@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Toro | The Stability Layer</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & Babel -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Tailwind Config -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        toro: {
+                            bg: '#050505',
+                            card: '#0A0A0A',
+                            border: '#27272a', // zinc-800
+                            green: '#22c55e',
+                            greenDim: 'rgba(34, 197, 94, 0.1)',
+                        }
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'float': 'float 6s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-20px)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        body { background-color: #050505; color: white; }
+        /* Custom scrollbar for terminal */
+        .terminal-scroll::-webkit-scrollbar { width: 6px; }
+        .terminal-scroll::-webkit-scrollbar-track { background: #0A0A0A; }
+        .terminal-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        
+        .cursor-blink {
+            animation: blink 1s step-end infinite;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+        
+        .grid-bg {
+            background-size: 40px 40px;
+            background-image: linear-gradient(to right, #18181b 1px, transparent 1px),
+                              linear-gradient(to bottom, #18181b 1px, transparent 1px);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- Icons ---
+        const Icons = {
+            Shield: ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>,
+            Terminal: ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>,
+            Activity: ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>,
+            Check: ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+            Zap: ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+            Server: ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>,
+            ChevronDown: ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        };
+
+        // --- Components ---
+
+        const SectionTitle = ({ children, badge }) => (
+            <div className="text-center max-w-2xl mx-auto mb-16">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-toro-border text-xs text-green-400 font-mono mb-6">
+                   {badge}
+                </div>
+                <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-4">{children}</h2>
+            </div>
+        );
+
+        const WaitlistForm = ({ id }) => {
+            const [email, setEmail] = useState('');
+            const [submitted, setSubmitted] = useState(false);
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if(email) setSubmitted(true);
+            };
+
+            return (
+                <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3 max-w-md w-full">
+                    <input 
+                        type="email" 
+                        placeholder="developer@startup.com" 
+                        className="bg-zinc-900/50 border border-toro-border rounded-lg px-4 py-3 flex-1 focus:outline-none focus:border-green-500 transition-colors placeholder:text-zinc-600 text-white"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        disabled={submitted}
+                    />
+                    <button 
+                        type="submit"
+                        className={`font-semibold px-6 py-3 rounded-lg transition-all flex items-center justify-center gap-2 min-w-[140px] ${submitted ? 'bg-green-600 text-white' : 'bg-white text-black hover:bg-zinc-200'}`}
+                        disabled={submitted}
+                    >
+                        {submitted ? <><Icons.Check className="w-4 h-4"/> Joined</> : "Join Waitlist"}
+                    </button>
+                </form>
+            );
+        };
+
+        function App() {
+            const [logs, setLogs] = useState([
+                { id: 1, text: "➜ ~ toro listen --port 3000", color: "text-zinc-300", delay: 0 },
+                { id: 2, text: "Authenticated as @cachecowboy", color: "text-zinc-500", delay: 800 },
+                { id: 3, text: "✔ Tunnel Established: https://api.usetoro.io/h/8291", color: "text-green-500", delay: 1600 },
+                { id: 4, isDivider: true, delay: 1600 },
+            ]);
+            
+            const [dynamicLogs, setDynamicLogs] = useState([]);
+
+            useEffect(() => {
+                const traffic = [
+                    { time: "[20:01:42]", method: "POST", path: "/stripe/webhook", status: "200 OK", statusColor: "text-green-500", latency: "(12ms)" },
+                    { time: "[20:01:45]", method: "POST", path: "/supabase/write", status: "QUEUED", statusColor: "text-yellow-500", latency: "(Buffered)" },
+                    { time: "[20:01:46]", method: "POST", path: "/plaid/sync", status: "PROCESSING", statusColor: "text-blue-400", latency: "..." },
+                ];
+
+                let timeouts = [];
+                traffic.forEach((log, index) => {
+                    const timeout = setTimeout(() => {
+                        setDynamicLogs(prev => [...prev, log]);
+                    }, 2500 + (index * 1200)); 
+                    timeouts.push(timeout);
+                });
+                return () => timeouts.forEach(clearTimeout);
+            }, []);
+
+            return (
+                <div className="min-h-screen text-white font-sans selection:bg-green-500/30 overflow-x-hidden">
+                    
+                    {/* --- Navbar --- */}
+                    <nav className="fixed top-0 w-full z-50 bg-[#050505]/80 backdrop-blur-md border-b border-toro-border">
+                        <div className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
+                            <div className="flex items-center gap-2 font-mono text-xl font-bold tracking-tighter cursor-pointer" onClick={() => window.scrollTo(0,0)}>
+                                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                                TORO
+                            </div>
+                            <div className="hidden md:flex gap-8 text-sm font-medium text-zinc-400">
+                                <a href="#problem" className="hover:text-white transition-colors">The Trap</a>
+                                <a href="#features" className="hover:text-white transition-colors">Features</a>
+                                <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
+                            </div>
+                            <a href="#join" className="text-sm bg-zinc-900 hover:bg-zinc-800 text-white px-4 py-2 rounded-lg border border-toro-border transition-colors">
+                                Login
+                            </a>
+                        </div>
+                    </nav>
+
+                    {/* --- Hero Section --- */}
+                    <main className="max-w-7xl mx-auto px-6 pt-32 pb-24 relative">
+                         {/* Background Grid */}
+                        <div className="absolute inset-0 grid-bg opacity-[0.15] -z-10 pointer-events-none mask-gradient"></div>
+
+                        <div className="grid lg:grid-cols-2 gap-16 items-center">
+                            <div className="space-y-8 z-10">
+                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-toro-border text-xs text-zinc-400 font-mono">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                                    v1.0 Early Access
+                                </div>
+                                <h1 className="text-5xl md:text-7xl font-bold tracking-tight leading-[1.1]">
+                                    The Stability Layer for <span className="text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-600">Vibe Coders</span>.
+                                </h1>
+                                <p className="text-xl text-zinc-400 max-w-md leading-relaxed">
+                                    Stop crashing Supabase with AI agents. Stop fighting Plaid webhooks. 
+                                    Toro provides the queues, tunnels, and workers so you can just build.
+                                </p>
+                                <WaitlistForm id="hero-form" />
+                                <div className="flex items-center gap-4 text-xs text-zinc-500 font-mono pt-4">
+                                    <span>TRUSTED BY BUILDERS AT</span>
+                                    <div className="h-px bg-zinc-800 flex-1"></div>
+                                </div>
+                                {/* Stack Logos (Text based for now) */}
+                                <div className="flex gap-6 opacity-50 grayscale hover:grayscale-0 transition-all">
+                                    <span className="font-bold text-lg">N8N</span>
+                                    <span className="font-bold text-lg">Supabase</span>
+                                    <span className="font-bold text-lg">Stripe</span>
+                                    <span className="font-bold text-lg">Plaid</span>
+                                </div>
+                            </div>
+
+                            {/* Terminal Visual */}
+                            <div className="relative">
+                                <div className="absolute -inset-1 bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl blur opacity-20 animate-pulse-slow"></div>
+                                <div className="relative bg-[#0A0A0A] border border-toro-border rounded-xl shadow-2xl overflow-hidden font-mono text-sm h-[360px] flex flex-col">
+                                    <div className="flex items-center gap-2 px-4 py-3 bg-zinc-900/50 border-b border-toro-border">
+                                        <div className="flex gap-1.5">
+                                            <div className="w-3 h-3 rounded-full bg-red-500/20 border border-red-500/30"></div>
+                                            <div className="w-3 h-3 rounded-full bg-yellow-500/20 border border-yellow-500/30"></div>
+                                            <div className="w-3 h-3 rounded-full bg-green-500/20 border border-green-500/30"></div>
+                                        </div>
+                                        <div className="ml-2 text-zinc-600 text-xs">toro — -zsh — 80x24</div>
+                                    </div>
+                                    <div className="p-6 space-y-2 text-zinc-300 overflow-y-auto terminal-scroll flex-1">
+                                        {logs.map((log) => (
+                                            <div key={log.id} className={`transition-opacity duration-500 ${log.isDivider ? 'border-t border-toro-border my-4 opacity-50' : ''}`} style={{animation: `fadeIn 0.5s ease-out ${log.delay}ms forwards`, opacity: 0}}>
+                                                {!log.isDivider && <span className={log.color}>{log.text}</span>}
+                                            </div>
+                                        ))}
+                                        {dynamicLogs.map((log, i) => (
+                                            <div key={i} className="flex gap-3 animate-[slideUp_0.3s_ease-out]">
+                                                <span className="text-zinc-600">{log.time}</span>
+                                                <span className="text-purple-400">{log.method}</span>
+                                                <span>{log.path}</span>
+                                                <span className={log.statusColor}>{log.status}</span>
+                                                <span className="text-zinc-600 ml-auto">{log.latency}</span>
+                                            </div>
+                                        ))}
+                                        <div className="w-2 h-4 bg-zinc-500 mt-2 cursor-blink"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+
+                    {/* --- Problem Section --- */}
+                    <section id="problem" className="py-24 border-t border-toro-border bg-zinc-900/10">
+                        <div className="max-w-7xl mx-auto px-6">
+                            <SectionTitle badge="THE VIBE TRAP">Why your stack is crashing</SectionTitle>
+                            
+                            <div className="grid md:grid-cols-3 gap-8 mt-12">
+                                <div className="p-8 rounded-2xl bg-zinc-900/30 border border-toro-border relative overflow-hidden group">
+                                    <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:opacity-100 transition-opacity">
+                                        <Icons.Zap className="w-12 h-12 text-yellow-500" />
+                                    </div>
+                                    <h3 className="text-xl font-bold mb-4">Connection Exhaustion</h3>
+                                    <p className="text-zinc-400">
+                                        AI Agents in N8N are chaotic. When 50 agents try to write to Postgres at once, you hit the <span className="text-red-400 font-mono bg-red-900/20 px-1 rounded">max_connections</span> limit and everything dies.
+                                    </p>
+                                </div>
+                                <div className="p-8 rounded-2xl bg-zinc-900/30 border border-toro-border relative overflow-hidden group">
+                                    <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:opacity-100 transition-opacity">
+                                        <Icons.Terminal className="w-12 h-12 text-blue-500" />
+                                    </div>
+                                    <h3 className="text-xl font-bold mb-4">Webhook Hell</h3>
+                                    <p className="text-zinc-400">
+                                        Debugging webhooks on localhost usually means Ngrok timeouts or blind guessing. If your server crashes, that webhook data is gone forever.
+                                    </p>
+                                </div>
+                                <div className="p-8 rounded-2xl bg-zinc-900/30 border border-toro-border relative overflow-hidden group">
+                                    <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:opacity-100 transition-opacity">
+                                        <Icons.Activity className="w-12 h-12 text-purple-500" />
+                                    </div>
+                                    <h3 className="text-xl font-bold mb-4">Integration Fatigue</h3>
+                                    <p className="text-zinc-400">
+                                        Implementing Plaid means writing infinite polling loops and managing cursors. It's boring, fragile, and breaks when you sleep.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* --- Feature Deep Dives --- */}
+                    <div id="features" className="space-y-0">
+                        
+                        {/* 1. The Airbag */}
+                        <section className="py-24 border-t border-toro-border relative overflow-hidden">
+                            <div className="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center">
+                                <div>
+                                    <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-yellow-500">
+                                        <Icons.Shield className="w-6 h-6"/>
+                                    </div>
+                                    <h2 className="text-4xl font-bold mb-6">The Airbag. <br/><span className="text-zinc-500">Queue first, write later.</span></h2>
+                                    <p className="text-lg text-zinc-400 mb-8 leading-relaxed">
+                                        We handle the chaos so your database doesn't have to. Toro sits between your AI agents and your infrastructure, absorbing traffic spikes and messy inputs instantly, then writing clean, safe data to your database at a pace it can handle.
+                                    </p>
+                                    <ul className="space-y-4 text-zinc-300">
+                                        <li className="flex items-center gap-3">
+                                            <Icons.Check className="w-5 h-5 text-green-500" />
+                                            <span>Protects against traffic spikes</span>
+                                        </li>
+                                        <li className="flex items-center gap-3">
+                                            <Icons.Check className="w-5 h-5 text-green-500" />
+                                            <span>Auto-fixes bad JSON types (AI Hallucination guard)</span>
+                                        </li>
+                                        <li className="flex items-center gap-3">
+                                            <Icons.Check className="w-5 h-5 text-green-500" />
+                                            <span>Zero-config connection pooling</span>
+                                        </li>
+                                    </ul>
+                                </div>
+                                <div className="bg-[#0A0A0A] border border-toro-border rounded-xl p-8 shadow-2xl relative">
+                                    {/* Visual: Spike vs Smooth */}
+                                    <div className="absolute top-4 right-4 text-xs font-mono text-zinc-600">LIVE MONITOR</div>
+                                    <div className="space-y-6">
+                                        <div>
+                                            <div className="flex justify-between text-xs font-mono text-zinc-500 mb-2">
+                                                <span>INBOUND (N8N AGENTS)</span>
+                                                <span className="text-red-400">500 req/sec</span>
+                                            </div>
+                                            <div className="h-12 flex items-end gap-1">
+                                                {[...Array(20)].map((_, i) => (
+                                                    <div key={i} className="w-full bg-red-500/20 rounded-sm animate-pulse" style={{height: `${Math.random() * 100}%`}}></div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="h-px bg-zinc-800 w-full"></div>
+                                        <div>
+                                            <div className="flex justify-between text-xs font-mono text-zinc-500 mb-2">
+                                                <span>OUTBOUND (SUPABASE)</span>
+                                                <span className="text-green-400">50 req/sec (Safe)</span>
+                                            </div>
+                                            <div className="h-12 flex items-end gap-1">
+                                                {[...Array(20)].map((_, i) => (
+                                                    <div key={i} className="w-full bg-green-500/50 rounded-sm" style={{height: `40%`}}></div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        {/* 2. The Pipe */}
+                        <section className="py-24 border-t border-toro-border bg-zinc-900/10">
+                            <div className="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center lg:flex-row-reverse">
+                                <div className="order-2 lg:order-1 relative">
+                                    <div className="bg-[#0A0A0A] border border-toro-border rounded-xl p-6 shadow-2xl font-mono text-xs md:text-sm">
+                                        <div className="text-zinc-500 mb-4 border-b border-zinc-800 pb-2">~/.config/toro/tunnels.json</div>
+                                        <div className="text-purple-400">const</div> <div className="text-white inline">stripe_webhook</div> = <div className="text-green-500 inline">"https://api.usetoro.io/h/stripe_dev"</div>;
+                                        <br/><br/>
+                                        <div className="text-zinc-500">// Debugging failed payload</div>
+                                        <div className="text-blue-400">await</div> toro.analyze(<div className="text-yellow-500">failed_event_id</div>);
+                                        <br/><br/>
+                                        <div className="text-zinc-400">
+                                            > Analysis: <span className="text-red-400">CRITICAL FAILURE</span><br/>
+                                            > Reason: Field <span className="text-white">'tax_id'</span> is null.<br/>
+                                            > Fix: Update Stripe test data or add null check.
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="order-1 lg:order-2">
+                                    <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-blue-500">
+                                        <Icons.Terminal className="w-6 h-6"/>
+                                    </div>
+                                    <h2 className="text-4xl font-bold mb-6">The Pipe. <br/><span className="text-zinc-500">Localhost is Production.</span></h2>
+                                    <p className="text-lg text-zinc-400 mb-8 leading-relaxed">
+                                        Forget Ngrok. Toro gives you a persistent, authenticated WebSocket tunnel. But we don't just forward data—we analyze it. If a webhook fails, our AI compares it to successful ones and tells you exactly *why*.
+                                    </p>
+                                    <button className="text-green-400 hover:text-green-300 font-mono text-sm flex items-center gap-2 group">
+                                        Read the CLI docs <span className="group-hover:translate-x-1 transition-transform">-></span>
+                                    </button>
+                                </div>
+                            </div>
+                        </section>
+
+                        {/* 3. The Concierge */}
+                        <section className="py-24 border-t border-toro-border">
+                            <div className="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center">
+                                <div>
+                                    <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-purple-500">
+                                        <Icons.Activity className="w-6 h-6"/>
+                                    </div>
+                                    <h2 className="text-4xl font-bold mb-6">The Concierge. <br/><span className="text-zinc-500">Plaid on Autopilot.</span></h2>
+                                    <p className="text-lg text-zinc-400 mb-8 leading-relaxed">
+                                        Don't build your own sync server. We handle the Plaid cursors, pagination, and retries. We even clean up the messy merchant names using AI before sending you the final JSON.
+                                    </p>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="p-4 bg-zinc-900 rounded-lg border border-zinc-800">
+                                            <div className="text-xs text-zinc-500 mb-1">YOU DO</div>
+                                            <div className="font-mono text-sm">Nothing.</div>
+                                        </div>
+                                        <div className="p-4 bg-zinc-900 rounded-lg border border-zinc-800">
+                                            <div className="text-xs text-zinc-500 mb-1">WE DO</div>
+                                            <div className="font-mono text-sm text-green-400">Sync, Clean, Post</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-[#0A0A0A] border border-toro-border rounded-xl p-8 shadow-2xl relative">
+                                    <div className="text-xs font-mono text-zinc-500 mb-4 text-center">DATA TRANSFORMATION</div>
+                                    <div className="space-y-4">
+                                        <div className="p-3 bg-red-900/10 border border-red-900/30 rounded text-xs font-mono text-zinc-400">
+                                            "UBER *TRIP 8402 CA 05-20"
+                                        </div>
+                                        <div className="flex justify-center">
+                                            <Icons.ChevronDown className="w-4 h-4 text-zinc-600"/>
+                                        </div>
+                                        <div className="p-3 bg-green-900/10 border border-green-900/30 rounded text-xs font-mono text-green-400">
+                                            {`{`}
+                                            <div className="pl-4">"merchant": "Uber",</div>
+                                            <div className="pl-4">"category": "Transport",</div>
+                                            <div className="pl-4">"amount": 24.50</div>
+                                            {`}`}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    {/* --- Architecture --- */}
+                    <section className="py-32 border-t border-toro-border bg-[#030303]">
+                        <div className="max-w-7xl mx-auto px-6 text-center">
+                            <SectionTitle badge="ARCHITECTURE">How it fits your stack</SectionTitle>
+                            <div className="flex flex-col md:flex-row items-center justify-center gap-4 md:gap-8 mt-12 opacity-80">
+                                {/* Source */}
+                                <div className="p-6 border border-zinc-800 rounded-xl bg-zinc-900/50 w-full md:w-auto">
+                                    <div className="font-mono text-zinc-500 text-xs mb-2">SOURCE</div>
+                                    <div className="font-bold">N8N / Agents</div>
+                                </div>
+                                <div className="hidden md:block w-12 h-px bg-zinc-700"></div>
+                                <div className="md:hidden w-px h-12 bg-zinc-700"></div>
+                                
+                                {/* Toro */}
+                                <div className="p-8 border border-green-500/30 rounded-xl bg-green-500/5 w-full md:w-auto relative">
+                                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-[#030303] border border-green-500/30 rounded-full text-[10px] text-green-500 font-mono tracking-widest">TORO</div>
+                                    <div className="flex flex-col gap-2">
+                                        <div className="flex items-center gap-2 text-sm font-mono"><Icons.Shield className="w-4 h-4 text-green-500"/> Buffer</div>
+                                        <div className="flex items-center gap-2 text-sm font-mono"><Icons.Zap className="w-4 h-4 text-green-500"/> Clean</div>
+                                    </div>
+                                </div>
+                                
+                                <div className="hidden md:block w-12 h-px bg-zinc-700"></div>
+                                <div className="md:hidden w-px h-12 bg-zinc-700"></div>
+
+                                {/* Dest */}
+                                <div className="p-6 border border-zinc-800 rounded-xl bg-zinc-900/50 w-full md:w-auto">
+                                    <div className="font-mono text-zinc-500 text-xs mb-2">DESTINATION</div>
+                                    <div className="font-bold">Your Backend / Database</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* --- FAQ --- */}
+                    <section id="faq" className="py-24 border-t border-toro-border">
+                        <div className="max-w-3xl mx-auto px-6">
+                            <SectionTitle badge="FAQ">Common Questions</SectionTitle>
+                            <div className="space-y-6">
+                                {[
+                                    { q: "Do you replace Supabase?", a: "No. We protect Supabase. We sit in front of it to manage connection pooling and queueing so your low-code tools don't crash it." },
+                                    { q: "Is this secure?", a: "Yes. We encrypt all payloads at rest. For Plaid integration, we use AES-256 for token storage. We are SOC-2 Type 1 compliant (in progress)." },
+                                    { q: "Can I self host?", a: "Not yet. But the CLI is open source. We plan to offer a self-hosted Docker container for Enterprise plans later this year." },
+                                    { q: "What does it cost?", a: "During beta, it's free. At launch, we'll have a generous free tier for developers, with Team plans starting at $29/mo." }
+                                ].map((item, i) => (
+                                    <div key={i} className="p-6 rounded-xl bg-zinc-900/20 border border-zinc-800">
+                                        <h3 className="font-bold mb-2">{item.q}</h3>
+                                        <p className="text-zinc-400 text-sm leading-relaxed">{item.a}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* --- CTA --- */}
+                    <section id="join" className="py-32 border-t border-toro-border bg-gradient-to-b from-zinc-900/20 to-black text-center">
+                        <div className="max-w-2xl mx-auto px-6">
+                            <h2 className="text-4xl font-bold mb-6">Ready to stop debugging?</h2>
+                            <p className="text-zinc-400 mb-10 text-lg">
+                                Join the waitlist to get early access to the CLI and Cloud Dashboard.
+                            </p>
+                            <div className="flex justify-center">
+                                <WaitlistForm id="footer-form" />
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* --- Footer --- */}
+                    <footer className="py-12 text-center text-zinc-600 text-sm border-t border-toro-border bg-[#050505]">
+                        <div className="flex justify-center gap-6 mb-8 font-medium">
+                            <a href="#" className="hover:text-zinc-400">Twitter</a>
+                            <a href="#" className="hover:text-zinc-400">GitHub</a>
+                            <a href="#" className="hover:text-zinc-400">Docs</a>
+                        </div>
+                        <p>© 2026 Toro Systems. Built for stubborn builders.</p>
+                    </footer>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

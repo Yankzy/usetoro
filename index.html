@@ -109,6 +109,11 @@
 </head>
 
 <body>
+    <!-- Hidden form for Netlify Detection (Works if you deploy to Netlify) -->
+    <form name="waitlist" netlify netlify-honeypot="bot-field" hidden>
+        <input type="email" name="email" />
+    </form>
+
     <div id="root"></div>
 
     <script type="text/babel">
@@ -178,29 +183,77 @@
         const WaitlistForm = ({ id }) => {
             const [email, setEmail] = useState('');
             const [submitted, setSubmitted] = useState(false);
+            const [loading, setLoading] = useState(false);
 
-            const handleSubmit = (e) => {
+            // --- INSTRUCTIONS ---
+            // 1. In Google Apps Script: Deploy > New Deployment > Web App
+            // 2. Set "Who has access" to "Anyone"
+            // 3. Copy the URL ending in "/exec"
+            // Example: "https://script.google.com/macros/s/AKfycby.../exec"
+            const WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyJVlAXnOsvYkarrZ9oWV5yEHpn0SgmSap2D5WvWyYEG6UkbrNG1DptpLqHDtlhKL1_PA/exec";
+
+            // Specify which Tab (at the bottom of your Google Sheet) to write to
+            // e.g. "Sheet1", "Waitlist_2026", "Beta_Signups"
+            const TAB_NAME = "Sheet1";
+
+            const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (email) setSubmitted(true);
+                if (!email) return;
+
+                setLoading(true);
+
+                try {
+                    if (WEBHOOK_URL) {
+                        // Note: Google Apps Script requires text/plain to avoid CORS preflight issues
+                        await fetch(WEBHOOK_URL, {
+                            method: 'POST',
+                            mode: 'no-cors', // Important for Google Apps Script
+                            headers: {
+                                'Content-Type': 'text/plain'
+                            },
+                            // We send 'sheetName' because Apps Script expects that key, 
+                            // but we populate it with our clear TAB_NAME variable.
+                            body: JSON.stringify({ email, sheetName: TAB_NAME })
+                        });
+                    } else {
+                        // Simulate network delay if no URL provided (for testing)
+                        await new Promise(resolve => setTimeout(resolve, 800));
+                        console.log("Simulated submission for:", email);
+                        console.log("Add your Google Apps Script URL to the WEBHOOK_URL variable.");
+                    }
+                    setSubmitted(true);
+                    setEmail('');
+                } catch (error) {
+                    console.error("Error:", error);
+                    // Even if Google returns an opaque response (no-cors), we assume success if no network error
+                    setSubmitted(true);
+                    setEmail('');
+                } finally {
+                    setLoading(false);
+                }
             };
 
             return (
-                <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3 max-w-md w-full relative z-20">
+                <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3 max-w-md w-full relative z-20" name="waitlist">
                     <input
                         type="email"
+                        name="email"
                         placeholder="developer@startup.com"
                         className="bg-zinc-900/50 border border-toro-border rounded-lg px-4 py-3 flex-1 focus:outline-none focus:border-green-500 transition-colors placeholder:text-zinc-600 text-white"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         required
-                        disabled={submitted}
+                        disabled={submitted || loading}
                     />
                     <button
                         type="submit"
-                        className={`font-semibold px-6 py-3 rounded-lg transition-all flex items-center justify-center gap-2 min-w-[140px] ${submitted ? 'bg-green-600 text-white' : 'bg-white text-black hover:bg-zinc-200 hover:scale-105'}`}
-                        disabled={submitted}
+                        className={`font-semibold px-6 py-3 rounded-lg transition-all flex items-center justify-center gap-2 min-w-[140px] 
+                            ${submitted ? 'bg-green-600 text-white' : 'bg-white text-black hover:bg-zinc-200 hover:scale-105'}
+                            ${loading ? 'opacity-80 cursor-wait' : ''}
+                        `}
+                        disabled={submitted || loading}
                     >
-                        {submitted ? <><Icons.Check className="w-4 h-4" /> Joined</> : "Join Waitlist"}
+                        {loading ? "Joining..." : (submitted ? <><Icons.Check className="w-4 h-4" /> Joined</> : "Join Waitlist")}
                     </button>
                 </form>
             );

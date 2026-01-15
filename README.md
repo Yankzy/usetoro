@@ -1,173 +1,136 @@
-This is a formal **Technical Product Requirements Document (PRD)** for **Toro**.
+# **Product Requirements Document: Toro v1.0**
 
-**Product Name:** Toro
-**Version:** 1.0
-**Core Objective:** To solve the "Integration Hell" B2B developers face by providing two distinct services:
-
-1. **The Hub:** A robust webhook infrastructure to ingest, debug, and reliable forward events.
-2. **The Concierge:** A managed sync engine for Plaid that handles the polling logic and delivers clean, normalized financial data.
+**Product Name:** Toro (The Bull)
+**Tagline:** The Stability Layer for Modern Backends.
+**Core Value:** "Don't crash your database. Don't fight API limits. Just send it to Toro."
 
 ---
 
-# Section 1: The Webhook Hub ("The Pipe")
+## **Section 1: The Webhook Hub ("The Pipe")**
 
-**Objective:** Build a high-concurrency ingestion engine that acts as the "middleman" for all third-party webhooks (Stripe, Twilio, GitHub). It must provide visibility (logs), reliability (retries), and developer velocity (local tunneling).
+*The Foundation: Ingest, Debug, Tunnel.*
 
-### 1.1 Functional Requirements
+**Objective:** Build a high-concurrency ingestion engine that acts as the "middleman" for all third-party webhooks (Stripe, Twilio, GitHub). It provides visibility, local tunneling, and automated debugging.
 
-#### 1.1.1 Ingestion & Routing
+### **1.1 Functional Requirements**
 
-* **Requirement:** The system must expose dynamic, unique URL endpoints (Buckets) for users (e.g., `api.toro.dev/h/{bucket_id}`).
-* **Performance:** Must acknowledge receipt to the provider (return `200 OK`) within **100ms** to prevent timeouts, regardless of downstream latency.
-* **Queueing:** All incoming payloads must be immediately pushed to a durable queue (Redis/Kafka) before processing.
-* **Broadcasting:** Incoming events must be broadcast via **WebSockets** to the connected frontend dashboard and CLI in real-time.
-
-#### 1.1.2 The "Native" Tunnel (CLI)
-
-* **Requirement:** A Go-based CLI tool (`toro listen`) that creates a secure WebSocket tunnel to localhost.
-* **Flow:**
-1. User runs `toro listen --port 3000`.
-2. Toro Server receives webhook -> serializes to binary -> sends down WebSocket.
-3. CLI receives binary -> POSTs to `localhost:3000`.
-4. CLI captures response (200/500) -> sends back to Server -> Server logs the local response status.
+* **1.1.1 The "Instant" Receiver**
+* **Endpoint:** Dynamic buckets (`api.toro.dev/h/{bucket_id}`).
+* **SLA:** Must respond `200 OK` to the provider within **50ms** (ACK only). Processing happens asynchronously.
+* **Architecture:** `Ingest -> Redis Queue`. The main HTTP thread never touches the database.
 
 
+* **1.1.2 The "Native" Tunnel (CLI)**
+* **Tool:** `toro listen --port 3000`
+* **Protocol:** Persistent WebSocket.
+* **Behavior:** Forwards payloads to `localhost`. Captures the local response code (200/500) and sends it back to the cloud dashboard for debugging.
 
-#### 1.1.3 Reliability & Replay
 
-* **Retention:** Store full headers and body payloads for 30 days (Tier 2) or 7 days (Tier 1).
-* **Manual Replay:** User can click "Resend" on any historical event. System must issue a new request to the configured destination.
-* **Modified Replay:** User can edit the JSON payload in-browser before replaying (for edge-case testing).
+* **1.1.3 "Wreckage Analysis" (AI Debugger)**
+* **Trigger:** When a forwarded webhook fails (Status 5xx).
+* **Action:** Asynchronously compares the payload against the last successful one.
+* **Output:** Natural language root cause pinned to the log (e.g., *"Crash Reason: The 'email' field is null."*).
 
-### 1.2 AI & "Vibe" Requirements
 
-#### 1.2.1 "Drift Detection" (Schema Monitor)
 
-* **Logic:** The system must maintain a "Fingerprint" of the expected JSON structure for each bucket.
-* **Action:** If a new webhook arrives with missing keys or changed data types (e.g., `amount` changed from `int` to `string`), tag the event as **"Schema Drift"** and alert the user.
+### **1.2 Technical Stack**
 
-#### 1.2.2 "Wreckage Analysis" (Auto-Diagnostics)
-
-* **Trigger:** When a webhook returns a `5xx` error from the user's server.
-* **Process:** Asynchronously send the Payload + Error Log to an LLM.
-* **Output:** A natural language summary pinned to the log (e.g., *"Your server crashed because the 'email' field is null, but your code likely expects a string."*).
-
-### 1.3 Technical Stack & Data Model (Section 1)
-
-* **Language:** Go (Golang) - Optimized for high-concurrency HTTP handling.
-* **Database:** PostgreSQL (Partitioned by time for log retention).
-* **Real-time:** `gorilla/websocket` for the tunnel and UI updates.
-
-**Data Schema (Simplified):**
-
-```go
-type WebhookEvent struct {
-    ID          string
-    BucketID    string
-    Headers     map[string]string
-    Body        JSONB
-    ReceivedAt  time.Time
-    // The response from the customer's server
-    DestinationStatus int 
-    DestinationLatency int
-}
-
-```
+* **Lang:** Go (Fast HTTP handling).
+* **Real-time:** `gorilla/websocket`.
+* **Storage:** Postgres (Logs), Redis (Hot Queue).
 
 ---
 
-# Section 2: The Plaid Concierge ("The Syncer")
+## **Section 2: The Write Buffer ("The Airbag")**
 
-**Objective:** Abstract away the complexity of Plaid's `transactions/sync` API. The customer should never have to write a polling loop or manage a cursor. They simply receive a clean POST request containing the new transactions.
+*The Vibe Guard: Protecting Supabase/Postgres from N8N & AI Agents.*
 
-### 2.1 Functional Requirements
+**Objective:** Solve the "Connection Exhaustion" problem for low-code builders. Serve as a durable queue between chaotic sources (AI Agents, N8N workflows) and fragile destinations (Supabase, SQL).
 
-#### 2.1.1 Account Onboarding
+### **2.1 Functional Requirements**
 
-* **Input:** User submits `access_token` and `item_id` via the Toro API.
-* **Storage:** Toro securely encrypts and stores these tokens in a "Vault" table.
-* **State:** Toro initializes a `cursor` value of `null` for this new item.
-
-#### 2.1.2 The Sync Workflow (The "Concierge" Logic)
-
-* **Trigger:** System listens for the `SYNC_UPDATES_AVAILABLE` webhook from Plaid.
-* **Workflow (Temporal/Go):**
-1. **Wake Up:** Worker acknowledges the hook.
-2. **Fetch Loop:**
-* Call Plaid `/transactions/sync` using the stored `cursor`.
-* If `has_more == true`, append transactions to a buffer and loop again immediately.
-* Update the stored `cursor` in DB.
+* **2.1.1 The "Safe" Write Endpoint**
+* **Input:** Users send JSON to `api.toro.dev/buffer/{buffer_id}` instead of writing directly to their DB.
+* **Behavior:** Toro accepts the request instantly and releases the N8N workflow (preventing timeouts).
 
 
-3. **Aggregation:** Collect all `added`, `modified`, and `removed` transactions from the loop.
-4. **Delivery:** Send a **single** cleaned JSON POST to the customer's configured `webhook_url`.
+* **2.1.2 Connection Pooling Worker**
+* **Mechanism:** A dedicated Go worker pulls jobs from the queue.
+* **Constraint:** It maintains **ONE** persistent connection pool to the user's Supabase/Postgres instance.
+* **Throughput:** Even if 5,000 agents trigger at once, Toro writes them to the DB sequentially (or in controlled batches of 50). **Zero crashes.**
 
 
-
-#### 2.1.3 Durability & Retries
-
-* **Requirement:** If the Customer's server returns a `500` or times out during delivery, the system must **not** lose the transactions.
-* **Strategy:** Use Exponential Backoff (1m, 5m, 1h) to retry delivery for up to 24 hours.
-
-### 2.2 AI Requirements (The Value Add)
-
-#### 2.2.1 Merchant Normalization
-
-* **Process:** Before delivery, pass raw Plaid descriptions through a local NLP model or LLM API.
-* **Transformation:**
-* `"Uber 072515 SF**POOL"` → `Merchant: "Uber"`, `Category: "Ride Share"`.
+* **2.1.3 The "Hallucination Firewall"**
+* **Schema Enforcement:** User defines a strict schema (e.g., `age: int`).
+* **AI Cleaning:** If an AI agent sends messy data (e.g., `age: "twenty"`), Toro intercepts it.
+* **Repair:** Uses a micro-LLM call to fix the type (`"twenty"` -> `20`) before attempting the SQL INSERT.
+* **Quarantine:** If unfixable, the record is moved to a "Dead Letter Queue" for manual review, ensuring the database stays clean.
 
 
-* **Benefit:** Customer receives clean data, not raw bank gibberish.
-
-#### 2.2.2 "The Clean Payload" (API Contract)
-
-The customer will receive this JSON structure, regardless of how messy the bank data was:
-
-```json
-{
-  "event_type": "transactions.new",
-  "account_id": "acc_12345",
-  "sync_date": "2026-05-20T10:00:00Z",
-  "data": {
-    "added": [
-      {
-        "id": "tx_999",
-        "amount_cents": 1450,
-        "currency": "USD",
-        "merchant_clean": "Netflix",
-        "raw_description": "NFLX DIGITAL NT Svc",
-        "date": "2026-05-19"
-      }
-    ],
-    "removed": ["tx_888"],
-    "modified": []
-  }
-}
-
-```
-
-### 2.3 Technical Stack (Section 2)
-
-* **Orchestration:** **Temporal.io** (Essential for managing long-running sync loops and durable retries).
-* **Language:** Go (Worker Nodes).
-* **Encryption:** AES-256 for storing Plaid Access Tokens.
 
 ---
 
-### 3. Monetization Gates (Technical Enforcement)
+## **Section 3: The Plaid Concierge ("The Syncer")**
 
-To ensure the business model works, the following limits must be enforced in code:
+*The Partner: Managed Financial Data Sync.*
 
-| Feature | Tier 1 (Hobby) | Tier 2 (Pro - $49) | Tier 3 (Agency - $249) |
+**Objective:** Abstract away the complexity of Plaid's `transactions/sync` API. The customer receives clean, normalized financial data via webhook, without writing polling loops.
+
+### **3.1 Functional Requirements**
+
+* **3.1.1 The "Sync Loop" Engine**
+* **Trigger:** Receives `SYNC_UPDATES_AVAILABLE` from Plaid.
+* **Action:** Temporal Workflow wakes up.
+* **Logic:**
+1. Retrieves `cursor` from Vault.
+2. Loops Plaid API until `has_more == false`.
+3. Aggregates 1,000+ transactions into memory.
+
+
+
+
+* **3.1.2 Merchant Normalization (AI)**
+* **Process:** Passes raw descriptions (`"UBER *TRIP..."`) through a local NLP model.
+* **Output:** Adds `merchant_clean` and `category_normalized` fields to the JSON.
+
+
+* **3.1.3 Delivery**
+* **Action:** POSTs a single, clean JSON payload to the customer’s API.
+* **Reliability:** Uses exponential backoff (up to 24h) if the customer’s server is down.
+
+
+
+### **3.2 Technical Stack**
+
+* **Engine:** **Temporal.io** (For durable execution and retries).
+* **Security:** AES-256 (Access Token Vault).
+
+---
+
+## **4. Monetization Strategy (B2B)**
+
+| Feature | **Tier 1: Builder ($29/mo)** | **Tier 2: Team ($99/mo)** | **Tier 3: Scale ($299/mo)** |
 | --- | --- | --- | --- |
-| **Log Retention** | 1 Day | 30 Days | 90 Days |
-| **Tunneling** | Single Connection | Multi-seat | Multi-seat |
-| **Plaid Sync** | Manual Trigger Only | Auto-Sync (Up to 50 Items) | Auto-Sync (Unlimited) |
-| **AI Features** | None | Schema Monitor | Merchant Cleaning & Diagnostics |
+| **Focus** | Solo Vibe Coders | Small Agencies / Startups | High-Volume SaaS |
+| **The Pipe** | 7-day retention | 30-day retention | 90-day retention |
+| **The Airbag** | **Queue only.** (Protects DB from crashes). | **AI Cleaning.** (Auto-fixes data types). | **High Throughput.** (Dedicated Workers). |
+| **The Syncer** | Manual Trigger. | 50 Connected Accounts. | 500+ Connected Accounts. |
 
-### 4. Next Steps for Engineering
+---
 
-1. **Phase 1 (Week 1):** Build the **Go Ingestion Server** (Part 1). Just the HTTP handler + Redis Queue + WebSocket.
-2. **Phase 2 (Week 2):** Build the **CLI Tool** (`toro listen`) to verify the tunneling works.
-3. **Phase 3 (Week 3):** Implement the **Temporal Workflow** for the Plaid Loop (Part 2).
+## **5. Roadmap & Implementation Plan**
+
+1. **Phase 1: The "Uncrashable" MVP (Weeks 1-2)**
+* Build the Go Ingestion Server (Section 1).
+* Build the Redis-to-Postgres worker (Section 2 - The Buffer).
+* *Goal:* Sell to N8N users immediately. "Stop crashing Supabase."
+
+
+2. **Phase 2: The Tunnel (Week 3)**
+* Release `toro` CLI.
+* *Goal:* Developer stickiness.
+
+
+3. **Phase 3: The Plaid Engine (Week 4+)**
+* Implement Temporal workflows.
+* *Goal:* High-ticket B2B sales.

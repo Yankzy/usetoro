@@ -1,136 +1,150 @@
-# **Product Requirements Document: Toro v1.0**
+# **Product Requirements Document: Toro v1.1**
 
 **Product Name:** Toro (The Bull)
-**Tagline:** The Stability Layer for Modern Backends.
-**Core Value:** "Don't crash your database. Don't fight API limits. Just send it to Toro."
+**Domain:** `usetoro.io`
+**Core Objective:** To be the "Stability Layer" for modern Vibe Coders and B2B SaaS teams. We sit between chaotic inputs (Webhooks, AI Agents) and fragile infrastructure (Postgres, Localhost).
 
 ---
 
-## **Section 1: The Webhook Hub ("The Pipe")**
+## **Section 1: The Pipe (Inbound Webhooks)**
 
-*The Foundation: Ingest, Debug, Tunnel.*
+*The Gateway: Ingest, Debug, Tunnel.*
 
-**Objective:** Build a high-concurrency ingestion engine that acts as the "middleman" for all third-party webhooks (Stripe, Twilio, GitHub). It provides visibility, local tunneling, and automated debugging.
+**Problem:** Developers struggle to debug webhooks on localhost, and they lose data when their servers crash.
+**Solution:** A high-concurrency ingestion engine that acts as a "durable middleman" for all third-party events (Stripe, Twilio, GitHub).
 
 ### **1.1 Functional Requirements**
 
 * **1.1.1 The "Instant" Receiver**
-* **Endpoint:** Dynamic buckets (`api.toro.dev/h/{bucket_id}`).
-* **SLA:** Must respond `200 OK` to the provider within **50ms** (ACK only). Processing happens asynchronously.
-* **Architecture:** `Ingest -> Redis Queue`. The main HTTP thread never touches the database.
+* **Endpoint:** `api.usetoro.io/h/{bucket_id}`
+* **Behavior:**
+* Accepts `POST/PUT` requests instantly.
+* **SLA:** Returns `200 OK` to the provider within **50ms** (ACK only) to prevent timeouts.
+* **Architecture:** `Ingest -> Redis Queue`. The main HTTP thread never blocks.
+
+
+* **Broadcasting:** Pushes payload via WebSocket to the Dashboard and CLI in real-time.
 
 
 * **1.1.2 The "Native" Tunnel (CLI)**
-* **Tool:** `toro listen --port 3000`
-* **Protocol:** Persistent WebSocket.
-* **Behavior:** Forwards payloads to `localhost`. Captures the local response code (200/500) and sends it back to the cloud dashboard for debugging.
+* **Goal:** Replace Ngrok with a built-in, authenticated solution.
+* **Command:** `toro listen --port 3000`
+* **Flow:**
+1. Toro Cloud receives webhook.
+2. Forwards binary frame down WebSocket to User's CLI.
+3. CLI hits `localhost:3000`.
+4. CLI captures the response (e.g., `500 Error`) and sends it back to the Cloud Dashboard.
 
 
-* **1.1.3 "Wreckage Analysis" (AI Debugger)**
-* **Trigger:** When a forwarded webhook fails (Status 5xx).
-* **Action:** Asynchronously compares the payload against the last successful one.
-* **Output:** Natural language root cause pinned to the log (e.g., *"Crash Reason: The 'email' field is null."*).
+
+
+* **1.1.3 "Wreckage Analysis" (AI Diagnostics)**
+* **Trigger:** When a tunneled request returns status `5xx` or `4xx`.
+* **Action:** Asynchronously bundles the *Failed Payload* + *Local Error Log* -> LLM.
+* **Output:** A pinned "Crash Report" in the dashboard.
+> *Example: "Stripe sent a null `tax_id`, but your local server threw a `TypeError: Cannot read property 'length' of null`."*
 
 
 
-### **1.2 Technical Stack**
 
-* **Lang:** Go (Fast HTTP handling).
-* **Real-time:** `gorilla/websocket`.
-* **Storage:** Postgres (Logs), Redis (Hot Queue).
 
 ---
 
-## **Section 2: The Write Buffer ("The Airbag")**
+## **Section 2: The Airbag (The Write Buffer)**
 
 *The Vibe Guard: Protecting Supabase/Postgres from N8N & AI Agents.*
 
-**Objective:** Solve the "Connection Exhaustion" problem for low-code builders. Serve as a durable queue between chaotic sources (AI Agents, N8N workflows) and fragile destinations (Supabase, SQL).
+**Problem:** "Vibe Coding" stacks (N8N, Retool, LangChain) crash databases because they open too many concurrent connections (Connection Exhaustion).
+**Solution:** A managed "Write Queue" that sits between the Agent and the Database.
 
 ### **2.1 Functional Requirements**
 
-* **2.1.1 The "Safe" Write Endpoint**
-* **Input:** Users send JSON to `api.toro.dev/buffer/{buffer_id}` instead of writing directly to their DB.
-* **Behavior:** Toro accepts the request instantly and releases the N8N workflow (preventing timeouts).
+* **2.1.1 The "Safe" Buffer Endpoint**
+* **Endpoint:** `api.usetoro.io/buffer/{buffer_id}`
+* **Use Case:** User points their N8N "HTTP Request" node here instead of connecting directly to Postgres.
+* **Behavior:** Toro accepts the JSON payload instantly and releases the N8N workflow.
 
 
-* **2.1.2 Connection Pooling Worker**
-* **Mechanism:** A dedicated Go worker pulls jobs from the queue.
-* **Constraint:** It maintains **ONE** persistent connection pool to the user's Supabase/Postgres instance.
-* **Throughput:** Even if 5,000 agents trigger at once, Toro writes them to the DB sequentially (or in controlled batches of 50). **Zero crashes.**
+* **2.1.2 The Connection Pooling Worker**
+* **Mechanism:** A dedicated Go worker pulls jobs from the Redis queue.
+* **The Guard:** This worker maintains **ONE** high-quality, persistent connection pool to the user's Supabase instance.
+* **Throughput:** Even if 1,000 AI agents trigger simultaneously, Toro writes them to the DB sequentially (or in batches of 50).
+* **Result:** **Zero Database Crashes.**
 
 
 * **2.1.3 The "Hallucination Firewall"**
-* **Schema Enforcement:** User defines a strict schema (e.g., `age: int`).
-* **AI Cleaning:** If an AI agent sends messy data (e.g., `age: "twenty"`), Toro intercepts it.
-* **Repair:** Uses a micro-LLM call to fix the type (`"twenty"` -> `20`) before attempting the SQL INSERT.
-* **Quarantine:** If unfixable, the record is moved to a "Dead Letter Queue" for manual review, ensuring the database stays clean.
+* **Schema Enforcement:** User defines a strict schema (e.g., `{ "age": "integer", "email": "string" }`).
+* **Sanitization:** If an AI Agent sends `{"age": "twenty"}`, Toro intercepts it.
+* **Auto-Repair:** Uses a micro-LLM to fix the type (`"twenty"` -> `20`) before attempting the SQL INSERT.
+* **Quarantine:** Unfixable records are sent to a "Dead Letter Queue" for manual review, preventing database corruption.
 
 
 
 ---
 
-## **Section 3: The Plaid Concierge ("The Syncer")**
+## **Section 3: The Concierge (Plaid Sync)**
 
 *The Partner: Managed Financial Data Sync.*
 
-**Objective:** Abstract away the complexity of Plaid's `transactions/sync` API. The customer receives clean, normalized financial data via webhook, without writing polling loops.
+**Problem:** Integrating Plaid requires building complex polling loops, managing cursors, and handling messy bank descriptions.
+**Solution:** A "Set and Forget" engine. We handle the loop; the customer gets clean webhooks.
 
 ### **3.1 Functional Requirements**
 
-* **3.1.1 The "Sync Loop" Engine**
-* **Trigger:** Receives `SYNC_UPDATES_AVAILABLE` from Plaid.
-* **Action:** Temporal Workflow wakes up.
-* **Logic:**
-1. Retrieves `cursor` from Vault.
-2. Loops Plaid API until `has_more == false`.
-3. Aggregates 1,000+ transactions into memory.
+* **3.1.1 The Sync Engine (Temporal)**
+* **Input:** User submits Plaid `access_token` and `item_id`.
+* **Trigger:** System listens for Plaid's `SYNC_UPDATES_AVAILABLE` webhook.
+* **Workflow:**
+1. **Wake Up:** Temporal Workflow starts.
+2. **Fetch:** Calls Plaid `/transactions/sync` using the stored `cursor`.
+3. **Loop:** Continues paging until `has_more == false`.
+4. **Save:** Updates the new cursor in the Toro Vault.
 
 
 
 
 * **3.1.2 Merchant Normalization (AI)**
-* **Process:** Passes raw descriptions (`"UBER *TRIP..."`) through a local NLP model.
-* **Output:** Adds `merchant_clean` and `category_normalized` fields to the JSON.
-
-
-* **3.1.3 Delivery**
-* **Action:** POSTs a single, clean JSON payload to the customer’s API.
-* **Reliability:** Uses exponential backoff (up to 24h) if the customer’s server is down.
+* **Process:** Passes raw bank descriptions through a specialized cleaning model.
+* **Transformation:**
+* *Raw:* `"PAYPAL *STEAM GAMES 4253 CA"`
+* *Clean:* `{ "merchant": "Steam", "category": "Entertainment", "logo": "steam.png" }`
 
 
 
-### **3.2 Technical Stack**
 
-* **Engine:** **Temporal.io** (For durable execution and retries).
-* **Security:** AES-256 (Access Token Vault).
+* **3.1.3 The "Clean" Delivery**
+* **Action:** POSTs a single, sanitized JSON payload to the customer's server.
+* **Reliability:** If the customer's server is down, Toro retries for 24 hours (Exponential Backoff).
+
+
 
 ---
 
-## **4. Monetization Strategy (B2B)**
+## **4. Technical Standards**
+
+* **Language:** **Go (Golang)**. Chosen for high concurrency and single-binary deployment.
+* **Orchestration:** **Temporal.io**. Essential for the durability of the Plaid Sync loops and reliable retries.
+* **Database:** **PostgreSQL**. Used for log retention, user vaults, and cursors.
+* **Queue:** **Redis**. Used for the "Write Buffer" and real-time WebSocket broadcasting.
+
+---
+
+## **5. Monetization Strategy**
 
 | Feature | **Tier 1: Builder ($29/mo)** | **Tier 2: Team ($99/mo)** | **Tier 3: Scale ($299/mo)** |
 | --- | --- | --- | --- |
-| **Focus** | Solo Vibe Coders | Small Agencies / Startups | High-Volume SaaS |
-| **The Pipe** | 7-day retention | 30-day retention | 90-day retention |
-| **The Airbag** | **Queue only.** (Protects DB from crashes). | **AI Cleaning.** (Auto-fixes data types). | **High Throughput.** (Dedicated Workers). |
-| **The Syncer** | Manual Trigger. | 50 Connected Accounts. | 500+ Connected Accounts. |
+| **Focus** | Solo Vibe Coders | Agencies & Startups | High-Volume SaaS |
+| **The Pipe** | 7-day retention. | 30-day retention. | 90-day retention. |
+| **The Airbag** | **Crash Protection.** (Queueing). | **AI Cleaning.** (Auto-fixes data types). | **High Throughput.** (Dedicated Workers). |
+| **The Concierge** | Manual Sync Trigger. | 50 Connected Accounts. | 500+ Connected Accounts. |
 
 ---
 
-## **5. Roadmap & Implementation Plan**
+## **6. The Toro CLI Reference**
 
-1. **Phase 1: The "Uncrashable" MVP (Weeks 1-2)**
-* Build the Go Ingestion Server (Section 1).
-* Build the Redis-to-Postgres worker (Section 2 - The Buffer).
-* *Goal:* Sell to N8N users immediately. "Stop crashing Supabase."
+*Designed for the "Flow State"*
 
-
-2. **Phase 2: The Tunnel (Week 3)**
-* Release `toro` CLI.
-* *Goal:* Developer stickiness.
-
-
-3. **Phase 3: The Plaid Engine (Week 4+)**
-* Implement Temporal workflows.
-* *Goal:* High-ticket B2B sales.
+* **Login:** `toro login` (Opens browser auth).
+* **Tunnel:** `toro listen --port 3000` (Starts the WebSocket tunnel).
+* **Sync:** `toro sync` (Manually triggers a Plaid sync for local testing).
+* **Status:** `toro status` (Shows active tunnels and queue health).

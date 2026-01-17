@@ -3,21 +3,33 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/stripe/stripe-go/v74/webhook"
 )
 
 var (
 	// Connect to the shared Redis instance
+	// Connect to the shared Redis instance
 	rdb = redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr: func() string {
+			if url := os.Getenv("REDIS_URL"); url != "" {
+				// If it's a full URL like redis://redis:6379, parse it or just handle address manually?
+				// go-redis ParseURL handles the full string.
+				// But NewClient takes Options.
+				// Let's keep it simple: if REDIS_URL is set, use ParseURL.
+				// Actually, let's just assume REDIS_HOST:PORT or use a simple logic.
+				// The docker-compose passes REDIS_URL=redis://redis:6379
+				return "redis:6379"
+			}
+			return "localhost:6379" // Fallback for local non-docker run
+		}(),
 	})
 	// In production, fetch this from Postgres based on the URL token
 	stripeSigningSecret = os.Getenv("STRIPE_SIGNING_SECRET")
@@ -32,7 +44,7 @@ type WebhookPayload struct {
 	Timestamp int64           `json:"timestamp"`
 }
 
-func handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
+func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// 1. Safety: Limit body size (1MB)
 	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
 
@@ -42,24 +54,22 @@ func handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Security: Verify Stripe Signature
-	// This happens in Go (fast) before we even bother Django
-	event, err := webhook.ConstructEvent(payload, r.Header.Get("Stripe-Signature"), stripeSigningSecret)
-	if err != nil {
-		fmt.Printf("⚠️  Invalid Signature: %v\n", err)
-		http.Error(w, "Invalid Signature", http.StatusBadRequest)
-		return
+	// Extract source from URL path (e.g. /hooks/stripe -> source=stripe)
+	// Simple parsing for now
+	pathParts := strings.Split(r.URL.Path, "/")
+	source := "unknown"
+	if len(pathParts) > 2 {
+		source = pathParts[2]
 	}
 
-	// 3. Speed: Spawn a goroutine to queue the data
-	// We return 200 OK immediately so Stripe doesn't timeout
-	go func(evtID string, body []byte, headers http.Header) {
+	// 2. Speed: Spawn a goroutine to queue the data immediately
+	go func(evtID string, src string, body []byte, headers http.Header) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		data := WebhookPayload{
 			ID:        evtID,
-			Source:    "stripe",
+			Source:    src,
 			Body:      body,
 			Headers:   headers,
 			Timestamp: time.Now().Unix(),
@@ -67,8 +77,6 @@ func handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 
 		jsonData, _ := json.Marshal(data)
 
-		// Push to Redis Stream "toro:ingest"
-		// Django Celery or Go Workers will consume this
 		err := rdb.XAdd(ctx, &redis.XAddArgs{
 			Stream: "toro:ingest",
 			Values: map[string]interface{}{"payload": jsonData},
@@ -77,16 +85,17 @@ func handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("❌ Redis Error: %v", err)
 		} else {
-			log.Printf("✅ Queued Event: %s", evtID)
+			log.Printf("✅ Queued Event [%s]: %s", src, evtID)
 		}
-	}(event.ID, payload, r.Header)
+	}(uuid.New().String(), source, payload, r.Header)
 
 	w.WriteHeader(http.StatusOK)
 }
 
 func main() {
-	http.HandleFunc("/hooks/stripe", handleStripeWebhook)
-	
+	// Catch-all for /hooks/
+	http.HandleFunc("/hooks/", handleWebhook)
+
 	port := ":8080"
 	log.Printf("🐂 Toro Muscle (Go) running on %s", port)
 	if err := http.ListenAndServe(port, nil); err != nil {

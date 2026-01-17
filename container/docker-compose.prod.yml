@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  app-django:
+    container_name: app-django
+    build:
+      context: ..
+      dockerfile: container/django/Dockerfile
+    restart: always
+    env_file:
+      - ../.env
+    environment:
+      - DJANGO_DEBUG=0
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ..:/app
+      - staticfiles:/app/staticfiles
+      - daphne-sockets:/run/daphne
+    depends_on:
+      - db
+      - redis
+    networks:
+      - toro-net
+
+  app-go:
+    container_name: app-go
+    restart: always
+    env_file:
+      - ../.env
+    networks:
+      - toro-net
+    depends_on:
+      - redis
+      - db
+
+  nginx:
+    container_name: nginx
+    image: nginx:alpine
+    restart: always
+    volumes:
+      - staticfiles:/app/staticfiles
+      - ../container/nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+    environment:
+      VIRTUAL_HOST: usetoro.io,www.usetoro.io
+      LETSENCRYPT_HOST: usetoro.io,www.usetoro.io
+    ports:
+      - "80:80"
+    depends_on:
+      - app-django
+      - app-go
+    networks:
+      - toro-net
+      - frontend-net # Connects to nginx-proxy
+
+  db:
+    restart: always
+    env_file:
+      - ../.env
+    volumes:
+      - ../container/postgres/db_data:/var/lib/postgresql/data
+
+  redis:
+    restart: always
+    command: [ "redis-server", "--appendonly", "yes" ]
+    volumes:
+      - redis_data:/data
+
+volumes:
+  staticfiles:
+  daphne-sockets:
+  redis_data:
+
+
+networks:
+  toro-net:
+    driver: bridge
+  frontend-net:
+    external: true

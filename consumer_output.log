@@ -1,0 +1,12 @@
+Created consumer group: django_processor_group
+🚀 Started Webhook Consumer: worker_1
+📥 Processing Event [stripe] ID: 
+No active schema found for source 'stripe'. Skipping validation.
+✅ Schema Validated for stripe
+✅ Acked Event 
+📥 Processing Event [stripe_charge_succeeded] ID: evt_test_123
+✅ Schema Validated for stripe_charge_succeeded
+✅ Acked Event evt_test_123
+📥 Processing Event [stripe_charge_succeeded] ID: evt_invalid
+❌ Schema Validation Failed for stripe_charge_succeeded: [{"type":"missing","loc":["amount"],"msg":"Field required","input":{"id":"evt_invalid","currency":"usd"},"url":"https://errors.pydantic.dev/2.12/v/missing"}]
+✅ Acked Event evt_invalid

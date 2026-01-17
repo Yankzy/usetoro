@@ -1,0 +1,9 @@
+Django>=4.0
+redis>=4.0
+psycopg2-binary>=2.9
+gunicorn>=20.1
+celery>=5.2
+stripe>=7.0
+pydantic>=2.0
+djangorestframework
+django-cors-headers

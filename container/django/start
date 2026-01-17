@@ -1,0 +1,16 @@
+#!/bin/bash
+mkdir -p /app/.logs
+touch /app/.logs/gunicorn.log /app/.logs/celery.log /app/.logs/celery-beat.log /app/.logs/consumer.log
+
+# Ensure Celery run dirs
+mkdir -p /var/run/celery
+chmod 0755 /var/run/celery
+
+# Collect static files
+python manage.py collectstatic --noinput
+
+# Run migrations
+python manage.py migrate
+
+# Start Supervisor
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf

@@ -1,0 +1,85 @@
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: toro
+      POSTGRES_USER: toro
+      POSTGRES_PASSWORD: toro_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"
+    networks:
+      - toro-net
+
+  redis:
+    image: redis:alpine
+    restart: always
+    command: [ "redis-server", "--appendonly", "yes" ]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - toro-net
+
+  app-go:
+    build:
+      context: ../go
+      dockerfile: ../container/go/Dockerfile
+    environment:
+      STRIPE_SIGNING_SECRET: ${STRIPE_SIGNING_SECRET:-whsec_test}
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8082:8080"
+    depends_on:
+      - redis
+      - db
+    networks:
+      - toro-net
+
+  app-django:
+    build:
+      context: ..
+      dockerfile: container/django/Dockerfile
+    environment:
+      POSTGRES_DB: toro
+      POSTGRES_USER: toro
+      POSTGRES_PASSWORD: toro_password
+      POSTGRES_HOST: db
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8002:8000"
+    depends_on:
+      - redis
+      - db
+    volumes:
+      - ..:/app
+      - django_static:/app/staticfiles
+    networks:
+      - toro-net
+
+  nginx:
+    build:
+      context: ../
+      dockerfile: container/nginx/Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - app-django
+      - app-go
+    volumes:
+      - django_static:/app/staticfiles
+    networks:
+      - toro-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  django_static:
+
+
+networks:
+  toro-net:
+    driver: bridge

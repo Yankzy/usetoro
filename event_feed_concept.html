@@ -1,0 +1,1473 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Event Subscription Feed</title>
+    <style>
+        :root {
+            /* Toro Dark Mode Palette */
+            --bg-color: #050505;
+            --app-bg: #0A0A0A;
+            /* Zinc-900 */
+            --text-main: #FFFFFF;
+            --text-muted: #A1A1AA;
+            /* Zinc-400 */
+            --border-color: #27272A;
+            /* Zinc-800 */
+
+            /* Accents */
+            --accent-color: #A855F7;
+            /* Purple for AI/Insights */
+            --success-color: #22C55E;
+            /* Green for success/stripe */
+            --sandbox-color: #F59E0B;
+            /* Amber for sandbox */
+            --hover-bg: #18181B;
+            /* Zinc-900/950 mix */
+
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+            --card-hover-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
+
+            --font-stack: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Menlo', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            font-family: var(--font-stack);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: var(--text-main);
+        }
+
+        /* Mobile Container Simulation */
+        .app-container {
+            width: 100%;
+            max-width: 390px;
+            height: 100vh;
+            max-height: 844px;
+            background-color: var(--app-bg);
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 0 0 1px #333, 0 20px 40px rgba(0, 0, 0, 0.7);
+            /* Subtle bezel + shadow */
+            overflow: hidden;
+            border-radius: 40px;
+        }
+
+        @media (max-width: 450px) {
+            .app-container {
+                max-width: 100%;
+                max-height: 100vh;
+                border-radius: 0;
+                box-shadow: none;
+            }
+        }
+
+        /* Top Header */
+        .header {
+            padding-top: 54px;
+            /* Status bar space */
+            background: rgba(10, 10, 10, 0.85);
+            /* Dark blur */
+            /* Stronger blur */
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-color);
+            z-index: 10;
+            flex-shrink: 0;
+        }
+
+        /* Sandbox Indicator */
+        .sandbox-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--sandbox-color);
+            margin-bottom: 12px;
+            cursor: pointer;
+        }
+
+        .sandbox-indicator svg {
+            width: 12px;
+            height: 12px;
+            margin-left: 4px;
+            fill: currentColor;
+        }
+
+        /* Tabs */
+        .tabs-scroll-container {
+            overflow-x: auto;
+            white-space: nowrap;
+            padding: 0 16px;
+            padding-bottom: 12px;
+            scrollbar-width: none;
+            /* Firefox */
+        }
+
+        .tabs-scroll-container::-webkit-scrollbar {
+            display: none;
+            /* Chrome/Safari */
+        }
+
+        .tab-button {
+            display: inline-block;
+            padding: 8px 18px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 20px;
+            margin-right: 6px;
+            letter-spacing: -0.01em;
+        }
+
+        .tab-button.active {
+            color: var(--text-main);
+            background-color: var(--hover-bg);
+            /* Subtle text shadow for depth */
+            text-shadow: 0 0 1px rgba(0, 0, 0, 0.05);
+        }
+
+        /* Feed Area */
+        .feed-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+            background-color: var(--app-bg);
+        }
+
+        .feed-list {
+            padding: 16px;
+            padding-bottom: 100px;
+            /* Space for bottom nav and fab */
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        /* Event Card Redesign */
+        /* Event Card Redesign (Dark Mode) */
+        .event-card {
+            background: var(--app-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            box-shadow: none;
+            transition: transform 0.2s, border-color 0.2s;
+            position: relative;
+        }
+
+        .event-card:hover {
+            transform: translateY(-2px);
+            border-color: #3f3f46;
+            /* Zinc-700 */
+            box-shadow: var(--card-shadow);
+        }
+
+        .event-card:active {
+            transform: scale(0.98);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Removed the complex ::before highlight for cleaner look */
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            /* Centered align */
+        }
+
+        .provider-name {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            font-weight: 700;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Little dot indicator for provider */
+        .provider-name::before {
+            content: '';
+            display: block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background-color: var(--accent-color);
+            opacity: 0.6;
+        }
+
+        .event-name {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-main);
+            font-family: var(--font-mono);
+            letter-spacing: -0.02em;
+            background: rgba(0, 0, 0, 0.03);
+            padding: 4px 8px;
+            border-radius: 6px;
+            display: inline-block;
+            white-space: normal;
+            word-break: break-word;
+            line-height: 1.4;
+        }
+
+        .event-desc {
+            font-size: 15px;
+            color: #424245;
+            /* Darker gray for readability */
+            line-height: 1.5;
+            font-weight: 400;
+        }
+
+        .card-footer {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 8px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(0, 0, 0, 0.03);
+            /* Very subtle separator */
+        }
+
+        .subscribe-btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            border: 1px solid var(--border-color);
+            background: #18181B;
+            /* Zinc-900 */
+            color: white;
+            transition: all 0.2s;
+            font-family: var(--font-mono);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .subscribe-btn:hover {
+            background: white;
+            color: black;
+            border-color: white;
+        }
+
+        .subscribe-btn.subscribed {
+            background: rgba(34, 197, 94, 0.15);
+            /* Green-500/15 */
+            color: var(--success-color);
+            border-color: rgba(34, 197, 94, 0.3);
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .settings-header-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--text-muted);
+            display: none;
+            /* Hidden on For You */
+            padding: 8px;
+            border-radius: 50%;
+            transition: all 0.2s;
+        }
+
+        .settings-header-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+        }
+
+        .settings-header-btn svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        /* Bottom Nav */
+        .bottom-nav {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 80px;
+            background: rgba(10, 10, 10, 0.9);
+            /* Dark bg */
+            backdrop-filter: blur(20px);
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 40px;
+            padding-bottom: 20px;
+            z-index: 20;
+        }
+
+        .nav-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 10px;
+            font-weight: 500;
+        }
+
+        .nav-item svg {
+            width: 24px;
+            height: 24px;
+            stroke-width: 2px;
+        }
+
+        .nav-item.active {
+            color: var(--text-main);
+        }
+
+        /* Floating AI Button */
+        .ai-fab {
+            position: absolute;
+            bottom: 100px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            border-radius: 25px;
+            /* Purple Gradient */
+            background: linear-gradient(135deg, #a855f7, #7c3aed);
+            box-shadow: 0 4px 15px rgba(168, 85, 247, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 15;
+            transition: transform 0.2s, box-shadow 0.2s;
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .ai-fab:active {
+            transform: scale(0.9);
+        }
+
+        .ai-fab svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        /* Modals */
+        .modal-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 100;
+            display: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .modal-overlay.open {
+            display: block;
+            opacity: 1;
+        }
+
+        .modal-content {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background: white;
+            border-top-left-radius: 24px;
+            border-top-right-radius: 24px;
+            padding: 24px;
+            padding-bottom: 40px;
+            transform: translateY(100%);
+            transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+
+        .modal-overlay.open .modal-content {
+            transform: translateY(0);
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+
+        .modal-close-btn {
+            position: absolute;
+            top: 24px;
+            right: 24px;
+            background: #f0f0f0;
+            border: none;
+            width: 30px;
+            height: 30px;
+            border-radius: 15px;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+        }
+
+        /* Settings Modal specific */
+        .webhook-field-label {
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-muted);
+        }
+
+        .webhook-input-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .webhook-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-family: monospace;
+            background: #f9f9f9;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .copy-btn {
+            padding: 0 16px;
+            background: var(--text-main);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .instruction-text {
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        /* Chat Modal specific */
+        .chat-area {
+            height: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            background: #fafafa;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+
+        .chat-bubble {
+            max-width: 80%;
+            padding: 10px 14px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .chat-bubble.ai {
+            align-self: flex-start;
+            background: #e9e9eb;
+            color: black;
+            border-bottom-left-radius: 4px;
+        }
+
+        .chat-bubble.user {
+            align-self: flex-end;
+            background: var(--text-main);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .chat-input-area {
+            display: flex;
+            gap: 8px;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            outline: none;
+        }
+
+
+        /* Insight Card */
+        /* Insight Card (Premium Dark) */
+        .insight-card {
+            background: linear-gradient(145deg, #120E16 0%, #0A0A0A 100%);
+            /* Very subtle purple tint */
+            border: 1px solid rgba(168, 85, 247, 0.2);
+            /* Purple border */
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+            cursor: pointer;
+            position: relative;
+        }
+
+        .insight-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(168, 85, 247, 0.5);
+            box-shadow: 0 8px 30px rgba(168, 85, 247, 0.15);
+        }
+
+        /* Glowing accent on left */
+        .insight-card::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 10%;
+            bottom: 10%;
+            width: 3px;
+            background: var(--accent-color);
+            border-radius: 0 4px 4px 0;
+            box-shadow: 0 0 10px var(--accent-color);
+            opacity: 0.8;
+        }
+
+        .insight-label {
+            align-self: flex-start;
+            background: rgba(168, 85, 247, 0.15);
+            color: #d8b4fe;
+            /* Light purple */
+            padding: 4px 10px;
+            border-radius: 100px;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-weight: 700;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            border: 1px solid rgba(168, 85, 247, 0.2);
+        }
+
+        .insight-label svg {
+            width: 12px;
+            height: 12px;
+        }
+
+        .insight-summary {
+            font-size: 16px;
+            font-weight: 500;
+            color: white;
+            line-height: 1.5;
+        }
+
+        .insight-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+        }
+
+        .insight-expanded {
+            display: none;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 13px;
+            color: #d4d4d8;
+            animation: slideDown 0.2s ease-out;
+        }
+
+        .insight-card.open .insight-expanded {
+            display: block;
+        }
+
+        .insight-explanation {
+            margin-bottom: 12px;
+            color: #a1a1aa;
+            line-height: 1.6;
+        }
+
+        .insight-event-list {
+            background: #000;
+            padding: 12px;
+            border-radius: 8px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: #22c55e;
+            /* Matrix green text */
+            line-height: 1.6;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-4px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-5px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Logs Panel */
+        .logs-panel {
+            position: absolute;
+            bottom: 80px;
+            /* Above nav */
+            left: 0;
+            right: 0;
+            background: #1a1a1a;
+            color: #00ff00;
+            font-family: monospace;
+            height: 0;
+            /* Hidden initially */
+            overflow: hidden;
+            transition: height 0.3s;
+            z-index: 14;
+            padding: 0 20px;
+            font-size: 12px;
+        }
+
+        .logs-panel.open {
+            height: 200px;
+            padding: 20px;
+            border-top-left-radius: 16px;
+            border-top-right-radius: 16px;
+        }
+
+        .log-entry {
+            margin-bottom: 8px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 4px;
+        }
+
+        .log-time {
+            color: #666;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div
+                style="position: relative; height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px 16px 16px;">
+                <!-- Left: Title -->
+                <div
+                    style="font-weight: 700; font-size: 20px; color: var(--text-main); display: flex; align-items: center; gap: 10px; z-index: 10;">
+                    <svg class="w-6 h-6" style="width: 24px; height: 24px; color: var(--success-color);"
+                        xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+                    </svg>
+                    Feed
+                </div>
+
+                <!-- Center: Sandbox Dropdown Trigger -->
+                <div class="sandbox-wrapper"
+                    style="position: absolute; left: 50%; transform: translateX(-50%); z-index: 20;">
+                    <div class="sandbox-indicator" onclick="toggleEnvDropdown()"
+                        style="margin-bottom: 0; display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 6px 10px; border-radius: 20px; background: rgba(255,255,255,0.05);">
+                        <div id="envDot"
+                            style="width: 8px; height: 8px; background: var(--sandbox-color); border-radius: 50%; box-shadow: 0 0 8px var(--sandbox-color);">
+                        </div>
+                        <span id="envLabel"
+                            style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; color: var(--text-muted);">Sandbox</span>
+                        <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2"
+                            fill="none" stroke-linecap="round" stroke-linejoin="round"
+                            style="color: var(--text-muted);">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </div>
+
+                    <!-- Dropdown Menu -->
+                    <div id="envDropdown"
+                        style="display: none; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 8px; background: #1a1a1a; border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,0.5); z-index: 50; min-width: 150px;">
+                        <div onclick="setEnvironment('sandbox')"
+                            style="padding: 12px 16px; font-size: 13px; color: white; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; gap: 10px; transition: background 0.2s;">
+                            <div style="width: 6px; height: 6px; background: #F59E0B; border-radius: 50%;"></div>
+                            Sandbox
+                        </div>
+                        <div onclick="setEnvironment('production')"
+                            style="padding: 12px 16px; font-size: 13px; color: white; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: background 0.2s;">
+                            <div style="width: 6px; height: 6px; background: #06f039; border-radius: 50%;"></div>
+                            Production
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Actions (Settings) -->
+                <div style="display: flex; align-items: center; gap: 12px; z-index: 10;">
+                    <button class="settings-header-btn" id="providerSettingsBtn" onclick="openSettingsModal()">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="tabs-scroll-container" id="tabsContainer">
+                <!-- Javascript will populate tabs -->
+            </div>
+        </header>
+
+        <!-- Main Feed -->
+        <main class="feed-area">
+            <div id="feedList" class="feed-list">
+                <!-- Javascript will populate feed -->
+            </div>
+        </main>
+
+        <!-- Logs Panel -->
+        <div class="logs-panel" id="logsPanel">
+            <div class="log-entry">
+                <span class="log-time">10:42:01</span>
+                <span>System initialized. Waiting for events...</span>
+            </div>
+            <!-- More fake logs appended here -->
+        </div>
+
+        <!-- Floating Action Button (AI Assistant) -->
+        <div class="ai-fab" onclick="openChat()">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
+        </div>
+
+        <!-- Bottom Navigation -->
+        <nav class="bottom-nav">
+            <div class="nav-item">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                <span>Settings</span>
+            </div>
+            <div class="nav-item" onclick="toggleLogs()">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+                <span>Logs</span>
+            </div>
+            <div class="nav-item" style="pointer-events: none; opacity: 0;">
+                <!-- Spacer for balance -->
+                <div style="width: 24px;"></div>
+            </div>
+        </nav>
+
+        <!-- Provider Settings Modal -->
+        <div class="modal-overlay" id="settingsModal">
+            <div class="modal-content">
+                <button class="modal-close-btn" onclick="closeModals()">&times;</button>
+                <div class="modal-title" id="settingsTitle">Provider Settings</div>
+
+                <div class="webhook-field-label">Webhook URL (Read-only)</div>
+                <div class="webhook-input-group">
+                    <input type="text" class="webhook-input" value="https://api.usetoro.com/hooks/v1/sandbox/stripe_123"
+                        readonly>
+                    <button class="copy-btn">Copy</button>
+                </div>
+                <p class="instruction-text">
+                    Paste this webhook URL into the provider's dashboard to start receiving events in the sandbox.
+                </p>
+            </div>
+        </div>
+
+        <!-- AI Chat Modal -->
+        <div class="modal-overlay" id="chatModal">
+            <div class="modal-content">
+                <button class="modal-close-btn" onclick="closeModals()">&times;</button>
+                <div class="modal-title">AI Assistant</div>
+
+                <div class="chat-area" id="chatArea">
+                    <div class="chat-bubble ai">
+                        Hi! I can help you configure your subscriptions.
+                    </div>
+                </div>
+
+                <div class="chat-input-area">
+                    <input type="text" class="chat-input" placeholder="Type a message..."
+                        value="Subscribe me to Stripe">
+                    <button class="subscribe-btn" style="background: black; color: white;"
+                        onclick="sendChatMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Icon Definitions ---
+        const icons = {
+            Logo: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v3c0 6-7 11-10 11S2 17 2 11V8z" /><path d="M2 6L5 2" /><path d="M22 6L19 2" /><line x1="12" y1="11" x2="12" y2="17" /><line x1="9" y1="14" x2="15" y2="14" /></svg>`,
+            Shield: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" /></svg>`,
+            Terminal: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5" /><line x1="12" x2="20" y1="19" y2="19" /></svg>`,
+            Activity: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>`,
+            Check: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>`,
+            Zap: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>`,
+            Server: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2" /><rect width="20" height="8" x="2" y="14" rx="2" ry="2" /><line x1="6" x2="6.01" y1="6" y2="6" /><line x1="6" x2="6.01" y1="18" y2="18" /></svg>`,
+            Brain: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" /><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" /><path d="M15 13a4.5 4.5 0 0 1-3-1.4 4.5 4.5 0 0 1-3 1.4" /></svg>`,
+            FileText: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>`,
+            Sparkles: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>`
+        };
+
+        function getIcon(name, classes = "") {
+            const svg = icons[name] || icons.Terminal;
+            return svg.replace('<svg', `<svg class="${classes}"`);
+        }
+
+        function formatEventName(name) {
+            if (!name) return '';
+            return name
+                // Replace dots and underscores with spaces
+                .replace(/[._]/g, ' ')
+                .split(' ')
+                .filter(part => part.length > 0)
+                .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+                .join(' ');
+        }
+
+        // --- Data ---
+        const providers = [
+            { id: 'for-you', label: 'For You' },
+            { id: 'stripe', label: 'Stripe' },
+            { id: 'plaid', label: 'Plaid' },
+            { id: 'zendesk', label: 'Zendesk' },
+            { id: 'slack', label: 'Slack' }
+        ];
+
+        const allEvents = [
+            // Account & Application
+            { id: 'evt_account_app_auth', provider: 'Stripe', name: 'account.application.authorized', desc: 'Account & Application event' },
+            { id: 'evt_account_app_deauth', provider: 'Stripe', name: 'account.application.deauthorized', desc: 'Account & Application event' },
+            { id: 'evt_account_ext_created', provider: 'Stripe', name: 'account.external_account.created', desc: 'Account & Application event' },
+            { id: 'evt_account_ext_deleted', provider: 'Stripe', name: 'account.external_account.deleted', desc: 'Account & Application event' },
+            { id: 'evt_account_ext_updated', provider: 'Stripe', name: 'account.external_account.updated', desc: 'Account & Application event' },
+            { id: 'evt_account_updated', provider: 'Stripe', name: 'account.updated', desc: 'Account & Application event' },
+            { id: 'evt_app_fee_created', provider: 'Stripe', name: 'application_fee.created', desc: 'Account & Application event' },
+            { id: 'evt_app_fee_ref_updated', provider: 'Stripe', name: 'application_fee.refund.updated', desc: 'Account & Application event' },
+            { id: 'evt_app_fee_refunded', provider: 'Stripe', name: 'application_fee.refunded', desc: 'Account & Application event' },
+            { id: 'evt_capability_updated', provider: 'Stripe', name: 'capability.updated', desc: 'Account & Application event' },
+            { id: 'evt_person_created', provider: 'Stripe', name: 'person.created', desc: 'Account & Application event' },
+            { id: 'evt_person_deleted', provider: 'Stripe', name: 'person.deleted', desc: 'Account & Application event' },
+            { id: 'evt_person_updated', provider: 'Stripe', name: 'person.updated', desc: 'Account & Application event' },
+
+            // Balance & Payouts
+            { id: 'evt_balance_available', provider: 'Stripe', name: 'balance.available', desc: 'Balance & Payouts event' },
+            { id: 'evt_balance_settings', provider: 'Stripe', name: 'balance_settings.updated', desc: 'Balance & Payouts event' },
+            { id: 'evt_cash_bal_funds', provider: 'Stripe', name: 'cash_balance.funds_available', desc: 'Balance & Payouts event' },
+            { id: 'evt_payout_canceled', provider: 'Stripe', name: 'payout.canceled', desc: 'Balance & Payouts event' },
+            { id: 'evt_payout_created', provider: 'Stripe', name: 'payout.created', desc: 'Balance & Payouts event' },
+            { id: 'evt_payout_failed', provider: 'Stripe', name: 'payout.failed', desc: 'Balance & Payouts event' },
+            { id: 'evt_payout_paid', provider: 'Stripe', name: 'payout.paid', desc: 'Balance & Payouts event' },
+            { id: 'evt_payout_rec_comp', provider: 'Stripe', name: 'payout.reconciliation_completed', desc: 'Balance & Payouts event' },
+            { id: 'evt_payout_updated', provider: 'Stripe', name: 'payout.updated', desc: 'Balance & Payouts event' },
+            { id: 'evt_topup_canceled', provider: 'Stripe', name: 'topup.canceled', desc: 'Balance & Payouts event' },
+            { id: 'evt_topup_created', provider: 'Stripe', name: 'topup.created', desc: 'Balance & Payouts event' },
+            { id: 'evt_topup_failed', provider: 'Stripe', name: 'topup.failed', desc: 'Balance & Payouts event' },
+            { id: 'evt_topup_reversed', provider: 'Stripe', name: 'topup.reversed', desc: 'Balance & Payouts event' },
+            { id: 'evt_topup_succeeded', provider: 'Stripe', name: 'topup.succeeded', desc: 'Balance & Payouts event' },
+            { id: 'evt_transfer_created', provider: 'Stripe', name: 'transfer.created', desc: 'Balance & Payouts event' },
+            { id: 'evt_transfer_reversed', provider: 'Stripe', name: 'transfer.reversed', desc: 'Balance & Payouts event' },
+            { id: 'evt_transfer_updated', provider: 'Stripe', name: 'transfer.updated', desc: 'Balance & Payouts event' },
+
+            // Billing & Invoices
+            { id: 'evt_billing_alert', provider: 'Stripe', name: 'billing.alert.triggered', desc: 'Billing & Invoices event' },
+            { id: 'evt_billing_cred_txn', provider: 'Stripe', name: 'billing.credit_balance_transaction.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_billing_cred_grant_cr', provider: 'Stripe', name: 'billing.credit_grant.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_billing_cred_grant_up', provider: 'Stripe', name: 'billing.credit_grant.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_billing_meter_cr', provider: 'Stripe', name: 'billing.meter.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_billing_meter_deac', provider: 'Stripe', name: 'billing.meter.deactivated', desc: 'Billing & Invoices event' },
+            { id: 'evt_billing_meter_reac', provider: 'Stripe', name: 'billing.meter.reactivated', desc: 'Billing & Invoices event' },
+            { id: 'evt_billing_meter_up', provider: 'Stripe', name: 'billing.meter.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_bp_conf_cr', provider: 'Stripe', name: 'billing_portal.configuration.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_bp_conf_up', provider: 'Stripe', name: 'billing_portal.configuration.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_bp_sess_cr', provider: 'Stripe', name: 'billing_portal.session.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_coupon_cr', provider: 'Stripe', name: 'coupon.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_coupon_del', provider: 'Stripe', name: 'coupon.deleted', desc: 'Billing & Invoices event' },
+            { id: 'evt_coupon_up', provider: 'Stripe', name: 'coupon.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_cn_cr', provider: 'Stripe', name: 'credit_note.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_cn_up', provider: 'Stripe', name: 'credit_note.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_cn_void', provider: 'Stripe', name: 'credit_note.voided', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_disc_cr', provider: 'Stripe', name: 'customer.discount.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_disc_del', provider: 'Stripe', name: 'customer.discount.deleted', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_disc_up', provider: 'Stripe', name: 'customer.discount.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_sub_cr', provider: 'Stripe', name: 'customer.subscription.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_sub_del', provider: 'Stripe', name: 'customer.subscription.deleted', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_sub_pause', provider: 'Stripe', name: 'customer.subscription.paused', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_sub_pend_app', provider: 'Stripe', name: 'customer.subscription.pending_update_applied', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_sub_pend_exp', provider: 'Stripe', name: 'customer.subscription.pending_update_expired', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_sub_res', provider: 'Stripe', name: 'customer.subscription.resumed', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_sub_trial', provider: 'Stripe', name: 'customer.subscription.trial_will_end', desc: 'Billing & Invoices event' },
+            { id: 'evt_cust_sub_up', provider: 'Stripe', name: 'customer.subscription.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_entitlements_up', provider: 'Stripe', name: 'entitlements.active_entitlement_summary.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_cr', provider: 'Stripe', name: 'invoice.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_del', provider: 'Stripe', name: 'invoice.deleted', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_fail_fail', provider: 'Stripe', name: 'invoice.finalization_failed', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_fin', provider: 'Stripe', name: 'invoice.finalized', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_uncoll', provider: 'Stripe', name: 'invoice.marked_uncollectible', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_ovrd', provider: 'Stripe', name: 'invoice.overdue', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_ovpd', provider: 'Stripe', name: 'invoice.overpaid', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_pd', provider: 'Stripe', name: 'invoice.paid', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_act_req', provider: 'Stripe', name: 'invoice.payment_action_required', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_att_req', provider: 'Stripe', name: 'invoice.payment_attempt_required', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_pay_fail', provider: 'Stripe', name: 'invoice.payment_failed', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_pay_suc', provider: 'Stripe', name: 'invoice.payment_succeeded', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_sent', provider: 'Stripe', name: 'invoice.sent', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_upc', provider: 'Stripe', name: 'invoice.upcoming', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_up', provider: 'Stripe', name: 'invoice.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_void', provider: 'Stripe', name: 'invoice.voided', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_will_due', provider: 'Stripe', name: 'invoice.will_be_due', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_item_cr', provider: 'Stripe', name: 'invoiceitem.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_inv_item_del', provider: 'Stripe', name: 'invoiceitem.deleted', desc: 'Billing & Invoices event' },
+            { id: 'evt_plan_cr', provider: 'Stripe', name: 'plan.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_plan_del', provider: 'Stripe', name: 'plan.deleted', desc: 'Billing & Invoices event' },
+            { id: 'evt_plan_up', provider: 'Stripe', name: 'plan.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_price_cr', provider: 'Stripe', name: 'price.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_price_del', provider: 'Stripe', name: 'price.deleted', desc: 'Billing & Invoices event' },
+            { id: 'evt_price_up', provider: 'Stripe', name: 'price.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_prod_cr', provider: 'Stripe', name: 'product.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_prod_del', provider: 'Stripe', name: 'product.deleted', desc: 'Billing & Invoices event' },
+            { id: 'evt_prod_up', provider: 'Stripe', name: 'product.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_promo_cr', provider: 'Stripe', name: 'promotion_code.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_promo_up', provider: 'Stripe', name: 'promotion_code.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_quote_acc', provider: 'Stripe', name: 'quote.accepted', desc: 'Billing & Invoices event' },
+            { id: 'evt_quote_canc', provider: 'Stripe', name: 'quote.canceled', desc: 'Billing & Invoices event' },
+            { id: 'evt_quote_cr', provider: 'Stripe', name: 'quote.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_quote_fin', provider: 'Stripe', name: 'quote.finalized', desc: 'Billing & Invoices event' },
+            { id: 'evt_quote_exp', provider: 'Stripe', name: 'quote.will_expire', desc: 'Billing & Invoices event' },
+            { id: 'evt_sub_sch_ab', provider: 'Stripe', name: 'subscription_schedule.aborted', desc: 'Billing & Invoices event' },
+            { id: 'evt_sub_sch_can', provider: 'Stripe', name: 'subscription_schedule.canceled', desc: 'Billing & Invoices event' },
+            { id: 'evt_sub_sch_comp', provider: 'Stripe', name: 'subscription_schedule.completed', desc: 'Billing & Invoices event' },
+            { id: 'evt_sub_sch_cr', provider: 'Stripe', name: 'subscription_schedule.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_sub_sch_exp', provider: 'Stripe', name: 'subscription_schedule.expiring', desc: 'Billing & Invoices event' },
+            { id: 'evt_sub_sch_rel', provider: 'Stripe', name: 'subscription_schedule.released', desc: 'Billing & Invoices event' },
+            { id: 'evt_sub_sch_up', provider: 'Stripe', name: 'subscription_schedule.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_tax_set_up', provider: 'Stripe', name: 'tax.settings.updated', desc: 'Billing & Invoices event' },
+            { id: 'evt_tax_rate_cr', provider: 'Stripe', name: 'tax_rate.created', desc: 'Billing & Invoices event' },
+            { id: 'evt_tax_rate_up', provider: 'Stripe', name: 'tax_rate.updated', desc: 'Billing & Invoices event' },
+
+            // Charge & Payments
+            { id: 'evt_chg_cap', provider: 'Stripe', name: 'charge.captured', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_disp_cl', provider: 'Stripe', name: 'charge.dispute.closed', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_disp_cr', provider: 'Stripe', name: 'charge.dispute.created', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_disp_fr', provider: 'Stripe', name: 'charge.dispute.funds_reinstated', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_disp_fw', provider: 'Stripe', name: 'charge.dispute.funds_withdrawn', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_disp_up', provider: 'Stripe', name: 'charge.dispute.updated', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_exp', provider: 'Stripe', name: 'charge.expired', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_fail', provider: 'Stripe', name: 'charge.failed', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_pend', provider: 'Stripe', name: 'charge.pending', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_ref_up', provider: 'Stripe', name: 'charge.refund.updated', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_ref', provider: 'Stripe', name: 'charge.refunded', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_suc', provider: 'Stripe', name: 'charge.succeeded', desc: 'Charge & Payments event' },
+            { id: 'evt_chg_up', provider: 'Stripe', name: 'charge.updated', desc: 'Charge & Payments event' },
+            { id: 'evt_pi_amt_up', provider: 'Stripe', name: 'payment_intent.amount_capturable_updated', desc: 'Charge & Payments event' },
+            { id: 'evt_pi_can', provider: 'Stripe', name: 'payment_intent.canceled', desc: 'Charge & Payments event' },
+            { id: 'evt_pi_cr', provider: 'Stripe', name: 'payment_intent.created', desc: 'Charge & Payments event' },
+            { id: 'evt_pi_part_fund', provider: 'Stripe', name: 'payment_intent.partially_funded', desc: 'Charge & Payments event' },
+            { id: 'evt_pi_fail', provider: 'Stripe', name: 'payment_intent.payment_failed', desc: 'Charge & Payments event' },
+            { id: 'evt_pi_proc', provider: 'Stripe', name: 'payment_intent.processing', desc: 'Charge & Payments event' },
+            { id: 'evt_pi_act_req', provider: 'Stripe', name: 'payment_intent.requires_action', desc: 'Charge & Payments event' },
+            { id: 'evt_pi_suc', provider: 'Stripe', name: 'payment_intent.succeeded', desc: 'Charge & Payments event' },
+            { id: 'evt_pl_cr', provider: 'Stripe', name: 'payment_link.created', desc: 'Charge & Payments event' },
+            { id: 'evt_pl_up', provider: 'Stripe', name: 'payment_link.updated', desc: 'Charge & Payments event' },
+            { id: 'evt_pm_att', provider: 'Stripe', name: 'payment_method.attached', desc: 'Charge & Payments event' },
+            { id: 'evt_pm_auto_up', provider: 'Stripe', name: 'payment_method.automatically_updated', desc: 'Charge & Payments event' },
+            { id: 'evt_pm_det', provider: 'Stripe', name: 'payment_method.detached', desc: 'Charge & Payments event' },
+            { id: 'evt_pm_up', provider: 'Stripe', name: 'payment_method.updated', desc: 'Charge & Payments event' },
+            { id: 'evt_ref_cr', provider: 'Stripe', name: 'refund.created', desc: 'Charge & Payments event' },
+            { id: 'evt_ref_fail', provider: 'Stripe', name: 'refund.failed', desc: 'Charge & Payments event' },
+            { id: 'evt_ref_up', provider: 'Stripe', name: 'refund.updated', desc: 'Charge & Payments event' },
+            { id: 'evt_si_can', provider: 'Stripe', name: 'setup_intent.canceled', desc: 'Charge & Payments event' },
+            { id: 'evt_si_cr', provider: 'Stripe', name: 'setup_intent.created', desc: 'Charge & Payments event' },
+            { id: 'evt_si_act', provider: 'Stripe', name: 'setup_intent.requires_action', desc: 'Charge & Payments event' },
+            { id: 'evt_si_fail', provider: 'Stripe', name: 'setup_intent.setup_failed', desc: 'Charge & Payments event' },
+            { id: 'evt_si_suc', provider: 'Stripe', name: 'setup_intent.succeeded', desc: 'Charge & Payments event' },
+
+            // Checkout
+            { id: 'evt_chk_async_fail', provider: 'Stripe', name: 'checkout.session.async_payment_failed', desc: 'Checkout event' },
+            { id: 'evt_chk_async_suc', provider: 'Stripe', name: 'checkout.session.async_payment_succeeded', desc: 'Checkout event' },
+            { id: 'evt_chk_comp', provider: 'Stripe', name: 'checkout.session.completed', desc: 'Checkout event' },
+            { id: 'evt_chk_exp', provider: 'Stripe', name: 'checkout.session.expired', desc: 'Checkout event' },
+
+            // Climate
+            { id: 'evt_cli_cancel', provider: 'Stripe', name: 'climate.order.canceled', desc: 'Climate event' },
+            { id: 'evt_cli_cr', provider: 'Stripe', name: 'climate.order.created', desc: 'Climate event' },
+            { id: 'evt_cli_del', provider: 'Stripe', name: 'climate.order.delayed', desc: 'Climate event' },
+            { id: 'evt_cli_delivered', provider: 'Stripe', name: 'climate.order.delivered', desc: 'Climate event' },
+            { id: 'evt_cli_prod_sub', provider: 'Stripe', name: 'climate.order.product_substituted', desc: 'Climate event' },
+            { id: 'evt_cli_prod_cr', provider: 'Stripe', name: 'climate.product.created', desc: 'Climate event' },
+            { id: 'evt_cli_price_up', provider: 'Stripe', name: 'climate.product.pricing_updated', desc: 'Climate event' },
+
+            // Customer
+            { id: 'evt_cust_bal_txn', provider: 'Stripe', name: 'customer.cash_balance_transaction.created', desc: 'Customer event' },
+            { id: 'evt_cust_cr', provider: 'Stripe', name: 'customer.created', desc: 'Customer event' },
+            { id: 'evt_cust_del', provider: 'Stripe', name: 'customer.deleted', desc: 'Customer event' },
+            { id: 'evt_cust_src_cr', provider: 'Stripe', name: 'customer.source.created', desc: 'Customer event' },
+            { id: 'evt_cust_src_del', provider: 'Stripe', name: 'customer.source.deleted', desc: 'Customer event' },
+            { id: 'evt_cust_src_exp', provider: 'Stripe', name: 'customer.source.expiring', desc: 'Customer event' },
+            { id: 'evt_cust_src_up', provider: 'Stripe', name: 'customer.source.updated', desc: 'Customer event' },
+            { id: 'evt_cust_tax_cr', provider: 'Stripe', name: 'customer.tax_id.created', desc: 'Customer event' },
+            { id: 'evt_cust_tax_del', provider: 'Stripe', name: 'customer.tax_id.deleted', desc: 'Customer event' },
+            { id: 'evt_cust_tax_up', provider: 'Stripe', name: 'customer.tax_id.updated', desc: 'Customer event' },
+            { id: 'evt_cust_up', provider: 'Stripe', name: 'customer.updated', desc: 'Customer event' },
+
+            // Financial Connections
+            { id: 'evt_fc_acc_cr', provider: 'Stripe', name: 'financial_connections.account.created', desc: 'Financial Connections event' },
+            { id: 'evt_fc_acc_deac', provider: 'Stripe', name: 'financial_connections.account.deactivated', desc: 'Financial Connections event' },
+            { id: 'evt_fc_acc_disc', provider: 'Stripe', name: 'financial_connections.account.disconnected', desc: 'Financial Connections event' },
+            { id: 'evt_fc_acc_reac', provider: 'Stripe', name: 'financial_connections.account.reactivated', desc: 'Financial Connections event' },
+            { id: 'evt_fc_acc_ref_bal', provider: 'Stripe', name: 'financial_connections.account.refreshed_balance', desc: 'Financial Connections event' },
+            { id: 'evt_fc_acc_ref_own', provider: 'Stripe', name: 'financial_connections.account.refreshed_ownership', desc: 'Financial Connections event' },
+            { id: 'evt_fc_acc_ref_txn', provider: 'Stripe', name: 'financial_connections.account.refreshed_transactions', desc: 'Financial Connections event' },
+            { id: 'evt_fc_sess_up', provider: 'Stripe', name: 'financial_connections.session.updated', desc: 'Financial Connections event' },
+
+            // Fraud & Radar
+            { id: 'evt_radar_early_cr', provider: 'Stripe', name: 'radar.early_fraud_warning.created', desc: 'Fraud & Radar event' },
+            { id: 'evt_radar_early_up', provider: 'Stripe', name: 'radar.early_fraud_warning.updated', desc: 'Fraud & Radar event' },
+            { id: 'evt_review_cl', provider: 'Stripe', name: 'review.closed', desc: 'Fraud & Radar event' },
+            { id: 'evt_review_op', provider: 'Stripe', name: 'review.opened', desc: 'Fraud & Radar event' },
+
+            // Identity
+            { id: 'evt_id_ver_canc', provider: 'Stripe', name: 'identity.verification_session.canceled', desc: 'Identity event' },
+            { id: 'evt_id_ver_cr', provider: 'Stripe', name: 'identity.verification_session.created', desc: 'Identity event' },
+            { id: 'evt_id_ver_proc', provider: 'Stripe', name: 'identity.verification_session.processing', desc: 'Identity event' },
+            { id: 'evt_id_ver_red', provider: 'Stripe', name: 'identity.verification_session.redacted', desc: 'Identity event' },
+            { id: 'evt_id_ver_req', provider: 'Stripe', name: 'identity.verification_session.requires_input', desc: 'Identity event' },
+            { id: 'evt_id_ver_ver', provider: 'Stripe', name: 'identity.verification_session.verified', desc: 'Identity event' },
+
+            // Issuing
+            { id: 'evt_iss_auth_cr', provider: 'Stripe', name: 'issuing_authorization.created', desc: 'Issuing event' },
+            { id: 'evt_iss_auth_req', provider: 'Stripe', name: 'issuing_authorization.request', desc: 'Issuing event' },
+            { id: 'evt_iss_auth_up', provider: 'Stripe', name: 'issuing_authorization.updated', desc: 'Issuing event' },
+            { id: 'evt_iss_card_cr', provider: 'Stripe', name: 'issuing_card.created', desc: 'Issuing event' },
+            { id: 'evt_iss_card_up', provider: 'Stripe', name: 'issuing_card.updated', desc: 'Issuing event' },
+            { id: 'evt_iss_ch_cr', provider: 'Stripe', name: 'issuing_cardholder.created', desc: 'Issuing event' },
+            { id: 'evt_iss_ch_up', provider: 'Stripe', name: 'issuing_cardholder.updated', desc: 'Issuing event' },
+            { id: 'evt_iss_disp_cl', provider: 'Stripe', name: 'issuing_dispute.closed', desc: 'Issuing event' },
+            { id: 'evt_iss_disp_cr', provider: 'Stripe', name: 'issuing_dispute.created', desc: 'Issuing event' },
+            { id: 'evt_iss_disp_fr', provider: 'Stripe', name: 'issuing_dispute.funds_reinstated', desc: 'Issuing event' },
+            { id: 'evt_iss_disp_fresc', provider: 'Stripe', name: 'issuing_dispute.funds_rescinded', desc: 'Issuing event' },
+            { id: 'evt_iss_disp_sub', provider: 'Stripe', name: 'issuing_dispute.submitted', desc: 'Issuing event' },
+            { id: 'evt_iss_disp_up', provider: 'Stripe', name: 'issuing_dispute.updated', desc: 'Issuing event' },
+            { id: 'evt_iss_pd_act', provider: 'Stripe', name: 'issuing_personalization_design.activated', desc: 'Issuing event' },
+            { id: 'evt_iss_pd_deac', provider: 'Stripe', name: 'issuing_personalization_design.deactivated', desc: 'Issuing event' },
+            { id: 'evt_iss_pd_rej', provider: 'Stripe', name: 'issuing_personalization_design.rejected', desc: 'Issuing event' },
+            { id: 'evt_iss_pd_up', provider: 'Stripe', name: 'issuing_personalization_design.updated', desc: 'Issuing event' },
+            { id: 'evt_iss_tok_cr', provider: 'Stripe', name: 'issuing_token.created', desc: 'Issuing event' },
+            { id: 'evt_iss_tok_up', provider: 'Stripe', name: 'issuing_token.updated', desc: 'Issuing event' },
+            { id: 'evt_iss_txn_cr', provider: 'Stripe', name: 'issuing_transaction.created', desc: 'Issuing event' },
+            { id: 'evt_iss_txn_rec_up', provider: 'Stripe', name: 'issuing_transaction.purchase_details_receipt_updated', desc: 'Issuing event' },
+            { id: 'evt_iss_txn_up', provider: 'Stripe', name: 'issuing_transaction.updated', desc: 'Issuing event' },
+
+            // Other Resources
+            { id: 'evt_file_cr', provider: 'Stripe', name: 'file.created', desc: 'Other Resources event' },
+            { id: 'evt_mandate_up', provider: 'Stripe', name: 'mandate.updated', desc: 'Other Resources event' },
+            { id: 'evt_rep_fail', provider: 'Stripe', name: 'reporting.report_run.failed', desc: 'Other Resources event' },
+            { id: 'evt_rep_suc', provider: 'Stripe', name: 'reporting.report_run.succeeded', desc: 'Other Resources event' },
+            { id: 'evt_rep_type_up', provider: 'Stripe', name: 'reporting.report_type.updated', desc: 'Other Resources event' },
+            { id: 'evt_sig_query_cr', provider: 'Stripe', name: 'sigma.scheduled_query_run.created', desc: 'Other Resources event' },
+            { id: 'evt_src_canc', provider: 'Stripe', name: 'source.canceled', desc: 'Other Resources event' },
+            { id: 'evt_src_chg', provider: 'Stripe', name: 'source.chargeable', desc: 'Other Resources event' },
+            { id: 'evt_src_fail', provider: 'Stripe', name: 'source.failed', desc: 'Other Resources event' },
+            { id: 'evt_src_not', provider: 'Stripe', name: 'source.mandate_notification', desc: 'Other Resources event' },
+            { id: 'evt_src_ref_req', provider: 'Stripe', name: 'source.refund_attributes_required', desc: 'Other Resources event' },
+            { id: 'evt_src_txn_cr', provider: 'Stripe', name: 'source.transaction.created', desc: 'Other Resources event' },
+            { id: 'evt_src_txn_up', provider: 'Stripe', name: 'source.transaction.updated', desc: 'Other Resources event' },
+            { id: 'evt_term_act_fail', provider: 'Stripe', name: 'terminal.reader.action_failed', desc: 'Other Resources event' },
+            { id: 'evt_term_act_suc', provider: 'Stripe', name: 'terminal.reader.action_succeeded', desc: 'Other Resources event' },
+            { id: 'evt_term_act_up', provider: 'Stripe', name: 'terminal.reader.action_updated', desc: 'Other Resources event' },
+            { id: 'evt_test_clk_adv', provider: 'Stripe', name: 'test_helpers.test_clock.advancing', desc: 'Other Resources event' },
+            { id: 'evt_test_clk_cr', provider: 'Stripe', name: 'test_helpers.test_clock.created', desc: 'Other Resources event' },
+            { id: 'evt_test_clk_del', provider: 'Stripe', name: 'test_helpers.test_clock.deleted', desc: 'Other Resources event' },
+            { id: 'evt_test_clk_fail', provider: 'Stripe', name: 'test_helpers.test_clock.internal_failure', desc: 'Other Resources event' },
+            { id: 'evt_test_clk_rdy', provider: 'Stripe', name: 'test_helpers.test_clock.ready', desc: 'Other Resources event' },
+
+            { id: 'plaid_1', provider: 'Plaid', name: 'transactions.get', desc: 'Fired when new transactions are available for a detailed pull.' },
+            { id: 'zendesk_1', provider: 'Zendesk', name: 'ticket.created', desc: 'Fired when a user submits a new ticket.' },
+            { id: 'slack_1', provider: 'Slack', name: 'message.posted', desc: 'Fired when a message is posted to a subscribed channel.' },
+        ];
+
+        // --- State ---
+        let state = {
+            activeTab: 'for-you',
+            subscribed: new Set()
+        };
+
+
+        // --- Render Functions ---
+
+        function generateInsights() {
+            return [
+                {
+                    id: 'ins_weekly_rev',
+                    type: 'insight',
+                    provider: 'Stripe',
+                    summary: 'This week you collected $5,000 from 42 successful payments.',
+                    source: 'Derived from Stripe payment_intent events',
+                    timeWindow: 'Last 7 days',
+                    explanation: 'Sum of payment_intent.succeeded amounts for the last 7 days.',
+                    relatedEvents: ['payment_intent.succeeded']
+                },
+                {
+                    id: 'ins_monthly_rev',
+                    type: 'insight',
+                    provider: 'Stripe',
+                    summary: 'This month you collected $22,400 from 185 successful payments.',
+                    source: 'Derived from Stripe payment_intent events',
+                    timeWindow: 'Last 30 days',
+                    explanation: 'Sum of payment_intent.succeeded amounts for the last 30 days.',
+                    relatedEvents: ['payment_intent.succeeded']
+                },
+                {
+                    id: 'ins_abandoned',
+                    type: 'insight',
+                    provider: 'Stripe',
+                    summary: '3 customers abandoned checkout this week.',
+                    source: 'Derived from Stripe payment_intent events',
+                    timeWindow: 'Last 7 days',
+                    explanation: 'Count of payment intent creations without success within timeout.',
+                    relatedEvents: ['payment_intent.created']
+                }
+            ];
+        }
+
+        function renderTabs() {
+            const container = document.getElementById('tabsContainer');
+            container.innerHTML = '';
+
+            providers.forEach(p => {
+                const btn = document.createElement('button');
+                btn.className = `tab-button ${state.activeTab === p.id ? 'active' : ''}`;
+                btn.innerText = p.label;
+                btn.onclick = () => switchTab(p.id);
+                container.appendChild(btn);
+            });
+
+            // Show/Hide settings button based on tab
+            const settingsBtn = document.getElementById('providerSettingsBtn');
+            if (state.activeTab !== 'for-you') {
+                settingsBtn.style.display = 'block';
+            } else {
+                settingsBtn.style.display = 'none';
+            }
+        }
+
+
+
+        function renderFeed() {
+            const container = document.getElementById('feedList');
+            container.innerHTML = '';
+
+            let itemsToShow = [];
+            const insights = generateInsights();
+
+            if (state.activeTab === 'for-you') {
+                // Filter out subscribed events from 'For You'
+                const events = allEvents.filter(e => !state.subscribed.has(e.id));
+                // Do NOT interleave insights in 'For You'
+                itemsToShow = [...events];
+            } else {
+                // Show provider specific
+                const currentProvider = providers.find(p => p.id === state.activeTab).label;
+                const events = allEvents.filter(e => e.provider === currentProvider);
+                const providerInsights = insights.filter(i => i.provider === currentProvider);
+
+                itemsToShow = [...events];
+                // Insert insights
+                providerInsights.forEach((ins, idx) => {
+                    itemsToShow.splice(1 + (idx * 3), 0, ins);
+                });
+            }
+
+            if (itemsToShow.length === 0) {
+                container.innerHTML = `<div class="empty-state">No more events to discover in this feed.</div>`;
+                return;
+            }
+
+            itemsToShow.forEach(item => {
+                if (item.type === 'insight') {
+                    // Render Insight
+                    const div = document.createElement('div');
+                    div.className = 'insight-card';
+                    div.id = `insight-${item.id}`;
+                    div.onclick = (e) => toggleInsight(item.id, e);
+                    div.innerHTML = `
+                        <div class="insight-label">
+                            ${getIcon('Brain')} Insight
+                        </div>
+                        <div class="insight-summary">${item.summary}</div>
+                        <div class="insight-meta">${item.source} • ${item.timeWindow}</div>
+                        <div class="insight-expanded">
+                            <div class="insight-explanation">${item.explanation}</div>
+                            <div class="insight-event-list">
+                                ${item.relatedEvents.map(e => `• ${e}`).join('<br>')}
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(div);
+                } else {
+                    // Render Event
+                    const isSubscribed = state.subscribed.has(item.id);
+
+                    // Determine Icon
+                    let iconName = 'Terminal';
+                    if (item.provider === 'Stripe') iconName = 'Zap';
+                    if (item.provider === 'Plaid') iconName = 'Activity';
+                    if (item.provider === 'QuickBooks') iconName = 'FileText';
+                    // Slack/Default -> Terminal
+
+                    const card = document.createElement('div');
+                    card.className = 'event-card';
+                    card.innerHTML = `
+                        <div class="card-header">
+                            <div>
+                                <div class="provider-name">
+                                    ${getIcon(iconName, 'w-3 h-3')} ${item.provider}
+                                </div>
+                                <div class="event-name">${formatEventName(item.name)}</div>
+                            </div>
+                        </div>
+                        <div class="event-desc">${item.desc}</div>
+                        <div class="card-footer">
+                            <button 
+                                class="subscribe-btn ${isSubscribed ? 'subscribed' : ''}" 
+                                onclick="toggleSubscription('${item.id}')"
+                            >
+                                ${isSubscribed
+                            ? `${getIcon('Check', 'w-3 h-3')} Subscribed`
+                            : 'Subscribe'}
+                            </button>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                }
+            });
+        }
+
+        // --- Actions ---
+
+        function switchTab(tabId) {
+            state.activeTab = tabId;
+            renderTabs();
+            renderFeed();
+        }
+
+        function toggleInsight(id, event) {
+            // Prevent if clicking a button inside (if any)
+            // But here the whole card is clickable
+            const card = document.getElementById(`insight-${id}`);
+            card.classList.toggle('open');
+        }
+
+        function toggleSubscription(eventId) {
+            if (state.subscribed.has(eventId)) {
+                // Unsubscribing wasn't explicitly requested but logic allows toggling for demo or just one-way?
+                // Rules: "Clicking Subscribe: Changes state to Subscribed...". 
+                // Let's assume one-way for simplicity unless they click it in provider tab.
+                // But generally click 'Subscribe' implies subscribing. 
+                // If already subscribed, button is disabled in UI description ("Subscribed (green checkmark, disabled)")
+                return;
+            }
+
+            state.subscribed.add(eventId);
+
+            // Add a log entry
+            addLog(`Subscribed to ${eventId}`);
+
+            renderFeed();
+        }
+
+        function addLog(message) {
+            const logs = document.getElementById('logsPanel');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            entry.innerHTML = `<span class="log-time">${time}</span><span>${message}</span>`;
+            logs.insertBefore(entry, logs.firstChild);
+        }
+
+        // --- Modals ---
+
+        function openSettingsModal() {
+            const provider = providers.find(p => p.id === state.activeTab);
+            document.getElementById('settingsTitle').innerText = `${provider.label} Settings`;
+            openModal('settingsModal');
+        }
+
+        function openChat() {
+            openModal('chatModal');
+        }
+
+        function openModal(id) {
+            document.getElementById(id).classList.add('open');
+        }
+
+        function closeModals() {
+            document.querySelectorAll('.modal-overlay').forEach(el => el.classList.remove('open'));
+        }
+
+        function toggleLogs() {
+            document.getElementById('logsPanel').classList.toggle('open');
+        }
+
+        function sendChatMessage() {
+            const input = document.querySelector('.chat-input');
+            const chatArea = document.getElementById('chatArea');
+            const text = input.value;
+
+            if (!text) return;
+
+            // User Message
+            const userBubble = document.createElement('div');
+            userBubble.className = 'chat-bubble user';
+            userBubble.innerText = text;
+            chatArea.appendChild(userBubble);
+
+            input.value = '';
+
+            // AI Response (Hardcoded + Logic)
+            setTimeout(() => {
+                const aiBubble = document.createElement('div');
+                aiBubble.className = 'chat-bubble ai';
+
+                const lowerText = text.toLowerCase();
+                const insights = generateInsights();
+
+                if (lowerText.includes('how much') || lowerText.includes('collected') || lowerText.includes('revenue')) {
+                    // Look for weekly if 'week' else default to weekly or monthly
+                    const insight = insights.find(i => i.id === 'ins_weekly_rev');
+                    aiBubble.innerHTML = `Based on your events: ${insight.summary}`;
+                } else if (lowerText.includes('abandon')) {
+                    const insight = insights.find(i => i.id === 'ins_abandoned');
+                    aiBubble.innerHTML = `${insight.summary}`;
+                } else if (lowerText.includes('stripe')) {
+                    aiBubble.innerHTML = "Which Stripe events would you like to subscribe to?<br><br>• Payment Intents<br>• Invoices<br>• Subscriptions";
+                } else {
+                    aiBubble.innerText = "I'm in sandbox mode. I can help you simulate subscriptions or derive insights like 'How much did I make this week?'.";
+                }
+
+                chatArea.appendChild(aiBubble);
+                chatArea.scrollTop = chatArea.scrollHeight;
+            }, 600);
+        }
+
+        // --- Header Actions ---
+
+        function toggleEnvDropdown() {
+            const dd = document.getElementById('envDropdown');
+            dd.style.display = dd.style.display === 'block' ? 'none' : 'block';
+        }
+
+        function setEnvironment(env) {
+            const label = document.getElementById('envLabel');
+            const dot = document.getElementById('envDot');
+            const dd = document.getElementById('envDropdown');
+
+            if (env === 'production') {
+                label.innerText = 'Production';
+                dot.style.background = '#06f039';
+                dot.style.boxShadow = '0 0 8px #06f039';
+            } else {
+                label.innerText = 'Sandbox';
+                dot.style.background = '#F59E0B';
+                dot.style.boxShadow = '0 0 8px #F59E0B';
+            }
+
+            dd.style.display = 'none';
+        }
+
+        // Close dropdown when clicking outside
+        window.onclick = function (event) {
+            if (!event.target.closest('.sandbox-wrapper')) {
+                const dd = document.getElementById('envDropdown');
+                if (dd && dd.style.display === 'block') {
+                    dd.style.display = 'none';
+                }
+            }
+
+            // Also handle modals close clicking outside logic separately if needed
+            // but we have a dedicated modal overlay onclick usually
+        }
+
+        // --- Initialization ---
+        renderTabs();
+        renderFeed();
+
+    </script>
+</body>
+
+</html>

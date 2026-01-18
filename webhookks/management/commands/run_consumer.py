@@ -53,50 +53,97 @@ class Command(BaseCommand):
     def process_message(self, r, stream_key, group_name, message_id, data):
         try:
             payload_json = data.get('payload')
+            source = data.get('source', 'unknown')
+            connection_id = data.get('connection_id')
+
             if not payload_json:
                 logger.warning(f"Missing payload in message {message_id}")
                 r.xack(stream_key, group_name, message_id)
                 return
 
             payload = json.loads(payload_json)
-            source = payload.get('source', 'unknown') # Assuming source is inside payload, or passed as metadata
-            # Note: In real production, source usually comes from URL path or separate metadata field in Redis 
-            # But based on the previous simple consumer, we extract it.
-            # If extracting from payload is unreliable, we should look at 'source' key in Redis data if we stored it there.
-            # Checking previous file content...
-            # The Go example showed: "source": source, "payload": body.
-            # So 'source' might be a top-level field in Redis data, NOT inside the JSON body.
+            # If source wasn't top-level in Redis, try payload (fallback)
+            if source == 'unknown':
+                source = payload.get('source', 'unknown')
             
-            # Let's check 'data' dictionary from Redis.
-            redis_source = data.get('source')
-            if redis_source:
-                 source = redis_source
-            
-            event_id = payload.get('id', 'unknown')
+            event_uuid = payload.get('id', 'unknown')
 
-            logger.info(f"📥 Processing Event [{source}] ID: {event_id}")
+            logger.info(f"📥 Processing Event [{source}] ID: {event_uuid}")
 
-            # --- DYNAMIC SCHEMA VALIDATION ---
+            # 1. PERSIST RAW EVENT
+            connection = None
+            if connection_id:
+                try:
+                    from webhookks.models import Connection, Event
+                    connection = Connection.objects.get(id=connection_id)
+                except Connection.DoesNotExist:
+                    logger.error(f"❌ Connection {connection_id} not found for event {event_uuid}")
+                    # Decide: Ack and drop? Or keep for manual inspection? 
+                    # For now, drop/ack to avoid blocking.
+                    r.xack(stream_key, group_name, message_id)
+                    return
+                except Exception as e:
+                    logger.error(f"Error fetching connection: {e}")
+                    # DB error, don't ack, let it retry
+                    return
+            else:
+                 logger.warning(f"No connection_id provided for event {event_uuid}")
+                 # For v1 strictness, maybe drop. For dev, we might tolerate.
+                 # Let's drop if invalid.
+                 r.xack(stream_key, group_name, message_id)
+                 return
+
+            # Save Raw Event
             try:
-                validated_data = SchemaValidationService.validate_payload(source, payload)
-                logger.info(f"✅ Schema Validated for {source}")
+                event = Event.objects.create(
+                    id=event_uuid, # Use the UUID from Go if possible, or let Django gen valid one if format differs. 
+                    # Go generates standard UUID string. Django UUIDField expects UUID object or valid string.
+                    connection=connection,
+                    source=source,
+                    payload=payload.get('body'), # Go 'WebhookPayload' has 'Body' (original payload)
+                    headers=payload.get('headers'),
+                    status='raw'
+                )
+                logger.info(f"💾 Persisted raw event {event.id}")
+            except Exception as e:
+                logger.error(f"❌ Failed to persist raw event: {e}")
+                # Don't Ack, retry
+                return
+
+            # 2. DYNAMIC SCHEMA VALIDATION
+            try:
+                # payload['body'] is expected to be a dict if json, or we need to handle non-json body?
+                # Go sends json.RawMessage which unmarshals to whatever it is. 
+                # If it's a JSON webhook, 'body' in 'payload' dict is the data.
+                body_data = payload.get('body')
+                if isinstance(body_data, (bytes, str)):
+                     # If it came as string/bytes, try to parse
+                     try:
+                        body_data = json.loads(body_data)
+                     except:
+                        pass # Keep as is if not json
                 
-                # TODO: Save to Postgres (Implementation pending)
-                
+                if isinstance(body_data, dict):
+                    validated_data = SchemaValidationService.validate_payload(source, body_data)
+                    event.status = 'validated'
+                    event.save()
+                    logger.info(f"✅ Schema Validated for {source}")
+                else:
+                    logger.warning(f"Skipping validation for non-dict body: {type(body_data)}")
+                    
             except ValidationError as e:
                 logger.error(f"❌ Schema Validation Failed for {source}: {e.json()}")
-                # TODO: Send to AI Repair Queue
-                # For now, we ack it so we don't loop forever, but log it as error.
+                event.status = 'validation_failed'
+                event.save()
+                # We still Ack because we saved the raw event and marked it failed.
             
-            # ---------------------------------
-
-            # Ack the message so it's not redelivered
+            # 3. Ack the message from Stream
             r.xack(stream_key, group_name, message_id)
-            logger.info(f"✅ Acked Event {event_id}")
+            logger.info(f"✅ Acked Event {event_uuid}")
 
         except json.JSONDecodeError:
             logger.error(f"Failed to decode JSON for message {message_id}")
-            r.xack(stream_key, group_name, message_id) # Ack bad data to skip it
+            r.xack(stream_key, group_name, message_id) 
         except Exception as e:
             logger.error(f"Error processing message {message_id}: {e}")
-            # Do NOT Ack here, so it can be retried or moved to DLQ later
+            # Do NOT Ack here for general errors

@@ -7,3 +7,5 @@ stripe>=7.0
 pydantic>=2.0
 djangorestframework
 django-cors-headers
+cryptography>=41.0.0
+ipython-9.9.0

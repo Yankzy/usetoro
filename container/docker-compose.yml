@@ -24,17 +24,60 @@ services:
     networks:
       - toro-net
 
-  app-go:
-    build:
-      context: ../go
-      dockerfile: ../container/go/Dockerfile
-    environment:
-      STRIPE_SIGNING_SECRET: ${STRIPE_SIGNING_SECRET:-whsec_test}
-      REDIS_URL: redis://redis:6379
+  nats-common: &nats-common
+    image: nats:2.9-alpine
+    networks:
+      - toro-net
+
+  nats-1:
+    <<: *nats-common
+    command: >
+      -js  -sd /data  --cluster_name=${NATS_CLUSTER_NAME}  --name=nats-1  --cluster=nats://0.0.0.0:${NATS_CLUSTER_PORT}  --routes=nats://nats-2:${NATS_CLUSTER_PORT},nats://nats-3:${NATS_CLUSTER_PORT}  --http_port=8222
     ports:
-      - "8082:8080"
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_1_data:/data
+
+  nats-2:
+    <<: *nats-common
+    command: >
+      -js  -sd /data  --cluster_name=${NATS_CLUSTER_NAME}  --name=nats-2  --cluster=nats://0.0.0.0:${NATS_CLUSTER_PORT}  --routes=nats://nats-1:${NATS_CLUSTER_PORT},nats://nats-3:${NATS_CLUSTER_PORT} 
+    ports:
+      - "4223:4222"
+    volumes:
+      - nats_2_data:/data
+
+  nats-3:
+    <<: *nats-common
+    command: >
+      -js  -sd /data  --cluster_name=${NATS_CLUSTER_NAME}  --name=nats-3  --cluster=nats://0.0.0.0:${NATS_CLUSTER_PORT}  --routes=nats://nats-1:${NATS_CLUSTER_PORT},nats://nats-2:${NATS_CLUSTER_PORT} 
+    ports:
+      - "4224:4222"
+    volumes:
+      - nats_3_data:/data
+
+  svix-redis:
+    image: redis:alpine
+    restart: always
+    command: [ "redis-server", "--appendonly", "yes" ]
+    volumes:
+      - svix_redis_data:/data
+    networks:
+      - toro-net
+
+  svix-server:
+    image: svix/svix-server:v1.84.1
+    restart: always
+    environment:
+      SVIX_QUEUE_TYPE: redis
+      SVIX_DB_DSN: postgresql://toro:toro_password@db:5432/toro
+      SVIX_REDIS_DSN: redis://svix-redis:6379
+      SVIX_JWT_SECRET: ${SVIX_JWT_SECRET}
+    ports:
+      - "8071:8071"
     depends_on:
-      - redis
+      - svix-redis
       - db
     networks:
       - toro-net
@@ -49,6 +92,7 @@ services:
       POSTGRES_PASSWORD: toro_password
       POSTGRES_HOST: db
       REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
     ports:
       - "8002:8000"
     depends_on:
@@ -68,7 +112,6 @@ services:
       - "80:80"
     depends_on:
       - app-django
-      - app-go
     volumes:
       - django_static:/app/staticfiles
     networks:
@@ -78,6 +121,10 @@ volumes:
   postgres_data:
   redis_data:
   django_static:
+  nats_1_data:
+  nats_2_data:
+  nats_3_data:
+  svix_redis_data:
 
 
 networks:

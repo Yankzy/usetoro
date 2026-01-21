@@ -13,7 +13,7 @@ const Dashboard = () => {
 
     const handleLogout = () => {
         dispatch(logout());
-        navigate('/login');
+        navigate('/');
     };
 
     const handleReplay = async (id: string) => {

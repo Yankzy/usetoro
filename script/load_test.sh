@@ -1,6 +1,6 @@
 #!/bin/bash
 
-ENDPOINT="http://localhost:8082/hooks/n8n-agent-1"
+ENDPOINT="http://localhost:8082/v1/webhooks/test/13a6e1e9-d48e-4734-b103-8a678a7ee345"
 COUNT=1000
 
 echo "🚀 Starting Load Test: Sending $COUNT requests to $ENDPOINT..."

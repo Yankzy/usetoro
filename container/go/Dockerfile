@@ -1,25 +1,25 @@
-# Build Stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-# Copy dependency files
-# Context will be set to ../../go, so we copy from root of context
-COPY go.mod go.sum ./
+# Copy go mod files from go directory
+COPY go/go.mod go/go.sum ./
 RUN go mod download
 
-# Copy source code
-COPY . .
+# Copy source code from go directory
+COPY go/main.go ./
 
-# Build binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o toro-muscle main.go
+# Build the binary
+RUN go build -o /go-ingress main.go
 
-# Runtime Stage
+# Final stage - minimal image
 FROM alpine:latest
-WORKDIR /app
-COPY --from=builder /app/toro-muscle .
 
-# Expose port
+WORKDIR /
+
+# Copy binary from builder
+COPY --from=builder /go-ingress /go-ingress
+
 EXPOSE 8080
 
-CMD ["./toro-muscle"]
+CMD ["/go-ingress"]

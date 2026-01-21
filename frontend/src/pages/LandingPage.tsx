@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import { Icons } from '../components/Icons';
 import { RevealOnScroll } from '../components/RevealOnScroll';
 import { SalesContactModal } from '../components/SalesContactModal';
 import { ArchitectureRow } from '../components/ArchitectureRow';
 import { DashboardDemo } from '../components/DashboardDemo';
+import { Navbar } from '../components/Navbar';
 
 const SectionTitle = ({ children, badge }: { children: React.ReactNode; badge: string }) => (
     <RevealOnScroll className="text-center max-w-2xl mx-auto mb-16">
@@ -83,7 +83,6 @@ const LandingPage = () => {
         { id: 4, isDivider: true, delay: 1600 },
     ]);
     const [dynamicLogs, setDynamicLogs] = useState<any[]>([]);
-    const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isContactOpen, setIsContactOpen] = useState(false);
     const [selectedTier, setSelectedTier] = useState({ name: '', price: '' });
 
@@ -91,8 +90,6 @@ const LandingPage = () => {
         setSelectedTier({ name, price });
         setIsContactOpen(true);
     };
-
-    const toggleMenu = () => setIsMenuOpen(!isMenuOpen);
 
     useEffect(() => {
         document.title = "Toro | The AI-Native Stability Layer";
@@ -125,46 +122,7 @@ const LandingPage = () => {
     return (
         <div className="min-h-screen text-white font-sans selection:bg-green-500/30 overflow-x-hidden">
             {/* Navbar */}
-            <nav className="fixed top-0 w-full z-50 bg-[#050505]/80 backdrop-blur-md border-b border-toro-border">
-                <div className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
-                    <div className="flex items-center gap-2 font-mono text-xl font-bold tracking-tighter cursor-pointer hover:opacity-80 transition-opacity" onClick={() => window.scrollTo(0, 0)}>
-                        <Icons.Logo className="w-8 h-8 text-green-500" />
-                        <span className="pt-1">TORO</span>
-                    </div>
-
-                    <div className="hidden md:flex gap-8 text-sm font-medium text-zinc-400">
-                        <a href="#problem" className="hover:text-white transition-colors">The Trap</a>
-                        <a href="#features" className="hover:text-white transition-colors">Features</a>
-                        <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
-                        <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
-                    </div>
-
-                    <div className="hidden md:block">
-                        <Link to="/login" className="text-sm bg-zinc-900 hover:bg-zinc-800 text-white px-4 py-2 rounded-lg border border-toro-border transition-colors">
-                            Login
-                        </Link>
-                    </div>
-
-                    <button className="md:hidden flex flex-col justify-center gap-1.5 w-8 h-8 z-50" onClick={toggleMenu}>
-                        <span className={`block w-full h-0.5 bg-white transition-all duration-300 ${isMenuOpen ? 'rotate-45 translate-y-2' : ''}`}></span>
-                        <span className={`block w-full h-0.5 bg-white transition-all duration-300 ${isMenuOpen ? 'opacity-0' : ''}`}></span>
-                        <span className={`block w-full h-0.5 bg-white transition-all duration-300 ${isMenuOpen ? '-rotate-45 -translate-y-2' : ''}`}></span>
-                    </button>
-                </div>
-
-                <div className={`md:hidden absolute top-full left-0 w-full bg-[#050505] border-b border-toro-border shadow-2xl transition-all duration-300 overflow-hidden ${isMenuOpen ? 'max-h-screen opacity-100 py-6' : 'max-h-0 opacity-0 py-0'}`}>
-                    <div className="flex flex-col items-center gap-6 text-lg font-medium text-zinc-300">
-                        <a href="#problem" onClick={() => setIsMenuOpen(false)} className="hover:text-white transition-colors">The Trap</a>
-                        <a href="#features" onClick={() => setIsMenuOpen(false)} className="hover:text-white transition-colors">Features</a>
-                        <a href="#pricing" onClick={() => setIsMenuOpen(false)} className="hover:text-white transition-colors">Pricing</a>
-                        <a href="#faq" onClick={() => setIsMenuOpen(false)} className="hover:text-white transition-colors">FAQ</a>
-                        <div className="h-px bg-zinc-800 w-1/3"></div>
-                        <Link to="/login" onClick={() => setIsMenuOpen(false)} className="text-sm bg-zinc-900 hover:bg-zinc-800 text-white px-8 py-3 rounded-lg border border-toro-border transition-colors">
-                            Login
-                        </Link>
-                    </div>
-                </div>
-            </nav>
+            <Navbar />
 
             {/* Hero Section */}
             <main className="max-w-7xl mx-auto px-6 pt-32 pb-24 relative">

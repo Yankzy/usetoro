@@ -14,7 +14,7 @@ else
 endif
 
 # App Services
-SERVICES := app-django app-go redis db
+SERVICES := app-django redis db svix-server
 
 .PHONY: deploy up-scanner down-scanner build-scanner
 deploy:
@@ -61,8 +61,8 @@ http:
 logs:
 	$(DOCKER_COMPOSE) logs -f $(ARGS)
 
-go-logs:
-	$(DOCKER_COMPOSE) logs -f app-go
+svix-logs:
+	$(DOCKER_COMPOSE) logs -f svix-server
 
 django-logs:
 	$(DOCKER_COMPOSE) logs -f app-django
@@ -229,3 +229,9 @@ commit:
 	CUR_BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
 	git add -u && git commit -m "$$MSG" && git push origin "$$CUR_BRANCH"
 
+# Webhook Bridge Commands
+bridge:
+	$(DOCKER_COMPOSE) exec app-django python manage.py run_webhook_bridge
+
+bridge-logs:
+	$(DOCKER_COMPOSE) logs -f app-django | grep "webhook-bridge"

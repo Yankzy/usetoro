@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Toro | The AI-Native Stability Layer</title>
+    <title>Toro | Financial Concierge + Intelligence Platform</title>
 
     <!-- Favicon (Toro Logo: Shield + Bull Horns) -->
     <link rel="icon"
@@ -430,6 +430,231 @@
             </RevealOnScroll>
         );
 
+        // --- Testimonials Carousel Component ---
+        const TestimonialsCarousel = () => {
+            const [currentIndex, setCurrentIndex] = useState(0);
+            const [isAutoPlaying, setIsAutoPlaying] = useState(true);
+
+            const testimonials = [
+                {
+                    id: 1,
+                    name: "Sarah Chen",
+                    role: "Engineering Lead",
+                    company: "Fintech Startup",
+                    image: "./assets/avatar_1.png",
+                    quote: "Toro eliminated 3 weeks of integration work. We went from debugging Stripe webhooks at 2AM to having bulletproof financial data pipelines.",
+                    verified: true
+                },
+                {
+                    id: 2,
+                    name: "David Miller",
+                    role: "CTO",
+                    company: "TechFlow",
+                    image: "./assets/avatar_2.png",
+                    quote: "No more schema drift nightmares. Toro handles all our Plaid integrations flawlessly. The peace of mind alone is worth every penny.",
+                    verified: true
+                },
+                {
+                    id: 3,
+                    name: "Maya Johnson",
+                    role: "Product Manager",
+                    company: "Creative Solutions",
+                    image: "./assets/avatar_3.png",
+                    quote: "We needed SOC-2 compliance and cross-provider reconciliation. Toro delivered both without us writing a single line of integration code.",
+                    verified: true
+                },
+                {
+                    id: 4,
+                    name: "Arjun Patel",
+                    role: "Senior Developer",
+                    company: "DevCorp",
+                    image: "./assets/avatar_4.png",
+                    quote: "QuickBooks token management was killing our velocity. Toro made it disappear completely. Now we ship features instead of maintaining integrations.",
+                    verified: true
+                },
+                {
+                    id: 5,
+                    name: "Elena Ross",
+                    role: "VP of Engineering",
+                    company: "Global Systems",
+                    image: "./assets/avatar_5.png",
+                    quote: "The AI diagnostics for failed webhooks is pure magic. Saved us hours of debugging. It's like having a senior engineer on call 24/7.",
+                    verified: true
+                },
+                {
+                    id: 6,
+                    name: "Carlos Gomez",
+                    role: "Lead Designer",
+                    company: "Artistry Inc.",
+                    image: "./assets/avatar_6.png",
+                    quote: "Implementation was surprisingly smooth. The documentation is top-notch and the support team is incredibly responsive.",
+                    verified: true
+                },
+                {
+                    id: 7,
+                    name: "Zara Al-Fayed",
+                    role: "Data Scientist",
+                    company: "DataMinds",
+                    image: "./assets/avatar_7.png",
+                    quote: "Finally, a unified financial data layer that actually works. The normalization across different providers is spot on.",
+                    verified: true
+                },
+                {
+                    id: 8,
+                    name: "Robert Washington",
+                    role: "VP of Technology",
+                    company: "Enterprise Co.",
+                    image: "./assets/avatar_8.png",
+                    quote: "We replaced our entire home-grown billing infrastructure with Toro. It's more reliable, faster, and significantly cheaper.",
+                    verified: true
+                },
+                {
+                    id: 9,
+                    name: "Kenji Tanaka",
+                    role: "Founder",
+                    company: "StartUp X",
+                    image: "./assets/avatar_9.png", // Will be generated
+                    quote: "As a founder, I need tools that just work. Toro allowed us to launch our payments feature in days instead of months.",
+                    verified: true
+                },
+                {
+                    id: 10,
+                    name: "Emma Wilson",
+                    role: "Marketing Lead",
+                    company: "Growth.io",
+                    image: "./assets/avatar_10.png", // Will be generated
+                    quote: "Our finance team loves the reconciliation reports. It bridged the gap between engineering and accounting perfectly.",
+                    verified: true
+                }
+            ];
+
+            const nextSlide = () => {
+                setCurrentIndex((prev) => (prev + 1) % testimonials.length);
+            };
+
+            const prevSlide = () => {
+                setCurrentIndex((prev) => (prev - 1 + testimonials.length) % testimonials.length);
+            };
+
+            const goToSlide = (index) => {
+                setCurrentIndex(index);
+                setIsAutoPlaying(false);
+            };
+
+            useEffect(() => {
+                if (!isAutoPlaying) return;
+                const interval = setInterval(nextSlide, 5000);
+                return () => clearInterval(interval);
+            }, [currentIndex, isAutoPlaying]);
+
+            // Get standard window size
+            const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+
+            useEffect(() => {
+                const handleResize = () => setWindowWidth(window.innerWidth);
+                window.addEventListener('resize', handleResize);
+                return () => window.removeEventListener('resize', handleResize);
+            }, []);
+
+            // Visible items logic
+            const getVisibleItems = () => {
+                if (windowWidth < 768) return [testimonials[currentIndex]];
+
+                const items = [];
+                for (let i = 0; i < 3; i++) {
+                    const index = (currentIndex + i) % testimonials.length;
+                    items.push(testimonials[index]);
+                }
+                return items;
+            };
+
+            const visibleItems = getVisibleItems();
+
+            return (
+                <div className="relative max-w-7xl mx-auto">
+                    {/* Carousel Container */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {visibleItems.map((item, idx) => (
+                            <div
+                                key={`${item.id}-${idx}`}
+                                className="group relative p-6 rounded-2xl bg-zinc-900/40 border border-zinc-800 hover:border-zinc-700 transition-all duration-500 hover:bg-zinc-900/60 flex flex-col h-full"
+                            >
+                                {/* Hover Gradient */}
+                                <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl"></div>
+
+                                <div className="relative z-10 flex flex-col h-full">
+                                    {/* Header */}
+                                    <div className="flex items-center gap-4 mb-4">
+                                        <div className="relative">
+                                            <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-zinc-800 group-hover:border-green-500/50 transition-colors">
+                                                <img
+                                                    src={item.image}
+                                                    alt={item.name}
+                                                    className="w-full h-full object-cover"
+                                                    onError={(e) => {
+                                                        e.target.onerror = null;
+                                                        e.target.src = 'https://ui-avatars.com/api/?name=' + item.name + '&background=random';
+                                                    }}
+                                                />
+                                            </div>
+                                            {item.verified && (
+                                                <div className="absolute -bottom-1 -right-1 bg-[#050505] rounded-full p-0.5 border border-zinc-800">
+                                                    <Icons.Check className="w-3 h-3 text-green-500" />
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div>
+                                            <div className="text-white font-bold text-sm">{item.name}</div>
+                                            <div className="text-xs text-zinc-400">{item.role}</div>
+                                            <div className="text-xs text-zinc-500 font-mono mt-0.5">@ {item.company}</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Quote */}
+                                    <blockquote className="text-zinc-300 text-sm leading-relaxed flex-1 italic relative">
+                                        <span className="text-3xl text-zinc-700 font-serif absolute -top-4 -left-1">"</span>
+                                        <span className="relative z-10">{item.quote}</span>
+                                    </blockquote>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Controls */}
+                    <div className="flex items-center justify-between mt-8">
+                        {/* Indicators */}
+                        <div className="flex gap-1.5 mx-auto">
+                            {testimonials.map((_, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => goToSlide(idx)}
+                                    className={`transition-all duration-300 rounded-full h-1.5 ${idx === currentIndex
+                                            ? 'w-8 bg-green-500'
+                                            : 'w-1.5 bg-zinc-800 hover:bg-zinc-600'
+                                        }`}
+                                    aria-label={`Go to slide ${idx + 1}`}
+                                />
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Navigation Arrows (Absolute) */}
+                    <button
+                        onClick={prevSlide}
+                        className="absolute top-1/2 -left-4 md:-left-12 -translate-y-1/2 w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-500 hover:text-white hover:border-zinc-700 flex items-center justify-center transition-all z-20"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                    </button>
+                    <button
+                        onClick={nextSlide}
+                        className="absolute top-1/2 -right-4 md:-right-12 -translate-y-1/2 w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-500 hover:text-white hover:border-zinc-700 flex items-center justify-center transition-all z-20"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    </button>
+                </div>
+            );
+        };
+
         // --- Dashboard Demo Component (AI Enhanced) ---
         const DashboardDemo = () => {
             const [rows, setRows] = useState([
@@ -625,11 +850,11 @@
                         <div className="grid lg:grid-cols-2 gap-16 items-center w-full max-w-full">
                             <RevealOnScroll className="space-y-8 z-10 min-w-0">
                                 <h1 className="text-4xl md:text-5xl lg:text-7xl font-bold tracking-tight leading-[1.1]">
-                                    The <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">AI-Native</span> Stability Layer for API Integrations.
+                                    Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-500">Financial Concierge</span> for Stripe, Plaid, and QuickBooks.
                                 </h1>
                                 <p className="text-lg md:text-xl text-zinc-400 max-w-md leading-relaxed">
-                                    Stop crashing your database with AI agents. Stop missing webhooks.
-                                    Toro provides the queues, tunnels, and agents so you can just build.
+                                    We own your financial integrations end-to-end. No schema drift. No reconciliation nightmares. No API versioning hell.
+                                    You get clean, normalized financial truth.
                                 </p>
                                 <WaitlistForm id="hero-form" />
                                 <div className="flex items-center gap-4 text-xs text-zinc-500 font-mono pt-4">
@@ -702,7 +927,7 @@
                                     {/* Right: Caption & Logos */}
                                     <div className="space-y-12 min-w-0">
                                         <h3 className="text-2xl md:text-3xl font-mono text-zinc-300 italic leading-relaxed">
-                                            "I never want to think about broken payloads, retries, cursors, missed webhooks, or schema drift ever again."
+                                            "I never want to think about Stripe reconciliation, Plaid cursors, schema versioning, or financial data drift ever again."
                                         </h3>
 
                                         <div className="space-y-6">
@@ -733,34 +958,34 @@
                     {/* --- Problem Section --- */}
                     <section id="problem" className="py-24 border-t border-toro-border bg-zinc-900/10">
                         <div className="max-w-7xl mx-auto px-6">
-                            <SectionTitle badge="INTEGRATION TRAP">Why your stack is crashing</SectionTitle>
+                            <SectionTitle badge="FINANCIAL INTEGRATION TRAP">Why financial integrations are a nightmare</SectionTitle>
 
                             <div className="grid md:grid-cols-3 gap-8 mt-12">
                                 <RevealOnScroll delay={0} className="p-8 rounded-2xl bg-zinc-900/30 border border-toro-border relative overflow-hidden group hover:bg-zinc-900/50 transition-colors">
                                     <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:opacity-100 transition-opacity transform group-hover:scale-110 duration-300">
                                         <Icons.Zap className="w-12 h-12 text-yellow-500" />
                                     </div>
-                                    <h3 className="text-xl font-bold mb-4">Connection Exhaustion</h3>
+                                    <h3 className="text-xl font-bold mb-4">Token Lifecycle Management</h3>
                                     <p className="text-zinc-400">
-                                        AI Agents in N8N are chaotic. When 50 agents try to write to Postgres at once, you hit the <span className="text-red-400 font-mono bg-red-900/20 px-1 rounded">max_connections</span> limit and everything dies.
+                                        QuickBooks tokens expire every 100 days. Plaid requires manual Item reconnection. Stripe webhooks need signature verification. Each provider has different authentication flows, refresh logic, and failure modes.
                                     </p>
                                 </RevealOnScroll>
                                 <RevealOnScroll delay={100} className="p-8 rounded-2xl bg-zinc-900/30 border border-toro-border relative overflow-hidden group hover:bg-zinc-900/50 transition-colors">
                                     <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:opacity-100 transition-opacity transform group-hover:scale-110 duration-300">
                                         <Icons.Terminal className="w-12 h-12 text-blue-500" />
                                     </div>
-                                    <h3 className="text-xl font-bold mb-4">Webhook Hell</h3>
+                                    <h3 className="text-xl font-bold mb-4">Cross-Provider Reconciliation</h3>
                                     <p className="text-zinc-400">
-                                        Debugging webhooks usually means network timeouts or blind guessing. If your server crashes, that webhook data is gone forever.
+                                        Matching a Stripe charge to a Plaid transaction to a QuickBooks entry requires understanding each system's data model, timing delays, and edge cases. Most teams build one-off scripts that break during audits.
                                     </p>
                                 </RevealOnScroll>
                                 <RevealOnScroll delay={200} className="p-8 rounded-2xl bg-zinc-900/30 border border-toro-border relative overflow-hidden group hover:bg-zinc-900/50 transition-colors">
                                     <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:opacity-100 transition-opacity transform group-hover:scale-110 duration-300">
                                         <Icons.Activity className="w-12 h-12 text-purple-500" />
                                     </div>
-                                    <h3 className="text-xl font-bold mb-4">Integration Fatigue</h3>
+                                    <h3 className="text-xl font-bold mb-4">API Surface Area Drift</h3>
                                     <p className="text-zinc-400">
-                                        Integrating Stripe, Plaid, QuickBooks and other APIs means writing perfect endpoints or infinite polling loops and managing cursors. It's tidious, boring, and you will maintain it for for the rest of your life.
+                                        Financial providers ship breaking changes, deprecate endpoints, and add new required fields. Your integration code becomes a maintenance liability that scales with the number of providers you support.
                                     </p>
                                 </RevealOnScroll>
                             </div>
@@ -769,130 +994,165 @@
 
                     {/* --- Feature Deep Dives --- */}
                     <div id="features" className="space-y-0">
-                        {/* 1. The Airbag */}
+                        {/* 1. Financial Concierge - PRIMARY PRODUCT */}
                         <section className="py-24 border-t border-toro-border relative overflow-hidden">
-                            <div className="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center">
-                                <RevealOnScroll>
-                                    <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-yellow-500 animate-float">
-                                        <Icons.Shield className="w-6 h-6" />
-                                    </div>
-                                    <h2 className="text-4xl font-bold mb-6">AI-Powered Buffer. <br /><span className="text-zinc-500">Queue first, write later.</span></h2>
-                                    <p className="text-lg text-zinc-400 mb-8 leading-relaxed">
-                                        We handle the chaos so your database doesn't have to. Toro sits between your AI agents and your infrastructure, absorbing traffic spikes and messy inputs instantly, then writing clean, safe data to your database at a pace it can handle.
-                                    </p>
-                                    <ul className="space-y-4 text-zinc-300">
-                                        {[
-                                            "Protects against traffic spikes",
-                                            "AI Schema Repair (Fixes bad JSON automatically)",
-                                            "Zero-config connection pooling"
-                                        ].map((text, i) => (
-                                            <li key={i} className="flex items-center gap-3">
-                                                <Icons.Check className="w-5 h-5 text-green-500" />
-                                                <span>{text}</span>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </RevealOnScroll>
-                                <RevealOnScroll delay={200} className="bg-[#0A0A0A] border border-toro-border rounded-xl p-8 shadow-2xl relative animate-float">
-                                    {/* Visual: Spike vs Smooth */}
-                                    <div className="absolute top-4 right-4 text-xs font-mono text-zinc-600">LIVE MONITOR</div>
-                                    <div className="space-y-6">
-                                        <div>
-                                            <div className="flex justify-between text-xs font-mono text-zinc-500 mb-2">
-                                                <span>INBOUND (N8N AGENTS)</span>
-                                                <span className="text-red-400">500 req/sec</span>
-                                            </div>
-                                            <div className="h-12 flex items-end gap-1">
-                                                {[...Array(20)].map((_, i) => (
-                                                    <div key={i} className="w-full bg-red-500/20 rounded-sm animate-pulse" style={{ height: `${Math.random() * 80 + 20}%`, animationDuration: `${Math.random() * 0.5 + 0.5}s` }}></div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div className="h-px bg-zinc-800 w-full"></div>
-                                        <div>
-                                            <div className="flex justify-between text-xs font-mono text-zinc-500 mb-2">
-                                                <span>OUTBOUND (SUPABASE)</span>
-                                                <span className="text-green-400">50 req/sec (Safe)</span>
-                                            </div>
-                                            <div className="h-12 flex items-end gap-1">
-                                                {[...Array(20)].map((_, i) => (
-                                                    <div key={i} className="w-full bg-green-500/50 rounded-sm transition-all duration-300" style={{ height: `40%` }}></div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </RevealOnScroll>
-                            </div>
-                        </section>
-
-                        {/* 2. The Pipe */}
-                        <section className="py-24 border-t border-toro-border bg-zinc-900/10">
-                            <div className="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center lg:flex-row-reverse">
-                                <RevealOnScroll delay={200} className="order-2 lg:order-1 relative animate-float" style={{ animationDelay: '1s' }}>
-                                    {/* --- DASHBOARD DEMO VISUAL --- */}
-                                    <DashboardDemo />
-                                </RevealOnScroll>
-                                <RevealOnScroll className="order-1 lg:order-2">
-                                    <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-blue-500 animate-float" style={{ animationDelay: '0.5s' }}>
-                                        <Icons.Terminal className="w-6 h-6" />
-                                    </div>
-                                    <h2 className="text-4xl font-bold mb-6">The Pipe. <br /><span className="text-zinc-500">Fix. Replay. Done.</span></h2>
-                                    <p className="text-lg text-zinc-400 mb-8 leading-relaxed">
-                                        Forget Ngrok. Toro gives you a persistent tunnel that stores every webhook. If your server crashes or your code has a bug, simply fix the issue and click <strong>Replay</strong> to re-run the exact event against your destination of choice.
-                                    </p>
-                                    <ul className="space-y-4 text-zinc-300 mb-8">
-                                        <li className="flex items-center gap-3">
-                                            <Icons.RotateCw className="w-5 h-5 text-blue-400" />
-                                            <span>One-click replay for failed events</span>
-                                        </li>
-                                        <li className="flex items-center gap-3">
-                                            <Icons.Brain className="w-5 h-5 text-purple-400" />
-                                            <span>AI Root Cause Analysis</span>
-                                        </li>
-                                        <li className="flex items-center gap-3">
-                                            <Icons.Check className="w-5 h-5 text-green-500" />
-                                            <span>Persistent tunnels (no random URLs)</span>
-                                        </li>
-                                    </ul>
-                                    <button className="text-green-400 hover:text-green-300 font-mono text-sm flex items-center gap-2 group">
-                                        Read the CLI docs <span className="group-hover:translate-x-1 transition-transform">-></span>
-                                    </button>
-                                </RevealOnScroll>
-                            </div>
-                        </section>
-
-                        {/* 3. The Concierge Suite */}
-                        <section className="py-24 border-t border-toro-border">
                             <div className="max-w-7xl mx-auto px-6">
-                                <SectionTitle badge="THE CONCIERGE">Automated Financial Services</SectionTitle>
+                                <SectionTitle badge="FINANCIAL CONCIERGE">We own your financial integrations</SectionTitle>
 
-                                {/* Part A: QuickBooks Concierge */}
+                                <div className="text-center max-w-3xl mx-auto mb-20">
+                                    <p className="text-lg text-zinc-400 leading-relaxed">
+                                        Stop building and maintaining Stripe, Plaid, and QuickBooks integrations.
+                                        We handle schemas, retries, reconciliation, and delivery.
+                                        You get clean, normalized financial data.
+                                    </p>
+                                </div>
+
+                                {/* Stripe Concierge */}
                                 <div className="grid lg:grid-cols-2 gap-16 items-center mb-32">
                                     <RevealOnScroll>
-                                        <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-green-500 animate-float">
-                                            <Icons.FileText className="w-6 h-6" />
+                                        <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-purple-500 animate-float">
+                                            <Icons.Zap className="w-6 h-6" />
                                         </div>
-                                        <h3 className="text-3xl font-bold mb-4">QuickBooks Concierge. <br /><span className="text-zinc-500">POS to Accounting.</span></h3>
+                                        <h3 className="text-3xl font-bold mb-4">Stripe Concierge. <br /><span className="text-zinc-500">Payments to Truth.</span></h3>
                                         <p className="text-lg text-zinc-400 mb-6 leading-relaxed">
-                                            Stop acting like an accountant. We accept raw sales receipts from your app or POS, normalize them, transform them into accounting semantics, and post them directly to your customer's QuickBooks.
+                                            We listen to every Stripe event, normalize the data, reconcile payment states, and deliver transaction truth to your system. No missed webhooks. No signature verification headaches. No reconciliation hell.
                                         </p>
                                         <ul className="space-y-3 text-zinc-300">
                                             <li className="flex items-center gap-3">
-                                                <Icons.Check className="w-5 h-5 text-green-500" />
-                                                <span>Raw POS Data &rarr; Accounting Entries</span>
+                                                <Icons.Check className="w-5 h-5 text-purple-500" />
+                                                <span>Webhook verification & ingestion</span>
                                             </li>
                                             <li className="flex items-center gap-3">
-                                                <Icons.Check className="w-5 h-5 text-green-500" />
-                                                <span>Automatic Schema & Token Management</span>
+                                                <Icons.Check className="w-5 h-5 text-purple-500" />
+                                                <span>Payment state reconciliation</span>
                                             </li>
                                             <li className="flex items-center gap-3">
-                                                <Icons.Check className="w-5 h-5 text-green-500" />
-                                                <span>Error Handling & Instant Retries</span>
+                                                <Icons.Check className="w-5 h-5 text-purple-500" />
+                                                <span>Automatic retries with exponential backoff</span>
+                                            </li>
+                                            <li className="flex items-center gap-3">
+                                                <Icons.Check className="w-5 h-5 text-purple-500" />
+                                                <span>Guaranteed event delivery to your database</span>
                                             </li>
                                         </ul>
                                     </RevealOnScroll>
                                     <RevealOnScroll delay={200} className="bg-[#0A0A0A] border border-toro-border rounded-xl p-8 shadow-2xl relative">
-                                        {/* Visual: POS -> Clean -> QB */}
+                                        <div className="flex items-center justify-between mb-6">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></div>
+                                                <span className="text-xs font-mono text-purple-400">STRIPE EVENT RECEIVED</span>
+                                            </div>
+                                            <span className="text-xs font-mono text-zinc-600">Processing...</span>
+                                        </div>
+                                        <div className="space-y-3 font-mono text-xs">
+                                            <div className="flex items-center gap-3 text-zinc-500">
+                                                <Icons.Shield className="w-4 h-4" />
+                                                <span>Verified webhook signature ✓</span>
+                                            </div>
+                                            <div className="flex items-center gap-3 text-purple-400">
+                                                <Icons.Activity className="w-4 h-4" />
+                                                <span>payment_intent.succeeded</span>
+                                            </div>
+                                            <div className="flex items-center gap-3 text-green-500">
+                                                <Icons.Server className="w-4 h-4" />
+                                                <span>Normalized & delivered to your DB</span>
+                                            </div>
+                                            <div className="p-2 mt-4 bg-zinc-900 border border-purple-500/50 rounded text-[10px] text-purple-400 font-bold italic shadow-[0_0_15px_rgba(168,85,247,0.4)] animate-pulse">
+                                                "You never touch Stripe webhooks. We handle everything."
+                                            </div>
+                                        </div>
+                                    </RevealOnScroll>
+                                </div>
+
+                                {/* Plaid Concierge */}
+                                <div className="grid lg:grid-cols-2 gap-16 items-center mb-32 lg:flex-row-reverse">
+                                    <RevealOnScroll delay={100} className="order-2 lg:order-1 relative">
+                                        <div className="bg-[#0A0A0A] border border-toro-border rounded-xl p-8 shadow-2xl">
+                                            <div className="flex items-center justify-between mb-6">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                                                    <span className="text-xs font-mono text-blue-400">PLAID WEBHOOK RECEIVED</span>
+                                                </div>
+                                                <span className="text-xs font-mono text-zinc-600">Syncing...</span>
+                                            </div>
+                                            <div className="space-y-3 font-mono text-xs">
+                                                <div className="flex items-center gap-3 text-zinc-500">
+                                                    <Icons.Activity className="w-4 h-4" />
+                                                    <span>Fetching new transactions...</span>
+                                                </div>
+                                                <div className="flex items-center gap-3 text-purple-400">
+                                                    <Icons.Brain className="w-4 h-4" />
+                                                    <span>AI Cleanup: "UBER *RIDE" → "Uber"</span>
+                                                </div>
+                                                <div className="flex items-center gap-3 text-green-500">
+                                                    <Icons.Server className="w-4 h-4" />
+                                                    <span>INSERT INTO transactions (Safe)</span>
+                                                </div>
+                                                <div className="p-2 mt-4 bg-zinc-900 border border-blue-500/50 rounded text-[10px] text-blue-400 font-bold italic shadow-[0_0_15px_rgba(59,130,246,0.4)] animate-pulse">
+                                                    "We manage cursors, pagination, and Item health for you."
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </RevealOnScroll>
+                                    <RevealOnScroll className="order-1 lg:order-2">
+                                        <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-blue-500 animate-float">
+                                            <Icons.Activity className="w-6 h-6" />
+                                        </div>
+                                        <h3 className="text-3xl font-bold mb-4">Plaid Concierge. <br /><span className="text-zinc-500">Bank Data, Simplified.</span></h3>
+                                        <p className="text-lg text-zinc-400 mb-6 leading-relaxed">
+                                            When Plaid says something changed, we fetch it, clean it, and sync it to your database. AI-powered merchant name cleanup. Automatic deduplication. No more missing transactions.
+                                        </p>
+                                        <ul className="space-y-3 text-zinc-300">
+                                            <li className="flex items-center gap-3">
+                                                <Icons.Check className="w-5 h-5 text-blue-500" />
+                                                <span>Webhook listening & Item health monitoring</span>
+                                            </li>
+                                            <li className="flex items-center gap-3">
+                                                <Icons.Check className="w-5 h-5 text-blue-500" />
+                                                <span>AI merchant name normalization</span>
+                                            </li>
+                                            <li className="flex items-center gap-3">
+                                                <Icons.Check className="w-5 h-5 text-blue-500" />
+                                                <span>Transaction deduplication</span>
+                                            </li>
+                                            <li className="flex items-center gap-3">
+                                                <Icons.Check className="w-5 h-5 text-blue-500" />
+                                                <span>Direct database sync (Postgres, Supabase)</span>
+                                            </li>
+                                        </ul>
+                                    </RevealOnScroll>
+                                </div>
+
+                                {/* QuickBooks Concierge */}
+                                <div className="grid lg:grid-cols-2 gap-16 items-center">
+                                    <RevealOnScroll>
+                                        <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-green-500 animate-float">
+                                            <Icons.FileText className="w-6 h-6" />
+                                        </div>
+                                        <h3 className="text-3xl font-bold mb-4">QuickBooks Concierge. <br /><span className="text-zinc-500">POS to Ledger.</span></h3>
+                                        <p className="text-lg text-zinc-400 mb-6 leading-relaxed">
+                                            Send us raw sales data from your POS or app. We transform it into proper accounting entries and post them to QuickBooks Online. You connect your QuickBooks account once.
+                                        </p>
+                                        <ul className="space-y-3 text-zinc-300">
+                                            <li className="flex items-center gap-3">
+                                                <Icons.Check className="w-5 h-5 text-green-500" />
+                                                <span>POS Data → Accounting Semantics</span>
+                                            </li>
+                                            <li className="flex items-center gap-3">
+                                                <Icons.Check className="w-5 h-5 text-green-500" />
+                                                <span>QuickBooks account health monitoring</span>
+                                            </li>
+                                            <li className="flex items-center gap-3">
+                                                <Icons.Check className="w-5 h-5 text-green-500" />
+                                                <span>Chart of Accounts mapping</span>
+                                            </li>
+                                            <li className="flex items-center gap-3">
+                                                <Icons.Check className="w-5 h-5 text-green-500" />
+                                                <span>Error handling & automatic retries</span>
+                                            </li>
+                                        </ul>
+                                    </RevealOnScroll>
+                                    <RevealOnScroll delay={200} className="bg-[#0A0A0A] border border-toro-border rounded-xl p-8 shadow-2xl relative">
                                         <div className="flex items-center justify-between text-xs font-mono mb-8 opacity-50">
                                             <span>COFFEE SHOP POS</span>
                                             <span>&rarr;</span>
@@ -919,60 +1179,75 @@
                                         </div>
                                     </RevealOnScroll>
                                 </div>
+                            </div>
+                        </section>
 
-                                {/* Part B: Plaid Concierge */}
-                                <div className="grid lg:grid-cols-2 gap-16 items-center lg:flex-row-reverse">
-                                    <RevealOnScroll delay={100} className="order-2 lg:order-1 relative">
-                                        {/* Visual: Webhook -> Clean -> DB */}
-                                        <div className="bg-[#0A0A0A] border border-toro-border rounded-xl p-8 shadow-2xl">
-                                            <div className="flex items-center justify-between mb-6">
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-                                                    <span className="text-xs font-mono text-blue-400">WEBHOOK RECEIVED</span>
-                                                </div>
-                                                <span className="text-xs font-mono text-zinc-600">Syncing...</span>
-                                            </div>
-                                            <div className="space-y-3 font-mono text-xs">
-                                                <div className="flex items-center gap-3 text-zinc-500">
-                                                    <Icons.Activity className="w-4 h-4" />
-                                                    <span>Fetching transaction details...</span>
-                                                </div>
-                                                <div className="flex items-center gap-3 text-purple-400">
-                                                    <Icons.Brain className="w-4 h-4" />
-                                                    <span>Cleaning: "UBER *RIDE" &rarr; "Uber"</span>
-                                                </div>
-                                                <div className="flex items-center gap-3 text-green-500">
-                                                    <Icons.Server className="w-4 h-4" />
-                                                    <span>INSERT INTO transactions (Safe)</span>
-                                                </div>
-                                                <div className="p-2 mt-4 bg-zinc-900 border border-green-500/50 rounded text-[10px] text-green-400 font-bold italic shadow-[0_0_15px_rgba(74,222,128,0.4)] animate-pulse">
-                                                    "We handle pagination, cursors, and updates."
-                                                </div>
-                                            </div>
+                        {/* 2. Financial Intelligence - SECONDARY PRODUCT */}
+                        <section className="py-24 border-t border-toro-border bg-zinc-900/10">
+                            <div className="max-w-7xl mx-auto px-6">
+                                <SectionTitle badge="FINANCIAL INTELLIGENCE">From noise to operational truth</SectionTitle>
+
+                                <div className="grid lg:grid-cols-2 gap-16 items-center">
+                                    <RevealOnScroll>
+                                        <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-purple-500 animate-float">
+                                            <Icons.Brain className="w-6 h-6" />
                                         </div>
-                                    </RevealOnScroll>
-                                    <RevealOnScroll className="order-1 lg:order-2">
-                                        <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center mb-6 text-blue-500 animate-float">
-                                            <Icons.Activity className="w-6 h-6" />
-                                        </div>
-                                        <h3 className="text-3xl font-bold mb-4">Plaid Concierge. <br /><span className="text-zinc-500">Data Sync, Resolved.</span></h3>
-                                        <p className="text-lg text-zinc-400 mb-6 leading-relaxed">
-                                            If a Plaid webhook says something changed, we handle it. We fetch the data, clean up messy merchant names using AI, and sync it directly to your database. No more missing transactions.
+                                        <h2 className="text-4xl font-bold mb-6">Intelligence Layer. <br /><span className="text-zinc-500">Built for ops, finance, and risk teams.</span></h2>
+                                        <p className="text-lg text-zinc-400 mb-8 leading-relaxed">
+                                            We don't just move financial data. We normalize it across providers, detect anomalies, reconcile discrepancies, and deliver human-readable financial truth. Ready for audits, compliance, and executive reporting.
                                         </p>
-                                        <ul className="space-y-3 text-zinc-300">
-                                            <li className="flex items-center gap-3">
-                                                <Icons.Check className="w-5 h-5 text-blue-500" />
-                                                <span>Webhook Listening & Verification</span>
-                                            </li>
-                                            <li className="flex items-center gap-3">
-                                                <Icons.Check className="w-5 h-5 text-blue-500" />
-                                                <span>AI Merchant Cleaning</span>
-                                            </li>
-                                            <li className="flex items-center gap-3">
-                                                <Icons.Check className="w-5 h-5 text-blue-500" />
-                                                <span>Direct DB Sync (Supabase, Postgres)</span>
-                                            </li>
+                                        <ul className="space-y-4 text-zinc-300">
+                                            {[
+                                                "Unified financial transaction ledger",
+                                                "Cross-provider reconciliation (Stripe ↔ Plaid ↔ QB)",
+                                                "Anomaly detection (duplicates, missing txns)",
+                                                "AI-powered discrepancy analysis",
+                                                "Compliance-ready audit trails"
+                                            ].map((text, i) => (
+                                                <li key={i} className="flex items-center gap-3">
+                                                    <Icons.Check className="w-5 h-5 text-purple-500" />
+                                                    <span>{text}</span>
+                                                </li>
+                                            ))}
                                         </ul>
+                                    </RevealOnScroll>
+                                    <RevealOnScroll delay={200} className="bg-[#0A0A0A] border border-toro-border rounded-xl p-8 shadow-2xl relative animate-float">
+                                        <div className="absolute top-4 right-4 text-xs font-mono text-zinc-600">INTELLIGENCE DASHBOARD</div>
+                                        <div className="space-y-6">
+                                            <div>
+                                                <div className="flex justify-between text-xs font-mono text-zinc-500 mb-2">
+                                                    <span>RECONCILIATION STATUS</span>
+                                                    <span className="text-green-400">99.8% Matched</span>
+                                                </div>
+                                                <div className="h-2 bg-zinc-900 rounded-full overflow-hidden">
+                                                    <div className="h-full bg-gradient-to-r from-green-500 to-emerald-500 w-[99.8%] animate-pulse"></div>
+                                                </div>
+                                            </div>
+                                            <div className="h-px bg-zinc-800 w-full"></div>
+                                            <div className="space-y-3 font-mono text-xs">
+                                                <div className="p-3 bg-yellow-900/20 border border-yellow-500/30 rounded">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <Icons.Activity className="w-3 h-3 text-yellow-400" />
+                                                        <span className="text-yellow-400 font-bold">ANOMALY DETECTED</span>
+                                                    </div>
+                                                    <div className="text-zinc-400">Duplicate transaction: $247.00 (Stripe & Plaid)</div>
+                                                </div>
+                                                <div className="p-3 bg-red-900/20 border border-red-500/30 rounded">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <Icons.Zap className="w-3 h-3 text-red-400" />
+                                                        <span className="text-red-400 font-bold">MISSING EVENT</span>
+                                                    </div>
+                                                    <div className="text-zinc-400">Stripe refund not in QuickBooks</div>
+                                                </div>
+                                                <div className="p-3 bg-green-900/20 border border-green-500/30 rounded">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <Icons.Check className="w-3 h-3 text-green-400" />
+                                                        <span className="text-green-400 font-bold">RECONCILED</span>
+                                                    </div>
+                                                    <div className="text-zinc-400">All Feb payments matched across systems</div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </RevealOnScroll>
                                 </div>
                             </div>
@@ -982,48 +1257,54 @@
                     {/* --- Architecture --- */}
                     <section className="py-32 border-t border-toro-border bg-[#030303] overflow-hidden">
                         <div className="max-w-7xl mx-auto px-6 text-center">
-                            <SectionTitle badge="ARCHITECTURE">How it fits your stack</SectionTitle>
+                            <SectionTitle badge="ARCHITECTURE">Financial data flows, managed for you</SectionTitle>
 
                             <div className="mt-16">
-                                {/* Flow 1: N8N -> Buffer -> DB */}
+                                {/* Flow 1: Stripe -> Concierge -> Your System */}
                                 <ArchitectureRow
-                                    title="The Airbag"
-                                    source="N8N / Agents"
-                                    dest="Supabase / Postgres"
-                                    toroAction="BUFFER & QUEUE"
-                                    icon={Icons.Shield}
+                                    title="Stripe Concierge"
+                                    source="Stripe Events"
+                                    dest="Your Database"
+                                    toroAction="RECONCILE & DELIVER"
+                                    icon={Icons.Zap}
                                     delay={0}
                                 />
 
-                                {/* Flow 2: QuickBooks -> Transform -> QB */}
+                                {/* Flow 2: Plaid -> Concierge -> Your System */}
                                 <ArchitectureRow
-                                    title="Concierge (QB)"
-                                    source="App / POS"
-                                    dest="QuickBooks Online"
-                                    toroAction="NORMALIZE & POST"
-                                    icon={Icons.FileText}
+                                    title="Plaid Concierge"
+                                    source="Plaid API"
+                                    dest="Normalized Transactions"
+                                    toroAction="SYNC & CLEAN"
+                                    icon={Icons.Activity}
                                     delay={100}
                                 />
 
-                                {/* Flow 3: Stripe -> Tunnel -> Localhost */}
+                                {/* Flow 3: POS -> QB */}
                                 <ArchitectureRow
-                                    title="The Pipe"
-                                    source="Stripe / Twilio"
-                                    dest="Localhost:3000"
-                                    toroAction="TUNNEL & ANALYZE"
-                                    icon={Icons.Terminal}
+                                    title="QuickBooks Concierge"
+                                    source="Your POS / App"
+                                    dest="QuickBooks Online"
+                                    toroAction="TRANSFORM & POST"
+                                    icon={Icons.FileText}
                                     delay={200}
                                 />
 
-                                {/* Flow 4: Plaid -> Sync -> API */}
+                                {/* Flow 4: All -> Intelligence */}
                                 <ArchitectureRow
-                                    title="Concierge (Plaid)"
-                                    source="Plaid / Banks"
-                                    dest="Your Backend API"
-                                    toroAction="SYNC & CLEAN"
-                                    icon={Icons.Activity}
+                                    title="Intelligence Layer"
+                                    source="All Financial Sources"
+                                    dest="Unified Truth"
+                                    toroAction="RECONCILE & ANALYZE"
+                                    icon={Icons.Brain}
                                     delay={300}
                                 />
+                            </div>
+
+                            <div className="mt-16 text-center">
+                                <p className="text-xs font-mono text-zinc-600 uppercase tracking-widest">
+                                    Powered by enterprise-grade infrastructure (Svix) • 99.99% uptime SLA
+                                </p>
                             </div>
                         </div>
                     </section>
@@ -1032,127 +1313,137 @@
                     <section id="pricing" className="py-24 border-t border-toro-border relative overflow-hidden bg-[#080808]">
                         <div className="absolute inset-0 grid-bg opacity-[0.05]"></div>
                         <div className="max-w-7xl mx-auto px-6 relative z-10">
-                            <SectionTitle badge="RELIABLE INFRASTRUCTURE">Pricing Built for Reliability</SectionTitle>
+                            <SectionTitle badge="PRICING">Serious infrastructure for serious financial operations</SectionTitle>
                             <p className="text-center text-zinc-400 max-w-2xl mx-auto -mt-10 mb-16 text-lg">
-                                Choose the level of control and reliability your infra requires.
+                                Stop building financial integrations. Let us own it.
                             </p>
 
                             <div className="grid lg:grid-cols-3 gap-6 mt-8">
-                                {/* Tier 1: Toro Ingest */}
+                                {/* Tier 1: Financial Concierge */}
                                 <RevealOnScroll delay={0} className="p-8 rounded-xl bg-zinc-900/30 border border-zinc-800 hover:border-zinc-700 transition-all flex flex-col group hover:bg-zinc-900/50">
                                     <div className="mb-6 border-b border-zinc-800 pb-6">
-                                        <h3 className="text-xl font-bold text-white mb-2">Toro Ingest</h3>
-                                        <div className="text-zinc-500 text-sm font-medium uppercase tracking-wide">Webhook Reliability & Data Safety</div>
+                                        <h3 className="text-xl font-bold text-white mb-2">Financial Concierge</h3>
+                                        <div className="text-zinc-500 text-sm font-medium uppercase tracking-wide">Per Integration (Stripe, Plaid, or QuickBooks)</div>
                                     </div>
 
                                     <div className="mb-6">
-                                        <div className="text-4xl font-bold text-white mb-2">$499<span className="text-lg text-zinc-500 font-normal">/mo</span></div>
-                                        <p className="text-zinc-400 text-sm">Scales by event volume</p>
+                                        <div className="text-4xl font-bold text-white mb-2">$2,500<span className="text-lg text-zinc-500 font-normal">/mo</span></div>
+                                        <p className="text-zinc-400 text-sm">Per financial provider integration</p>
                                     </div>
 
                                     <div className="mb-8">
                                         <div className="text-xs font-bold text-zinc-300 uppercase tracking-widest mb-4">Designed For</div>
                                         <p className="text-sm text-zinc-400 leading-relaxed">
-                                            SaaS companies ingesting high-volume financial webhooks. Teams tired of dropped, malformed, or unreplayable events.
+                                            Teams that need bulletproof Stripe, Plaid, or QuickBooks integration without building or maintaining it themselves.
                                         </p>
                                     </div>
 
                                     <ul className="space-y-4 mb-8 flex-1 text-sm text-zinc-300">
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>Unlimited webhook endpoints</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>Unlimited tunnels</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>Guaranteed event ingestion</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>Event replay & reprocessing</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>AI-assisted payload repair</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>Audit-ready event history</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>30-day log retention</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>Connection health monitoring</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>Schema normalization & mapping</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>Automatic retries with backoff</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>99.9% delivery guarantee</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>Enterprise-grade infrastructure (Svix)</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-zinc-500 shrink-0" /> <span>30-day event history</span></li>
                                     </ul>
 
-                                    <button onClick={() => openContact('Toro Ingest', '$499/mo')} className="w-full py-4 rounded-lg border border-zinc-700 text-white font-semibold hover:bg-zinc-800 transition-colors uppercase text-xs tracking-widest">Start with Ingestion</button>
+                                    <button onClick={() => openContact('Financial Concierge', '$1,500/mo')} className="w-full py-4 rounded-lg border border-zinc-700 text-white font-semibold hover:bg-zinc-800 transition-colors uppercase text-xs tracking-widest">Get Started</button>
                                 </RevealOnScroll>
 
-                                {/* Tier 2: Toro Sync */}
+                                {/* Tier 2: Financial Intelligence */}
                                 <RevealOnScroll delay={100} className="p-8 rounded-xl bg-[#0A0A0A] border border-green-500/30 relative flex flex-col shadow-[0_0_40px_rgba(34,197,94,0.05)] transform md:-translate-y-4 md:border-t-4 md:border-t-green-500">
                                     <div className="mb-6 border-b border-zinc-800 pb-6">
-                                        <h3 className="text-xl font-bold text-white mb-2">Toro Sync</h3>
-                                        <div className="text-green-400 text-sm font-medium uppercase tracking-wide">Managed Financial Integrations</div>
-                                    </div>
-
-                                    <div className="mb-6">
-                                        <div className="text-4xl font-bold text-white mb-2">$1,500<span className="text-lg text-zinc-500 font-normal">/mo</span></div>
-                                        <p className="text-zinc-400 text-sm">Per integration (e.g. Plaid, QuickBooks)</p>
-                                    </div>
-
-                                    <div className="mb-8">
-                                        <div className="text-xs font-bold text-zinc-300 uppercase tracking-widest mb-4">Designed For</div>
-                                        <p className="text-sm text-zinc-400 leading-relaxed">
-                                            Teams that do not want to build or maintain complex financial integrations where correctness is critical.
-                                        </p>
-                                    </div>
-
-                                    <ul className="space-y-4 mb-8 flex-1 text-sm text-zinc-300">
-                                        <li className="flex items-start gap-3"><span className="text-green-500 font-bold shrink-0">+</span> <span>Everything in Ingest</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-green-500 shrink-0" /> <span>Managed Plaid / QuickBooks Sync</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-green-500 shrink-0" /> <span>Token lifecycle management</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-green-500 shrink-0" /> <span>Automatic retries with backoff</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-green-500 shrink-0" /> <span>Schema normalization</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-green-500 shrink-0" /> <span>Integration health monitoring</span></li>
-                                    </ul>
-
-                                    <button onClick={() => openContact('Toro Sync', '$1,500/mo')} className="w-full py-4 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-500 transition-colors shadow-lg shadow-green-900/20 uppercase text-xs tracking-widest">Stop Maintaining Integrations</button>
-                                </RevealOnScroll>
-
-                                {/* Tier 3: Ledger Intelligence */}
-                                <RevealOnScroll delay={200} className="p-8 rounded-xl bg-zinc-900/30 border border-zinc-800 hover:border-zinc-700 transition-all flex flex-col group hover:bg-zinc-900/50">
-                                    <div className="mb-6 border-b border-zinc-800 pb-6">
-                                        <h3 className="text-xl font-bold text-white mb-2">Ledger Intelligence</h3>
-                                        <div className="text-purple-400 text-sm font-medium uppercase tracking-wide">Financial Truth & Reconciliation</div>
+                                        <h3 className="text-xl font-bold text-white mb-2">Financial Intelligence</h3>
+                                        <div className="text-green-400 text-sm font-medium uppercase tracking-wide">Reconciliation</div>
                                     </div>
 
                                     <div className="mb-6">
                                         <div className="text-4xl font-bold text-white mb-2">$5,000<span className="text-lg text-zinc-500 font-normal">/mo</span></div>
-                                        <p className="text-zinc-400 text-sm">Custom enterprise pricing available</p>
+                                        <p className="text-zinc-400 text-sm">Cross-provider intelligence layer</p>
                                     </div>
 
                                     <div className="mb-8">
                                         <div className="text-xs font-bold text-zinc-300 uppercase tracking-widest mb-4">Designed For</div>
                                         <p className="text-sm text-zinc-400 leading-relaxed">
-                                            CFO-grade financial visibility. Companies preparing for audits, due diligence, or massive scale.
+                                            CFOs and finance teams who need unified financial truth across Stripe, Plaid, and QuickBooks. Built for audits and compliance.
                                         </p>
                                     </div>
 
                                     <ul className="space-y-4 mb-8 flex-1 text-sm text-zinc-300">
-                                        <li className="flex items-start gap-3"><span className="text-purple-400 font-bold shrink-0">+</span> <span>Everything in Sync</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-purple-400 shrink-0" /> <span>Unified financial transaction ledger</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-purple-400 shrink-0" /> <span>Cross-provider reconciliation</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-purple-400 shrink-0" /> <span>Missing/Duplicate transaction detection</span></li>
-                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-purple-400 shrink-0" /> <span>AI-assisted discrepancy analysis</span></li>
+                                        <li className="flex items-start gap-3"><span className="text-green-500 font-bold shrink-0">+</span> <span>Everything in Concierge</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-green-500 shrink-0" /> <span>Unified financial transaction ledger</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-green-500 shrink-0" /> <span>Cross-provider reconciliation</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-green-500 shrink-0" /> <span>Anomaly & duplicate detection</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-green-500 shrink-0" /> <span>AI discrepancy analysis</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-green-500 shrink-0" /> <span>Compliance-ready audit trails</span></li>
+                                    </ul>
+
+                                    <button onClick={() => openContact('Financial Intelligence', '$3,500/mo')} className="w-full py-4 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-500 transition-colors shadow-lg shadow-green-900/20 uppercase text-xs tracking-widest">Get Financial Truth</button>
+                                </RevealOnScroll>
+
+                                {/* Tier 3: Enterprise */}
+                                <RevealOnScroll delay={200} className="p-8 rounded-xl bg-zinc-900/30 border border-zinc-800 hover:border-zinc-700 transition-all flex flex-col group hover:bg-zinc-900/50">
+                                    <div className="mb-6 border-b border-zinc-800 pb-6">
+                                        <h3 className="text-xl font-bold text-white mb-2">Enterprise</h3>
+                                        <div className="text-purple-400 text-sm font-medium uppercase tracking-wide">Custom Solutions & Compliance</div>
+                                    </div>
+
+                                    <div className="mb-6">
+                                        <div className="text-4xl font-bold text-white mb-2">Custom<span className="text-lg text-zinc-500 font-normal"></span></div>
+                                        <p className="text-zinc-400 text-sm">Let's talk about your requirements</p>
+                                    </div>
+
+                                    <div className="mb-8">
+                                        <div className="text-xs font-bold text-zinc-300 uppercase tracking-widest mb-4">Designed For</div>
+                                        <p className="text-sm text-zinc-400 leading-relaxed">
+                                            Organizations with unique compliance requirements, custom financial providers, or on-premise deployment needs.
+                                        </p>
+                                    </div>
+
+                                    <ul className="space-y-4 mb-8 flex-1 text-sm text-zinc-300">
+                                        <li className="flex items-start gap-3"><span className="text-purple-400 font-bold shrink-0">+</span> <span>Everything in Intelligence</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-purple-400 shrink-0" /> <span>Dedicated infrastructure</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-purple-400 shrink-0" /> <span>On-premise deployment option</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-purple-400 shrink-0" /> <span>Custom financial provider integrations</span></li>
+                                        <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-purple-400 shrink-0" /> <span>SOC-2 audit logs & compliance</span></li>
                                         <li className="flex items-start gap-3"><Icons.Check className="w-5 h-5 text-purple-400 shrink-0" /> <span>Priority support & SLA</span></li>
                                     </ul>
 
-                                    <button onClick={() => openContact('Ledger Intelligence', '$5,000/mo')} className="w-full py-4 rounded-lg border border-zinc-700 text-white font-semibold hover:bg-zinc-800 transition-colors uppercase text-xs tracking-widest">Start with Ledger</button>
+                                    <button onClick={() => openContact('Enterprise', 'Custom')} className="w-full py-4 rounded-lg border border-zinc-700 text-white font-semibold hover:bg-zinc-800 transition-colors uppercase text-xs tracking-widest">Contact Sales</button>
                                 </RevealOnScroll>
                             </div>
 
-                            {/* Enterprise Block */}
-                            <RevealOnScroll delay={300} className="mt-12 p-8 rounded-xl bg-zinc-900/20 border border-zinc-800 flex flex-col md:flex-row items-center justify-between gap-8">
-                                <div>
-                                    <h3 className="text-2xl font-bold text-white mb-2">Enterprise</h3>
-                                    <p className="text-zinc-400 mb-4">Custom Infrastructure & Compliance</p>
-                                    <div className="flex flex-wrap gap-4 text-sm text-zinc-500">
-                                        <span className="flex items-center gap-2"><Icons.Check className="w-4 h-4" /> Dedicated Infrastructure</span>
-                                        <span className="flex items-center gap-2"><Icons.Check className="w-4 h-4" /> On-prem Deployment</span>
-                                        <span className="flex items-center gap-2"><Icons.Check className="w-4 h-4" /> SOC Audit Logs</span>
-                                        <span className="flex items-center gap-2"><Icons.Check className="w-4 h-4" /> Architecture Reviews</span>
-                                    </div>
-                                </div>
-                                <button onClick={() => setIsContactOpen(true)} className="px-8 py-3 rounded-lg bg-white text-black font-bold hover:bg-zinc-200 transition-colors whitespace-nowrap">Talk to Sales</button>
-                            </RevealOnScroll>
-
                             <div className="mt-12 text-center border-t border-zinc-900 pt-8">
                                 <p className="text-zinc-600 text-xs uppercase tracking-widest font-mono">
-                                    Toro is infrastructure. Pricing reflects reliability, durability, and operational risk reduction.
+                                    Financial infrastructure shouldn't break. Pricing reflects reliability and correctness.
                                 </p>
                             </div>
+                        </div>
+                    </section>
+
+                    {/* --- Testimonials Section --- */}
+                    <section className="py-24 border-t border-toro-border bg-gradient-to-b from-zinc-900/10 to-transparent relative overflow-hidden">
+                        <div className="max-w-7xl mx-auto px-6">
+                            <SectionTitle badge="TRUSTED BY BUILDERS">What developers are saying</SectionTitle>
+
+
+                            {/* Testimonials Carousel */}
+                            <TestimonialsCarousel />
+
+
+                            {/* Floating Companies Banner */}
+                            <RevealOnScroll delay={100} className="mt-16 text-center">
+                                <div className="inline-block px-6 py-3 rounded-full bg-zinc-900/50 border border-zinc-800">
+                                    <div className="flex items-center gap-6 text-xs font-mono text-zinc-600 uppercase tracking-widest">
+                                        <span>Powering teams at</span>
+                                        <span className="text-zinc-400 hover:text-white transition-colors cursor-default">YC Startups</span>
+                                        <span className="text-zinc-700">•</span>
+                                        <span className="text-zinc-400 hover:text-white transition-colors cursor-default">Series A SaaS</span>
+                                        <span className="text-zinc-700">•</span>
+                                        <span className="text-zinc-400 hover:text-white transition-colors cursor-default">Enterprises</span>
+                                    </div>
+                                </div>
+                            </RevealOnScroll>
                         </div>
                     </section>
 
@@ -1162,11 +1453,11 @@
                             <SectionTitle badge="FAQ">Common Questions</SectionTitle>
                             <div className="space-y-6">
                                 {[
-                                    { q: "Do you replace Supabase?", a: "No. We protect Supabase. We sit in front of it to manage connection pooling and queueing so your low-code tools don't crash it." },
-                                    { q: "How does the CLI help my workflow?", a: "It keeps you in the flow state. Instead of deploying to the cloud just to test a webhook, the CLI pipes live data directly to your local N8N instance or AI agent. You get instant feedback and can fix bugs in real-time without waiting for a deployment pipeline." },
-                                    { q: "Is this secure?", a: "Yes. We encrypt all payloads at rest. For Plaid integration, we use AES-256 for token storage. We are SOC-2 Type 1 compliant (in progress)." },
-                                    { q: "Can I self host?", a: "Not yet. But the CLI is open source. We plan to offer a self-hosted Docker container for Enterprise plans later this year." },
-                                    { q: "What does it cost?", a: "During beta, it's free. At launch, we'll have a generous free tier for developers, with Team plans starting at $99/mo." }
+                                    { q: "Which financial providers do you support?", a: "Currently Stripe, Plaid, and QuickBooks Online. We're adding support for more providers based on customer demand. Enterprise customers can request custom integrations." },
+                                    { q: "Do you store our financial credentials?", a: "No. You connect your Stripe, Plaid, and QuickBooks accounts directly through their official OAuth flows. We receive API access tokens that you can revoke at any time. We monitor connection health and alert you if reconnection is needed." },
+                                    { q: "What happens if a Stripe webhook fails?", a: "We verify, store, and retry with exponential backoff. Webhooks are persisted so even if your system is down, you won't lose financial events. This is powered by enterprise-grade infrastructure (Svix)." },
+                                    { q: "Can you reconcile transactions across multiple providers?", a: "Yes. Our Intelligence tier automatically reconciles Stripe payments with Plaid bank transactions and QuickBooks ledger entries. We detect duplicates, missing events, and discrepancies." },
+                                    { q: "Is this SOC-2 compliant?", a: "Yes. We encrypt all financial data at rest with AES-256. Our infrastructure is SOC-2 Type 2 certified. We provide audit trails and event logs for compliance teams." }
                                 ].map((item, i) => (
                                     <RevealOnScroll key={i} delay={i * 100} className="p-6 rounded-xl bg-zinc-900/20 border border-zinc-800 hover:border-toro-border hover:bg-zinc-900/40 transition-colors cursor-default">
                                         <h3 className="font-bold mb-2">{item.q}</h3>

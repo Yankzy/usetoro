@@ -8,4 +8,7 @@ pydantic>=2.0
 djangorestframework
 django-cors-headers
 cryptography>=41.0.0
-ipython-9.9.0
+ipython
+graphene-django>=3.0.0
+nats-py>=2.2.0
+svix>=1.0.0

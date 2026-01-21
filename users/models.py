@@ -172,11 +172,18 @@ class User(AbstractBaseUser, PermissionsMixin):
     # but the reference had explicit field. I'll omit explicit password field to use AbstractBaseUser's default unless user asks.
     
     date_joined = models.DateTimeField(default=timezone.now)
-    is_premium = models.BooleanField(default=False)
+    plan_tier = models.CharField(max_length=50, default="free")
+    plan_tier_validity_from = models.DateTimeField(blank=True, null=True)
+    plan_tier_validity_to = models.DateTimeField(blank=True, null=True)
+    plan_tier_validity_auto_renew = models.BooleanField(default=True)
+    plan_tier_validity_auto_renew_last_run = models.DateTimeField(blank=True, null=True)
+    plan_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    plan_currency = models.CharField(max_length=3, default="USD")
+    plan_payment_method = models.CharField(max_length=50, default="manual")
+    plan_payment_method_validity_from = models.DateTimeField(blank=True, null=True)
+    plan_payment_method_validity_to = models.DateTimeField(blank=True, null=True)
     premium_since = models.DateTimeField(blank=True, null=True)
     handle = models.CharField(max_length=50, null=True, blank=True)
-    trading_style = models.CharField(max_length=50, null=True, blank=True)
-    alpace_supplementary_info = models.JSONField(null=True, blank=True, default=dict)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []

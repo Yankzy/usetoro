@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
@@ -7,10 +7,10 @@ COPY go/go.mod go/go.sum ./
 RUN go mod download
 
 # Copy source code from go directory
-COPY go/main.go ./
+COPY go/ .
 
 # Build the binary
-RUN go build -o /go-ingress main.go
+RUN go build -o /go-ingress ./cmd/gate/main.go
 
 # Final stage - minimal image
 FROM alpine:latest

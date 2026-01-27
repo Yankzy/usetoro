@@ -177,6 +177,3 @@ migrate:
 
 sqlc:
 	~/go/bin/sqlc generate
-
-migrate-go:
-	go run ./go-gate/migrate.go

@@ -14,7 +14,7 @@ else
 endif
 
 # App Services
-SERVICES := app-django redis db svix-server
+SERVICES := redis db svix-server go-app migrator nginx
 
 .PHONY: deploy up-scanner down-scanner build-scanner
 deploy:
@@ -32,22 +32,6 @@ help:
 venv:
 	python3.12 -m venv .venv && $(ENV) && pip install --upgrade pip
 
-proj:
-	django-admin startproject config . && $(PY) && python manage.py startapp users
-
-app:
-	@echo "Enter the app name: "; \
-	read APP_NAME; \
-	mkdir -p $${APP_NAME}-be_py/$${APP_NAME} && \
-	echo "# $${APP_NAME}" > $${APP_NAME}-be_py/README.md && \
-	echo " " >> $${APP_NAME}-be_py/pyproject.toml && \
-	echo "urlpatterns = []" >> $${APP_NAME}-be_py/$${APP_NAME}/urls.py && \
-	python manage.py startapp $$APP_NAME $${APP_NAME}-be_py/$${APP_NAME}
-
-super:
-	@echo "Enter the username: "; \
-	read USERNAME; \
-	python manage.py createsuperuser  && python manage.py changepassword $$USERNAME
 
 static:
 	$(PY) collectstatic
@@ -63,9 +47,6 @@ logs:
 
 svix-logs:
 	$(DOCKER_COMPOSE) logs -f svix-server
-
-django-logs:
-	$(DOCKER_COMPOSE) logs -f app-django
 
 ls:
 	$(DOCKER_COMPOSE) run celery ls -la /app/
@@ -88,9 +69,6 @@ tail:
 tails:
 	$(DOCKER_COMPOSE) exec app-django /bin/bash -c "tail -f .logs/asgi.log & tail -f .logs/celery.log & bash"
 
-
-manage:
-	$(DOCKER_COMPOSE) exec app-django sh -c "cd fignode && python manage.py $(ARGS)"
 
 exec:
 	$(DOCKER_COMPOSE) exec $(ARGS)
@@ -116,6 +94,12 @@ up: create_networks
 	$(DOCKER_COMPOSE) up --remove-orphans $(SERVICES)
 upd: create_networks
 	$(DOCKER_COMPOSE) up -d --build --remove-orphans $(SERVICES)
+
+getlogs:
+	@echo "Enter the service name: "; \
+	read SER_NAME; \
+	$(DOCKER_COMPOSE) logs -f $$SER_NAME
+
 
 ssl:
 	docker-compose -f container/docker-compose.ssl.yml up -d
@@ -174,18 +158,6 @@ create_networks:
 		docker network create toro-net; \
 	fi
 
-
-
-install:
-	pip install -e . --config-settings editable_mode=strict
-
-be_py:
-	git clone --depth 1 --branch main git@github.com:zeed-ma/zeed-be_py.git
-
-clone:
-	@echo "Enter the app name: "; \
-	read APP_NAME; \
-	git clone --depth 1 --branch main git@github.com:zeed-ma/zeed-be-$${APP_NAME}_py.git
 	
 prune:
 	docker system prune -a --volumes -f && docker volume prune -f && docker network prune -f && sudo systemctl restart docker
@@ -200,38 +172,8 @@ install_make:
 	apt-get update && apt-get install -y zsh && chsh -s $(which zsh) root && make install && uv pip install --upgrade pip
 
 
-
-
-
-make_migration:
-	$(DOCKER_COMPOSE) exec app-django python manage.py makemigrations
-
 migrate:
-	$(DOCKER_COMPOSE) exec app-django python manage.py migrate
+	$(DOCKER_COMPOSE) up migrator
 
-showmigrations:
-	$(DOCKER_COMPOSE) exec app-django python manage.py showmigrations 
-
-n8n_up:
-	docker-compose -f compose/docker-compose.n8n.yml up -d n8n
-	ngrok http --url=prime-legible-turkey.ngrok-free.app 5678  
-
-n8n_down:
-	docker-compose -f compose/docker-compose.n8n.yml down
-n8n_logs:
-	@echo "Enter the service name: "; \
-	read SER_NAME; \
-	docker-compose -f compose/docker-compose.n8n.yml exec n8n tail -f /home/node/.n8n/$(SER_NAME).log
-
-commit:
-	@echo "Enter commit message: "; \
-	read MSG; \
-	CUR_BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
-	git add -u && git commit -m "$$MSG" && git push origin "$$CUR_BRANCH"
-
-# Webhook Bridge Commands
-bridge:
-	$(DOCKER_COMPOSE) exec app-django python manage.py run_webhook_bridge
-
-bridge-logs:
-	$(DOCKER_COMPOSE) logs -f app-django | grep "webhook-bridge"
+sqlc:
+	~/go/bin/sqlc generate

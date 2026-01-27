@@ -1,6 +1,6 @@
-module github.com/yourusername/usetoro
+module github.com/Yankzy/usetoro
 
-go 1.21
+go 1.22
 
 require (
 	github.com/dgraph-io/ristretto v0.1.1

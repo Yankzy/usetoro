@@ -1,3 +1,8 @@
+x-nats-common: &nats-common
+  image: nats:2.9-alpine
+  networks:
+    - toro-net
+
 services:
   db:
     image: postgres:15-alpine
@@ -8,8 +13,32 @@ services:
       POSTGRES_PASSWORD: toro_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh
     ports:
       - "5435:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U toro" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - toro-net
+
+  go-app:
+    build:
+      context: ../
+      dockerfile: container/go/Dockerfile
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+    depends_on:
+      db:
+        condition: service_healthy
+      nats-1:
+        condition: service_healthy
     networks:
       - toro-net
 
@@ -24,11 +53,6 @@ services:
     networks:
       - toro-net
 
-  nats-common: &nats-common
-    image: nats:2.9-alpine
-    networks:
-      - toro-net
-
   nats-1:
     <<: *nats-common
     command: >
@@ -38,6 +62,11 @@ services:
       - "8222:8222"
     volumes:
       - nats_1_data:/data
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8222/varz" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   nats-2:
     <<: *nats-common
@@ -71,7 +100,7 @@ services:
     restart: always
     environment:
       SVIX_QUEUE_TYPE: redis
-      SVIX_DB_DSN: postgresql://toro:toro_password@db:5432/toro
+      SVIX_DB_DSN: postgresql://toro:toro_password@db:5432/svix
       SVIX_REDIS_DSN: redis://svix-redis:6379
       SVIX_JWT_SECRET: ${SVIX_JWT_SECRET}
     ports:
@@ -82,28 +111,6 @@ services:
     networks:
       - toro-net
 
-  app-django:
-    build:
-      context: ..
-      dockerfile: container/django/Dockerfile
-    environment:
-      POSTGRES_DB: toro
-      POSTGRES_USER: toro
-      POSTGRES_PASSWORD: toro_password
-      POSTGRES_HOST: db
-      REDIS_URL: redis://redis:6379
-      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
-    ports:
-      - "8002:8000"
-    depends_on:
-      - redis
-      - db
-    volumes:
-      - ..:/app
-      - django_static:/app/staticfiles
-    networks:
-      - toro-net
-
   nginx:
     build:
       context: ../
@@ -111,16 +118,25 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - app-django
+      - go-app
+      - svix-server
+    networks:
+      - toro-net
+
+  migrator:
+    image: gomicro/goose
+    command: "goose -dir /migrations postgres \"user=toro password=toro_password dbname=toro host=db sslmode=disable\" up"
     volumes:
-      - django_static:/app/staticfiles
+      - ../sql/schema:/migrations
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - toro-net
 
 volumes:
   postgres_data:
   redis_data:
-  django_static:
   nats_1_data:
   nats_2_data:
   nats_3_data:

@@ -4,15 +4,15 @@
 We do not try to embed Go inside Python. Instead, we run them as parallel services that share a Database (Postgres) and communicate via a Message Queue (Redis Streams).
 
 - **The Muscle (Go)**: Sits at the edge. Receives high-volume webhooks (e.g. N8N, Slack, Stripe), handles ZERO logic, and instantly pushes to Redis.
-- **The Brain (Django)**: Manages users, organization settings, and the "AI Analysis/Repair".
-- **The Glue (Redis)**: Go pushes data into Streams; Django consumes, validates, and writes to Postgres.
+- **The Brain (GO)**: Manages users, organization settings, and the "AI Analysis/Repair".
+- **The Glue (Redis)**: Go pushes data into Streams; GO consumes, validates, and writes to Postgres.
 
 ### The Traffic Flow
 
 1. **Ingest**: Webhook -> Go Service (`api.usetoro.io/hooks/{source}`).
 2. **Buffer**: Go generates ID -> Pushes raw JSON to Redis Stream `toro:ingest`.
 3. **Process**:
-    - **Throttled Consume**: Django Worker reads `toro:ingest` (Consumer Group).
+    - **Throttled Consume**: GO Worker reads `toro:ingest` (Consumer Group).
     - **AI Repair**: If JSON is valid -> Write to Postgres. If invalid -> Call LLM to repair -> Write to Postgres.
 
 ## 2. The Muscle: High-Performance Ingestion (Go)

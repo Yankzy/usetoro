@@ -1,244 +1,248 @@
-# Toro Platform
+# Toro Platform - Developer Documentation
 
-> **Banking-grade webhook ingestion & normalization platform**
+> Banking-grade financial intelligence platform with fault-tolerant webhook architecture
 
-**Domain:** `usetoro.io`  
-**Stack:** Go (pgx/v5) + Django + NATS JetStream + Svix
+## Table of Contents
 
----
+- [Architecture Overview](#architecture-overview)
+- [Technology Stack](#technology-stack)
+- [Getting Started](#getting-started)
+- [Project Structure](#project-structure)
+- [Core Systems](#core-systems)
+- [Development Workflow](#development-workflow)
+- [API Documentation](#api-documentation)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Troubleshooting](#troubleshooting)
 
-## Overview
+## Architecture Overview
 
-Toro is a **webhook proxy and normalization platform** for financial services, providing:
+Toro uses a "Thick Go, Thin Python" architecture. Go handles the high-speed IO, while Python (Flask) acts as the intelligent "Refinery" for data analytics and normalization.
 
-1. **High-Performance Ingress** - Go service (pgxpool, 10k+ req/s) 
-2. **The Vault** - NATS JetStream for banking-grade durable persistence
-3. **Normalization Bridge** - Python transforms provider-specific payloads
-4. **The Cannon** - Svix delivers to customer endpoints with retries
+```mermaid
+graph TD
+    subgraph External[EXTERNAL PROVIDERS Ingress]
+        Providers["Stripe, Plaid, QuickBooks"]
+    end
 
-### Architecture
+    subgraph Ingress[GO INGRESS SERVICE]
+        GoGate[Go Gate]
+        note1["Signature verification<br/>10,000+ req/s<br/>Ristretto Caching<br/>Zero DB hits on hot path"]
+    end
 
+    subgraph Vault[THE VAULT NATS JetStream]
+        NATS[NATS Stream]
+        note2["3-node RAFT cluster<br/>File-backed storage<br/>Durable consumers<br/>Immutable Event Log"]
+    end
+
+    subgraph Refinery[PYTHON ANALYTICS REFINERY Flask]
+        Flask[Flask Worker]
+        note3["AI/LLM Processing<br/>Complex Data Normalization<br/>Financial Analytics<br/>OCR & Document Parsing"]
+    end
+
+    subgraph Egress[THE CANNON Svix Egress]
+        Svix[Svix Server]
+        note4["Retry logic<br/>Webhook signing<br/>Delivery tracking<br/>Fan-out to endpoints"]
+    end
+
+    subgraph Customers[CUSTOMER ENDPOINTS/DATABASES]
+        CustomerApp[customer-app.com/webhooks]
+    end
+    
+    subgraph Frontend[Frontend & API]
+        React[React Frontend]
+        FlaskAPI[Flask GraphQL API]
+    end
+
+    Providers -->|POST /v1/webhooks/provider/conn_id| GoGate
+    GoGate -->|Publish| NATS
+    NATS -->|Subscribe| Flask
+    Flask -->|dispatch_webhook| Svix
+    Svix -->|HTTP POST| CustomerApp
+    
+    React -->|GraphQL queries| FlaskAPI
+    FlaskAPI -.->|Read-Layer Only| Flask
 ```
-Stripe/Plaid/QuickBooks Webhooks
-         ↓
-   Go Ingress Service (Port 8080)  
-   - Signature verification
-   - BYOK (customer API keys)
-   - 10,000+ req/s capacity
-         ↓
-   NATS JetStream Cluster
-   - 3-node RAFT consensus
-   - File-backed storage
-   - Source of truth
-         ↓
-   Python Normalization Bridge
-   - Transform Stripe → unified schema
-   - Enrich Plaid notifications
-   - QuickBooks mapping
-         ↓
-   Svix Egress  
-   - Retry logic
-   - Delivery tracking
-   - Webhook signing
-         ↓
-   Customer Endpoints/Databases
-```
 
-**Key Principles:**
-- ✅ BYOK (Bring Your Own Keys) - customers provide their provider credentials
-- ✅ Go for ingress (speed) + Python for normalization (flexibility)
-- ✅ NATS as durable vault (banking-grade reliability)
-- ✅ Provider-agnostic normalization (unified webhook schema)
-- ✅ Atomic handoff (no message loss)
+### Design Principles
 
----
+1. **Go for Speed**: Ingress and Routing are handled by Go.
+2. **Python for Smarts**: Flask handles Data Analytics, LLM Logic, and Normalization.
+3. **Vault First**: All events persist to NATS JetStream before any processing.
+4. **Atomic Handoff**: Workers only ACK NATS after successful processing/dispatch.
+5. **Isolated Infrastructure**: Svix runs as a sidecar with its own Redis.
 
-## Quick Start
+## Technology Stack
+
+### Backend
+
+- **Go 1.22+** - High-performance Ingress ("The Gate")
+  - `pgx/v5` - Binary PostgreSQL driver
+  - `ristretto` - High-performance memory cache
+  - `nats.go` - JetStream Client
+
+- **Python (Flask)** - Analytics & Normalization ("The Refinery")
+  - `Flask 3.0` - Lightweight microframework
+  - `Graphene-Python` - GraphQL API
+  - `SQLAlchemy` - Database ORM (for complex analytics queries)
+  - `Pydantic` - Data validation & Schema definition
+
+- **Storage & Messaging**
+  - **PostgreSQL 15** - Unified Storage (Tenants, Transactions, Analytics)
+  - **NATS JetStream** - The Event Log (Source of Truth)
+  - **Svix** - Webhook Dispatch
+  - **Redis** - Hot state & Idempotency keys
+
+### Frontend
+
+- **React 18** - UI Library
+- **TypeScript** - Type Safety
+- **Redux Toolkit** - State Management
+- **Vite** - Build Tool
+
+### Infrastructure
+
+- **Docker Compose** - Orchestration
+- **Nginx** - Reverse Proxy & WebSocket Termination
+
+## Getting Started
 
 ### Prerequisites
+
 - Docker & Docker Compose
 - Python 3.12+
-- Go 1.21+
-- Node.js 18+ (for frontend)
+- Go 1.22+
+- Node.js 18+
 
-### Setup
+### Initial Setup
 
-1. **Clone and configure**
+1. **Clone & Configure**
    ```bash
-   git clone <repo-url>
-   cd usetoro/container
+   git clone <repo>
+   cd usetoro
    cp .env.example .env
-   # Edit .env and set SVIX_JWT_SECRET
    ```
 
-2. **Start services**
+2. **Start Infrastructure**
    ```bash
-   make build
-   make upd
+   make up  # Starts Postgres, NATS, Redis, Svix
    ```
 
-3. **Initialize database**
+3. **Initialize Database**
    ```bash
-   make migrate
-   make super
+   make migrate-go  # Runs Goose migrations
    ```
 
-4. **Start webhook bridge**
+4. **Start Services**
    ```bash
-   make bridge
+   make dev  # Starts Go Gate + Flask Refinery
    ```
 
-5. **Access application**
-   - Frontend: http://localhost
-   - Go Ingress: http://localhost:8080
-   - GraphQL Playground: http://localhost:8002/toro_graphql/
-   - Django Admin: http://localhost/admin
+### Access
 
----
+- **Frontend**: [http://localhost:3000](http://localhost:3000)
+- **GraphQL API**: [http://localhost:8000/graphql](http://localhost:8000/graphql)
+- **Svix Dashboard**: [http://localhost:8071](http://localhost:8071)
 
-## Core Features
+## Project Structure
 
-### 1. High-Performance Webhook Ingress
-- **Go service** receives webhooks from Stripe, Plaid, QuickBooks
-- **URL format**: `POST /v1/webhooks/{provider}/{connection_id}`
-- **Performance**: 10,000+ requests/second
-- **Security**: Provider-specific signature verification
-
-### 2. Durable Persistence (NATS JetStream)
-- **3-node cluster** with RAFT consensus
-- **File-backed storage** survives crashes
-- **Atomic ACK** only after Svix confirms delivery
-
-### 3. Intelligent Normalization
-- **Stripe** → Unified schema transformation
-- **Plaid** → Fetch full data from notifications
-- **QuickBooks** → Event mapping
-
-### 4. Reliable Delivery (Svix)
-- **Exponential backoff** retry logic
-- **Webhook signing** for security
-- **Delivery tracking** and monitoring
-
----
-
-## Development
-
-### Common Commands
-
-```bash
-# Start all services
-make upd
-
-# Start webhook bridge
-make bridge
-
-# View logs
-make django-logs
-make svix-logs
-make bridge-logs
-
-# Database operations
-make migrate
-make shell
-
-# Build Go service
-cd go && go build
-
-# Frontend development
-cd frontend && npm run dev
-```
-
-### Project Structure
-
-```
+```text
 usetoro/
-├── go/                  # Go ingress service
-│   ├── main.go         # Webhook receiver
-│   ├── go.mod          # Dependencies
-│   └── go.sum
-├── config/             # Django settings
-├── webhookks/          # Webhook system
-│   ├── models.py       # ProviderConnection (BYOK)
-│   ├── normalization.py# Provider transformations
-│   └── management/commands/
-│       └── run_webhook_bridge.py
-├── users/              # User management
-├── gql/                # GraphQL layer
-├── frontend/           # React app
-├── container/          # Docker config
-│   ├── go/Dockerfile   # Go service image
-│   └── docker-compose.yml
-└── docs.md            # Full developer docs
+├── go-gate/                # The Ingress (Go)
+│   ├── cmd/main.go         # Entry point
+│   ├── internal/
+│   │   ├── api/            # HTTP Handlers
+│   │   ├── ingest/         # NATS Publishers
+│   │   └── security/       # Signature Verification
+│   └── go.mod
+│
+├── python-refinery/        # The Brain (Flask)
+│   ├── app.py              # Flask Entry point
+│   ├── worker.py           # NATS Consumer Entry point
+│   ├── core/
+│   │   ├── models.py       # SQLAlchemy Models
+│   │   ├── schema.py       # GraphQL Schema
+│   │   └── database.py     # DB Connection
+│   ├── normalization/      # Provider Logic
+│   │   ├── stripe.py
+│   │   └── plaid.py
+│   └── bridge/             # NATS -> Svix Logic
+│
+├── sql/                    # Database Schema
+│   └── schema/             # Goose Migrations
+│
+├── container/              # Docker Configs
+│   ├── docker-compose.yml
+│   └── nginx/
+│
+└── Makefile                # Command shortcuts
 ```
 
----
+## Core Systems
 
-## How It Works
+### 1. Go Ingress ("The Gate")
 
-### Complete Flow: Stripe Webhook → Customer Endpoint
+Handles the "Firehose" of incoming webhooks.
 
-1. **Provider sends webhook**
-   ```bash
-   Stripe POSTs to: https://your-domain.com/v1/webhooks/stripe/550e8400-e29b-...
-   ```
+- **Port**: 8080
+- **Responsibility**: Auth -> Cache Check -> NATS Publish.
+- **Zero Logic**: It does not parse JSON deeply. It treats payloads as `[]byte`.
 
-2. **Go ingress validates**
-   - Extracts `connection_id` from URL
-   - Queries Django API for customer's webhook secret
-   - Verifies Stripe signature
-   - Publishes raw payload to NATS JetStream
+### 2. NATS JetStream ("The Vault")
 
-3. **NATS durably persists**
-   - Stored on disk (file-backed)
-   - Replicated across 3 nodes
-   - Survives crashes and restarts
+Immutable ledger of all raw events.
 
-4. **Python bridge normalizes**
-   - Pulls from NATS
-   - Transforms to unified schema
-   - For Plaid: fetches full data using customer API key
+- **Stream**: `TORO_EVENTS`
+- **Subjects**: `raw.{provider}.{tenant_id}`
 
-5. **Svix delivers**
-   - Sends normalized webhook to customer endpoint
-   - Retries on failure
-   - Adds webhook signatures
+### 3. Python Refinery ("The Hands")
 
-6. **Atomic ACK**
-   - Bridge only ACKs NATS after Svix confirms delivery
-   - If Svix fails, NATS redelivers automatically
+Consumes from NATS and applies business logic.
 
----
+- **Worker Process**: `python worker.py`
+- **Responsibility**:
+  - Read raw JSON.
+  - Fetch "BYOK" secrets from DB.
+  - Call Provider API (e.g. Plaid) for extra data.
+  - Normalize to ToroTransaction.
+  - Dispatch to Svix.
 
-## API Usage
+### 4. Flask API ("The Read Layer")
 
-### Webhook Ingress URLs
+Serves the Frontend.
 
-Customers configure these URLs in their provider dashboards:
+- **Port**: 5000 (Proxied to 80)
+- **Tech**: Flask + Graphene.
+- **Why Flask?**: We need Python's data libraries (Pandas/NumPy) for the "Analytics" dashboard (Burn rate, Cash flow forecasting) which are hard to write in Go.
 
-```
-Stripe:     POST https://your-domain.com/v1/webhooks/stripe/{connection_id}
-Plaid:      POST https://your-domain.com/v1/webhooks/plaid/{connection_id}
-QuickBooks: POST https://your-domain.com/v1/webhooks/quickbooks/{connection_id}
-```
+## API Documentation (GraphQL)
 
-### GraphQL Example
+Since we removed Django, we use Graphene-Python directly with Flask.
+
+**Endpoint**: `/graphql`
+
+### Queries (Analytics)
 
 ```graphql
-# Fetch normalized webhook messages
-query {
-  webhookMessages(limit: 50) {
-    id
-    eventType
-    payload
-    timestamp
+query GetCashflow {
+  analytics(tenantId: "uuid") {
+    burnRate
+    runwayDays
+    forecast(days: 30) {
+      date
+      predictedBalance
+    }
   }
 }
+```
 
-# Manually dispatch webhook
-mutation {
-  dispatchWebhook(
-    eventType: "payment.succeeded"
-    payload: {amount: 100, currency: "USD"}
+### Mutations (Control)
+
+```graphql
+mutation DispatchTest {
+  triggerWebhook(
+    eventType: "transaction.created",
+    payload: "{\"amount\": 100}"
   ) {
     success
     messageId
@@ -246,86 +250,26 @@ mutation {
 }
 ```
 
----
+## Deployment & Performance
 
-## Reliability Guarantees
+### Why this is faster than Django
 
-| Feature | Implementation |
-|---------|----------------|
-| **No Message Loss** | NATS file storage + durable consumer |
-| **At-Least-Once Delivery** | Explicit ACK only after Svix confirms |
-| **Survive Crashes** | NATS WAL + Docker volumes |
-| **High Throughput** | Go ingress handles 10,000+ req/s |
-| **Provider Agnostic** | Normalization layer unifies schemas |
-| **Zero Duplicates** | Redis idempotency guard (24hr dedup window) |
-| **Cache Hit Ratio** | 99.7% of secrets served from memory (5min TTL) |
-| **Poison Pill Protection** | NATS DLQ with MaxDeliver=5 |
+1. **No Middleware Bloat**: Flask is barebones. We only add what we need.
+2. **Go Ingress**: The heavy HTTP lifting is done by Go, not Gunicorn/uWSGI.
+3. **Async Workers**: The Python `worker.py` can run essentially as a script without the overhead of a web server framework.
 
----
+### Production Dockerfile (Python)
 
-## Performance Optimizations
+```dockerfile
+FROM python:3.11-slim-bookworm
 
-### 🚀 Production-Ready Enhancements
+WORKDIR /app
 
-#### 1. In-Memory Secrets Cache (Go)
-- **Problem**: Database bottleneck at 10,000+ req/s
-- **Solution**: Ristretto cache (100MB, 5min TTL)
-- **Impact**: **99.7% reduction** in DB queries (10k → 33/sec)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-#### 2. Idempotency Guard (Python)
-- **Problem**: Duplicate processing on NATS redelivery
-- **Solution**: Redis dedup keys with 24hr TTL
-- **Impact**: **0% duplicate webhooks** guaranteed
+COPY . .
 
-#### 3. Dead Letter Queue (NATS)
-- **Problem**: Poison pill messages blocking queue
-- **Solution**: MaxDeliver=5 configuration
-- **Impact**: Queue never blocked by bad messages
-
----
-
-## Deployment
-
-See [docs.md](./docs.md) for production deployment guide.
-
-**Quick checklist**:
-- Set `SVIX_JWT_SECRET` and `FIELD_ENCRYPTION_KEY`
-- Configure SSL for webhook URLs
-- Run bridge as systemd service
-- Set up monitoring for NATS and Svix
-- Configure backups for PostgreSQL and NATS volumes
-
----
-
-## Testing
-
-**Test Go ingress**:
-```bash
-curl -X POST http://localhost:8080/v1/webhooks/stripe/test-conn-id \
-  -H "Content-Type: application/json" \
-  -d '{"type":"charge.succeeded","id":"evt_123"}'
+# Run the API and the Worker side-by-side (or separate containers)
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "app:app"]
 ```
-
-**Verify NATS persistence**:
-```bash
-docker-compose exec nats-1 nats stream info TORO_INGEST
-```
-
-**Test bridge**:
-```bash
-make bridge-logs | grep "normalized"
-```
-
----
-
-## Support
-
-- **Documentation**: [docs.md](./docs.md)
-- **Implementation Plan**: [.gemini/antigravity/brain/.../implementation_plan.md]
-- **GraphQL Playground**: http://localhost:8002/toro_graphql/
-
----
-
-## License
-
-[Your License Here]

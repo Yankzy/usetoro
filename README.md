@@ -130,7 +130,7 @@ graph TD
 
 3. **Initialize Database**
    ```bash
-   make migrate-go  # Runs Goose migrations
+   make migrate  # Runs Goose migrations
    ```
 
 4. **Start Services**

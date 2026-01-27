@@ -1,13 +1,17 @@
 module github.com/Yankzy/usetoro
 
-go 1.22
+go 1.24.0
+
+toolchain go1.24.4
 
 require (
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/google/uuid v1.5.0
 	github.com/jackc/pgx/v5 v5.5.1
 	github.com/nats-io/nats.go v1.31.0
+	github.com/sony/gobreaker v1.0.0
 	github.com/stripe/stripe-go/v76 v76.16.0
+	golang.org/x/time v0.14.0
 )
 
 require (

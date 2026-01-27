@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,11 +23,9 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	// 2. Load and Validate Configuration
-	cfg := config.Load()
-
-	// GO CONCEPT: Fail Fast
-	if cfg.DatabaseURL == "" {
-		logger.Error("DATABASE_URL is required")
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("Configuration Loading Failed", "error", err)
 		os.Exit(1)
 	}
 
@@ -51,8 +48,8 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("db config error: %w", err)
 	}
-	dbConfig.MaxConns = 25
-	dbConfig.MinConns = 5
+	dbConfig.MaxConns = int32(cfg.DBMaxConns)
+	dbConfig.MinConns = int32(cfg.DBMinConns)
 
 	dbPool, err := pgxpool.NewWithConfig(ctx, dbConfig)
 	if err != nil {
@@ -61,6 +58,12 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	defer dbPool.Close()
 
 	if err := dbPool.Ping(ctx); err != nil {
+		logger.Error("db ping failed",
+			"error", err,
+			"host", dbConfig.ConnConfig.Host,
+			"port", dbConfig.ConnConfig.Port,
+			"database", dbConfig.ConnConfig.Database,
+		)
 		return fmt.Errorf("db ping failed: %w", err)
 	}
 	logger.Info("✅ Connected to PostgreSQL")
@@ -68,7 +71,9 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// 2. NATS JetStream (Durability Layer)
 	nc, err := nats.Connect(cfg.NatsURL,
 		nats.Name("toro-ingress"),
-		nats.MaxReconnects(-1),
+		nats.MaxReconnects(10),
+		nats.ReconnectWait(2*time.Second),
+		nats.ReconnectJitter(500*time.Millisecond, 2*time.Second),
 	)
 	if err != nil {
 		return fmt.Errorf("nats connect error: %w", err)
@@ -97,32 +102,20 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// =========================================================================
 
 	st := store.NewStore(dbPool, cache)
-	pub := ingest.NewPublisher(js)
-	h := api.NewHandler(logger, st, pub)
-	mux := api.NewRouter(h)
-
-	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: mux,
-		// Timeouts
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
+	pub := ingest.NewPublisher(nc, js)
+	// DI: Create Server
+	srv := api.NewServer(cfg, logger, st, pub)
 
 	// =========================================================================
 	// STARTUP & GRACEFUL SHUTDOWN
 	// =========================================================================
 
-	serverErrors := make(chan error, 1)
-	go func() {
-		logger.Info("🐂 Toro Ingress started", "port", cfg.Port)
-		serverErrors <- srv.ListenAndServe()
-	}()
+	serverErrors := srv.Start()
 
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
 
+	// We wait for either a server error or a shutdown signal
 	select {
 	case err := <-serverErrors:
 		return fmt.Errorf("server error: %w", err)

@@ -1,0 +1,149 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/stripe/stripe-go/v76"
+)
+
+// --- Mocks ---
+
+type MockStore struct {
+	Secret string
+	Err    error
+}
+
+func (m *MockStore) GetWebhookSecret(ctx context.Context, connID string) (string, error) {
+	if m.Err != nil {
+		return "", m.Err
+	}
+	return m.Secret, nil
+}
+
+func (m *MockStore) Ping(ctx context.Context) error {
+	return nil
+}
+
+type MockPublisher struct {
+	PublishErr error
+	Events     []stripe.Event
+}
+
+func (m *MockPublisher) PublishStripeEvent(ctx context.Context, connID, toroEventID string, event stripe.Event, body []byte) error {
+	if m.PublishErr != nil {
+		return m.PublishErr
+	}
+	m.Events = append(m.Events, event)
+	return nil
+}
+
+func (m *MockPublisher) Ping(ctx context.Context) error {
+	return nil
+}
+
+// --- Tests ---
+
+func TestHandleStripeWebhook(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	secret := "whsec_test_secret"
+
+	tests := []struct {
+		name           string
+		connID         string
+		payload        string
+		signature      string
+		mockSecret     string
+		mockStoreErr   error
+		mockPubErr     error
+		expectedStatus int
+	}{
+		{
+			name:           "Success",
+			connID:         "conn_123",
+			payload:        `{"id": "evt_123", "object": "event", "api_version": "2023-10-16"}`,
+			signature:      generateSignature(t, `{"id": "evt_123", "object": "event", "api_version": "2023-10-16"}`, secret),
+			mockSecret:     secret,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Missing Connection ID",
+			connID:         "",
+			payload:        `{}`,
+			expectedStatus: http.StatusBadRequest, // Handler checks r.PathValue("conn_id")
+		},
+		{
+			name:           "Store Lookup Failed",
+			connID:         "conn_123",
+			payload:        `{}`,
+			mockStoreErr:   errors.New("db error"),
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "Invalid Signature",
+			connID:         "conn_123",
+			payload:        `{"id": "evt_123"}`,
+			signature:      "t=123,v1=invalid_sig",
+			mockSecret:     secret,
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "Publish Failed",
+			connID:         "conn_123",
+			payload:        `{"id": "evt_123", "object": "event", "api_version": "2023-10-16"}`,
+			signature:      generateSignature(t, `{"id": "evt_123", "object": "event", "api_version": "2023-10-16"}`, secret),
+			mockSecret:     secret,
+			mockPubErr:     errors.New("nats error"),
+			expectedStatus: http.StatusServiceUnavailable, // Changed to 503
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &MockStore{Secret: tc.mockSecret, Err: tc.mockStoreErr}
+			pub := &MockPublisher{PublishErr: tc.mockPubErr}
+			handler := NewHandler(logger, store, pub, 1<<20) // 1 MiB max body size
+
+			// Construct request
+			req := httptest.NewRequest(http.MethodPost, "/webhook/stripe/"+tc.connID, bytes.NewBuffer([]byte(tc.payload)))
+			// Set the header manually (httptest doesn't route so PathValue isn't set automatically)
+			req.Header.Set("Stripe-Signature", tc.signature)
+
+			// Inject PathValue manually
+			if tc.connID != "" {
+				req.SetPathValue("conn_id", tc.connID)
+			}
+
+			w := httptest.NewRecorder()
+			handler.HandleStripeWebhook(w, req)
+
+			if w.Code != tc.expectedStatus {
+				t.Errorf("expected status %d, got %d. Body: %s", tc.expectedStatus, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func generateSignature(t *testing.T, payload, secret string) string {
+	t.Helper()
+	ts := time.Now().Unix()
+
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(fmt.Sprintf("%d", ts)))
+	h.Write([]byte("."))
+	h.Write([]byte(payload))
+	sig := hex.EncodeToString(h.Sum(nil))
+
+	return fmt.Sprintf("t=%d,v1=%s", ts, sig)
+}

@@ -24,10 +24,10 @@ services:
     networks:
       - toro-net
 
-  go-app:
+  gate:
     build:
       context: ../
-      dockerfile: container/go/Dockerfile
+      dockerfile: container/gate/Dockerfile
     restart: always
     ports:
       - "8080:8080"
@@ -41,6 +41,39 @@ services:
         condition: service_healthy
     networks:
       - toro-net
+
+  # protocol:
+  #   build:
+  #     context: ../
+  #     dockerfile: container/protocol/Dockerfile
+  #   restart: always
+  #   environment:
+  #     DATABASE_URL: ${DATABASE_URL}
+  #     NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+  #     # OPENAI_API_KEY: ${OPENAI_API_KEY} # Make sure this is in .env
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #     nats-1:
+  #       condition: service_healthy
+  #   networks:
+  #     - toro-net
+
+  # sync:
+  #   build:
+  #     context: ../
+  #     dockerfile: container/sync/Dockerfile
+  #   restart: always
+  #   environment:
+  #     DATABASE_URL: ${DATABASE_URL}
+  #     NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #     nats-1:
+  #       condition: service_healthy
+  #   networks:
+  #     - toro-net
 
   redis:
     image: redis:alpine
@@ -118,7 +151,7 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - go-app
+      - gate
       - svix-server
     networks:
       - toro-net

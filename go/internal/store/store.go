@@ -47,3 +47,8 @@ func (s *Store) ExecTx(ctx context.Context, tenantID string, fn func(*database.Q
 
 	return tx.Commit(ctx)
 }
+
+// Ping checks the connection to the database.
+func (s *Store) Ping(ctx context.Context) error {
+	return s.Pool.Ping(ctx)
+}

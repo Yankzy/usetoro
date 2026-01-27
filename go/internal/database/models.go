@@ -26,7 +26,7 @@ type Transaction struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
-type WebhookksProviderconnection struct {
+type WebhooksProviderconnection struct {
 	ID            pgtype.UUID
 	ConnectionID  string
 	WebhookSecret string

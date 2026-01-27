@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE IF NOT EXISTS webhookks_providerconnection (
+CREATE TABLE IF NOT EXISTS webhooks_providerconnection (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     connection_id TEXT NOT NULL,
     webhook_secret TEXT NOT NULL,
@@ -9,4 +9,5 @@ CREATE TABLE IF NOT EXISTS webhookks_providerconnection (
     UNIQUE(connection_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_provider_connection_id ON webhookks_providerconnection(connection_id);
+CREATE INDEX IF NOT EXISTS idx_provider_connection_id ON webhooks_providerconnection(connection_id);
+

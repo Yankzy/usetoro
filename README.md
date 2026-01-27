@@ -20,50 +20,59 @@
 Toro uses a "Thick Go, Thin Python" architecture. Go handles the high-speed IO, while Python (Flask) acts as the intelligent "Refinery" for data analytics and normalization.
 
 ```mermaid
-graph TD
-    subgraph External[EXTERNAL PROVIDERS Ingress]
-        Providers["Stripe, Plaid, QuickBooks"]
+  graph TD
+    subgraph External ["EXTERNAL WORLD"]
+        Providers["Stripe, Plaid, QBO"]
+        Users["Mobile App / WhatsApp"]
     end
 
-    subgraph Ingress[GO INGRESS SERVICE]
-        GoGate[Go Gate]
-        note1["Signature verification<br/>10,000+ req/s<br/>Ristretto Caching<br/>Zero DB hits on hot path"]
+    subgraph Ingress ["THE GATE (Go)"]
+        GoGate["cmd/gate"]
+        note1["Port 8080<br/>Stateless<br/>Http -> NATS"]
     end
 
-    subgraph Vault[THE VAULT NATS JetStream]
-        NATS[NATS Stream]
-        note2["3-node RAFT cluster<br/>File-backed storage<br/>Durable consumers<br/>Immutable Event Log"]
+    subgraph Vault ["THE VAULT"]
+        NATS["NATS JetStream"]
+        note2["Events & Task Queue"]
     end
 
-    subgraph Refinery[PYTHON ANALYTICS REFINERY Flask]
-        Flask[Flask Worker]
-        note3["AI/LLM Processing<br/>Complex Data Normalization<br/>Financial Analytics<br/>OCR & Document Parsing"]
+    subgraph Intelligence ["THE AGENT CLUSTER"]
+        GoBrain["THE PROTOCOL (Go)"]
+        note3["cmd/protocol<br/>Port 8081<br/>State Machine<br/>Calls LLMs"]
+        
+        PythonWorker["THE HANDS (Python)"]
+        note4["Sidecar<br/>OCR / Pandas<br/>gRPC over Unix Socket"]
     end
 
-    subgraph Egress[THE CANNON Svix Egress]
-        Svix[Svix Server]
-        note4["Retry logic<br/>Webhook signing<br/>Delivery tracking<br/>Fan-out to endpoints"]
+    subgraph Connectors ["THE SYNC ENGINE (Go)"]
+        GoSync["cmd/sync"]
+        note5["Background Worker<br/>Rate Limiters<br/>Token Refresh<br/>Plaid/QBO Clients"]
     end
 
-    subgraph Customers[CUSTOMER ENDPOINTS/DATABASES]
-        CustomerApp[customer-app.com/webhooks]
+    subgraph Egress ["THE CANNON"]
+        Svix["Svix Server"]
     end
+
+    %% Flow
+    Providers -->|Webhooks| GoGate
+    Users -->|WebSocket Audio| GoGate
     
-    subgraph Frontend[Frontend & API]
-        React[React Frontend]
-        FlaskAPI[Flask GraphQL API]
-    end
-
-    Providers -->|POST /v1/webhooks/provider/conn_id| GoGate
-    GoGate -->|Publish| NATS
-    NATS -->|Subscribe| Flask
-    Flask -->|dispatch_webhook| Svix
-    Svix -->|HTTP POST| CustomerApp
+    GoGate -->|1. Publish Input| NATS
     
-    React -->|GraphQL queries| FlaskAPI
-    FlaskAPI -.->|Read-Layer Only| Flask
-```
-
+    NATS -->|2. Subscribe| GoBrain
+    
+    GoBrain -->|3a. Reason| LLM(("LLMs"))
+    GoBrain <-->|3b. Heavy Calc| PythonWorker
+    
+    %% The New Path
+    GoBrain -.->|3c. Request Data| NATS
+    NATS -.->|4. Fetch| GoSync
+    GoSync <-->|5. API Call| Providers
+    GoSync -.->|6. Data Ready| NATS
+    
+    GoBrain -->|7. Dispatch Result| Svix
+    Svix -->|Webhook| CustomerApp["Customer App"]
+  ```
 ### Design Principles
 
 1. **Go for Speed**: Ingress and Routing are handled by Go.

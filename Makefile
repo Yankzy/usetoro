@@ -14,7 +14,7 @@ else
 endif
 
 # App Services
-SERVICES := redis db svix-server gate migrator nginx
+SERVICES := redis db svix-server gate migrator nginx svix-ui
 
 .PHONY: deploy up-scanner down-scanner build-scanner
 deploy:

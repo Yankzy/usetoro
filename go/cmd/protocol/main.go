@@ -11,6 +11,7 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/agent"
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/nats-io/nats.go"
 )
 
@@ -34,25 +35,23 @@ func main() {
 func run(cfg config.Config, logger *slog.Logger) error {
 	ctx := context.Background()
 
-	// 1. NATS Connection (Same as Ingress)
-	nc, err := nats.Connect(cfg.NatsURL,
+	// 1. NATS Connection handled by queue now
+
+	// 2. Initialize Queue Client
+	// Note: protocol was trying to create its own connection before, now we use queue
+	// We should probably reuse the connection options from before or just use defaults
+	q, err := queue.NewClient(cfg.NatsURL,
 		nats.Name("toro-protocol"),
 		nats.MaxReconnects(-1),
 	)
 	if err != nil {
-		return fmt.Errorf("nats connect error: %w", err)
+		return fmt.Errorf("queue client init error: %w", err)
 	}
-	defer nc.Close()
+	defer q.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		return fmt.Errorf("jetstream init error: %w", err)
-	}
-	logger.Info("✅ Connected to NATS JetStream")
-
-	// 2. Initialize Agent
+	// 3. Initialize Agent
 	// Note: We might want database connection here too eventually, similar to Gate
-	ag := agent.NewAgent(logger, js)
+	ag := agent.NewAgent(logger, q.JetStream(), q)
 
 	// 3. Start Agent
 	// Run in a goroutine because Start blocks

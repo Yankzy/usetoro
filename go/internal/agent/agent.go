@@ -3,19 +3,23 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"time"
 
+	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/nats-io/nats.go"
 )
 
 type Agent struct {
 	logger *slog.Logger
 	js     nats.JetStreamContext
+	q      *queue.Client
 }
 
-func NewAgent(logger *slog.Logger, js nats.JetStreamContext) *Agent {
+func NewAgent(logger *slog.Logger, js nats.JetStreamContext, q *queue.Client) *Agent {
 	return &Agent{
 		logger: logger,
 		js:     js,
+		q:      q,
 	}
 }
 
@@ -51,8 +55,14 @@ func (a *Agent) processMessage(msg *nats.Msg) {
 		"subject", msg.Subject,
 	)
 
-	// TODO: Call Python Sidecar via gRPC here
-	// TODO: Call OpenAI here
+	// Call request to python worker
+	resp, err := a.q.Request("skill.ocr", msg.Data, 5*time.Second) // 5s timeout
+	if err != nil {
+		a.logger.Error("Failed to call skill.ocr", "error", err)
+		// We might want to nak or term depending on error, for now log
+		return
+	}
 
+	a.logger.Info("Received response from skill.ocr", "response_len", len(resp))
 	msg.Ack()
 }

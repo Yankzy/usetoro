@@ -12,6 +12,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/api"
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/ingest"
+	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/dgraph-io/ristretto"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -69,21 +70,17 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	logger.Info("✅ Connected to PostgreSQL")
 
 	// 2. NATS JetStream (Durability Layer)
-	nc, err := nats.Connect(cfg.NatsURL,
+	q, err := queue.NewClient(cfg.NatsURL,
 		nats.Name("toro-ingress"),
 		nats.MaxReconnects(10),
 		nats.ReconnectWait(2*time.Second),
 		nats.ReconnectJitter(500*time.Millisecond, 2*time.Second),
 	)
 	if err != nil {
-		return fmt.Errorf("nats connect error: %w", err)
+		return fmt.Errorf("queue client init error: %w", err)
 	}
-	defer nc.Close()
+	defer q.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		return fmt.Errorf("jetstream init error: %w", err)
-	}
 	logger.Info("✅ Connected to NATS JetStream")
 
 	// 3. Ristretto Cache (L1 Cache)
@@ -102,7 +99,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// =========================================================================
 
 	st := store.NewStore(dbPool, cache)
-	pub := ingest.NewPublisher(nc, js)
+	pub := ingest.NewPublisher(q)
 	// DI: Create Server
 	srv := api.NewServer(cfg, logger, st, pub)
 

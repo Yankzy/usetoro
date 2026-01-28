@@ -42,6 +42,20 @@ services:
     networks:
       - toro-net
 
+  python-worker:
+    build:
+      context: ../
+      dockerfile: python-worker/Dockerfile
+    restart: always
+    environment:
+      # Use the cluster URL list so it knows all nodes
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+    depends_on:
+      nats-1:
+        condition: service_healthy
+    networks:
+      - toro-net
+
   # protocol:
   #   build:
   #     context: ../

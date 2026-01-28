@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/nats-io/nats.go"
 	"github.com/sony/gobreaker"
 	"github.com/stripe/stripe-go/v76"
@@ -13,13 +14,12 @@ import (
 
 // Publisher handles the ingestion of events into the system.
 type Publisher struct {
-	nc      *nats.Conn
-	js      nats.JetStreamContext
+	q       *queue.Client
 	breaker *gobreaker.CircuitBreaker
 }
 
 // NewPublisher creates a new Publisher with circuit breaker protection.
-func NewPublisher(nc *nats.Conn, js nats.JetStreamContext) *Publisher {
+func NewPublisher(q *queue.Client) *Publisher {
 	breaker := gobreaker.NewCircuitBreaker(gobreaker.Settings{
 		Name:        "nats-publisher",
 		MaxRequests: 3,
@@ -32,16 +32,15 @@ func NewPublisher(nc *nats.Conn, js nats.JetStreamContext) *Publisher {
 	})
 
 	return &Publisher{
-		nc:      nc,
-		js:      js,
+		q:       q,
 		breaker: breaker,
 	}
 }
 
 // Ping checks the connection to NATS.
 func (p *Publisher) Ping(ctx context.Context) error {
-	if p.nc.Status() != nats.CONNECTED {
-		return fmt.Errorf("nats not connected, status: %v", p.nc.Status())
+	if p.q.Status() != nats.CONNECTED {
+		return fmt.Errorf("nats not connected, status: %v", p.q.Status())
 	}
 	return nil
 }
@@ -63,7 +62,7 @@ func (p *Publisher) PublishStripeEvent(ctx context.Context, connID, toroEventID 
 			msg.Header.Set("Request-ID", requestID)
 		}
 
-		_, publishErr := p.js.PublishMsg(msg, nats.Context(ctx))
+		_, publishErr := p.q.PublishMsg(msg, nats.Context(ctx))
 		return nil, publishErr
 	})
 

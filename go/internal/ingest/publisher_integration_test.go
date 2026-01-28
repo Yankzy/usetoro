@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/ingest"
+	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/nats-io/nats.go"
 	"github.com/stripe/stripe-go/v76"
 	"github.com/testcontainers/testcontainers-go"
@@ -37,17 +38,14 @@ func TestPublisher_Integration(t *testing.T) {
 		t.Fatalf("failed to get nats connection string: %s", err)
 	}
 
-	// 2. Connect to NATS
-	nc, err := nats.Connect(uri)
+	// 2. Connect to NATS via Queue Client
+	q, err := queue.NewClient(uri)
 	if err != nil {
-		t.Fatalf("failed to connect to nats: %s", err)
+		t.Fatalf("failed to create queue client: %s", err)
 	}
-	defer nc.Close()
+	defer q.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("failed to create jetstream context: %s", err)
-	}
+	js := q.JetStream()
 
 	// 3. Setup Stream
 	streamName := "STRIPE_INGEST"
@@ -61,7 +59,7 @@ func TestPublisher_Integration(t *testing.T) {
 	}
 
 	// 4. Initialize Publisher
-	publisher := ingest.NewPublisher(nc, js)
+	publisher := ingest.NewPublisher(q)
 
 	// 5. Test Publish
 	connID := "conn_123"

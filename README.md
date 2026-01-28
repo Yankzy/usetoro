@@ -17,12 +17,12 @@
 
 ## Architecture Overview
 
-Toro uses a "Thick Go, Thin Python" architecture. Go handles the high-speed IO, while Python (Flask) acts as the intelligent "Refinery" for data analytics and normalization.
+Toro uses a "Thick Go, Thin Python" architecture. Go handles the high-speed IO, while Python acts as the intelligent "Refinery" for data analytics .
 
 ```mermaid
   graph TD
     subgraph External ["EXTERNAL WORLD"]
-        Providers["Stripe, Plaid, QBO"]
+        Providers["Stripe, Plaid, QBO, Netsuites, etc"]
         Users["Mobile App / WhatsApp"]
     end
 
@@ -36,12 +36,14 @@ Toro uses a "Thick Go, Thin Python" architecture. Go handles the high-speed IO, 
         note2["Events & Task Queue"]
     end
 
-    subgraph Intelligence ["THE AGENT CLUSTER"]
-        GoBrain["THE PROTOCOL (Go)"]
-        note3["cmd/protocol<br/>Port 8081<br/>State Machine<br/>Calls LLMs"]
+    subgraph Brain ["THE PROTOCOL (Go)"]
+        GoBrain["cmd/protocol"]
+        note3["Port 8081<br/>State Machine<br/>Calls LLMs"]
+    end
         
-        PythonWorker["THE HANDS (Python)"]
-        note4["Sidecar<br/>OCR / Pandas<br/>gRPC over Unix Socket"]
+    subgraph Hands ["THE HANDS (Python)"]
+        PythonWorker["python-worker"]
+        note4["Standalone Daemon<br/>OCR / Pandas<br/>Listens on skill.>"]
     end
 
     subgraph Connectors ["THE SYNC ENGINE (Go)"]
@@ -62,17 +64,22 @@ Toro uses a "Thick Go, Thin Python" architecture. Go handles the high-speed IO, 
     NATS -->|2. Subscribe| GoBrain
     
     GoBrain -->|3a. Reason| LLM(("LLMs"))
-    GoBrain <-->|3b. Heavy Calc| PythonWorker
     
-    %% The New Path
-    GoBrain -.->|3c. Request Data| NATS
-    NATS -.->|4. Fetch| GoSync
-    GoSync <-->|5. API Call| Providers
-    GoSync -.->|6. Data Ready| NATS
+    %% NATS Req-Rep Flow
+    GoBrain -- "3b. Request (skill.ocr)" --> NATS
+    NATS -- "3c. Deliver" --> PythonWorker
+    PythonWorker -- "3d. Reply" --> NATS
+    NATS -- "3e. Return" --> GoBrain
     
-    GoBrain -->|7. Dispatch Result| Svix
+    %% The Sync Path
+    GoBrain -. "4. Request Data" .-> NATS
+    NATS -. "5. Fetch" .-> GoSync
+    GoSync <-->|6. API Call| Providers
+    GoSync -. "7. Data Ready" .-> NATS
+    
+    GoBrain -->|8. Dispatch Result| Svix
     Svix -->|Webhook| CustomerApp["Customer App"]
-  ```
+```
 ### Design Principles
 
 1. **Go for Speed**: Ingress and Routing are handled by Go.

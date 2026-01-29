@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
@@ -17,6 +17,6 @@ FROM alpine:latest
 
 WORKDIR /
 
-COPY --from=builder /sync /sync
+COPY --from=builder /sync /usr/local/bin/sync
 
-CMD ["/sync"]
+ENTRYPOINT ["sync"]

@@ -45,7 +45,7 @@ http:
 logs:
 	$(DOCKER_COMPOSE) logs -f $(ARGS)
 
-svix-logs:
+svix_logs:
 	$(DOCKER_COMPOSE) logs -f svix-server
 
 ls:
@@ -112,9 +112,6 @@ fix-permissions:
 		echo "Skipping fix-permissions as this is not a production server"; \
 	fi
 
-up-tts: create_networks
-	$(DOCKER_COMPOSE) up -d --build dia_tts
-
 down:
 	$(DOCKER_COMPOSE) down --remove-orphans
 
@@ -161,12 +158,6 @@ create_networks:
 	
 prune:
 	docker system prune -a --volumes -f && docker volume prune -f && docker network prune -f && sudo systemctl restart docker
-
-supervisor:
-	$(DOCKER_COMPOSE) exec app-django supervisorctl restart all
-	
-restart_celery:
-	$(DOCKER_COMPOSE) exec app-django supervisorctl restart celery
 
 install_make:
 	apt-get update && apt-get install -y zsh && chsh -s $(which zsh) root && make install && uv pip install --upgrade pip

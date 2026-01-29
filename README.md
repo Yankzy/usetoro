@@ -289,3 +289,67 @@ COPY . .
 # Run the API and the Worker side-by-side (or separate containers)
 CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "app:app"]
 ```
+
+## How "Training" Works in Toro
+
+When I say "every click trains the Agent," I do not mean I am triggering a slow, expensive fine-tuning job on the OpenAI model every time a user makes a correction. That would be inefficient.
+
+Instead, I am implementing In-Context Learning via a persistent "Memory Layer" (RAG).
+
+Here is exactly what I am building to make the Agents smarter with every interaction:
+
+### 1. The Strategy: "Memory, Not Weights"
+
+I treat user corrections as Rules that are stored in my database and injected into the Agent's context window at runtime. This provides instant feedback loops without model retraining latency.
+
+### 2. The Implementation
+
+#### Step 1: The Memory Store (Postgres)
+
+I am creating a dedicated table to capture the human corrections.
+
+```sql
+CREATE TABLE categorization_rules (
+    id UUID PRIMARY KEY,
+    tenant_id UUID,          -- Scoped to the specific client (e.g., "Bob's Trucking")
+    vendor_name TEXT,        -- The trigger (e.g., "Home Depot")
+    correct_category TEXT,   -- The human's correction (e.g., "Repairs")
+    created_at TIMESTAMP
+);
+```
+
+#### Step 2: The Capture (The Desktop Action)
+
+When a CPA uses the Fignode Desktop App to correct an Agent (e.g., changing a category from "Supplies" to "Repairs"):
+
+1. The App sends a `POST /api/feedback` request to my Go Gate.
+2. My backend persists this correction as a new "Rule" in the `categorization_rules` table for that specific tenant.
+
+#### Step 3: The Execution (Dynamic Prompting)
+
+The next time a transaction arrives for that client, my Python Worker executes this logic before calling the LLM:
+
+**Lookup:** Query the database for any existing rules for this vendor/client.
+
+```sql
+SELECT * FROM categorization_rules WHERE tenant_id = X AND vendor_name = 'Home Depot'
+```
+
+**Injection:** Dynamically append these rules to the System Prompt.
+
+**The Resulting Prompt sent to OpenAI:**
+
+> "You are an expert bookkeeper.
+>
+> **Client-Specific Memory:**
+>
+> For this client, 'Home Depot' transactions are explicitly categorized as 'Repairs' based on past feedback.
+>
+> **Task:**
+> Categorize the following transaction: 'Home Depot - $50.00'. Return JSON."
+
+### 3. The Result
+
+The Agent stops making the same mistake immediately. To the user, it feels like the AI "learned" instantly. To me, it is simply **In-Context Learning**.
+
+![Fignode Pro](./fignode%20pro.png)

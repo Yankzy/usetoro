@@ -10,20 +10,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Store provides access to the database, cache, and query execution methods.
+// Store provides access to the database, cache, query execution methods, and encryption.
 type Store struct {
-	Pool    *pgxpool.Pool
-	Queries *database.Queries
-	Cache   *ristretto.Cache
+	Pool      *pgxpool.Pool
+	Queries   *database.Queries
+	Cache     *ristretto.Cache
+	Encryptor *Encryptor
 }
 
-// NewStore creates a new Store instance.
-func NewStore(pool *pgxpool.Pool, cache *ristretto.Cache) *Store {
-	return &Store{
-		Pool:    pool,
-		Queries: database.New(pool),
-		Cache:   cache,
+// NewStore creates a new Store instance with encryption support.
+// The encryptionKey must be exactly 32 bytes for AES-256.
+func NewStore(pool *pgxpool.Pool, cache *ristretto.Cache, encryptionKey []byte) (*Store, error) {
+	encryptor, err := NewEncryptor(encryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize encryptor: %w", err)
 	}
+
+	return &Store{
+		Pool:      pool,
+		Queries:   database.New(pool),
+		Cache:     cache,
+		Encryptor: encryptor,
+	}, nil
 }
 
 // ExecTx runs a callback function within a secure, tenant-isolated transaction.

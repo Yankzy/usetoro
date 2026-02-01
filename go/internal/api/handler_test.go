@@ -14,8 +14,6 @@ import (
 	"os"
 	"testing"
 	"time"
-
-	"github.com/stripe/stripe-go/v76"
 )
 
 // --- Mocks ---
@@ -38,14 +36,19 @@ func (m *MockStore) Ping(ctx context.Context) error {
 
 type MockPublisher struct {
 	PublishErr error
-	Events     []stripe.Event
+	Events     []WebhookEvent
 }
 
-func (m *MockPublisher) PublishStripeEvent(ctx context.Context, connID, toroEventID string, event stripe.Event, body []byte) error {
+func (m *MockPublisher) PublishWebhookEvent(ctx context.Context, provider, connID, toroEventID, providerEventID, providerEventType string, body []byte) error {
 	if m.PublishErr != nil {
 		return m.PublishErr
 	}
-	m.Events = append(m.Events, event)
+	m.Events = append(m.Events, WebhookEvent{
+		Provider: provider,
+		ID:       providerEventID,
+		Type:     providerEventType,
+		RawBody:  body,
+	})
 	return nil
 }
 
@@ -113,7 +116,12 @@ func TestHandleStripeWebhook(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &MockStore{Secret: tc.mockSecret, Err: tc.mockStoreErr}
 			pub := &MockPublisher{PublishErr: tc.mockPubErr}
-			handler := NewHandler(logger, store, pub, 1<<20) // 1 MiB max body size
+
+			// Create verifier registry with Stripe verifier
+			registry := NewVerifierRegistry()
+			registry.Register(NewStripeVerifier())
+
+			handler := NewHandler(logger, store, pub, registry, 1<<20) // 1 MiB max body size
 
 			// Construct request
 			req := httptest.NewRequest(http.MethodPost, "/webhook/stripe/"+tc.connID, bytes.NewBuffer([]byte(tc.payload)))

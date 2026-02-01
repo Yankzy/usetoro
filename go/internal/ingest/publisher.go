@@ -9,7 +9,6 @@ import (
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/nats-io/nats.go"
 	"github.com/sony/gobreaker"
-	"github.com/stripe/stripe-go/v76"
 )
 
 // Publisher handles the ingestion of events into the system.
@@ -45,16 +44,19 @@ func (p *Publisher) Ping(ctx context.Context) error {
 	return nil
 }
 
-// PublishStripeEvent publishes a raw Stripe webhook event to the NATS JetStream.
+// PublishWebhookEvent publishes a webhook event to the NATS JetStream.
 // It uses a circuit breaker to prevent cascading failures.
-func (p *Publisher) PublishStripeEvent(ctx context.Context, connID, toroEventID string, event stripe.Event, body []byte) error {
+// The subject is dynamically constructed as "raw.ingest.{provider}".
+func (p *Publisher) PublishWebhookEvent(ctx context.Context, provider, connID, toroEventID, providerEventID, providerEventType string, body []byte) error {
 	_, err := p.breaker.Execute(func() (interface{}, error) {
-		msg := nats.NewMsg("raw.ingest.stripe")
+		subject := fmt.Sprintf("raw.ingest.%s", provider)
+		msg := nats.NewMsg(subject)
 		msg.Data = body
 		msg.Header.Set("Toro-Conn-ID", connID)
 		msg.Header.Set("Toro-Event-ID", toroEventID)
-		msg.Header.Set("Stripe-Event-ID", event.ID)
-		msg.Header.Set("Stripe-Event-Type", string(event.Type))
+		msg.Header.Set("Provider", provider)
+		msg.Header.Set("Provider-Event-ID", providerEventID)
+		msg.Header.Set("Provider-Event-Type", providerEventType)
 		msg.Header.Set("Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
 
 		// Add request ID from context if available
@@ -71,4 +73,10 @@ func (p *Publisher) PublishStripeEvent(ctx context.Context, connID, toroEventID 
 	}
 
 	return err
+}
+
+// PublishStripeEvent is a backward-compatible wrapper around PublishWebhookEvent.
+// Deprecated: Use PublishWebhookEvent instead.
+func (p *Publisher) PublishStripeEvent(ctx context.Context, connID, toroEventID, eventID, eventType string, body []byte) error {
+	return p.PublishWebhookEvent(ctx, "stripe", connID, toroEventID, eventID, eventType, body)
 }

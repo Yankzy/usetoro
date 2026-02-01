@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strconv"
@@ -28,6 +29,9 @@ type Config struct {
 
 	// Limits
 	MaxWebhookBodySize int64
+
+	// Security
+	EncryptionKey []byte
 }
 
 // Load returns the application configuration sourced from environment variables.
@@ -50,6 +54,8 @@ func Load() (Config, error) {
 
 		// Limits
 		MaxWebhookBodySize: getEnvInt64("MAX_WEBHOOK_BODY_SIZE", 1<<20), // 1 MiB default
+
+		// Security - EncryptionKey will be loaded and validated below
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -61,6 +67,24 @@ func Load() (Config, error) {
 		// It must be provided.
 		return Config{}, fmt.Errorf("NATS_URL is required")
 	}
+
+	// Load encryption key
+	encryptionKeyStr := os.Getenv("ENCRYPTION_KEY")
+	if encryptionKeyStr == "" {
+		return Config{}, fmt.Errorf("ENCRYPTION_KEY is required")
+	}
+
+	// Decode base64 encryption key
+	encryptionKey, err := base64.StdEncoding.DecodeString(encryptionKeyStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("ENCRYPTION_KEY must be base64-encoded: %w", err)
+	}
+
+	if len(encryptionKey) != 32 {
+		return Config{}, fmt.Errorf("ENCRYPTION_KEY must be exactly 32 bytes when decoded (got %d bytes)", len(encryptionKey))
+	}
+
+	cfg.EncryptionKey = encryptionKey
 
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {

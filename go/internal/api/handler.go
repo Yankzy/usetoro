@@ -9,8 +9,6 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/resilience"
 	"github.com/google/uuid"
-	"github.com/stripe/stripe-go/v76"
-	"github.com/stripe/stripe-go/v76/webhook"
 )
 
 // SecretGetter defines the interface for retrieving webhook secrets and checking health.
@@ -21,7 +19,7 @@ type SecretGetter interface {
 
 // EventPublisher defines the interface for publishing events.
 type EventPublisher interface {
-	PublishStripeEvent(ctx context.Context, connID, toroEventID string, event stripe.Event, body []byte) error
+	PublishWebhookEvent(ctx context.Context, provider, connID, toroEventID, providerEventID, providerEventType string, body []byte) error
 	Ping(ctx context.Context) error
 }
 
@@ -30,17 +28,19 @@ type Handler struct {
 	Logger            *slog.Logger
 	Store             SecretGetter
 	Pub               EventPublisher
+	VerifierRegistry  *VerifierRegistry
 	RateLimiter       *resilience.RateLimiter
 	FailedAuthTracker *resilience.FailedAttemptsTracker
 	MaxBodySize       int64
 }
 
 // NewHandler creates a new Handler.
-func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher, maxBodySize int64) *Handler {
+func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher, verifierRegistry *VerifierRegistry, maxBodySize int64) *Handler {
 	return &Handler{
 		Logger:            logger,
 		Store:             store,
 		Pub:               pub,
+		VerifierRegistry:  verifierRegistry,
 		RateLimiter:       resilience.NewRateLimiter(100, 10), // 100 req/s, burst 10
 		FailedAuthTracker: resilience.NewFailedAttemptsTracker(5),
 		MaxBodySize:       maxBodySize,
@@ -82,10 +82,16 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 	h.Liveness(w, r)
 }
 
-// HandleStripeWebhook receives webhooks from Stripe.
-func (h *Handler) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
-	// Go 1.22 Feature: Extract path value
+// HandleWebhook receives webhooks from any supported provider.
+func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	// Go 1.22 Feature: Extract path values
+	provider := r.PathValue("provider")
 	connID := r.PathValue("conn_id")
+
+	if provider == "" {
+		JSONError(w, h.Logger, http.StatusBadRequest, "Missing provider")
+		return
+	}
 	if connID == "" {
 		JSONError(w, h.Logger, http.StatusBadRequest, "Missing connection ID")
 		return
@@ -97,23 +103,31 @@ func (h *Handler) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 		requestID = uuid.New().String()
 	}
 	ctx := context.WithValue(r.Context(), "request_id", requestID)
-	logger := h.Logger.With("request_id", requestID, "conn_id", connID)
+	logger := h.Logger.With("request_id", requestID, "provider", provider, "conn_id", connID)
 
-	// 1. RATE LIMITING
+	// 1. GET PROVIDER-SPECIFIC VERIFIER
+	verifier, err := h.VerifierRegistry.Get(provider)
+	if err != nil {
+		logger.Warn("Unsupported provider", "error", err)
+		JSONError(w, logger, http.StatusBadRequest, "Unsupported provider")
+		return
+	}
+
+	// 2. RATE LIMITING
 	if !h.RateLimiter.Allow(connID) {
 		logger.Warn("Rate limit exceeded")
 		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 		return
 	}
 
-	// 2. CHECK FOR TOO MANY FAILED AUTH ATTEMPTS
+	// 3. CHECK FOR TOO MANY FAILED AUTH ATTEMPTS
 	if h.FailedAuthTracker.IsBlocked(connID) {
 		logger.Warn("Blocked due to too many failed auth attempts")
 		http.Error(w, "Too many failed attempts", http.StatusTooManyRequests)
 		return
 	}
 
-	// 3. LOOKUP (Hot Path Optimization)
+	// 4. LOOKUP WEBHOOK SECRET (Hot Path Optimization)
 	secret, err := h.Store.GetWebhookSecret(ctx, connID)
 	if err != nil {
 		logger.Warn("Invalid connection or missing secret", "error", err)
@@ -121,7 +135,7 @@ func (h *Handler) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. READ PAYLOAD (Safety)
+	// 5. READ PAYLOAD (Safety)
 	r.Body = http.MaxBytesReader(w, r.Body, h.MaxBodySize)
 
 	body, err := io.ReadAll(r.Body)
@@ -131,11 +145,10 @@ func (h *Handler) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. VERIFY SIGNATURE (Security)
-	signature := r.Header.Get("Stripe-Signature")
-	event, err := webhook.ConstructEvent(body, signature, secret)
+	// 6. VERIFY SIGNATURE (Security)
+	event, err := verifier.Verify(r.Header, body, secret)
 	if err != nil {
-		logger.Warn("Signature verification failed")
+		logger.Warn("Signature verification failed", "error", err)
 
 		// Track failed attempt
 		attempts := h.FailedAuthTracker.Increment(connID)
@@ -148,20 +161,28 @@ func (h *Handler) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// Reset failed attempts on successful auth
 	h.FailedAuthTracker.Reset(connID)
 
-	// 6. PERSIST TO VAULT (Durability)
+	// 7. PERSIST TO VAULT (Durability)
 	eventID := uuid.New().String()
 
 	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	if err := h.Pub.PublishStripeEvent(publishCtx, connID, eventID, event, body); err != nil {
+	if err := h.Pub.PublishWebhookEvent(publishCtx, provider, connID, eventID, event.ID, event.Type, body); err != nil {
 		logger.Error("NATS Publish failed", "error", err)
 		JSONError(w, logger, http.StatusServiceUnavailable, "Service Temporarily Unavailable")
 		return
 	}
 
-	logger.Info("Webhook ingested", "toro_id", eventID, "stripe_id", event.ID)
+	logger.Info("Webhook ingested", "toro_id", eventID, "provider_event_id", event.ID, "provider_event_type", event.Type)
 	w.Header().Set("X-Request-ID", requestID)
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
+}
+
+// HandleStripeWebhook is a backward-compatible wrapper for Stripe webhooks.
+// Deprecated: Use HandleWebhook with /webhooks/stripe/{conn_id} instead.
+func (h *Handler) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
+	// Inject "stripe" as the provider for backward compatibility
+	r.SetPathValue("provider", "stripe")
+	h.HandleWebhook(w, r)
 }

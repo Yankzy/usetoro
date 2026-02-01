@@ -21,3 +21,22 @@ func (q *Queries) GetWebhookSecret(ctx context.Context, connectionID string) (st
 	err := row.Scan(&webhook_secret)
 	return webhook_secret, err
 }
+
+const upsertWebhookSecret = `-- name: UpsertWebhookSecret :exec
+INSERT INTO webhooks_providerconnection (connection_id, webhook_secret, is_active)
+VALUES ($1, $2, true)
+ON CONFLICT (connection_id) 
+DO UPDATE SET 
+    webhook_secret = $2, 
+    updated_at = NOW()
+`
+
+type UpsertWebhookSecretParams struct {
+	ConnectionID  string
+	WebhookSecret string
+}
+
+func (q *Queries) UpsertWebhookSecret(ctx context.Context, arg UpsertWebhookSecretParams) error {
+	_, err := q.db.Exec(ctx, upsertWebhookSecret, arg.ConnectionID, arg.WebhookSecret)
+	return err
+}

@@ -68,7 +68,7 @@ func TestPublisher_Integration(t *testing.T) {
 	body := []byte(`{"id": "evt_789", "type": "payment_intent.succeeded"}`)
 
 	reqCtx := context.WithValue(ctx, "request_id", "req_abc")
-	err = publisher.PublishStripeEvent(reqCtx, connID, toroEventID, stripeEvent, body)
+	err = publisher.PublishStripeEvent(reqCtx, connID, toroEventID, stripeEvent.ID, string(stripeEvent.Type), body)
 	if err != nil {
 		t.Fatalf("failed to publish stripe event: %s", err)
 	}

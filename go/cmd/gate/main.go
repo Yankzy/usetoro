@@ -98,7 +98,10 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// APPLICATION WIRING
 	// =========================================================================
 
-	st := store.NewStore(dbPool, cache)
+	st, err := store.NewStore(dbPool, cache, cfg.EncryptionKey)
+	if err != nil {
+		return fmt.Errorf("store init error: %w", err)
+	}
 	pub := ingest.NewPublisher(q)
 	// DI: Create Server
 	srv := api.NewServer(cfg, logger, st, pub)

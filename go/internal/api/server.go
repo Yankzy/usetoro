@@ -25,8 +25,16 @@ func NewServer(
 	logger *slog.Logger,
 	st *store.Store,
 	pub *ingest.Publisher,
-) *Server {
-	h := NewHandler(logger, st, pub, cfg.MaxWebhookBodySize)
+) *Server { // <-- TYPE: returns an address
+	// Initialize webhook verifier registry
+	registry := NewVerifierRegistry()
+
+	// Register supported webhook providers
+	registry.Register(NewStripeVerifier())
+	// Future providers can be registered here, e.g.:
+	// registry.Register(NewQBOVerifier())
+
+	h := NewHandler(logger, st, pub, registry, cfg.MaxWebhookBodySize)
 	mux := NewRouter(h)
 
 	srv := &http.Server{
@@ -37,7 +45,7 @@ func NewServer(
 		IdleTimeout:  cfg.IdleTimeout,
 	}
 
-	return &Server{
+	return &Server{ // <-- TYPE: The address of a Server struct
 		server: srv,
 		logger: logger,
 	}

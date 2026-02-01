@@ -20,7 +20,7 @@ Kv8xZ2rY9Ln4mP3qR5sT7uV0wX1yB2zA3cD4eF5gH6i=
 Add the generated key to your environment:
 
 ```bash
-export ENCRYPTION_KEY="Kv8xZ2rY9Ln4mP3qR5sT7uV0wX1yB2zA3cD4eF5gH6i="
+export ENCRYPTION_KEY="9Lf/JTY/gAqAAi4RPoUY3ljWc2aW++m258IjQ/0Y9ZU="
 ```
 
 Or add it to your `.env` file or deployment configuration.

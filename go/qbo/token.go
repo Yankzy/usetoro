@@ -63,7 +63,7 @@ func (c *Client) RefreshToken(refreshToken string) (*BearerToken, error) {
 
 // RetrieveBearerToken
 // Method to retrieve access token (bearer token).
-// This method can only be called once
+// This method can only be called once per customer.
 func (c *Client) RetrieveBearerToken(authorizationCode, redirectURI string) (*BearerToken, error) {
 	client := &http.Client{}
 	urlValues := url.Values{}

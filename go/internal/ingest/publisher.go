@@ -80,3 +80,30 @@ func (p *Publisher) PublishWebhookEvent(ctx context.Context, provider, connID, t
 func (p *Publisher) PublishStripeEvent(ctx context.Context, connID, toroEventID, eventID, eventType string, body []byte) error {
 	return p.PublishWebhookEvent(ctx, "stripe", connID, toroEventID, eventID, eventType, body)
 }
+
+// PublishQBOEvent publishes a QuickBooks Online event to NATS.
+// This is used to notify WebSocket clients about QBO authentication success.
+func (p *Publisher) PublishQBOEvent(ctx context.Context, eventType, realmID string, data []byte) error {
+	_, err := p.breaker.Execute(func() (interface{}, error) {
+		subject := fmt.Sprintf("qbo.events.%s", eventType)
+		msg := nats.NewMsg(subject)
+		msg.Data = data
+		msg.Header.Set("Realm-ID", realmID)
+		msg.Header.Set("Event-Type", eventType)
+		msg.Header.Set("Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
+
+		// Add request ID from context if available
+		if requestID, ok := ctx.Value("request_id").(string); ok {
+			msg.Header.Set("Request-ID", requestID)
+		}
+
+		_, publishErr := p.q.PublishMsg(msg, nats.Context(ctx))
+		return nil, publishErr
+	})
+
+	if err == gobreaker.ErrOpenState {
+		return fmt.Errorf("circuit breaker open: NATS is unhealthy")
+	}
+
+	return err
+}

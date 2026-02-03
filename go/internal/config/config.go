@@ -30,6 +30,11 @@ type Config struct {
 	// Limits
 	MaxWebhookBodySize int64
 
+	// QBO Config
+	QBOClientID     string
+	QBOClientSecret string
+	QBOIsProduction bool
+
 	// Security
 	EncryptionKey []byte
 }
@@ -54,6 +59,11 @@ func Load() (Config, error) {
 
 		// Limits
 		MaxWebhookBodySize: getEnvInt64("MAX_WEBHOOK_BODY_SIZE", 1<<20), // 1 MiB default
+
+		// QBO Config
+		QBOClientID:     os.Getenv("QBO_CLIENT_ID"),
+		QBOClientSecret: os.Getenv("QBO_CLIENT_SECRET"),
+		QBOIsProduction: getEnvBool("QBO_IS_PRODUCTION", false),
 
 		// Security - EncryptionKey will be loaded and validated below
 	}
@@ -152,6 +162,15 @@ func getEnvInt64(key string, fallback int64) int64 {
 	if v, exists := os.LookupEnv(key); exists {
 		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return i
+		}
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if v, exists := os.LookupEnv(key); exists {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return fallback

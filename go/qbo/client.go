@@ -1,5 +1,3 @@
-// Copyright (c) 2018, Randy Westlund. All rights reserved.
-// This code is under the BSD-2-Clause license.
 package quickbooks
 
 import (
@@ -177,4 +175,8 @@ func (c *Client) post(endpoint string, payloadData interface{}, responseObject i
 // query makes the specified QBO `query` and unmarshals the result into `responseObject`
 func (c *Client) query(query string, responseObject interface{}) error {
 	return c.get("query", responseObject, map[string]string{"query": query})
+}
+
+func (c *Client) GetEndpoint() string {
+	return c.endpoint.String()
 }

@@ -8,6 +8,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type QboConnection struct {
+	ID           pgtype.UUID
+	RealmID      string
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type Tenant struct {
 	ID        pgtype.UUID
 	Name      string

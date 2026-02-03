@@ -25,6 +25,7 @@ func NewServer(
 	logger *slog.Logger,
 	st *store.Store,
 	pub *ingest.Publisher,
+	qboConfig *QBOConfig,
 ) *Server { // <-- TYPE: returns an address
 	// Initialize webhook verifier registry
 	registry := NewVerifierRegistry()
@@ -34,7 +35,7 @@ func NewServer(
 	// Future providers can be registered here, e.g.:
 	// registry.Register(NewQBOVerifier())
 
-	h := NewHandler(logger, st, pub, registry, cfg.MaxWebhookBodySize)
+	h := NewHandler(logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig)
 	mux := NewRouter(h)
 
 	srv := &http.Server{

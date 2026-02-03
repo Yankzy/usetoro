@@ -34,6 +34,14 @@ func (m *MockStore) Ping(ctx context.Context) error {
 	return nil
 }
 
+func (m *MockStore) SaveQBOTokens(ctx context.Context, realmID, accessToken, refreshToken string, expiresAt time.Time) error {
+	return nil
+}
+
+func (m *MockStore) GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, error) {
+	return "", "", time.Time{}, nil
+}
+
 type MockPublisher struct {
 	PublishErr error
 	Events     []WebhookEvent
@@ -49,6 +57,14 @@ func (m *MockPublisher) PublishWebhookEvent(ctx context.Context, provider, connI
 		Type:     providerEventType,
 		RawBody:  body,
 	})
+	return nil
+}
+
+func (m *MockPublisher) PublishQBOEvent(ctx context.Context, eventType, realmID string, data []byte) error {
+	if m.PublishErr != nil {
+		return m.PublishErr
+	}
+	// Just a mock implementation - doesn't need to do anything
 	return nil
 }
 
@@ -121,7 +137,7 @@ func TestHandleStripeWebhook(t *testing.T) {
 			registry := NewVerifierRegistry()
 			registry.Register(NewStripeVerifier())
 
-			handler := NewHandler(logger, store, pub, registry, 1<<20) // 1 MiB max body size
+			handler := NewHandler(logger, store, pub, registry, 1<<20, nil) // 1 MiB max body size, nil QBOConfig for test
 
 			// Construct request
 			req := httptest.NewRequest(http.MethodPost, "/webhook/stripe/"+tc.connID, bytes.NewBuffer([]byte(tc.payload)))

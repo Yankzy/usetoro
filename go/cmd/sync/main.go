@@ -11,6 +11,7 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/connectors"
+	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/nats-io/nats.go"
 )
 
@@ -32,24 +33,20 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	ctx := context.Background()
 
 	// 1. NATS Connection
-	nc, err := nats.Connect(cfg.NatsURL,
+	q, err := queue.NewClient(cfg.NatsURL,
 		nats.Name("toro-sync"),
 		nats.MaxReconnects(-1),
 	)
 	if err != nil {
-		return fmt.Errorf("nats connect error: %w", err)
+		return fmt.Errorf("queue client init error: %w", err)
 	}
-	defer nc.Close()
+	defer q.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		return fmt.Errorf("jetstream init error: %w", err)
-	}
 	logger.Info("✅ Connected to NATS JetStream")
 
 	// 2. Initialize Logic
-	mgr := connectors.NewManager(logger)
-	worker := connectors.NewWorker(logger, js, mgr)
+	mgr := connectors.NewManager(logger, cfg)
+	worker := connectors.NewWorker(logger, q, mgr)
 
 	// 3. Start Worker
 	workerErrors := make(chan error, 1)

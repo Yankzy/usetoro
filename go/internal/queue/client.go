@@ -71,3 +71,22 @@ func (c *Client) PublishMsg(msg *nats.Msg, opts ...nats.PubOpt) (*nats.PubAck, e
 func (c *Client) Status() nats.Status {
 	return c.nc.Status()
 }
+
+// EnsureStream checks if a stream exists and creates it if it doesn't.
+func (c *Client) EnsureStream(cfg *nats.StreamConfig) error {
+	_, err := c.js.StreamInfo(cfg.Name)
+	if err == nil {
+		return nil
+	}
+
+	if err != nats.ErrStreamNotFound {
+		return fmt.Errorf("failed to check stream status: %w", err)
+	}
+
+	_, err = c.js.AddStream(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to add stream: %w", err)
+	}
+
+	return nil
+}

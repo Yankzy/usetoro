@@ -1,6 +1,3 @@
-// Copyright (c) 2018, Randy Westlund. All rights reserved.
-// This code is under the BSD-2-Clause license.
-
 package quickbooks
 
 // CompanyInfo describes a company account.
@@ -22,7 +19,7 @@ type CompanyInfo struct {
 	Domain    string
 	Id        string
 	SyncToken string
-	Metadata  MetaData `json:",omitempty"`
+	Metadata  *MetaData `json:",omitempty"`
 }
 
 // FindCompanyInfo returns the QuickBooks CompanyInfo object. This is a good

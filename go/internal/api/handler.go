@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -9,18 +11,30 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/resilience"
 	"github.com/google/uuid"
+	"golang.org/x/oauth2"
 )
 
 // SecretGetter defines the interface for retrieving webhook secrets and checking health.
 type SecretGetter interface {
 	GetWebhookSecret(ctx context.Context, connID string) (string, error)
+	SaveQBOTokens(ctx context.Context, realmID, accessToken, refreshToken string, expiresAt time.Time) error
+	GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, error)
 	Ping(ctx context.Context) error
 }
 
 // EventPublisher defines the interface for publishing events.
 type EventPublisher interface {
 	PublishWebhookEvent(ctx context.Context, provider, connID, toroEventID, providerEventID, providerEventType string, body []byte) error
+	PublishQBOEvent(ctx context.Context, eventType, realmID string, data []byte) error
 	Ping(ctx context.Context) error
+}
+
+// QBOConfig holds QuickBooks Online OAuth2 configuration.
+type QBOConfig struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURI  string
+	IsProduction bool
 }
 
 // Handler holds dependencies for HTTP handlers.
@@ -32,10 +46,11 @@ type Handler struct {
 	RateLimiter       *resilience.RateLimiter
 	FailedAuthTracker *resilience.FailedAttemptsTracker
 	MaxBodySize       int64
+	QBOConfig         *QBOConfig
 }
 
 // NewHandler creates a new Handler.
-func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher, verifierRegistry *VerifierRegistry, maxBodySize int64) *Handler {
+func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher, verifierRegistry *VerifierRegistry, maxBodySize int64, qboConfig *QBOConfig) *Handler {
 	return &Handler{
 		Logger:            logger,
 		Store:             store,
@@ -44,6 +59,7 @@ func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher, ver
 		RateLimiter:       resilience.NewRateLimiter(100, 10), // 100 req/s, burst 10
 		FailedAuthTracker: resilience.NewFailedAttemptsTracker(5),
 		MaxBodySize:       maxBodySize,
+		QBOConfig:         qboConfig,
 	}
 }
 
@@ -185,4 +201,172 @@ func (h *Handler) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// Inject "stripe" as the provider for backward compatibility
 	r.SetPathValue("provider", "stripe")
 	h.HandleWebhook(w, r)
+}
+
+// =========================================================================
+// QBO OAUTH2 PIPELINE
+// =========================================================================
+
+// OAuthTask defines a single step in the OAuth2 pipeline.
+type OAuthTask func(*OAuthContext) error
+
+// OAuthContext holds the state for the OAuth2 pipeline.
+type OAuthContext struct {
+	Request  *http.Request
+	Response http.ResponseWriter
+	Handler  *Handler
+	Log      *slog.Logger
+
+	// Extracted Data
+	Code    string
+	RealmID string
+
+	// Result Data
+	Token *oauth2.Token
+}
+
+// OAuthPipeline orchestrates the OAuth2 callback processing steps.
+type OAuthPipeline struct {
+	Steps []OAuthTask
+}
+
+// Run executes the pipeline steps sequentially.
+func (p *OAuthPipeline) Run(ctx *OAuthContext) {
+	for _, step := range p.Steps {
+		if err := step(ctx); err != nil {
+			ctx.Log.Error("OAuth Pipeline failed", "error", err)
+			// On error, the step is responsible for writing the response (e.g., redirecting to error page)
+			return
+		}
+	}
+}
+
+// HandleQBOCallback handles the QuickBooks Online OAuth2 redirect.
+func (h *Handler) HandleQBOCallback(w http.ResponseWriter, r *http.Request) {
+	requestID := r.Header.Get("X-Request-ID")
+	if requestID == "" {
+		requestID = uuid.New().String()
+	}
+
+	logger := h.Logger.With("request_id", requestID, "handler", "HandleQBOCallback")
+
+	pipeline := &OAuthPipeline{
+		Steps: []OAuthTask{
+			ExtractParamsTask,
+			ExchangeTokenTask,
+			SaveTokensTask,
+			NotifyWSTask,
+			RedirectResultTask,
+		},
+	}
+
+	pipeline.Run(&OAuthContext{
+		Request:  r,
+		Response: w,
+		Handler:  h,
+		Log:      logger,
+	})
+}
+
+// ExtractParamsTask grabs the code and realmID from the URL query.
+func ExtractParamsTask(ctx *OAuthContext) error {
+	ctx.Code = ctx.Request.URL.Query().Get("code")
+	ctx.RealmID = ctx.Request.URL.Query().Get("realmId")
+
+	if ctx.Code == "" || ctx.RealmID == "" {
+		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=missing_params", http.StatusFound)
+		return fmt.Errorf("missing code or realmId")
+	}
+
+	return nil
+}
+
+// ExchangeTokenTask exchanges the authorization code for tokens.
+func ExchangeTokenTask(ctx *OAuthContext) error {
+	if ctx.Handler.QBOConfig == nil {
+		ctx.Log.Error("QBO configuration not available")
+		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=config_missing", http.StatusFound)
+		return fmt.Errorf("QBO configuration not available")
+	}
+
+	conf := &oauth2.Config{
+		ClientID:     ctx.Handler.QBOConfig.ClientID,
+		ClientSecret: ctx.Handler.QBOConfig.ClientSecret,
+		RedirectURL:  ctx.Handler.QBOConfig.RedirectURI,
+		Endpoint: oauth2.Endpoint{
+			TokenURL: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+		},
+	}
+
+	ctx.Log.Info("Exchanging authorization code for tokens", "realm_id", ctx.RealmID)
+
+	token, err := conf.Exchange(ctx.Request.Context(), ctx.Code)
+	if err != nil {
+		ctx.Log.Error("Token exchange failed", "error", err)
+		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=exchange_failed", http.StatusFound)
+		return fmt.Errorf("token exchange failed: %w", err)
+	}
+
+	ctx.Token = token
+	ctx.Log.Info("Token exchange successful", "realm_id", ctx.RealmID)
+	return nil
+}
+
+// SaveTokensTask persists the tokens to the database.
+func SaveTokensTask(ctx *OAuthContext) error {
+	err := ctx.Handler.Store.SaveQBOTokens(
+		ctx.Request.Context(),
+		ctx.RealmID,
+		ctx.Token.AccessToken,
+		ctx.Token.RefreshToken,
+		ctx.Token.Expiry,
+	)
+
+	if err != nil {
+		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=storage_failed", http.StatusFound)
+		return fmt.Errorf("failed to save tokens: %w", err)
+	}
+
+	return nil
+}
+
+// NotifyWSTask sends success notification via NATS for WebSocket broadcasting.
+func NotifyWSTask(ctx *OAuthContext) error {
+	if ctx.Handler.Pub == nil {
+		ctx.Log.Warn("Publisher not available, skipping WebSocket notification")
+		return nil
+	}
+
+	// Publish a QBO connection success event
+	publishCtx, cancel := context.WithTimeout(ctx.Request.Context(), 3*time.Second)
+	defer cancel()
+
+	// Create a success message
+	successMsg := map[string]interface{}{
+		"type":      "qbo_connected",
+		"realm_id":  ctx.RealmID,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"status":    "success",
+	}
+
+	msgBytes, err := json.Marshal(successMsg)
+	if err != nil {
+		ctx.Log.Error("Failed to marshal success message", "error", err)
+		return nil // Don't fail the pipeline
+	}
+
+	// Publish to a dedicated QBO events subject
+	if err := ctx.Handler.Pub.PublishQBOEvent(publishCtx, "connected", ctx.RealmID, msgBytes); err != nil {
+		ctx.Log.Error("Failed to publish QBO success event", "error", err)
+		// Don't fail the pipeline - OAuth succeeded, notification is best-effort
+	}
+
+	ctx.Log.Info("QBO connection success event published", "realm_id", ctx.RealmID)
+	return nil
+}
+
+// RedirectResultTask redirects to the success page.
+func RedirectResultTask(ctx *OAuthContext) error {
+	http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/dashboard?status=connected", http.StatusFound)
+	return nil
 }

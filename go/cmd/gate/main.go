@@ -103,8 +103,33 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("store init error: %w", err)
 	}
 	pub := ingest.NewPublisher(q)
+
+	// Load QBO OAuth2 configuration from environment
+	qboConfig := &api.QBOConfig{
+		ClientID:     os.Getenv("QBO_CLIENT_ID"),
+		ClientSecret: os.Getenv("QBO_CLIENT_SECRET"),
+		RedirectURI:  os.Getenv("QBO_REDIRECT_URI"),
+		IsProduction: os.Getenv("QBO_IS_PRODUCTION") == "true" || os.Getenv("QBO_IS_PRODUCTION") == "1",
+	}
+
+	// Validate QBO config
+	if qboConfig.ClientID == "" || qboConfig.ClientSecret == "" {
+		logger.Warn("QBO credentials not configured - OAuth will not work")
+	}
+
+	if qboConfig.RedirectURI == "" {
+		qboConfig.RedirectURI = "http://localhost/api/auth/qbo/callback"
+		logger.Info("Using default QBO redirect URI", "uri", qboConfig.RedirectURI)
+	}
+
+	logger.Info("QBO configuration loaded",
+		"client_id_configured", qboConfig.ClientID != "",
+		"redirect_uri", qboConfig.RedirectURI,
+		"is_production", qboConfig.IsProduction,
+	)
+
 	// DI: Create Server
-	srv := api.NewServer(cfg, logger, st, pub)
+	srv := api.NewServer(cfg, logger, st, pub, qboConfig)
 
 	// =========================================================================
 	// STARTUP & GRACEFUL SHUTDOWN

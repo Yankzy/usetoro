@@ -12,6 +12,9 @@ func NewRouter(h *Handler) *http.ServeMux {
 	// Generic webhook endpoint (supports all providers)
 	mux.HandleFunc("POST /webhooks/{provider}/{conn_id}", h.HandleWebhook)
 
+	// QBO OAuth2 callback
+	mux.HandleFunc("GET /auth/qbo/callback", h.HandleQBOCallback)
+
 	// Backward compatibility: specific Stripe endpoint
 	mux.HandleFunc("POST /webhooks/stripe/{conn_id}", h.HandleStripeWebhook)
 

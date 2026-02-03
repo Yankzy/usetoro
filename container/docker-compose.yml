@@ -34,6 +34,11 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      QBO_CLIENT_ID: ${QBO_CLIENT_ID}
+      QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
+      QBO_REDIRECT_URI: ${QBO_REDIRECT_URI}
+      QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION}
     depends_on:
       db:
         condition: service_healthy
@@ -56,38 +61,55 @@ services:
     networks:
       - toro-net
 
-  # protocol:
-  #   build:
-  #     context: ../
-  #     dockerfile: container/protocol/Dockerfile
-  #   restart: always
-  #   environment:
-  #     DATABASE_URL: ${DATABASE_URL}
-  #     NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
-  #     # OPENAI_API_KEY: ${OPENAI_API_KEY} # Make sure this is in .env
-  #   depends_on:
-  #     db:
-  #       condition: service_healthy
-  #     nats-1:
-  #       condition: service_healthy
-  #   networks:
-  #     - toro-net
+  protocol:
+    build:
+      context: ../
+      dockerfile: container/protocol/Dockerfile
+    restart: always
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      # OPENAI_API_KEY: ${OPENAI_API_KEY} # Make sure this is in .env
+    depends_on:
+      db:
+        condition: service_healthy
+      nats-1:
+        condition: service_healthy
+    networks:
+      - toro-net
 
-  # sync:
-  #   build:
-  #     context: ../
-  #     dockerfile: container/sync/Dockerfile
-  #   restart: always
-  #   environment:
-  #     DATABASE_URL: ${DATABASE_URL}
-  #     NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
-  #   depends_on:
-  #     db:
-  #       condition: service_healthy
-  #     nats-1:
-  #       condition: service_healthy
-  #   networks:
-  #     - toro-net
+  sync:
+    build:
+      context: ../
+      dockerfile: container/sync/Dockerfile
+    restart: always
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      nats-1:
+        condition: service_healthy
+    networks:
+      - toro-net
+
+  ws:
+    build:
+      context: ../
+      dockerfile: container/ws/Dockerfile
+    restart: always
+    ports:
+      - "8081:8080"
+    environment:
+      WS_ADDR: :8080
+      QBO_CLIENT_ID: ${QBO_CLIENT_ID}
+      QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
+      QBO_REDIRECT_URI: ${QBO_REDIRECT_URI:-http://localhost/api/auth/qbo/callback}
+      QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION:-false}
+    networks:
+      - toro-net
 
   redis:
     image: redis:alpine

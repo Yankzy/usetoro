@@ -14,7 +14,7 @@ else
 endif
 
 # App Services
-SERVICES := redis db svix-server gate migrator nginx svix-ui
+SERVICES := redis db svix-server gate migrator nginx svix-ui ws
 
 .PHONY: deploy up-scanner down-scanner build-scanner
 deploy:
@@ -167,4 +167,4 @@ migrate:
 	$(DOCKER_COMPOSE) up migrator
 
 sqlc:
-	~/go/bin/sqlc generate
+	~/go/bin/sqlc generate && make migrate

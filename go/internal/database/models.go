@@ -18,6 +18,15 @@ type QboConnection struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type RefreshToken struct {
+	TokenHash string
+	UserID    pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+	IpAddress pgtype.Text
+	UserAgent pgtype.Text
+	CreatedAt pgtype.Timestamptz
+}
+
 type Tenant struct {
 	ID        pgtype.UUID
 	Name      string
@@ -34,6 +43,18 @@ type Transaction struct {
 	AmountMicros int64
 	Description  pgtype.Text
 	CreatedAt    pgtype.Timestamptz
+}
+
+type User struct {
+	ID           pgtype.UUID
+	TenantID     pgtype.UUID
+	Email        string
+	PasswordHash string
+	FullName     pgtype.Text
+	Role         pgtype.Text
+	IsActive     pgtype.Bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type WebhooksProviderconnection struct {

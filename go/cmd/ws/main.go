@@ -9,7 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/wshandler"
+	"github.com/nats-io/nats.go"
 )
 
 func main() {
@@ -40,9 +42,48 @@ func main() {
 		"qbo_configured", qboConfig.QBOClientID != "",
 	)
 
+	// Initialize NATS connection
+	natsURL := os.Getenv("NATS_URL")
+	if natsURL == "" {
+		natsURL = "nats://nats:4222"
+	}
+
+	logger.Info("Connecting to NATS", "url", natsURL)
+	queueClient, err := queue.NewClient(
+		natsURL,
+		nats.Name("ws-service"),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(2*time.Second),
+	)
+	if err != nil {
+		logger.Error("Failed to connect to NATS", "error", err)
+		os.Exit(1)
+	}
+	defer queueClient.Close()
+
+	// Ensure QBO events stream exists
+	streamCfg := &nats.StreamConfig{
+		Name:     "QBO_EVENTS",
+		Subjects: []string{"qbo.events.*"},
+		Storage:  nats.FileStorage,
+		MaxAge:   24 * time.Hour,
+	}
+	if err := queueClient.EnsureStream(streamCfg); err != nil {
+		logger.Error("Failed to ensure QBO events stream", "error", err)
+		os.Exit(1)
+	}
+
 	// Create WebSocket hub
 	hub := wshandler.NewHub(logger)
 	go hub.Run()
+
+	// Create and start QBO event consumer
+	qboConsumer := wshandler.NewQBOEventConsumer(queueClient, hub, logger)
+	if err := qboConsumer.Start(); err != nil {
+		logger.Error("Failed to start QBO event consumer", "error", err)
+		os.Exit(1)
+	}
+	defer qboConsumer.Stop()
 
 	// Create message handler
 	messageHandler := wshandler.NewMessageHandler(logger, qboConfig)

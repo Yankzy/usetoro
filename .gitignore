@@ -29,6 +29,10 @@ go.work.sum
 **/env
 .logs
 **/logs
+**/keys
+**/db_data
+**/redis_data
+container/postgres/db_data
 
 # Editor/IDE
 # .idea/

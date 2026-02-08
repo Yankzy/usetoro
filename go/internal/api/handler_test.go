@@ -14,6 +14,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/Yankzy/usetoro/internal/database"
 )
 
 // --- Mocks ---
@@ -34,8 +36,12 @@ func (m *MockStore) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (m *MockStore) SaveQBOTokens(ctx context.Context, realmID, accessToken, refreshToken string, expiresAt time.Time) error {
+func (m *MockStore) SaveQBOTokens(ctx context.Context, tenantID, realmID, accessToken, refreshToken string, expiresAt time.Time) error {
 	return nil
+}
+
+func (m *MockStore) GetQBOConnection(ctx context.Context, tenantID string) (*database.QboConnection, error) {
+	return nil, nil
 }
 
 func (m *MockStore) GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, error) {

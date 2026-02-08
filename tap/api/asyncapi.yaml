@@ -1,0 +1,47 @@
+asyncapi: '2.6.0'
+info:
+  title: Toro Agent Protocol (TAP)
+  version: '1.0.0'
+  description: Asynchronous messaging definition for ToroNet.
+
+channels:
+  almanac.query:
+    publish:
+      message:
+        $ref: '#/components/messages/QueryMessage'
+    subscribe:
+      message:
+        $ref: '#/components/messages/QueryResponse'
+
+  tasks.{domain}.{complexity}.{type}:
+    parameters:
+      domain:
+        schema: { type: "string" }
+      complexity:
+        schema: { type: "integer" }
+      type:
+        schema: { type: "string" }
+    publish:
+      message:
+        $ref: '#/components/messages/TaskBroadcast'
+
+  contracts.request:
+    publish:
+      message:
+        $ref: '#/components/messages/ContractRequest'
+
+components:
+  messages:
+    QueryMessage:
+      payload:
+        type: object
+        properties:
+          capability_type: { type: string }
+    
+    TaskBroadcast:
+      payload:
+        $ref: './json-schema/v1/primitives.json#/definitions/task'
+        
+    ContractRequest:
+      payload:
+        $ref: './json-schema/v1/primitives.json#/definitions/contract'

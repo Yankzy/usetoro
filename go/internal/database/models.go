@@ -8,6 +8,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AgentPerformanceHourly struct {
+	Bucket        interface{}
+	AgentID       interface{}
+	TotalTasks    int64
+	AvgConfidence float64
+	TotalCost     int64
+}
+
 type QboConnection struct {
 	ID           pgtype.UUID
 	RealmID      string
@@ -16,6 +24,7 @@ type QboConnection struct {
 	ExpiresAt    pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	TenantID     pgtype.UUID
 }
 
 type RefreshToken struct {
@@ -25,6 +34,16 @@ type RefreshToken struct {
 	IpAddress pgtype.Text
 	UserAgent pgtype.Text
 	CreatedAt pgtype.Timestamptz
+}
+
+type TelemetryEvent struct {
+	Time       pgtype.Timestamptz
+	TraceID    pgtype.UUID
+	TenantID   pgtype.UUID
+	Service    string
+	EventType  string
+	DurationMs pgtype.Int4
+	Meta       []byte
 }
 
 type Tenant struct {

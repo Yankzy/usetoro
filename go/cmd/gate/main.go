@@ -9,7 +9,13 @@ import (
 	"syscall"
 	"time"
 
+	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/pem"
+
 	"github.com/Yankzy/usetoro/internal/api"
+
+	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/ingest"
 	"github.com/Yankzy/usetoro/internal/queue"
@@ -93,6 +99,55 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("cache init error: %w", err)
 	}
 	logger.Info("✅ Initialized Cache")
+
+	// 4. Authenticator (For future Admin routes)
+	// We load the public key to verify internal JWTs.
+	// Webhooks from Stripe/Plaid do NOT use this.
+	authPublicKeyPath := os.Getenv("AUTH_PUBLIC_KEY")
+	if authPublicKeyPath == "" {
+		authPublicKeyPath = "keys/public.pem"
+	}
+	var authenticator *auth.Authenticator
+
+	// Only try to load if file exists or env var is explicitly set
+	// This prevents crashing if gate is deployed without keys (pure webhook mode)
+	if _, err := os.Stat(authPublicKeyPath); err == nil {
+		pubKeyBytes, err := os.ReadFile(authPublicKeyPath)
+		if err != nil {
+			logger.Error("Failed to read public key", "error", err)
+			os.Exit(1)
+		}
+		block, _ := pem.Decode(pubKeyBytes)
+		if block == nil || block.Type != "PUBLIC KEY" {
+			logger.Error("Failed to decode PEM block containing public key")
+			os.Exit(1)
+		}
+		parsedKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+		if err != nil {
+			logger.Error("Failed to parse public key", "error", err)
+			os.Exit(1)
+		}
+		edPubKey, ok := parsedKey.(ed25519.PublicKey)
+		if !ok {
+			logger.Error("Key is not an Ed25519 public key")
+			os.Exit(1)
+		}
+		authenticator = &auth.Authenticator{
+			PublicKey: edPubKey,
+			// Gate might not need Redis for simple signature checks,
+			// or we can reuse `q` if it was a redis client, but `q` is Nats here.
+			// `cache` is local ristretto.
+			// For now, no revocation check in Gate to keep it simple/fast?
+			// The instructions didn't force Redis in Gate.
+		}
+		logger.Info("✅ Initialized Authenticator")
+	} else {
+		logger.Warn("Auth Public Key not found, admin routes will not be secured if added later", "path", authPublicKeyPath)
+	}
+
+	// TODO: Use app.Auth.Middleware for future internal admin routes
+	// Example: mux.Handle("/api/admin", authenticator.Middleware(adminHandler))
+	_ = authenticator // Suppress unused error
 
 	// =========================================================================
 	// APPLICATION WIRING

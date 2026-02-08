@@ -1,0 +1,42 @@
+scalar Time
+
+type User {
+  id: ID!
+  email: String!
+  role: String!
+  tenantId: ID!
+}
+
+type AuthPayload {
+  accessToken: String!
+  refreshToken: String!
+  expiresAt: Time!
+  user: User!
+}
+
+type QBOCompany {
+  realmId: ID!
+  companyName: String!
+  connectedAt: Time
+}
+
+input SignupInput {
+  email: String!
+  password: String!
+  orgName: String!
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+}
+
+type Mutation {
+  signup(input: SignupInput!): AuthPayload!
+  login(input: LoginInput!): AuthPayload!
+}
+
+type Query {
+  me: User
+  qboConnection: QBOCompany
+}

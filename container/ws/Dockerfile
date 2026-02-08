@@ -8,6 +8,7 @@ WORKDIR /app
 
 # Copy go mod files
 COPY go/go.mod go/go.sum ./
+COPY tap /tap
 RUN go mod download
 
 # Copy source code

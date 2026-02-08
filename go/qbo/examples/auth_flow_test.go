@@ -9,6 +9,7 @@ import (
 )
 
 func TestAuthorizationFlow(t *testing.T) {
+	t.Skip("Skipping example testrequiring credentials")
 	clientId := "<your-client-id>"
 	clientSecret := "<your-client-secret>"
 	realmId := "<realm-id>"

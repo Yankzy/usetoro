@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/pem"
 	"log/slog"
 	"net/http"
 	"os"
@@ -9,9 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/wshandler"
 	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -37,10 +42,75 @@ func main() {
 		qboConfig.QBORedirectURI = "http://localhost/api/auth/qbo/callback"
 	}
 
+	// Auth Configuration
+	authPublicKeyPath := os.Getenv("AUTH_PUBLIC_KEY")
+	if authPublicKeyPath == "" {
+		authPublicKeyPath = "keys/public.pem"
+	} else if _, err := os.Stat(authPublicKeyPath); os.IsNotExist(err) {
+		// If provided path doesn't exist, assume it might be the content or try default
+		// For now, let's stick to file path as per convention in cmd/auth
+	}
+
+	pubKeyBytes, err := os.ReadFile(authPublicKeyPath)
+	if err != nil {
+		logger.Error("Failed to read public key", "path", authPublicKeyPath, "error", err)
+		os.Exit(1)
+	}
+
+	block, _ := pem.Decode(pubKeyBytes)
+	if block == nil || block.Type != "PUBLIC KEY" {
+		logger.Error("Failed to decode PEM block containing public key")
+		os.Exit(1)
+	}
+
+	parsedKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		logger.Error("Failed to parse public key", "error", err)
+		os.Exit(1)
+	}
+
+	edPubKey, ok := parsedKey.(ed25519.PublicKey)
+	if !ok {
+		logger.Error("Key is not an Ed25519 public key")
+		os.Exit(1)
+	}
+
+	// Redis Configuration
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379"
+	}
+
+	redisOpts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		logger.Error("Invalid Redis URL", "url", redisURL, "error", err)
+		os.Exit(1)
+	}
+
+	rdb := redis.NewClient(redisOpts)
+	// We'll check connectivity in a moment...
+
+	authenticator := &auth.Authenticator{
+		PublicKey: edPubKey,
+		Redis:     rdb,
+	}
+
 	logger.Info("Starting WebSocket server",
 		"addr", addr,
 		"qbo_configured", qboConfig.QBOClientID != "",
+		"auth_configured", true,
+		"redis_url", redisURL,
 	)
+
+	// Check Redis connectivity
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		logger.Error("Failed to connect to Redis", "url", redisURL, "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Connected to Redis")
+	defer rdb.Close()
 
 	// Initialize NATS connection
 	natsURL := os.Getenv("NATS_URL")
@@ -48,30 +118,49 @@ func main() {
 		natsURL = "nats://nats:4222"
 	}
 
-	logger.Info("Connecting to NATS", "url", natsURL)
-	queueClient, err := queue.NewClient(
-		natsURL,
-		nats.Name("ws-service"),
-		nats.MaxReconnects(-1),
-		nats.ReconnectWait(2*time.Second),
-	)
-	if err != nil {
-		logger.Error("Failed to connect to NATS", "error", err)
+	// Initialize NATS connection with retries
+	var queueClient *queue.Client
+	maxRetries := 15
+	var lastErr error
+
+	for i := 0; i < maxRetries; i++ {
+		logger.Info("Connecting to NATS", "url", natsURL, "attempt", i+1)
+		queueClient, err = queue.NewClient(
+			natsURL,
+			nats.Name("ws-service"),
+			nats.MaxReconnects(-1),
+			nats.ReconnectWait(2*time.Second),
+		)
+
+		if err == nil {
+			// Ensure QBO events stream exists
+			streamCfg := &nats.StreamConfig{
+				Name:     "QBO_EVENTS",
+				Subjects: []string{"qbo.events.*"},
+				Storage:  nats.FileStorage,
+				MaxAge:   24 * time.Hour,
+			}
+			if err := queueClient.EnsureStream(streamCfg); err == nil {
+				logger.Info("Connected to NATS and JetStream stream ensured")
+				lastErr = nil
+				break
+			} else {
+				lastErr = err
+				logger.Warn("Failed to ensure JetStream stream, retrying...", "error", err)
+				queueClient.Close()
+			}
+		} else {
+			lastErr = err
+			logger.Warn("Failed to connect to NATS, retrying...", "error", err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	if lastErr != nil {
+		logger.Error("Failed to initialize NATS/JetStream after multiple attempts", "error", lastErr)
 		os.Exit(1)
 	}
 	defer queueClient.Close()
-
-	// Ensure QBO events stream exists
-	streamCfg := &nats.StreamConfig{
-		Name:     "QBO_EVENTS",
-		Subjects: []string{"qbo.events.*"},
-		Storage:  nats.FileStorage,
-		MaxAge:   24 * time.Hour,
-	}
-	if err := queueClient.EnsureStream(streamCfg); err != nil {
-		logger.Error("Failed to ensure QBO events stream", "error", err)
-		os.Exit(1)
-	}
 
 	// Create WebSocket hub
 	hub := wshandler.NewHub(logger)
@@ -93,7 +182,8 @@ func main() {
 
 	// Setup HTTP routes
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ws", wsHandler.ServeWS)
+	// Wrap handleWebSocket with QueryMiddleware
+	mux.Handle("/ws", authenticator.QueryMiddleware(http.HandlerFunc(wsHandler.ServeWS)))
 
 	// Health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

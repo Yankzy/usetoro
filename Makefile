@@ -14,7 +14,7 @@ else
 endif
 
 # App Services
-SERVICES := redis db svix-server gate migrator nginx svix-ui ws
+SERVICES := redis db svix-server gate migrator nginx svix-ui ws graphql nats-1 nats-2 nats-3
 
 .PHONY: deploy up-scanner down-scanner build-scanner
 deploy:
@@ -125,8 +125,6 @@ psql:
 	read DB_USER; \
 	$(DOCKER_COMPOSE) exec db psql -U $$DB_USER -d db
 
-test:
-	$(DOCKER_COMPOSE) exec app-django python manage.py test $(PARAMETER)
 
 
 submodule:
@@ -168,3 +166,11 @@ migrate:
 
 sqlc:
 	~/go/bin/sqlc generate && make migrate
+
+test:
+	cd go && go test ./...
+
+clean_db:
+	$(DOCKER_COMPOSE) down
+	sudo rm -rf container/postgres/db_data
+	$(MAKE) upd

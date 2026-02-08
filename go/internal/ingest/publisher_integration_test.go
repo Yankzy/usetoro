@@ -97,8 +97,8 @@ func TestPublisher_Integration(t *testing.T) {
 		t.Errorf("expected Toro-Event-ID %s, got %s", toroEventID, msg.Header.Get("Toro-Event-ID"))
 	}
 
-	if msg.Header.Get("Stripe-Event-ID") != stripeEvent.ID {
-		t.Errorf("expected Stripe-Event-ID %s, got %s", stripeEvent.ID, msg.Header.Get("Stripe-Event-ID"))
+	if msg.Header.Get("Provider-Event-ID") != stripeEvent.ID {
+		t.Errorf("expected Provider-Event-ID %s, got %s", stripeEvent.ID, msg.Header.Get("Provider-Event-ID"))
 	}
 
 	if msg.Header.Get("Request-ID") != "req_abc" {

@@ -1,0 +1,54 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "TAP Message Envelope",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string",
+            "format": "uuid"
+        },
+        "ts": {
+            "type": "string",
+            "format": "date-time"
+        },
+        "src": {
+            "type": "string",
+            "pattern": "^did:toro:.*$"
+        },
+        "dst": {
+            "type": "string",
+            "pattern": "^did:toro:.*$"
+        },
+        "perf": {
+            "type": "string",
+            "enum": [
+                "cfp",
+                "propose",
+                "accept-proposal",
+                "reject-proposal",
+                "inform",
+                "query-ref",
+                "request",
+                "refuse",
+                "failure"
+            ]
+        },
+        "cid": {
+            "type": "string"
+        },
+        "body": {
+            "type": "object"
+        },
+        "sig": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "id",
+        "ts",
+        "src",
+        "perf",
+        "body",
+        "sig"
+    ]
+}

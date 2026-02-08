@@ -11,8 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getQBOConnection = `-- name: GetQBOConnection :one
+SELECT id, realm_id, access_token, refresh_token, expires_at, created_at, updated_at, tenant_id FROM qbo_connections
+WHERE tenant_id = $1
+`
+
+func (q *Queries) GetQBOConnection(ctx context.Context, tenantID pgtype.UUID) (QboConnection, error) {
+	row := q.db.QueryRow(ctx, getQBOConnection, tenantID)
+	var i QboConnection
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TenantID,
+	)
+	return i, err
+}
+
 const getQBOTokens = `-- name: GetQBOTokens :one
-SELECT access_token, refresh_token, expires_at
+SELECT access_token, refresh_token, expires_at, tenant_id
 FROM qbo_connections
 WHERE realm_id = $1
 `
@@ -21,18 +42,24 @@ type GetQBOTokensRow struct {
 	AccessToken  string
 	RefreshToken string
 	ExpiresAt    pgtype.Timestamptz
+	TenantID     pgtype.UUID
 }
 
 func (q *Queries) GetQBOTokens(ctx context.Context, realmID string) (GetQBOTokensRow, error) {
 	row := q.db.QueryRow(ctx, getQBOTokens, realmID)
 	var i GetQBOTokensRow
-	err := row.Scan(&i.AccessToken, &i.RefreshToken, &i.ExpiresAt)
+	err := row.Scan(
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.ExpiresAt,
+		&i.TenantID,
+	)
 	return i, err
 }
 
 const upsertQBOTokens = `-- name: UpsertQBOTokens :exec
-INSERT INTO qbo_connections (realm_id, access_token, refresh_token, expires_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO qbo_connections (realm_id, access_token, refresh_token, expires_at, tenant_id)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (realm_id) 
 DO UPDATE SET 
     access_token = $2, 
@@ -46,6 +73,7 @@ type UpsertQBOTokensParams struct {
 	AccessToken  string
 	RefreshToken string
 	ExpiresAt    pgtype.Timestamptz
+	TenantID     pgtype.UUID
 }
 
 func (q *Queries) UpsertQBOTokens(ctx context.Context, arg UpsertQBOTokensParams) error {
@@ -54,6 +82,7 @@ func (q *Queries) UpsertQBOTokens(ctx context.Context, arg UpsertQBOTokensParams
 		arg.AccessToken,
 		arg.RefreshToken,
 		arg.ExpiresAt,
+		arg.TenantID,
 	)
 	return err
 }

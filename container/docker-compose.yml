@@ -5,14 +5,14 @@ x-nats-common: &nats-common
 
 services:
   db:
-    image: postgres:15-alpine
+    image: timescale/timescaledb:latest-pg18
     restart: always
     environment:
       POSTGRES_DB: toro
       POSTGRES_USER: toro
       POSTGRES_PASSWORD: toro_password
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/db_data:/var/lib/postgresql/data
       - ./postgres/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh
     ports:
       - "5435:5432"
@@ -108,6 +108,16 @@ services:
       QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
       QBO_REDIRECT_URI: ${QBO_REDIRECT_URI:-http://localhost/api/auth/qbo/callback}
       QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION:-false}
+      AUTH_PUBLIC_KEY: ${AUTH_PUBLIC_KEY}
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+    volumes:
+      - ../keys:/keys:ro
+    depends_on:
+      redis:
+        condition: service_started
+      nats-1:
+        condition: service_healthy
     networks:
       - toro-net
 
@@ -197,6 +207,28 @@ services:
     networks:
       - toro-net
 
+  graphql:
+    build:
+      context: ../
+      dockerfile: container/graphql/Dockerfile
+    restart: always
+    ports:
+      - "8082:8080" # Exposed on host 8082 for debugging, but Nginx uses internal 8080
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+      AUTH_PRIVATE_KEY: ${AUTH_PRIVATE_KEY}
+      PORT: 8080
+    volumes:
+      - ../keys:/keys # Mount keys directory
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - toro-net
+
   nginx:
     build:
       context: ../
@@ -205,6 +237,7 @@ services:
       - "80:80"
     depends_on:
       - gate
+      - graphql
       - svix-server
     networks:
       - toro-net
@@ -221,7 +254,6 @@ services:
       - toro-net
 
 volumes:
-  postgres_data:
   redis_data:
   nats_1_data:
   nats_2_data:

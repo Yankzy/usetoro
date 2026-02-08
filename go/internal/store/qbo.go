@@ -10,7 +10,7 @@ import (
 )
 
 // SaveQBOTokens encrypts and stores the OAuth2 tokens for a QBO connection.
-func (s *Store) SaveQBOTokens(ctx context.Context, realmID, accessToken, refreshToken string, expiresAt time.Time) error {
+func (s *Store) SaveQBOTokens(ctx context.Context, tenantID, realmID, accessToken, refreshToken string, expiresAt time.Time) error {
 	// Encrypt sensitive tokens
 	encryptedAccess, err := s.Encryptor.Encrypt(accessToken)
 	if err != nil {
@@ -23,11 +23,17 @@ func (s *Store) SaveQBOTokens(ctx context.Context, realmID, accessToken, refresh
 	}
 
 	// Store in database
+	tenantUUID := pgtype.UUID{}
+	if err := tenantUUID.Scan(tenantID); err != nil {
+		return fmt.Errorf("invalid tenant UUID: %w", err)
+	}
+
 	err = s.Queries.UpsertQBOTokens(ctx, database.UpsertQBOTokensParams{
 		RealmID:      realmID,
 		AccessToken:  encryptedAccess,
 		RefreshToken: encryptedRefresh,
 		ExpiresAt:    pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		TenantID:     tenantUUID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to store QBO tokens: %w", err)
@@ -55,4 +61,20 @@ func (s *Store) GetQBOTokens(ctx context.Context, realmID string) (string, strin
 	}
 
 	return accessToken, refreshToken, row.ExpiresAt.Time, nil
+}
+
+// GetQBOConnection returns the basic connection info (no secrets) for a tenant
+func (s *Store) GetQBOConnection(ctx context.Context, tenantID string) (*database.QboConnection, error) {
+	tenantUUID := pgtype.UUID{}
+	if err := tenantUUID.Scan(tenantID); err != nil {
+		return nil, fmt.Errorf("invalid tenant UUID: %w", err)
+	}
+
+	row, err := s.Queries.GetQBOConnection(ctx, tenantUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	// We return the raw row which maps to the model
+	return &row, nil
 }

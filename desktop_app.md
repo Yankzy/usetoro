@@ -141,7 +141,7 @@ We need sub-100ms latency for state updates. "Green Bubble" (SMS) fallback logic
 
 ### 3.1 The WebSocket Gateway (Go)
 
-- **Connection:** `wss://api.toro.io/chat/v1/stream`
+- **Connection:** `wss://api.usetoro.io/chat/v1/stream`
 - **Auth:** JWT Token (User ID).
 - **Responsibility:**
   - Maintain persistent connection to Mobile/Web clients.

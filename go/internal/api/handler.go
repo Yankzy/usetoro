@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/resilience"
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
@@ -17,8 +18,9 @@ import (
 // SecretGetter defines the interface for retrieving webhook secrets and checking health.
 type SecretGetter interface {
 	GetWebhookSecret(ctx context.Context, connID string) (string, error)
-	SaveQBOTokens(ctx context.Context, realmID, accessToken, refreshToken string, expiresAt time.Time) error
+	SaveQBOTokens(ctx context.Context, tenantID, realmID, accessToken, refreshToken string, expiresAt time.Time) error
 	GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, error)
+	GetQBOConnection(ctx context.Context, tenantID string) (*database.QboConnection, error)
 	Ping(ctx context.Context) error
 }
 
@@ -218,8 +220,9 @@ type OAuthContext struct {
 	Log      *slog.Logger
 
 	// Extracted Data
-	Code    string
-	RealmID string
+	Code     string
+	RealmID  string
+	TenantID string // <-- Added
 
 	// Result Data
 	Token *oauth2.Token
@@ -272,10 +275,17 @@ func (h *Handler) HandleQBOCallback(w http.ResponseWriter, r *http.Request) {
 func ExtractParamsTask(ctx *OAuthContext) error {
 	ctx.Code = ctx.Request.URL.Query().Get("code")
 	ctx.RealmID = ctx.Request.URL.Query().Get("realmId")
+	ctx.TenantID = ctx.Request.URL.Query().Get("state")
 
 	if ctx.Code == "" || ctx.RealmID == "" {
 		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=missing_params", http.StatusFound)
 		return fmt.Errorf("missing code or realmId")
+	}
+
+	if ctx.TenantID == "" {
+		ctx.Log.Error("Missing state (tenant_id) parameter")
+		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=missing_state", http.StatusFound)
+		return fmt.Errorf("missing state (tenant_id) parameter")
 	}
 
 	return nil
@@ -316,6 +326,7 @@ func ExchangeTokenTask(ctx *OAuthContext) error {
 func SaveTokensTask(ctx *OAuthContext) error {
 	err := ctx.Handler.Store.SaveQBOTokens(
 		ctx.Request.Context(),
+		ctx.TenantID,
 		ctx.RealmID,
 		ctx.Token.AccessToken,
 		ctx.Token.RefreshToken,

@@ -1,6 +1,6 @@
 -- name: UpsertQBOTokens :exec
-INSERT INTO qbo_connections (realm_id, access_token, refresh_token, expires_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO qbo_connections (realm_id, access_token, refresh_token, expires_at, tenant_id)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (realm_id) 
 DO UPDATE SET 
     access_token = $2, 
@@ -9,6 +9,10 @@ DO UPDATE SET
     updated_at = NOW();
 
 -- name: GetQBOTokens :one
-SELECT access_token, refresh_token, expires_at
+SELECT access_token, refresh_token, expires_at, tenant_id
 FROM qbo_connections
 WHERE realm_id = $1;
+
+-- name: GetQBOConnection :one
+SELECT * FROM qbo_connections
+WHERE tenant_id = $1;

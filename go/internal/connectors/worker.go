@@ -30,9 +30,13 @@ func (w *Worker) Start(ctx context.Context) error {
 
 	// 1. Ensure Stream Exists
 	err := w.q.EnsureStream(&nats.StreamConfig{
-		Name:     "SYNC",
-		Subjects: []string{"cmd.sync.*"},
-		MaxAge:   24 * time.Hour,
+		Name:        "SYNC",
+		Subjects:    []string{"cmd.sync.*", "qbo_webhook"},
+		MaxAge:      24 * time.Hour,
+		DenyDelete:  true,
+		DenyPurge:   true,
+		AllowRollup: false,
+		AllowDirect: true,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to ensure stream: %w", err)
@@ -49,9 +53,24 @@ func (w *Worker) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
-	w.logger.Info("⚙️ Listening on cmd.sync.fetch")
+	// 3. Listen for QBO webhooks
+	// Subject: qbo_webhook
+	qboSub, err := js.Subscribe("qbo_webhook", func(msg *nats.Msg) {
+		w.processQBOWebhook(msg)
+	}, nats.Durable("toro-qbo-webhook-consumer"), nats.ManualAck())
+
+	if err != nil {
+		sub.Unsubscribe()
+		return fmt.Errorf("failed to subscribe to qbo_webhook: %w", err)
+	}
+
+	w.logger.Info("⚙️ Listening on cmd.sync.fetch and qbo_webhook")
 	<-ctx.Done()
-	return sub.Unsubscribe()
+
+	// Cleanup subscriptions
+	sub.Unsubscribe()
+	qboSub.Unsubscribe()
+	return nil
 }
 
 func (w *Worker) processFetch(msg *nats.Msg) {

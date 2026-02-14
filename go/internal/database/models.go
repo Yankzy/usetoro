@@ -16,6 +16,51 @@ type AgentPerformanceHourly struct {
 	TotalCost     int64
 }
 
+type QboAccount struct {
+	ID                 string
+	RealmID            string
+	Name               string
+	AccountType        string
+	AccountSubType     pgtype.Text
+	Classification     pgtype.Text
+	FullyQualifiedName pgtype.Text
+	Active             pgtype.Bool
+	SyncToken          string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	DeletedAt          pgtype.Timestamptz
+}
+
+// Records when users correct AI predictions for learning and synonym updates
+type QboAiCorrection struct {
+	ID      pgtype.UUID
+	RealmID string
+	UserID  pgtype.UUID
+	// The original text that AI tried to match
+	RawInput     string
+	AiPrediction pgtype.Text
+	// The correct entity ID provided by user
+	UserCorrection  string
+	CorrectionType  string
+	ConfidenceScore pgtype.Numeric
+	CreatedAt       pgtype.Timestamptz
+}
+
+type QboBill struct {
+	ID          string
+	RealmID     string
+	VendorID    pgtype.Text
+	DocNumber   pgtype.Text
+	TotalAmount pgtype.Numeric
+	Balance     pgtype.Numeric
+	DueDate     pgtype.Date
+	TxnDate     pgtype.Date
+	SyncToken   string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	DeletedAt   pgtype.Timestamptz
+}
+
 type QboConnection struct {
 	ID           pgtype.UUID
 	RealmID      string
@@ -25,6 +70,88 @@ type QboConnection struct {
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
 	TenantID     pgtype.UUID
+	// Timestamp of last successful CDC sync. Used as changedSince parameter for CDC API calls. Max lookback is 30 days per QBO limits.
+	LastSyncTimestamp pgtype.Timestamptz
+	// Timestamp of last successful Account webhook. Used by CDC to fetch only missed events.
+	LastWebhookAccount pgtype.Timestamptz
+	// Timestamp of last successful Vendor webhook. Used by CDC to fetch only missed events.
+	LastWebhookVendor pgtype.Timestamptz
+	// Timestamp of last successful Customer webhook. Used by CDC to fetch only missed events.
+	LastWebhookCustomer pgtype.Timestamptz
+	// Timestamp of last successful Invoice webhook. Used by CDC to fetch only missed events.
+	LastWebhookInvoice pgtype.Timestamptz
+	// Timestamp of last successful Bill webhook. Used by CDC to fetch only missed events.
+	LastWebhookBill pgtype.Timestamptz
+}
+
+type QboCustomer struct {
+	ID          string
+	RealmID     string
+	DisplayName string
+	SyncToken   string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	DeletedAt   pgtype.Timestamptz
+}
+
+type QboInvoice struct {
+	ID          string
+	RealmID     string
+	CustomerID  pgtype.Text
+	DocNumber   pgtype.Text
+	TotalAmount pgtype.Numeric
+	Balance     pgtype.Numeric
+	DueDate     pgtype.Date
+	TxnDate     pgtype.Date
+	SyncToken   string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	DeletedAt   pgtype.Timestamptz
+}
+
+type QboProposedTransaction struct {
+	ID                 pgtype.UUID
+	RealmID            string
+	SourceType         string
+	RawAmount          pgtype.Numeric
+	RawDate            pgtype.Date
+	RawDescription     pgtype.Text
+	PredictedVendorID  pgtype.Text
+	PredictedAccountID pgtype.Text
+	ConfidenceScore    pgtype.Numeric
+	AiReasoning        pgtype.Text
+	QboTransactionID   pgtype.Text
+	SyncStatus         pgtype.Text
+	ErrorMessage       pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+// Tracks Pinecone vector database sync state per QBO realm
+type QboVectorSyncState struct {
+	RealmID string
+	// Last Chart of Accounts sync to Pinecone
+	LastCoaSync      pgtype.Timestamptz
+	LastVendorSync   pgtype.Timestamptz
+	LastCustomerSync pgtype.Timestamptz
+	// Number of account vectors in Pinecone
+	CoaVectorCount      pgtype.Int4
+	VendorVectorCount   pgtype.Int4
+	CustomerVectorCount pgtype.Int4
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type QboVendor struct {
+	ID                 string
+	RealmID            string
+	DisplayName        string
+	SyncToken          string
+	LastKnownAccountID pgtype.Text
+	AiSynonyms         []byte
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	DeletedAt          pgtype.Timestamptz
 }
 
 type RefreshToken struct {

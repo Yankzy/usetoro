@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,16 +31,24 @@ func main() {
 	}
 
 	// QBO Configuration
+	rawRedirectURIs := strings.Split(os.Getenv("QBO_REDIRECT_URI"), ",")
+	var redirectURIs []string
+	for _, uri := range rawRedirectURIs {
+		if trimmed := strings.TrimSpace(uri); trimmed != "" {
+			redirectURIs = append(redirectURIs, trimmed)
+		}
+	}
+
 	qboConfig := &wshandler.Config{
 		QBOClientID:     os.Getenv("QBO_CLIENT_ID"),
 		QBOClientSecret: os.Getenv("QBO_CLIENT_SECRET"),
-		QBORedirectURI:  os.Getenv("QBO_REDIRECT_URI"),
+		QBORedirectURIs: redirectURIs,
 		QBOIsProduction: os.Getenv("QBO_IS_PRODUCTION") == "true",
 	}
 
 	// Default redirect URI if not set
-	if qboConfig.QBORedirectURI == "" {
-		qboConfig.QBORedirectURI = "http://localhost/api/auth/qbo/callback"
+	if len(qboConfig.QBORedirectURIs) == 0 {
+		qboConfig.QBORedirectURIs = []string{"http://localhost/api/auth/qbo/callback"}
 	}
 
 	// Auth Configuration

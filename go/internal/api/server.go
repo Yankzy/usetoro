@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"crypto"
 	"log/slog"
 	"net/http"
 
+	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/ingest"
 	"github.com/Yankzy/usetoro/internal/store"
+	"github.com/redis/go-redis/v9"
 )
 
 // Server represents the API server and its dependencies.
@@ -26,16 +29,20 @@ func NewServer(
 	st *store.Store,
 	pub *ingest.Publisher,
 	qboConfig *QBOConfig,
+	authenticator *auth.Authenticator,
+	redisClient *redis.Client, // Added redisClient parameter
 ) *Server { // <-- TYPE: returns an address
 	// Initialize webhook verifier registry
 	registry := NewVerifierRegistry()
 
 	// Register supported webhook providers
 	registry.Register(NewStripeVerifier())
-	// Future providers can be registered here, e.g.:
-	// registry.Register(NewQBOVerifier())
+	// QBO webhook verification using generic HMAC verifier
+	registry.Register(NewHMACVerifier("qbo", "intuit-signature", crypto.SHA256))
+	// Future HMAC-based providers can be registered similarly:
+	// registry.Register(NewHMACVerifier("plaid", "x-plaid-signature", crypto.SHA256))
 
-	h := NewHandler(logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig)
+	h := NewHandler(logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig, authenticator, redisClient) // Passed redisClient to NewHandler
 	mux := NewRouter(h)
 
 	srv := &http.Server{

@@ -53,6 +53,11 @@ const (
 	// SandboxEndpoint is for testing.
 	SandboxEndpoint EndpointUrl = "https://sandbox-quickbooks.api.intuit.com"
 
+	// DefaultAuthProductionEndpoint is for live apps.
+	DefaultAuthProductionEndpoint = "https://appcenter.intuit.com/connect/oauth2"
+	// DefaultAuthSandboxEndpoint is for testing.
+	DefaultAuthSandboxEndpoint = "https://appcenter-sandbox.intuit.com/connect/oauth2"
+
 	format        = "2006-01-02T15:04:05-07:00"
 	queryPageSize = 1000
 	secondFormat  = "2006-01-02"

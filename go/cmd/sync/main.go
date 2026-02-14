@@ -11,7 +11,12 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/connectors"
+	"github.com/Yankzy/usetoro/internal/infrastructure/vector"
 	"github.com/Yankzy/usetoro/internal/queue"
+	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/internal/store"
+	"github.com/dgraph-io/ristretto"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 )
 
@@ -44,20 +49,106 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	logger.Info("✅ Connected to NATS JetStream")
 
-	// 2. Initialize Logic
-	mgr := connectors.NewManager(logger, cfg)
+	// 2. PostgreSQL (Metadata Store)
+	dbConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("db config error: %w", err)
+	}
+	dbConfig.MaxConns = int32(cfg.DBMaxConns)
+	dbConfig.MinConns = int32(cfg.DBMinConns)
+
+	dbPool, err := pgxpool.NewWithConfig(ctx, dbConfig)
+	if err != nil {
+		return fmt.Errorf("db connection error: %w", err)
+	}
+	defer dbPool.Close()
+
+	if err := dbPool.Ping(ctx); err != nil {
+		return fmt.Errorf("db ping failed: %w", err)
+	}
+	logger.Info("✅ Connected to PostgreSQL")
+
+	// 3. Ristretto Cache (L1 Cache)
+	cache, err := ristretto.NewCache(&ristretto.Config{
+		NumCounters: 1e7,
+		MaxCost:     100 << 20, // 100 * 1MiB
+		BufferItems: 64,
+	})
+	if err != nil {
+		return fmt.Errorf("cache init error: %w", err)
+	}
+	logger.Info("✅ Initialized Cache")
+
+	// 4. Store
+	st, err := store.NewStore(dbPool, cache, cfg.EncryptionKey)
+	if err != nil {
+		return fmt.Errorf("store init error: %w", err)
+	}
+
+	// 5. Initialize AI Infrastructure (Optional)
+	var vectorWorker *ai.VectorSyncWorker
+	if os.Getenv("PINECONE_API_KEY") != "" && os.Getenv("OPENAI_API_KEY") != "" {
+		pc, err := vector.NewPineconeClient(
+			os.Getenv("PINECONE_API_KEY"),
+			cfg.PineconeIndex,
+			cfg.EmbeddingDimensions,
+		)
+		if err != nil {
+			logger.Warn("Failed to initialize Pinecone client", "error", err)
+		} else {
+			emb, err := vector.NewEmbedder(
+				os.Getenv("OPENAI_API_KEY"),
+				cfg.EmbeddingModel,
+				cfg.EmbeddingDimensions,
+			)
+			if err != nil {
+				logger.Warn("Failed to initialize OpenAI embedder", "error", err)
+			} else {
+				vectorWorker = ai.NewVectorSyncWorker(logger, st, pc, emb, 1*time.Hour)
+				logger.Info("✅ AI infrastructure initialized")
+			}
+		}
+	}
+
+	// 6. Initialize Logic
+	mgr := connectors.NewManager(logger, cfg, st, vectorWorker)
 	worker := connectors.NewWorker(logger, q, mgr)
 
-	// 3. Start Worker
-	workerErrors := make(chan error, 1)
+	// 6. Initialize CDC Worker (if enabled)
+	var cdcWorker *connectors.CDCWorker
+	if cfg.CDCEnabled {
+		qboConn := mgr.GetConnector("qbo").(*connectors.QBOConnector)
+		cdcWorker = connectors.NewCDCWorker(logger, qboConn, st, cfg.CDCSyncInterval)
+		logger.Info("✅ CDC Worker initialized", "interval", cfg.CDCSyncInterval, "enabled", true)
+	} else {
+		logger.Info("⏭️  CDC Worker disabled", "enabled", false)
+	}
+
+	// 7. Start Workers
+	workerErrors := make(chan error, 3) // Increased buffer for Vector worker
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Start webhook worker
 	go func() {
 		workerErrors <- worker.Start(ctx)
 	}()
 
-	// 4. Graceful Shutdown
+	// Start CDC worker if enabled
+	if cdcWorker != nil {
+		go func() {
+			workerErrors <- cdcWorker.Start(ctx)
+		}()
+	}
+
+	// Start Vector sync worker if enabled
+	if vectorWorker != nil {
+		go func() {
+			vectorWorker.Start(ctx)
+		}()
+	}
+
+	// 8. Graceful Shutdown
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
 

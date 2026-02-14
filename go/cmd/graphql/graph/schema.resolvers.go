@@ -7,19 +7,15 @@ package graph
 
 import (
 	"context"
-	"crypto/ed25519"
-	"encoding/hex"
 	"fmt"
 	"time"
 
 	"github.com/Yankzy/usetoro/cmd/graphql/graph/model"
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"golang.org/x/crypto/argon2"
 )
 
 // Signup is the resolver for the signup field.
@@ -74,12 +70,17 @@ func (r *mutationResolver) Signup(ctx context.Context, input model.SignupInput) 
 		TokenHash: ref,
 		UserID:    userID,
 		ExpiresAt: pgtype.Timestamptz{Time: exp, Valid: true},
-		// IP and UserAgent are harder to get in GraphQL context without custom context middleware
-		// For now we'll leave them null or add them later via context injection
 	})
 	if err != nil {
 		r.Logger.Error("Failed to save refresh token", "error", err)
 		return nil, fmt.Errorf("internal server error")
+	}
+
+	// 5. Store Refresh Token in Redis (for caching/blacklisting)
+	err = r.Redis.Set(ctx, "refresh_token:"+ref, userID.String(), 7*24*time.Hour).Err()
+	if err != nil {
+		r.Logger.Warn("Failed to cache refresh token in Redis", "error", err)
+		// Proceed anyway, DB is source of truth
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -134,6 +135,12 @@ func (r *mutationResolver) Login(ctx context.Context, input model.LoginInput) (*
 		return nil, fmt.Errorf("internal server error")
 	}
 
+	// Store Refresh Token in Redis
+	err = r.Redis.Set(ctx, "refresh_token:"+ref, user.ID.String(), 7*24*time.Hour).Err()
+	if err != nil {
+		r.Logger.Warn("Failed to cache refresh token in Redis", "error", err)
+	}
+
 	// Convert UUIDs to strings
 	userID := uuid.UUID(user.ID.Bytes).String()
 	tenantID := uuid.UUID(user.TenantID.Bytes).String()
@@ -151,29 +158,128 @@ func (r *mutationResolver) Login(ctx context.Context, input model.LoginInput) (*
 	}, nil
 }
 
-// Me is the resolver for the me field.
-func (r *queryResolver) Me(ctx context.Context) (*model.User, error) {
+// RequestOtp is the resolver for the requestOTP field.
+func (r *mutationResolver) RequestOtp(ctx context.Context, email string) (bool, error) {
+	panic(fmt.Errorf("not implemented: RequestOtp - requestOTP"))
+}
+
+// VerifyOtp is the resolver for the verifyOTP field.
+func (r *mutationResolver) VerifyOtp(ctx context.Context, email string, otp string) (*model.AuthPayload, error) {
+	panic(fmt.Errorf("not implemented: VerifyOtp - verifyOTP"))
+}
+
+// RefreshToken is the resolver for the refreshToken field.
+func (r *mutationResolver) RefreshToken(ctx context.Context, refreshToken string) (*model.AuthPayload, error) {
+	q := database.New(r.DB)
+
+	// 1. Get Refresh Token
+	tokenRec, err := q.GetRefreshToken(ctx, refreshToken)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("invalid refresh token")
+		}
+		r.Logger.Error("Failed to fetch refresh token", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	// 2. Check Expiry
+	if tokenRec.ExpiresAt.Valid && tokenRec.ExpiresAt.Time.Before(time.Now()) {
+		// Cleanup expired token
+		_ = q.DeleteRefreshToken(ctx, refreshToken)
+		return nil, fmt.Errorf("refresh token expired")
+	}
+
+	// 3. Get User
+	user, err := q.GetUserByID(ctx, tokenRec.UserID)
+	if err != nil {
+		r.Logger.Error("Failed to fetch user for refresh token", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	// 4. Generate New Tokens (Rotation)
+	acc, ref, exp, err := generateTokens(user, r.PrivateKey)
+	if err != nil {
+		r.Logger.Error("Failed to generate tokens", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	// 5. Delete Old Token (Rotation)
+	// We do this BEFORE saving the new one to prevent reuse race conditions,
+	// though in a transaction would be better. For now simple deletion is fine.
+	err = q.DeleteRefreshToken(ctx, refreshToken)
+	if err != nil {
+		r.Logger.Warn("Failed to delete old refresh token from DB during rotation", "error", err)
+	}
+	// Also delete from Redis
+	r.Redis.Del(ctx, "refresh_token:"+refreshToken)
+
+	// 6. Save New Refresh Token
+	err = q.CreateRefreshToken(ctx, database.CreateRefreshTokenParams{
+		TokenHash: ref,
+		UserID:    user.ID,
+		ExpiresAt: pgtype.Timestamptz{Time: exp, Valid: true},
+	})
+	if err != nil {
+		r.Logger.Error("Failed to save new refresh token", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	// 7. Store new token in Redis
+	err = r.Redis.Set(ctx, "refresh_token:"+ref, user.ID.String(), 7*24*time.Hour).Err()
+	if err != nil {
+		r.Logger.Warn("Failed to cache new refresh token in Redis", "error", err)
+	}
+
+	// Return Payload
+	userID := uuid.UUID(user.ID.Bytes).String()
+	tenantID := uuid.UUID(user.TenantID.Bytes).String()
+
+	return &model.AuthPayload{
+		AccessToken:  acc,
+		RefreshToken: ref,
+		ExpiresAt:    exp,
+		User: &model.User{
+			ID:       userID,
+			Email:    user.Email,
+			Role:     user.Role.String,
+			TenantID: tenantID,
+		},
+	}, nil
+}
+
+// DeleteToken is the resolver for the deleteToken field.
+func (r *mutationResolver) DeleteToken(ctx context.Context, refreshToken string) (bool, error) {
+	q := database.New(r.DB)
+
+	// 1. Delete from DB
+	err := q.DeleteRefreshToken(ctx, refreshToken)
+	if err != nil {
+		r.Logger.Error("Failed to delete refresh token from DB", "error", err)
+		return false, fmt.Errorf("internal server error")
+	}
+
+	// 2. Delete from Redis
+	err = r.Redis.Del(ctx, "refresh_token:"+refreshToken).Err()
+	if err != nil {
+		r.Logger.Warn("Failed to delete refresh token from Redis", "error", err)
+		// Not critical, eventually it will expire
+	}
+
+	return true, nil
+}
+
+// User is the resolver for the user field.
+func (r *queryResolver) User(ctx context.Context) (*model.User, error) {
 	// Extract userID from context (requires auth middleware)
 	userID, ok := ctx.Value(auth.UserIDKey).(uuid.UUID)
 	if !ok {
 		return nil, fmt.Errorf("unauthorized")
 	}
-	// We could fetch from DB to get fresh data, or return claims data.
-	// Fetching from DB is safer for "latest state"
-	// q := database.New(r.DB)
-	// We need GetUserByID which might not exist or we query by email?
-	// The User struct in generated code assumes ID is string.
-	// Let's assume we can rely on claims for now for speed or if GetUser exists.
-	// Checking handlers.go: handleMe used claims directly.
-	tenantID, _ := ctx.Value(auth.TenantIDKey).(uuid.UUID)
-	role, _ := ctx.Value(auth.RoleKey).(string)
 
-	return &model.User{
-		ID:       userID.String(),
-		Email:    "", // Email is not in claims currently
-		Role:     role,
-		TenantID: tenantID.String(),
-	}, nil
+	// Use Data Loader
+	// We need to import `github.com/Yankzy/usetoro/cmd/graphql/dataloader` here.
+	// Note: imports are already there in the file header.
+	return UserLoader(ctx, userID)
 }
 
 // QboConnection is the resolver for the qboConnection field.
@@ -200,6 +306,171 @@ func (r *queryResolver) QboConnection(ctx context.Context) (*model.QBOCompany, e
 	}, nil
 }
 
+// SuggestAccounts is the resolver for the suggestAccounts field.
+func (r *queryResolver) SuggestAccounts(ctx context.Context, description string) ([]*model.AccountMatch, error) {
+	if r.CoAMapper == nil {
+		return nil, fmt.Errorf("AI services not configured")
+	}
+
+	tenantID, _ := ctx.Value(auth.TenantIDKey).(uuid.UUID)
+	if tenantID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, tenantID.String())
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch QBO connection: %w", err)
+	}
+
+	matches, err := r.CoAMapper.MapDescriptionToAccount(ctx, conn.RealmID, description, 5)
+	if err != nil {
+		r.Logger.Error("Failed to map description to account", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	var results []*model.AccountMatch
+	for _, m := range matches {
+		results = append(results, &model.AccountMatch{
+			AccountID: m.AccountID,
+			Score:     m.Score,
+			Name:      m.Name,
+		})
+	}
+
+	return results, nil
+}
+
+// ResolveEntity is the resolver for the resolveEntity field.
+func (r *queryResolver) ResolveEntity(ctx context.Context, entityType string, name string) (*model.EntityMatch, error) {
+	if r.EntityResolver == nil {
+		return nil, fmt.Errorf("AI services not configured")
+	}
+
+	tenantID, _ := ctx.Value(auth.TenantIDKey).(uuid.UUID)
+	if tenantID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, tenantID.String())
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch QBO connection: %w", err)
+	}
+
+	match, err := r.EntityResolver.ResolveEntity(ctx, conn.RealmID, entityType, name)
+	if err != nil {
+		r.Logger.Error("Failed to resolve entity", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	if match == nil {
+		return nil, nil
+	}
+
+	return &model.EntityMatch{
+		ID:         match.ID,
+		Score:      match.Score,
+		Name:       match.Name,
+		Source:     match.Source,
+		EntityType: match.EntityType,
+	}, nil
+}
+
+// RecordCorrection is the resolver for the recordCorrection field.
+func (r *mutationResolver) RecordCorrection(ctx context.Context, input model.RecordCorrectionInput) (bool, error) {
+	userID, _ := ctx.Value(auth.UserIDKey).(uuid.UUID)
+	// userID can be nil for anonymous corrections if supported, but here we expect it
+
+	q := database.New(r.DB)
+
+	conf := pgtype.Numeric{}
+	if input.ConfidenceScore != nil {
+		conf.Scan(fmt.Sprintf("%f", *input.ConfidenceScore))
+	}
+
+	err := q.RecordAICorrection(ctx, database.RecordAICorrectionParams{
+		RealmID:         input.RealmID,
+		UserID:          pgtype.UUID{Bytes: userID, Valid: userID != uuid.Nil},
+		RawInput:        input.RawInput,
+		AiPrediction:    pgtype.Text{String: *input.AiPrediction, Valid: input.AiPrediction != nil},
+		UserCorrection:  input.UserCorrection,
+		CorrectionType:  input.CorrectionType,
+		ConfidenceScore: conf,
+	})
+	if err != nil {
+		r.Logger.Error("Failed to record AI correction", "error", err)
+		return false, fmt.Errorf("internal server error")
+	}
+
+	// Active Learning: Update synonyms for better future matching
+	if r.EntityResolver != nil {
+		go func() {
+			// Use background context to not block the response
+			bgCtx := context.Background()
+			if err := r.EntityResolver.Learn(bgCtx, input.RealmID, input.RawInput, input.UserCorrection, input.CorrectionType); err != nil {
+				r.Logger.Warn("Failed to learn from correction", "error", err, "raw_input", input.RawInput)
+			}
+		}()
+	}
+
+	return true, nil
+}
+
+// AmbiguousProposals is the resolver for the ambiguousProposals field.
+func (r *queryResolver) AmbiguousProposals(ctx context.Context, realmID *string, threshold float64) ([]*model.ProposedTransaction, error) {
+	tenantID, _ := ctx.Value(auth.TenantIDKey).(uuid.UUID)
+	if tenantID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	q := database.New(r.DB)
+	var realmIDs []string
+
+	if realmID != nil && *realmID != "" {
+		// CPA / Specific Realm use case
+		realmIDs = append(realmIDs, *realmID)
+	} else {
+		// Mobile / Cross-realm use case
+		realms, err := q.GetRealmsByTenant(ctx, pgtype.UUID{Bytes: tenantID, Valid: true})
+		if err != nil {
+			r.Logger.Error("Failed to fetch realms for tenant", "error", err)
+			return nil, fmt.Errorf("internal server error")
+		}
+		realmIDs = realms
+	}
+
+	var results []*model.ProposedTransaction
+	confThreshold := pgtype.Numeric{}
+	confThreshold.Scan(fmt.Sprintf("%f", threshold))
+
+	for _, rid := range realmIDs {
+		proposals, err := q.GetAmbiguousProposals(ctx, database.GetAmbiguousProposalsParams{
+			RealmID:         rid,
+			ConfidenceScore: confThreshold,
+		})
+		if err != nil {
+			r.Logger.Error("Failed to fetch ambiguous proposals", "error", err, "realm_id", rid)
+			continue
+		}
+
+		for _, p := range proposals {
+			results = append(results, &model.ProposedTransaction{
+				ID:                 p.ID.String(),
+				RealmID:            p.RealmID,
+				SourceType:         p.SourceType,
+				RawAmount:          float64(p.RawAmount.Int.Int64()), // Simplified conversion
+				RawDate:            &p.RawDate.Time,
+				RawDescription:     &p.RawDescription.String,
+				PredictedVendorID:  &p.PredictedVendorID.String,
+				PredictedAccountID: &p.PredictedAccountID.String,
+				ConfidenceScore:    float64(p.ConfidenceScore.Int.Int64()), // Simplified conversion
+				AiReasoning:        &p.AiReasoning.String,
+			})
+		}
+	}
+
+	return results, nil
+}
+
 // Mutation returns MutationResolver implementation.
 func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }
 
@@ -208,48 +479,3 @@ func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 
 type mutationResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
-
-func hashPassword(password string) string {
-	salt := []byte("somesalt")
-	hash := argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32)
-	return hex.EncodeToString(hash)
-}
-
-func checkPassword(password, hash string) bool {
-	return hashPassword(password) == hash
-}
-
-func generateTokens(user database.User, privKey ed25519.PrivateKey) (string, string, time.Time, error) {
-	userID, err := uuid.FromBytes(user.ID.Bytes[:])
-	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("invalid user uuid: %w", err)
-	}
-	tenantID, err := uuid.FromBytes(user.TenantID.Bytes[:])
-	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("invalid tenant uuid: %w", err)
-	}
-
-	claims := auth.UserClaims{
-		UserID:   userID,
-		TenantID: tenantID,
-		Role:     user.Role.String,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    "usetoro-auth",
-			Subject:   userID.String(),
-			ID:        uuid.New().String(),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
-	accessToken, err := token.SignedString(privKey)
-	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("failed to sign access token: %w", err)
-	}
-
-	refreshToken := uuid.New().String()
-	expires := time.Now().Add(7 * 24 * time.Hour)
-	return accessToken, refreshToken, expires, nil
-}

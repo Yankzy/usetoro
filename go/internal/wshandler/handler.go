@@ -41,7 +41,13 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := NewClient(h.hub, conn, h.logger, h.messageHandler)
+	// Extract host
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+
+	client := NewClient(h.hub, conn, h.logger, h.messageHandler, host)
 	h.hub.register <- client
 
 	// Start the client's read and write pumps

@@ -75,6 +75,33 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.
 	return id, err
 }
 
+const deleteRefreshToken = `-- name: DeleteRefreshToken :exec
+DELETE FROM refresh_tokens WHERE token_hash = $1
+`
+
+func (q *Queries) DeleteRefreshToken(ctx context.Context, tokenHash string) error {
+	_, err := q.db.Exec(ctx, deleteRefreshToken, tokenHash)
+	return err
+}
+
+const getRefreshToken = `-- name: GetRefreshToken :one
+SELECT token_hash, user_id, expires_at, ip_address, user_agent, created_at FROM refresh_tokens WHERE token_hash = $1
+`
+
+func (q *Queries) GetRefreshToken(ctx context.Context, tokenHash string) (RefreshToken, error) {
+	row := q.db.QueryRow(ctx, getRefreshToken, tokenHash)
+	var i RefreshToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.UserID,
+		&i.ExpiresAt,
+		&i.IpAddress,
+		&i.UserAgent,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, tenant_id, email, password_hash, full_name, role, is_active, created_at, updated_at FROM users WHERE email = $1
 `
@@ -115,4 +142,38 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getUsersByIDs = `-- name: GetUsersByIDs :many
+SELECT id, tenant_id, email, password_hash, full_name, role, is_active, created_at, updated_at FROM users WHERE id = ANY($1::uuid[])
+`
+
+func (q *Queries) GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]User, error) {
+	rows, err := q.db.Query(ctx, getUsersByIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.Email,
+			&i.PasswordHash,
+			&i.FullName,
+			&i.Role,
+			&i.IsActive,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

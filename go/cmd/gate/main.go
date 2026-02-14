@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"encoding/pem"
 
 	"github.com/Yankzy/usetoro/internal/api"
+	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/config"
@@ -139,6 +142,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 			// `cache` is local ristretto.
 			// For now, no revocation check in Gate to keep it simple/fast?
 			// The instructions didn't force Redis in Gate.
+			DB: database.New(dbPool),
 		}
 		logger.Info("✅ Initialized Authenticator")
 	} else {
@@ -160,10 +164,18 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	pub := ingest.NewPublisher(q)
 
 	// Load QBO OAuth2 configuration from environment
+	rawRedirectURIs := strings.Split(os.Getenv("QBO_REDIRECT_URI"), ",")
+	var redirectURIs []string
+	for _, uri := range rawRedirectURIs {
+		if trimmed := strings.TrimSpace(uri); trimmed != "" {
+			redirectURIs = append(redirectURIs, trimmed)
+		}
+	}
+
 	qboConfig := &api.QBOConfig{
 		ClientID:     os.Getenv("QBO_CLIENT_ID"),
 		ClientSecret: os.Getenv("QBO_CLIENT_SECRET"),
-		RedirectURI:  os.Getenv("QBO_REDIRECT_URI"),
+		RedirectURIs: redirectURIs,
 		IsProduction: os.Getenv("QBO_IS_PRODUCTION") == "true" || os.Getenv("QBO_IS_PRODUCTION") == "1",
 	}
 
@@ -172,19 +184,39 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		logger.Warn("QBO credentials not configured - OAuth will not work")
 	}
 
-	if qboConfig.RedirectURI == "" {
-		qboConfig.RedirectURI = "http://localhost/api/auth/qbo/callback"
-		logger.Info("Using default QBO redirect URI", "uri", qboConfig.RedirectURI)
+	if len(qboConfig.RedirectURIs) == 0 {
+		qboConfig.RedirectURIs = []string{"http://localhost/api/auth/qbo/callback"}
+		logger.Info("Using default QBO redirect URI", "uri", qboConfig.RedirectURIs[0])
 	}
 
 	logger.Info("QBO configuration loaded",
 		"client_id_configured", qboConfig.ClientID != "",
-		"redirect_uri", qboConfig.RedirectURI,
+		"redirect_uris", qboConfig.RedirectURIs,
 		"is_production", qboConfig.IsProduction,
 	)
 
+	// 5. Initialize Redis Client (for dead-letter queue)
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://redis:6379"
+	}
+	redisOpts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse REDIS_URL: %w", err)
+	}
+	redisClient := redis.NewClient(redisOpts)
+
+	// Test Redis connection
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		logger.Warn("Redis connection failed - webhook retries will not persist to Redis", "error", err)
+		// Don't fail startup - Redis is optional for webhook retry persistence
+		redisClient = nil
+	} else {
+		logger.Info("✅ Connected to Redis")
+	}
+
 	// DI: Create Server
-	srv := api.NewServer(cfg, logger, st, pub, qboConfig)
+	srv := api.NewServer(cfg, logger, st, pub, qboConfig, authenticator, redisClient)
 
 	// =========================================================================
 	// STARTUP & GRACEFUL SHUTDOWN

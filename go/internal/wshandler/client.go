@@ -41,17 +41,22 @@ type Client struct {
 	logger *slog.Logger
 
 	// Message handler for processing requests
+	// Message handler for processing requests
 	messageHandler *MessageHandler
+
+	// Host from handshake request
+	host string
 }
 
 // NewClient creates a new Client instance
-func NewClient(hub *Hub, conn *websocket.Conn, logger *slog.Logger, messageHandler *MessageHandler) *Client {
+func NewClient(hub *Hub, conn *websocket.Conn, logger *slog.Logger, messageHandler *MessageHandler, host string) *Client {
 	return &Client{
 		hub:            hub,
 		conn:           conn,
 		send:           make(chan []byte, 256),
 		logger:         logger,
 		messageHandler: messageHandler,
+		host:           host,
 	}
 }
 
@@ -79,7 +84,7 @@ func (c *Client) readPump() {
 
 		// Process the message if handler is available
 		if c.messageHandler != nil {
-			ctx := context.Background()
+			ctx := context.WithValue(context.Background(), "host", c.host)
 			response, err := c.messageHandler.HandleMessage(ctx, message)
 			if err != nil {
 				c.logger.Error("Failed to handle message", "error", err)

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/url"
 
+	quickbooks "github.com/Yankzy/usetoro/qbo"
 	"github.com/gorilla/websocket"
 )
 
@@ -18,7 +20,7 @@ type MessageHandler struct {
 type Config struct {
 	QBOClientID     string
 	QBOClientSecret string
-	QBORedirectURI  string
+	QBORedirectURIs []string
 	QBOIsProduction bool
 }
 
@@ -86,19 +88,42 @@ func (h *MessageHandler) handleRequestAuthURL(ctx context.Context, msg Message) 
 	}
 
 	// Build QBO OAuth URL
-	// Base URL depends on production vs sandbox
-	baseURL := "https://appcenter.intuit.com/connect/oauth2"
+	baseURL := quickbooks.DefaultAuthProductionEndpoint
 	if !h.config.QBOIsProduction {
-		baseURL = "https://appcenter-sandbox.intuit.com/connect/oauth2"
+		baseURL = quickbooks.DefaultAuthSandboxEndpoint
 	}
 
-	// Construct full auth URL
-	authURL := baseURL +
-		"?client_id=" + h.config.QBOClientID +
-		"&redirect_uri=" + h.config.QBORedirectURI +
-		"&response_type=code" +
-		"&scope=com.intuit.quickbooks.accounting" +
-		"&state=" + state
+	// Determine valid RedirectURI based on Host from context
+	host, _ := ctx.Value("host").(string)
+
+	chosenURI := ""
+	if host != "" {
+		for _, uri := range h.config.QBORedirectURIs {
+			u, err := url.Parse(uri)
+			if err == nil && u.Host == host {
+				chosenURI = uri
+				break
+			}
+		}
+	}
+
+	// Fallback
+	if chosenURI == "" && len(h.config.QBORedirectURIs) > 0 {
+		chosenURI = h.config.QBORedirectURIs[0]
+	}
+
+	// Construct full auth URL using SDK helper
+	authURL, err := quickbooks.GetAuthURL(
+		h.config.QBOClientID,
+		"com.intuit.quickbooks.accounting",
+		state,
+		chosenURI,
+		baseURL,
+	)
+	if err != nil {
+		h.logger.Error("Failed to generate QBO auth URL", "error", err)
+		return NewErrorMessage("Failed to generate authorization URL")
+	}
 
 	h.logger.Info("Generated QBO auth URL", "url", authURL)
 	return NewAuthURLMessage(authURL)

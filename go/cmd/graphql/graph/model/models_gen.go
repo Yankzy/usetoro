@@ -6,11 +6,25 @@ import (
 	"time"
 )
 
+type AccountMatch struct {
+	AccountID string  `json:"accountId"`
+	Score     float64 `json:"score"`
+	Name      string  `json:"name"`
+}
+
 type AuthPayload struct {
 	AccessToken  string    `json:"accessToken"`
 	RefreshToken string    `json:"refreshToken"`
 	ExpiresAt    time.Time `json:"expiresAt"`
 	User         *User     `json:"user"`
+}
+
+type EntityMatch struct {
+	ID         string  `json:"id"`
+	Score      float64 `json:"score"`
+	Name       string  `json:"name"`
+	Source     string  `json:"source"`
+	EntityType string  `json:"entityType"`
 }
 
 type LoginInput struct {
@@ -21,10 +35,32 @@ type LoginInput struct {
 type Mutation struct {
 }
 
+type ProposedTransaction struct {
+	ID                 string     `json:"id"`
+	RealmID            string     `json:"realmId"`
+	SourceType         string     `json:"sourceType"`
+	RawAmount          float64    `json:"rawAmount"`
+	RawDate            *time.Time `json:"rawDate"`
+	RawDescription     *string    `json:"rawDescription"`
+	PredictedVendorID  *string    `json:"predictedVendorId"`
+	PredictedAccountID *string    `json:"predictedAccountId"`
+	ConfidenceScore    float64    `json:"confidenceScore"`
+	AiReasoning        *string    `json:"aiReasoning"`
+}
+
 type QBOCompany struct {
 	RealmID     string     `json:"realmId"`
 	CompanyName string     `json:"companyName"`
 	ConnectedAt *time.Time `json:"connectedAt,omitempty"`
+}
+
+type RecordCorrectionInput struct {
+	RealmID         string   `json:"realmId"`
+	RawInput        string   `json:"rawInput"`
+	AiPrediction    *string  `json:"aiPrediction"`
+	UserCorrection  string   `json:"userCorrection"`
+	CorrectionType  string   `json:"correctionType"`
+	ConfidenceScore *float64 `json:"confidenceScore"`
 }
 
 type Query struct {

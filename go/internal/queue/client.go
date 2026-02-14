@@ -72,10 +72,18 @@ func (c *Client) Status() nats.Status {
 	return c.nc.Status()
 }
 
-// EnsureStream checks if a stream exists and creates it if it doesn't.
+// EnsureStream checks if a stream exists and creates/updates it as needed.
 func (c *Client) EnsureStream(cfg *nats.StreamConfig) error {
-	_, err := c.js.StreamInfo(cfg.Name)
+	info, err := c.js.StreamInfo(cfg.Name)
 	if err == nil {
+		// Stream exists, update if needed
+		// Check if subjects need to be updated
+		if !containsAllSubjects(info.Config.Subjects, cfg.Subjects) {
+			_, err = c.js.UpdateStream(cfg)
+			if err != nil {
+				return fmt.Errorf("failed to update stream: %w", err)
+			}
+		}
 		return nil
 	}
 
@@ -89,4 +97,18 @@ func (c *Client) EnsureStream(cfg *nats.StreamConfig) error {
 	}
 
 	return nil
+}
+
+// containsAllSubjects checks if all required subjects are present in the stream config.
+func containsAllSubjects(existing, required []string) bool {
+	subjectMap := make(map[string]bool)
+	for _, s := range existing {
+		subjectMap[s] = true
+	}
+	for _, s := range required {
+		if !subjectMap[s] {
+			return false
+		}
+	}
+	return true
 }

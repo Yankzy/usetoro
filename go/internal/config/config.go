@@ -35,6 +35,15 @@ type Config struct {
 	QBOClientSecret string
 	QBOIsProduction bool
 
+	// CDC (Change Data Capture) Config
+	CDCEnabled      bool
+	CDCSyncInterval time.Duration
+
+	// AI/Vector Config
+	PineconeIndex       string
+	EmbeddingModel      string
+	EmbeddingDimensions int
+
 	// Security
 	EncryptionKey []byte
 }
@@ -64,6 +73,15 @@ func Load() (Config, error) {
 		QBOClientID:     os.Getenv("QBO_CLIENT_ID"),
 		QBOClientSecret: os.Getenv("QBO_CLIENT_SECRET"),
 		QBOIsProduction: getEnvBool("QBO_IS_PRODUCTION", false),
+
+		// CDC Config
+		CDCEnabled:      getEnvBool("CDC_ENABLED", true),
+		CDCSyncInterval: getEnvDuration("CDC_SYNC_INTERVAL", 1*time.Hour),
+
+		// AI Config
+		PineconeIndex:       getEnv("PINECONE_INDEX", "toro-ai"),
+		EmbeddingModel:      getEnv("EMBEDDING_MODEL", "text-embedding-3-small"),
+		EmbeddingDimensions: getEnvInt("EMBEDDING_DIMENSIONS", 1536),
 
 		// Security - EncryptionKey will be loaded and validated below
 	}

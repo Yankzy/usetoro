@@ -215,6 +215,8 @@ When your Go backend receives a sync event (from Webhooks or CDC), it needs to u
 | `Update` | **Update** fields + increment `SyncToken`. |
 | `Delete` | **Soft Delete** (mark as `deleted_at`). Don't hard delete; the AI might need the history to understand past patterns. |
 | `Merge` | **Update** reference; Point the "Old ID" to the "New ID." (Common when a CPA merges two duplicate vendors). |
+| `Void` | **Void** the transaction in QBO and flag for human review. |
+| `Emailed` | **Emailed** the transaction in QBO to mark it as emailed. |
 
 ---
 
@@ -239,67 +241,68 @@ Here is the technical breakdown of Phase 3.
 
 ---
 
-## Phase 3: The Accounting Intelligence (Business Logic)
+## Phase 3: The Accounting Intelligence (Pinecone Edition)
 
-### 1. The CoA Mapper (The AI's Navigation System)
+### 1. The CoA Vector Mapper
 
-Every QBO company has a unique **Chart of Accounts**. Your AI cannot use a "generic" list of categories; it must map to the specific `Id` and `AccountType` of the client.
+Your AI uses **Pinecone Namespaces** to maintain strict client isolation (one `Namespace` per `RealmID`). When you sync a client's Chart of Accounts (CoA), you embed the account names and store them in Pinecone with QBO metadata.
 
-**Vocabulary:** * **`AccountType`**: High-level category (e.g., `Expense`, `Revenue`, `Asset`).
+**The Semantic Logic:** * **Vectorization**: Convert "Office Supplies" into a 1536-dimension vector.
 
-* **`AccountSubType`**: Specific detail (e.g., `OfficeGeneralExpenses`, `AdvertisingPromotional`).
-* **`Classification`**: Is it a `Balance Sheet` or `Income Statement` account?
-
-**The Logic:** Your Go service should pull the CoA and index it into a vector store or a weighted search table so the AI can "match" raw transaction text to the closest valid QBO Account ID.
+* **Metadata Filtering**: When searching, your Go backend filters the vector query by `account_type == 'Expense'` to ensure the AI doesn't suggest a bank account for a lunch receipt.
 
 ---
 
 ### 2. Entity Resolution Service (The "Vendor Matcher")
 
-AI often struggles with messy strings like "SQ * PHO BAYSIDE." Your backend needs an **Entity Resolution** layer to prevent duplicate Vendors.
+This service now operates in three layers to ensure the AI never creates a duplicate vendor.
 
-* **Step A:** Search local DB for exact string match.
-* **Step B:** If no match, use a Fuzzy Match (Levenshtein distance) or LLM to check if "PHO BAYSIDE" is actually the existing Vendor "Bayside Vietnamese."
-* **Step C:** If still no match, create a new `Vendor` entity via the API.
+* **Layer A (Local DB)**: Exact match search in PostgreSQL for speed.
+* **Layer B (Pinecone Search)**: If no exact match, perform a similarity search in Pinecone. It will find "Starbucks #492" is 98% similar to the existing "Starbucks" vendor.
+* **Layer C (The Threshold)**:
+* **Score > 0.90**: Auto-assign.
+* **Score 0.70-0.90**: Flag as "Is this Vendor X?" for the CPA.
+* **Score < 0.70**: Suggest to create new Vendor in QBO.
+
+
 
 ---
 
-### 3. The Transaction Creator (Writing to the Books)
+### 3. The Transaction Creator (Logic & Code)
 
-When the AI decides to record an expense, you must choose between a `Bill`, a `Purchase`, or a `JournalEntry`.
+The AI must decide between a `Purchase` (already paid) and a `Bill` (needs payment).
 
-* **`Purchase`**: Use this for money already spent (Credit Card/Debit).
-* **`Bill`**: Use this for unpaid invoices (Accounts Payable).
+#### Optimized Go Struct & Post Function:
 
-#### Code Sample: Creating a Categorized Expense in Go
-
-This demonstrates how to link a transaction to a specific `AccountRef` and `VendorRef`.
+We now use a `Reference` struct to map the IDs we retrieved from Pinecone.
 
 ```go
-type QBOPurchase struct {
-    PaymentType string `json:"PaymentType"` // "CreditCard", "Cash", "Check"
-    AccountRef  Reference `json:"AccountRef"`  // The Bank/CC account money came from
-    Line        []Line    `json:"Line"`
-    EntityRef   Reference `json:"EntityRef"`   // The Vendor
+type Reference struct {
+    Value string `json:"value"`
 }
 
-func (s *AIService) PostExpense(realmID string, vendorID string, accountID string, amount float64) error {
-    expense := QBOPurchase{
+type QBOPurchase struct {
+    PaymentType string    `json:"PaymentType"` // "CreditCard" or "Cash"
+    AccountRef  Reference `json:"AccountRef"`  // e.g., "Checking" or "Visa"
+    EntityRef   Reference `json:"EntityRef"`   // The Pinecone-resolved VendorID
+    Line        []Line    `json:"Line"`
+}
+
+func (s *AIService) PostExpense(realmID string, vendorID string, accountID string, amount float64) (string, error) {
+    purchase := QBOPurchase{
         PaymentType: "CreditCard",
-        AccountRef:  Reference{Value: "35"}, // "Checking Account" ID
+        AccountRef:  Reference{Value: "35"}, // Your bank account ID
         EntityRef:   Reference{Value: vendorID},
-        Line: []Line{
-            {
-                Amount:     amount,
-                DetailType: "AccountBasedExpenseLineDetail",
-                AccountBasedExpenseLineDetail: &ExpenseDetail{
-                    AccountRef: Reference{Value: accountID}, // The "Office Supplies" ID
-                },
+        Line: []Line{{
+            Amount:     amount,
+            DetailType: "AccountBasedExpenseLineDetail",
+            AccountBasedExpenseLineDetail: &ExpenseDetail{
+                AccountRef: Reference{Value: accountID}, // The AI-selected Category
             },
-        },
+        }},
     }
-    // Call our Batch or Single POST service
-    return s.qboClient.CreatePurchase(realmID, expense)
+    // Return the new QBO ID for the next step (Attachable)
+    return s.qboClient.CreatePurchase(realmID, purchase)
 }
 
 ```
@@ -308,19 +311,44 @@ func (s *AIService) PostExpense(realmID string, vendorID string, accountID strin
 
 ### 4. The Attachable Service (The "Receipt Proof")
 
-A Junior Accountant must attach the source document to the transaction. In QBO, this is a two-step process using the `Attachable` API.
+Once the transaction is created, the AI "staples" the receipt to it. This is a 2026 requirement for audit-readiness.
 
-1. **Upload**: Upload the binary (PDF/JPG) to the `/upload` endpoint. QBO returns an `AttachableID`.
-2. **Link**: Send a `POST` to `/attachable` linking that ID to the `Bill` or `Purchase` ID created in the previous step.
+1. **Upload**: Upload the receipt image to `/upload`. It returns an `AttachableID`.
+2. **Link**: Send a second `POST` to `/attachable` using the `PurchaseID` from the previous step.
 
 ---
 
-### 5. Review & Feedback Loop
+### 5. Pinecone Query Implementation (Go)
 
-Since this is an "AI" accountant, the CPA must be able to "correct" it.
+Here is how you actually query Pinecone in your Go backend to resolve an account.
 
-* **State Management**: Store transactions in your DB with a status: `PENDING_REVIEW`, `SYNCED`, or `FLAGGED`.
-* **Feedback**: If a CPA changes an account from "Travel" to "Meals," your Go backend should capture that delta and use it to update your AI's prompt context for that specific `RealmID`.
+```go
+func (v *VectorService) ResolveAccount(realmID string, text string) (string, error) {
+    // 1. Convert incoming text (e.g., "AWS Invoice") to vector
+    queryVector := v.embedder.Embed(text)
+
+    // 2. Query Pinecone with a metadata filter for the client's namespace
+    resp, _ := v.pinecone.Index("qbo-ai").Query(ctx, &pinecone.QueryRequest{
+        Namespace: realmID,
+        Vector:    queryVector,
+        TopK:      1,
+        Filter:    map[string]interface{}{"type": "Expense"},
+        IncludeMetadata: true,
+    })
+
+    if len(resp.Matches) > 0 && resp.Matches[0].Score > 0.85 {
+        return resp.Matches[0].Metadata["qbo_id"].(string), nil
+    }
+    return "", errors.New("low_confidence_mapping")
+}
+
+```
+
+---
+
+### The Outcome
+
+Your Go backend now functions as a high-speed "sorting machine." It takes a messy receipt, resolves the vendor and category via Pinecone, creates the entry in QBO, and attaches the image—all in under 5 seconds.
 
 This is the "Operational Excellence" phase. As a CTO, I know that your AI's reputation depends on its reliability. If a CPA sees an "Error 429" or a "Sync Failed" message, they lose trust in the "Junior Accountant."
 

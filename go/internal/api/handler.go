@@ -7,11 +7,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
+	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/resilience"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 )
 
@@ -35,7 +38,7 @@ type EventPublisher interface {
 type QBOConfig struct {
 	ClientID     string
 	ClientSecret string
-	RedirectURI  string
+	RedirectURIs []string
 	IsProduction bool
 }
 
@@ -49,10 +52,12 @@ type Handler struct {
 	FailedAuthTracker *resilience.FailedAttemptsTracker
 	MaxBodySize       int64
 	QBOConfig         *QBOConfig
+	Authenticator     *auth.Authenticator
+	Redis             *redis.Client
 }
 
 // NewHandler creates a new Handler.
-func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher, verifierRegistry *VerifierRegistry, maxBodySize int64, qboConfig *QBOConfig) *Handler {
+func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher, verifierRegistry *VerifierRegistry, maxBodySize int64, qboConfig *QBOConfig, authenticator *auth.Authenticator, redisClient *redis.Client) *Handler {
 	return &Handler{
 		Logger:            logger,
 		Store:             store,
@@ -62,6 +67,8 @@ func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher, ver
 		FailedAuthTracker: resilience.NewFailedAttemptsTracker(5),
 		MaxBodySize:       maxBodySize,
 		QBOConfig:         qboConfig,
+		Authenticator:     authenticator,
+		Redis:             redisClient,
 	}
 }
 
@@ -180,18 +187,43 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	h.FailedAuthTracker.Reset(connID)
 
 	// 7. PERSIST TO VAULT (Durability)
+	// Note: We use a short timeout to ensure response < 3 seconds (QBO requirement)
+	// NATS JetStream publish typically takes 50-200ms when healthy
 	eventID := uuid.New().String()
 
-	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	publishCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 
+	publishStart := time.Now()
 	if err := h.Pub.PublishWebhookEvent(publishCtx, provider, connID, eventID, event.ID, event.Type, body); err != nil {
-		logger.Error("NATS Publish failed", "error", err)
-		JSONError(w, logger, http.StatusServiceUnavailable, "Service Temporarily Unavailable")
-		return
+		publishLatency := time.Since(publishStart)
+		logger.Error("NATS Publish failed - starting retry goroutine",
+			"error", err,
+			"latency_ms", publishLatency.Milliseconds(),
+		)
+
+		// Async retry with exponential backoff (max 5 retries)
+		retryData := WebhookRetryData{
+			Provider:          provider,
+			ConnID:            connID,
+			ToroEventID:       eventID,
+			ProviderEventID:   event.ID,
+			ProviderEventType: event.Type,
+			Body:              body,
+			RequestID:         requestID,
+		}
+
+		go h.retryPublishWithBackoff(retryData)
+	} else {
+		publishLatency := time.Since(publishStart)
+		logger.Info("Webhook ingested",
+			"toro_id", eventID,
+			"provider_event_id", event.ID,
+			"provider_event_type", event.Type,
+			"publish_latency_ms", publishLatency.Milliseconds(),
+		)
 	}
 
-	logger.Info("Webhook ingested", "toro_id", eventID, "provider_event_id", event.ID, "provider_event_type", event.Type)
 	w.Header().Set("X-Request-ID", requestID)
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
@@ -275,20 +307,42 @@ func (h *Handler) HandleQBOCallback(w http.ResponseWriter, r *http.Request) {
 func ExtractParamsTask(ctx *OAuthContext) error {
 	ctx.Code = ctx.Request.URL.Query().Get("code")
 	ctx.RealmID = ctx.Request.URL.Query().Get("realmId")
-	ctx.TenantID = ctx.Request.URL.Query().Get("state")
+	stateParam := ctx.Request.URL.Query().Get("state")
 
 	if ctx.Code == "" || ctx.RealmID == "" {
 		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=missing_params", http.StatusFound)
 		return fmt.Errorf("missing code or realmId")
 	}
 
-	if ctx.TenantID == "" {
-		ctx.Log.Error("Missing state (tenant_id) parameter")
+	if stateParam == "" {
+		ctx.Log.Error("Missing state parameter")
 		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=missing_state", http.StatusFound)
-		return fmt.Errorf("missing state (tenant_id) parameter")
+		return fmt.Errorf("missing state parameter")
 	}
 
-	return nil
+	// 1. Try to parse as valid Tenant UUID (Legacy / Direct)
+	if _, err := uuid.Parse(stateParam); err == nil {
+		ctx.TenantID = stateParam
+		return nil
+	}
+
+	// 2. Try to parse as JWT (Secure / Frontend)
+	if ctx.Handler.Authenticator != nil {
+		// Note: VerifyToken checks signature and expiration
+		claims, err := ctx.Handler.Authenticator.VerifyToken(ctx.Request.Context(), stateParam)
+		if err == nil {
+			ctx.TenantID = claims.TenantID.String()
+			ctx.Log.Info("Resolved TenantID from JWT state", "tenant_id", ctx.TenantID)
+			return nil
+		}
+		// If fails, we log it but fall through to error
+		ctx.Log.Warn("State parameter looks like token but failed verification", "error", err)
+	}
+
+	// If we reach here, state is neither a valid UUID nor a valid Token
+	ctx.Log.Error("Invalid state parameter: not a UUID and validation failed")
+	http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=invalid_state", http.StatusFound)
+	return fmt.Errorf("invalid state parameter")
 }
 
 // ExchangeTokenTask exchanges the authorization code for tokens.
@@ -302,11 +356,46 @@ func ExchangeTokenTask(ctx *OAuthContext) error {
 	conf := &oauth2.Config{
 		ClientID:     ctx.Handler.QBOConfig.ClientID,
 		ClientSecret: ctx.Handler.QBOConfig.ClientSecret,
-		RedirectURL:  ctx.Handler.QBOConfig.RedirectURI,
 		Endpoint: oauth2.Endpoint{
 			TokenURL: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
 		},
 	}
+
+	// Determine valid RedirectURI based on Request Host
+	// This supports both localhost and ngrok environments
+	host := ctx.Request.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = ctx.Request.Host
+	}
+
+	// strip port if present for simpler matching, or keep it?
+	// url.Parse(uri).Host usually includes port if allowed.
+	// Let's try to match exactly first.
+
+	var chosenURI string
+	for _, uri := range ctx.Handler.QBOConfig.RedirectURIs {
+		u, err := url.Parse(uri)
+		if err == nil {
+			if u.Host == host {
+				chosenURI = uri
+				break
+			}
+		}
+	}
+
+	// Fallback/Default
+	if chosenURI == "" {
+		if len(ctx.Handler.QBOConfig.RedirectURIs) > 0 {
+			chosenURI = ctx.Handler.QBOConfig.RedirectURIs[0]
+			ctx.Log.Warn("No exact RedirectURI match for host, using default", "host", host, "chosen_uri", chosenURI)
+		} else {
+			ctx.Log.Error("No RedirectURIs configured")
+			http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=config_missing", http.StatusFound)
+			return fmt.Errorf("no redirect URIs configured")
+		}
+	}
+
+	conf.RedirectURL = chosenURI
 
 	ctx.Log.Info("Exchanging authorization code for tokens", "realm_id", ctx.RealmID)
 

@@ -6,24 +6,28 @@ import (
 	"log/slog"
 
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/internal/store"
 )
 
 // Manager handles the lifecycle of connectors (Plaid, QBO).
 type Manager struct {
-	logger     *slog.Logger
-	cfg        config.Config
-	connectors map[string]Connector
+	logger       *slog.Logger
+	cfg          config.Config
+	connectors   map[string]Connector
+	vectorWorker *ai.VectorSyncWorker
 }
 
-func NewManager(logger *slog.Logger, cfg config.Config) *Manager {
+func NewManager(logger *slog.Logger, cfg config.Config, store *store.Store, vw *ai.VectorSyncWorker) *Manager {
 	m := &Manager{
-		logger:     logger,
-		cfg:        cfg,
-		connectors: make(map[string]Connector),
+		logger:       logger,
+		cfg:          cfg,
+		connectors:   make(map[string]Connector),
+		vectorWorker: vw,
 	}
 
 	// Register connectors (Factory Pattern)
-	m.connectors["qbo"] = NewQBOConnector(logger, cfg)
+	m.connectors["qbo"] = NewQBOConnector(logger, cfg, store, vw)
 	// m.connectors["plaid"] = NewPlaidConnector(logger, cfg)
 
 	return m
@@ -39,4 +43,10 @@ func (m *Manager) FetchData(ctx context.Context, provider string, tenantID strin
 	}
 
 	return connector.Fetch(ctx, tenantID)
+}
+
+// GetConnector returns the connector for the specified provider.
+// Used by CDC worker to access QBO connector.
+func (m *Manager) GetConnector(provider string) Connector {
+	return m.connectors[provider]
 }

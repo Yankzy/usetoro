@@ -10,6 +10,18 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// MockConnector stub
+type MockConnector struct {
+	FetchFunc func(ctx context.Context, tenantID string) error
+}
+
+func (m *MockConnector) Fetch(ctx context.Context, tenantID string) error {
+	if m.FetchFunc != nil {
+		return m.FetchFunc(ctx, tenantID)
+	}
+	return nil
+}
+
 func TestManager_FetchData_Routing(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
@@ -20,7 +32,9 @@ func TestManager_FetchData_Routing(t *testing.T) {
 		QBOIsProduction: false,
 	}
 
-	mgr := NewManager(logger, cfg)
+	// Pass nil for store; we'll mock the connector so it's not used
+	mgr := NewManager(logger, cfg, nil, nil)
+	mgr.connectors["qbo"] = &MockConnector{}
 
 	t.Run("Routes to QBO", func(t *testing.T) {
 		err := mgr.FetchData(context.Background(), "qbo", "tenant-123")

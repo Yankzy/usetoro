@@ -2,12 +2,15 @@ package quickbooks
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 // Client is your handle to the QuickBooks API.
@@ -30,8 +33,11 @@ type Client struct {
 	throttled bool
 }
 
+// TokenUpdatedFunc is a callback that is triggered when the token is refreshed.
+type TokenUpdatedFunc func(token *BearerToken) error
+
 // NewClient initializes a new QuickBooks client for interacting with their Online API
-func NewClient(clientId string, clientSecret string, realmId string, isProduction bool, minorVersion string, token *BearerToken) (c *Client, err error) {
+func NewClient(clientId string, clientSecret string, realmId string, isProduction bool, minorVersion string, token *BearerToken, onTokenUpdated TokenUpdatedFunc) (c *Client, err error) {
 	if minorVersion == "" {
 		minorVersion = "65"
 	}
@@ -44,30 +50,58 @@ func NewClient(clientId string, clientSecret string, realmId string, isProductio
 		throttled:    false,
 	}
 
+	var endpoint string
+	var discoveryEndpoint EndpointUrl
+
 	if isProduction {
-		client.endpoint, err = url.Parse(ProductionEndpoint.String() + "/v3/company/" + realmId + "/")
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse API endpoint: %v", err)
-		}
-
-		client.discoveryAPI, err = CallDiscoveryAPI(DiscoveryProductionEndpoint)
-		if err != nil {
-			return nil, fmt.Errorf("failed to obtain discovery endpoint: %v", err)
-		}
+		endpoint = ProductionEndpoint.String()
+		discoveryEndpoint = DiscoveryProductionEndpoint
 	} else {
-		client.endpoint, err = url.Parse(SandboxEndpoint.String() + "/v3/company/" + realmId + "/")
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse API endpoint: %v", err)
-		}
+		endpoint = SandboxEndpoint.String()
+		discoveryEndpoint = DiscoverySandboxEndpoint
+	}
 
-		client.discoveryAPI, err = CallDiscoveryAPI(DiscoverySandboxEndpoint)
-		if err != nil {
-			return nil, fmt.Errorf("failed to obtain discovery endpoint: %v", err)
-		}
+	client.endpoint, err = url.Parse(endpoint + "/v3/company/" + realmId + "/")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse API endpoint: %v", err)
+	}
+
+	client.discoveryAPI, err = CallDiscoveryAPI(discoveryEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to obtain discovery endpoint: %v", err)
 	}
 
 	if token != nil {
-		client.Client = getHttpClient(token)
+		// Create oauth2 config
+		conf := &oauth2.Config{
+			ClientID:     clientId,
+			ClientSecret: clientSecret,
+			Endpoint: oauth2.Endpoint{
+				TokenURL: client.discoveryAPI.TokenEndpoint,
+			},
+		}
+
+		// Convert BearerToken to oauth2.Token
+		oauthToken := &oauth2.Token{
+			AccessToken:  token.AccessToken,
+			RefreshToken: token.RefreshToken,
+			TokenType:    "Bearer",
+			Expiry:       token.Expiry,
+		}
+
+		// Create a token source that automatically refreshes
+		tokenSource := conf.TokenSource(context.Background(), oauthToken)
+
+		// Wrap with notification if callback provided
+		if onTokenUpdated != nil {
+			tokenSource = &notifyTokenSource{
+				src:            tokenSource,
+				lastKnownToken: oauthToken, // Init with current token so we don't fire on first read
+				onTokenUpdated: onTokenUpdated,
+			}
+		}
+
+		client.Client = oauth2.NewClient(context.Background(), tokenSource)
 	}
 
 	return &client, nil
@@ -79,15 +113,18 @@ func NewClient(clientId string, clientSecret string, realmId string, isProductio
 //
 // You can find live examples from https://developer.intuit.com/app/developer/playground
 func (c *Client) FindAuthorizationUrl(scope string, state string, redirectUri string) (string, error) {
-	var authorizationUrl *url.URL
+	return GetAuthURL(c.clientId, scope, state, redirectUri, c.discoveryAPI.AuthorizationEndpoint)
+}
 
-	authorizationUrl, err := url.Parse(c.discoveryAPI.AuthorizationEndpoint)
+// GetAuthURL builds a QBO Authorization URL.
+func GetAuthURL(clientId, scope, state, redirectUri, authEndpoint string) (string, error) {
+	authorizationUrl, err := url.Parse(authEndpoint)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse auth endpoint: %v", err)
 	}
 
 	urlValues := url.Values{}
-	urlValues.Add("client_id", c.clientId)
+	urlValues.Add("client_id", clientId)
 	urlValues.Add("response_type", "code")
 	urlValues.Add("scope", scope)
 	urlValues.Add("redirect_uri", redirectUri)
@@ -135,6 +172,7 @@ func (c *Client) req(method string, endpoint string, payloadData interface{}, re
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Content-Type", "application/json")
 
+	// Client.Do will automatically refresh token if needed due to ReuseTokenSource
 	resp, err := c.Client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to make request: %v", err)
@@ -164,6 +202,33 @@ func (c *Client) req(method string, endpoint string, payloadData interface{}, re
 	return nil
 }
 
+// Batch executes multiple operations in a single API call.
+// Returns responses mapped by bId, and any top-level errors.
+// Maximum of 30 operations per batch (QBO recommendation).
+func (c *Client) Batch(requests []BatchItemRequest) (*BatchResponse, error) {
+	if len(requests) == 0 {
+		return nil, errors.New("batch request cannot be empty")
+	}
+	if len(requests) > 30 {
+		return nil, fmt.Errorf("batch request exceeds maximum of 30 operations (got %d)", len(requests))
+	}
+
+	batchReq := BatchRequest{BatchItemRequest: requests}
+	var response BatchResponse
+
+	err := c.post("batch", batchReq, &response, nil)
+	if err != nil {
+		return nil, fmt.Errorf("batch request failed: %w", err)
+	}
+
+	return &response, nil
+}
+
+// IsThrottled returns true if the client has hit QBO's rate limit
+func (c *Client) IsThrottled() bool {
+	return c.throttled
+}
+
 func (c *Client) get(endpoint string, responseObject interface{}, queryParameters map[string]string) error {
 	return c.req("GET", endpoint, nil, responseObject, queryParameters)
 }
@@ -179,4 +244,92 @@ func (c *Client) query(query string, responseObject interface{}) error {
 
 func (c *Client) GetEndpoint() string {
 	return c.endpoint.String()
+}
+
+type BearerToken struct {
+	RefreshToken           string    `json:"refresh_token"`
+	AccessToken            string    `json:"access_token"`
+	TokenType              string    `json:"token_type"`
+	IdToken                string    `json:"id_token"`
+	ExpiresIn              int64     `json:"expires_in"`
+	XRefreshTokenExpiresIn int64     `json:"x_refresh_token_expires_in"`
+	Expiry                 time.Time `json:"-"` // Added for local expiry tracking
+}
+
+// notifyTokenSource wraps an oauth2.TokenSource and triggers a callback when a token is refreshed.
+type notifyTokenSource struct {
+	src            oauth2.TokenSource
+	lastKnownToken *oauth2.Token
+	onTokenUpdated TokenUpdatedFunc
+}
+
+func (s *notifyTokenSource) Token() (*oauth2.Token, error) {
+	t, err := s.src.Token()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if token has changed (refresh occurred)
+	// We compare AccessToken as the primary indicator of a change.
+	// lastKnownToken is initialized in NewClient, so it won't be nil here.
+	if t.AccessToken != s.lastKnownToken.AccessToken {
+		if s.onTokenUpdated != nil {
+			bt := &BearerToken{
+				AccessToken:  t.AccessToken,
+				RefreshToken: t.RefreshToken,
+				ExpiresIn:    int64(time.Until(t.Expiry).Seconds()),
+				Expiry:       t.Expiry,
+				TokenType:    t.TokenType,
+			}
+			// Best effort callback, ignore error or log it?
+			// For now we ignore returning error to not block the request,
+			// but in a real app might want to log.
+			_ = s.onTokenUpdated(bt)
+		}
+		s.lastKnownToken = t
+	}
+
+	return t, nil
+}
+
+// CDC (Change Data Capture) Types and Methods
+
+// CDCResponse represents the response from the CDC endpoint
+type CDCResponse struct {
+	CDCResponse []CDCEntity `json:"CDCResponse"`
+	Time        string      `json:"time"`
+}
+
+// CDCEntity represents a single entity group in the CDC response
+type CDCEntity struct {
+	QueryResponse []QueryResponseItem `json:"QueryResponse"`
+}
+
+// QueryResponseItem contains arrays of changed entities by type
+type QueryResponseItem struct {
+	Account  []Account  `json:"Account,omitempty"`
+	Vendor   []Vendor   `json:"Vendor,omitempty"`
+	Customer []Customer `json:"Customer,omitempty"`
+	Invoice  []Invoice  `json:"Invoice,omitempty"`
+	Bill     []Bill     `json:"Bill,omitempty"`
+}
+
+// QueryCDC fetches entities changed since the specified timestamp.
+// entities: comma-separated list like "Account,Vendor,Customer,Invoice,Bill"
+// changedSince: timestamp for changes (max 30 days lookback per QBO limits)
+//
+// Example: client.QueryCDC("Account,Vendor", time.Now().Add(-24*time.Hour))
+func (c *Client) QueryCDC(entities string, changedSince time.Time) (*CDCResponse, error) {
+	params := map[string]string{
+		"entities":     entities,
+		"changedSince": changedSince.Format(time.RFC3339),
+	}
+
+	var response CDCResponse
+	err := c.get("cdc", &response, params)
+	if err != nil {
+		return nil, fmt.Errorf("CDC query failed: %w", err)
+	}
+
+	return &response, nil
 }

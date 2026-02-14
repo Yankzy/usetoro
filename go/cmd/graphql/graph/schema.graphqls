@@ -14,6 +14,28 @@ type AuthPayload {
   user: User!
 }
 
+type ProposedTransaction {
+  id: ID!
+  realmId: String!
+  sourceType: String!
+  rawAmount: Float!
+  rawDate: Time
+  rawDescription: String
+  predictedVendorId: String
+  predictedAccountId: String
+  confidenceScore: Float!
+  aiReasoning: String
+}
+
+input RecordCorrectionInput {
+  realmId: String!
+  rawInput: String!
+  aiPrediction: String
+  userCorrection: String!
+  correctionType: String!
+  confidenceScore: Float
+}
+
 type QBOCompany {
   realmId: ID!
   companyName: String!
@@ -34,9 +56,30 @@ input LoginInput {
 type Mutation {
   signup(input: SignupInput!): AuthPayload!
   login(input: LoginInput!): AuthPayload!
+  requestOTP(email: String!): Boolean!
+  verifyOTP(email: String!, otp: String!): AuthPayload!
+  refreshToken(refreshToken: String!): AuthPayload!
+  deleteToken(refreshToken: String!): Boolean!
+  recordCorrection(input: RecordCorrectionInput!): Boolean!
+}
+
+type AccountMatch {
+  accountId: ID!
+  score: Float!
+  name: String!
+}
+
+type EntityMatch {
+  id: ID!
+  score: Float!
+  name: String!
+  source: String!
+  entityType: String!
 }
 
 type Query {
-  me: User
+  user: User
   qboConnection: QBOCompany
+  suggestAccounts(description: String!): [AccountMatch!]!
+  resolveEntity(entityType: String!, name: String!): EntityMatch
 }

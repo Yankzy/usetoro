@@ -11,8 +11,322 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getAccountsUpdatedSince = `-- name: GetAccountsUpdatedSince :many
+SELECT id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at FROM qbo.accounts
+WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
+ORDER BY updated_at ASC
+`
+
+type GetAccountsUpdatedSinceParams struct {
+	RealmID   string
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUpdatedSinceParams) ([]QboAccount, error) {
+	rows, err := q.db.Query(ctx, getAccountsUpdatedSince, arg.RealmID, arg.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QboAccount
+	for rows.Next() {
+		var i QboAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.Name,
+			&i.AccountType,
+			&i.AccountSubType,
+			&i.Classification,
+			&i.FullyQualifiedName,
+			&i.Active,
+			&i.SyncToken,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllAccountsForRealm = `-- name: GetAllAccountsForRealm :many
+SELECT id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at FROM qbo.accounts
+WHERE realm_id = $1 AND deleted_at IS NULL
+ORDER BY name ASC
+`
+
+func (q *Queries) GetAllAccountsForRealm(ctx context.Context, realmID string) ([]QboAccount, error) {
+	rows, err := q.db.Query(ctx, getAllAccountsForRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QboAccount
+	for rows.Next() {
+		var i QboAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.Name,
+			&i.AccountType,
+			&i.AccountSubType,
+			&i.Classification,
+			&i.FullyQualifiedName,
+			&i.Active,
+			&i.SyncToken,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllActiveConnections = `-- name: GetAllActiveConnections :many
+SELECT realm_id, tenant_id, last_sync_timestamp
+FROM qbo_connections
+ORDER BY last_sync_timestamp ASC
+`
+
+type GetAllActiveConnectionsRow struct {
+	RealmID           string
+	TenantID          pgtype.UUID
+	LastSyncTimestamp pgtype.Timestamptz
+}
+
+func (q *Queries) GetAllActiveConnections(ctx context.Context) ([]GetAllActiveConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, getAllActiveConnections)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllActiveConnectionsRow
+	for rows.Next() {
+		var i GetAllActiveConnectionsRow
+		if err := rows.Scan(&i.RealmID, &i.TenantID, &i.LastSyncTimestamp); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllCustomersForRealm = `-- name: GetAllCustomersForRealm :many
+SELECT id, realm_id, display_name, sync_token, created_at, updated_at, deleted_at FROM qbo.customers
+WHERE realm_id = $1 AND deleted_at IS NULL
+ORDER BY display_name ASC
+`
+
+func (q *Queries) GetAllCustomersForRealm(ctx context.Context, realmID string) ([]QboCustomer, error) {
+	rows, err := q.db.Query(ctx, getAllCustomersForRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QboCustomer
+	for rows.Next() {
+		var i QboCustomer
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.DisplayName,
+			&i.SyncToken,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllVendorsForRealm = `-- name: GetAllVendorsForRealm :many
+SELECT id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at FROM qbo.vendors
+WHERE realm_id = $1 AND deleted_at IS NULL
+ORDER BY display_name ASC
+`
+
+func (q *Queries) GetAllVendorsForRealm(ctx context.Context, realmID string) ([]QboVendor, error) {
+	rows, err := q.db.Query(ctx, getAllVendorsForRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QboVendor
+	for rows.Next() {
+		var i QboVendor
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.DisplayName,
+			&i.SyncToken,
+			&i.LastKnownAccountID,
+			&i.AiSynonyms,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAmbiguousProposals = `-- name: GetAmbiguousProposals :many
+SELECT id, realm_id, source_type, raw_amount, raw_date, raw_description, predicted_vendor_id, predicted_account_id, confidence_score, ai_reasoning, qbo_transaction_id, sync_status, error_message, created_at, updated_at FROM qbo.proposed_transactions
+WHERE realm_id = $1 
+  AND confidence_score < $2
+  AND sync_status = 'PENDING'
+ORDER BY created_at DESC
+`
+
+type GetAmbiguousProposalsParams struct {
+	RealmID         string
+	ConfidenceScore pgtype.Numeric
+}
+
+func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousProposalsParams) ([]QboProposedTransaction, error) {
+	rows, err := q.db.Query(ctx, getAmbiguousProposals, arg.RealmID, arg.ConfidenceScore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QboProposedTransaction
+	for rows.Next() {
+		var i QboProposedTransaction
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.SourceType,
+			&i.RawAmount,
+			&i.RawDate,
+			&i.RawDescription,
+			&i.PredictedVendorID,
+			&i.PredictedAccountID,
+			&i.ConfidenceScore,
+			&i.AiReasoning,
+			&i.QboTransactionID,
+			&i.SyncStatus,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getConnectionWithWebhookTimes = `-- name: GetConnectionWithWebhookTimes :one
+SELECT 
+    realm_id, 
+    tenant_id, 
+    last_sync_timestamp,
+    last_webhook_account,
+    last_webhook_vendor,
+    last_webhook_customer,
+    last_webhook_invoice,
+    last_webhook_bill
+FROM qbo_connections
+WHERE realm_id = $1
+`
+
+type GetConnectionWithWebhookTimesRow struct {
+	RealmID             string
+	TenantID            pgtype.UUID
+	LastSyncTimestamp   pgtype.Timestamptz
+	LastWebhookAccount  pgtype.Timestamptz
+	LastWebhookVendor   pgtype.Timestamptz
+	LastWebhookCustomer pgtype.Timestamptz
+	LastWebhookInvoice  pgtype.Timestamptz
+	LastWebhookBill     pgtype.Timestamptz
+}
+
+func (q *Queries) GetConnectionWithWebhookTimes(ctx context.Context, realmID string) (GetConnectionWithWebhookTimesRow, error) {
+	row := q.db.QueryRow(ctx, getConnectionWithWebhookTimes, realmID)
+	var i GetConnectionWithWebhookTimesRow
+	err := row.Scan(
+		&i.RealmID,
+		&i.TenantID,
+		&i.LastSyncTimestamp,
+		&i.LastWebhookAccount,
+		&i.LastWebhookVendor,
+		&i.LastWebhookCustomer,
+		&i.LastWebhookInvoice,
+		&i.LastWebhookBill,
+	)
+	return i, err
+}
+
+const getCustomersUpdatedSince = `-- name: GetCustomersUpdatedSince :many
+SELECT id, realm_id, display_name, sync_token, created_at, updated_at, deleted_at FROM qbo.customers
+WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
+ORDER BY updated_at ASC
+`
+
+type GetCustomersUpdatedSinceParams struct {
+	RealmID   string
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomersUpdatedSince(ctx context.Context, arg GetCustomersUpdatedSinceParams) ([]QboCustomer, error) {
+	rows, err := q.db.Query(ctx, getCustomersUpdatedSince, arg.RealmID, arg.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QboCustomer
+	for rows.Next() {
+		var i QboCustomer
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.DisplayName,
+			&i.SyncToken,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getQBOConnection = `-- name: GetQBOConnection :one
-SELECT id, realm_id, access_token, refresh_token, expires_at, created_at, updated_at, tenant_id FROM qbo_connections
+SELECT id, realm_id, access_token, refresh_token, expires_at, created_at, updated_at, tenant_id, last_sync_timestamp, last_webhook_account, last_webhook_vendor, last_webhook_customer, last_webhook_invoice, last_webhook_bill FROM qbo_connections
 WHERE tenant_id = $1
 `
 
@@ -28,6 +342,12 @@ func (q *Queries) GetQBOConnection(ctx context.Context, tenantID pgtype.UUID) (Q
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TenantID,
+		&i.LastSyncTimestamp,
+		&i.LastWebhookAccount,
+		&i.LastWebhookVendor,
+		&i.LastWebhookCustomer,
+		&i.LastWebhookInvoice,
+		&i.LastWebhookBill,
 	)
 	return i, err
 }
@@ -57,7 +377,637 @@ func (q *Queries) GetQBOTokens(ctx context.Context, realmID string) (GetQBOToken
 	return i, err
 }
 
+const getRealmsByTenant = `-- name: GetRealmsByTenant :many
+SELECT realm_id FROM qbo_connections
+WHERE tenant_id = $1
+`
+
+func (q *Queries) GetRealmsByTenant(ctx context.Context, tenantID pgtype.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, getRealmsByTenant, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var realm_id string
+		if err := rows.Scan(&realm_id); err != nil {
+			return nil, err
+		}
+		items = append(items, realm_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecentCorrections = `-- name: GetRecentCorrections :many
+SELECT id, realm_id, user_id, raw_input, ai_prediction, user_correction, correction_type, confidence_score, created_at FROM qbo.ai_corrections
+WHERE realm_id = $1 AND correction_type = $2
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type GetRecentCorrectionsParams struct {
+	RealmID        string
+	CorrectionType string
+	Limit          int32
+}
+
+func (q *Queries) GetRecentCorrections(ctx context.Context, arg GetRecentCorrectionsParams) ([]QboAiCorrection, error) {
+	rows, err := q.db.Query(ctx, getRecentCorrections, arg.RealmID, arg.CorrectionType, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QboAiCorrection
+	for rows.Next() {
+		var i QboAiCorrection
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.UserID,
+			&i.RawInput,
+			&i.AiPrediction,
+			&i.UserCorrection,
+			&i.CorrectionType,
+			&i.ConfidenceScore,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getVectorSyncState = `-- name: GetVectorSyncState :one
+
+SELECT realm_id, last_coa_sync, last_vendor_sync, last_customer_sync, coa_vector_count, vendor_vector_count, customer_vector_count, created_at, updated_at FROM qbo.vector_sync_state 
+WHERE realm_id = $1
+`
+
+// AI Vector Sync State Queries
+func (q *Queries) GetVectorSyncState(ctx context.Context, realmID string) (QboVectorSyncState, error) {
+	row := q.db.QueryRow(ctx, getVectorSyncState, realmID)
+	var i QboVectorSyncState
+	err := row.Scan(
+		&i.RealmID,
+		&i.LastCoaSync,
+		&i.LastVendorSync,
+		&i.LastCustomerSync,
+		&i.CoaVectorCount,
+		&i.VendorVectorCount,
+		&i.CustomerVectorCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getVendorByID = `-- name: GetVendorByID :one
+SELECT id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at FROM qbo.vendors
+WHERE realm_id = $1 AND id = $2
+`
+
+type GetVendorByIDParams struct {
+	RealmID string
+	ID      string
+}
+
+func (q *Queries) GetVendorByID(ctx context.Context, arg GetVendorByIDParams) (QboVendor, error) {
+	row := q.db.QueryRow(ctx, getVendorByID, arg.RealmID, arg.ID)
+	var i QboVendor
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.DisplayName,
+		&i.SyncToken,
+		&i.LastKnownAccountID,
+		&i.AiSynonyms,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getVendorByNameOrSynonym = `-- name: GetVendorByNameOrSynonym :one
+SELECT id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at FROM qbo.vendors
+WHERE realm_id = $1 
+  AND deleted_at IS NULL
+  AND (
+    display_name ILIKE $2 
+    OR ai_synonyms @> $3::jsonb
+  )
+LIMIT 1
+`
+
+type GetVendorByNameOrSynonymParams struct {
+	RealmID     string
+	DisplayName string
+	Column3     []byte
+}
+
+func (q *Queries) GetVendorByNameOrSynonym(ctx context.Context, arg GetVendorByNameOrSynonymParams) (QboVendor, error) {
+	row := q.db.QueryRow(ctx, getVendorByNameOrSynonym, arg.RealmID, arg.DisplayName, arg.Column3)
+	var i QboVendor
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.DisplayName,
+		&i.SyncToken,
+		&i.LastKnownAccountID,
+		&i.AiSynonyms,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getVendorsUpdatedSince = `-- name: GetVendorsUpdatedSince :many
+SELECT id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at FROM qbo.vendors
+WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
+ORDER BY updated_at ASC
+`
+
+type GetVendorsUpdatedSinceParams struct {
+	RealmID   string
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetVendorsUpdatedSince(ctx context.Context, arg GetVendorsUpdatedSinceParams) ([]QboVendor, error) {
+	rows, err := q.db.Query(ctx, getVendorsUpdatedSince, arg.RealmID, arg.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QboVendor
+	for rows.Next() {
+		var i QboVendor
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.DisplayName,
+			&i.SyncToken,
+			&i.LastKnownAccountID,
+			&i.AiSynonyms,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recordAICorrection = `-- name: RecordAICorrection :exec
+
+INSERT INTO qbo.ai_corrections (
+    realm_id, user_id, raw_input, ai_prediction, user_correction, correction_type, confidence_score
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`
+
+type RecordAICorrectionParams struct {
+	RealmID         string
+	UserID          pgtype.UUID
+	RawInput        string
+	AiPrediction    pgtype.Text
+	UserCorrection  string
+	CorrectionType  string
+	ConfidenceScore pgtype.Numeric
+}
+
+// AI Corrections Queries (for learning from user feedback)
+func (q *Queries) RecordAICorrection(ctx context.Context, arg RecordAICorrectionParams) error {
+	_, err := q.db.Exec(ctx, recordAICorrection,
+		arg.RealmID,
+		arg.UserID,
+		arg.RawInput,
+		arg.AiPrediction,
+		arg.UserCorrection,
+		arg.CorrectionType,
+		arg.ConfidenceScore,
+	)
+	return err
+}
+
+const softDeleteAccount = `-- name: SoftDeleteAccount :exec
+UPDATE qbo.accounts
+SET deleted_at = $1, updated_at = $1
+WHERE realm_id = $2 AND id = $3
+`
+
+type SoftDeleteAccountParams struct {
+	DeletedAt pgtype.Timestamptz
+	RealmID   string
+	ID        string
+}
+
+func (q *Queries) SoftDeleteAccount(ctx context.Context, arg SoftDeleteAccountParams) error {
+	_, err := q.db.Exec(ctx, softDeleteAccount, arg.DeletedAt, arg.RealmID, arg.ID)
+	return err
+}
+
+const softDeleteBill = `-- name: SoftDeleteBill :exec
+UPDATE qbo.bills
+SET deleted_at = $1, updated_at = $1
+WHERE realm_id = $2 AND id = $3
+`
+
+type SoftDeleteBillParams struct {
+	DeletedAt pgtype.Timestamptz
+	RealmID   string
+	ID        string
+}
+
+func (q *Queries) SoftDeleteBill(ctx context.Context, arg SoftDeleteBillParams) error {
+	_, err := q.db.Exec(ctx, softDeleteBill, arg.DeletedAt, arg.RealmID, arg.ID)
+	return err
+}
+
+const softDeleteCustomer = `-- name: SoftDeleteCustomer :exec
+UPDATE qbo.customers
+SET deleted_at = $1, updated_at = $1
+WHERE realm_id = $2 AND id = $3
+`
+
+type SoftDeleteCustomerParams struct {
+	DeletedAt pgtype.Timestamptz
+	RealmID   string
+	ID        string
+}
+
+func (q *Queries) SoftDeleteCustomer(ctx context.Context, arg SoftDeleteCustomerParams) error {
+	_, err := q.db.Exec(ctx, softDeleteCustomer, arg.DeletedAt, arg.RealmID, arg.ID)
+	return err
+}
+
+const softDeleteInvoice = `-- name: SoftDeleteInvoice :exec
+UPDATE qbo.invoices
+SET deleted_at = $1, updated_at = $1
+WHERE realm_id = $2 AND id = $3
+`
+
+type SoftDeleteInvoiceParams struct {
+	DeletedAt pgtype.Timestamptz
+	RealmID   string
+	ID        string
+}
+
+func (q *Queries) SoftDeleteInvoice(ctx context.Context, arg SoftDeleteInvoiceParams) error {
+	_, err := q.db.Exec(ctx, softDeleteInvoice, arg.DeletedAt, arg.RealmID, arg.ID)
+	return err
+}
+
+const softDeleteVendor = `-- name: SoftDeleteVendor :exec
+UPDATE qbo.vendors
+SET deleted_at = $1, updated_at = $1
+WHERE realm_id = $2 AND id = $3
+`
+
+type SoftDeleteVendorParams struct {
+	DeletedAt pgtype.Timestamptz
+	RealmID   string
+	ID        string
+}
+
+func (q *Queries) SoftDeleteVendor(ctx context.Context, arg SoftDeleteVendorParams) error {
+	_, err := q.db.Exec(ctx, softDeleteVendor, arg.DeletedAt, arg.RealmID, arg.ID)
+	return err
+}
+
+const updateCustomerVectorSync = `-- name: UpdateCustomerVectorSync :exec
+UPDATE qbo.vector_sync_state
+SET last_customer_sync = $2, customer_vector_count = $3, updated_at = NOW()
+WHERE realm_id = $1
+`
+
+type UpdateCustomerVectorSyncParams struct {
+	RealmID             string
+	LastCustomerSync    pgtype.Timestamptz
+	CustomerVectorCount pgtype.Int4
+}
+
+func (q *Queries) UpdateCustomerVectorSync(ctx context.Context, arg UpdateCustomerVectorSyncParams) error {
+	_, err := q.db.Exec(ctx, updateCustomerVectorSync, arg.RealmID, arg.LastCustomerSync, arg.CustomerVectorCount)
+	return err
+}
+
+const updateLastSyncTimestamp = `-- name: UpdateLastSyncTimestamp :exec
+
+UPDATE qbo_connections
+SET last_sync_timestamp = $2, updated_at = NOW()
+WHERE realm_id = $1
+`
+
+type UpdateLastSyncTimestampParams struct {
+	RealmID           string
+	LastSyncTimestamp pgtype.Timestamptz
+}
+
+// CDC Queries
+func (q *Queries) UpdateLastSyncTimestamp(ctx context.Context, arg UpdateLastSyncTimestampParams) error {
+	_, err := q.db.Exec(ctx, updateLastSyncTimestamp, arg.RealmID, arg.LastSyncTimestamp)
+	return err
+}
+
+const updateLastWebhookAccount = `-- name: UpdateLastWebhookAccount :exec
+
+UPDATE qbo_connections
+SET last_webhook_account = $2, updated_at = NOW()
+WHERE realm_id = $1
+`
+
+type UpdateLastWebhookAccountParams struct {
+	RealmID            string
+	LastWebhookAccount pgtype.Timestamptz
+}
+
+// Webhook Timestamp Tracking (for event-driven CDC)
+func (q *Queries) UpdateLastWebhookAccount(ctx context.Context, arg UpdateLastWebhookAccountParams) error {
+	_, err := q.db.Exec(ctx, updateLastWebhookAccount, arg.RealmID, arg.LastWebhookAccount)
+	return err
+}
+
+const updateLastWebhookBill = `-- name: UpdateLastWebhookBill :exec
+UPDATE qbo_connections
+SET last_webhook_bill = $2, updated_at = NOW()
+WHERE realm_id = $1
+`
+
+type UpdateLastWebhookBillParams struct {
+	RealmID         string
+	LastWebhookBill pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateLastWebhookBill(ctx context.Context, arg UpdateLastWebhookBillParams) error {
+	_, err := q.db.Exec(ctx, updateLastWebhookBill, arg.RealmID, arg.LastWebhookBill)
+	return err
+}
+
+const updateLastWebhookCustomer = `-- name: UpdateLastWebhookCustomer :exec
+UPDATE qbo_connections
+SET last_webhook_customer = $2, updated_at = NOW()
+WHERE realm_id = $1
+`
+
+type UpdateLastWebhookCustomerParams struct {
+	RealmID             string
+	LastWebhookCustomer pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateLastWebhookCustomer(ctx context.Context, arg UpdateLastWebhookCustomerParams) error {
+	_, err := q.db.Exec(ctx, updateLastWebhookCustomer, arg.RealmID, arg.LastWebhookCustomer)
+	return err
+}
+
+const updateLastWebhookInvoice = `-- name: UpdateLastWebhookInvoice :exec
+UPDATE qbo_connections
+SET last_webhook_invoice = $2, updated_at = NOW()
+WHERE realm_id = $1
+`
+
+type UpdateLastWebhookInvoiceParams struct {
+	RealmID            string
+	LastWebhookInvoice pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateLastWebhookInvoice(ctx context.Context, arg UpdateLastWebhookInvoiceParams) error {
+	_, err := q.db.Exec(ctx, updateLastWebhookInvoice, arg.RealmID, arg.LastWebhookInvoice)
+	return err
+}
+
+const updateLastWebhookVendor = `-- name: UpdateLastWebhookVendor :exec
+UPDATE qbo_connections
+SET last_webhook_vendor = $2, updated_at = NOW()
+WHERE realm_id = $1
+`
+
+type UpdateLastWebhookVendorParams struct {
+	RealmID           string
+	LastWebhookVendor pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateLastWebhookVendor(ctx context.Context, arg UpdateLastWebhookVendorParams) error {
+	_, err := q.db.Exec(ctx, updateLastWebhookVendor, arg.RealmID, arg.LastWebhookVendor)
+	return err
+}
+
+const updateVendorSynonyms = `-- name: UpdateVendorSynonyms :exec
+UPDATE qbo.vendors
+SET ai_synonyms = $3, updated_at = NOW()
+WHERE realm_id = $1 AND id = $2
+`
+
+type UpdateVendorSynonymsParams struct {
+	RealmID    string
+	ID         string
+	AiSynonyms []byte
+}
+
+func (q *Queries) UpdateVendorSynonyms(ctx context.Context, arg UpdateVendorSynonymsParams) error {
+	_, err := q.db.Exec(ctx, updateVendorSynonyms, arg.RealmID, arg.ID, arg.AiSynonyms)
+	return err
+}
+
+const updateVendorVectorSync = `-- name: UpdateVendorVectorSync :exec
+UPDATE qbo.vector_sync_state
+SET last_vendor_sync = $2, vendor_vector_count = $3, updated_at = NOW()
+WHERE realm_id = $1
+`
+
+type UpdateVendorVectorSyncParams struct {
+	RealmID           string
+	LastVendorSync    pgtype.Timestamptz
+	VendorVectorCount pgtype.Int4
+}
+
+func (q *Queries) UpdateVendorVectorSync(ctx context.Context, arg UpdateVendorVectorSyncParams) error {
+	_, err := q.db.Exec(ctx, updateVendorVectorSync, arg.RealmID, arg.LastVendorSync, arg.VendorVectorCount)
+	return err
+}
+
+const upsertAccount = `-- name: UpsertAccount :exec
+
+INSERT INTO qbo.accounts (
+    id, realm_id, name, account_type, account_sub_type, classification, 
+    fully_qualified_name, active, sync_token, created_at, updated_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+ON CONFLICT (realm_id, id) DO UPDATE SET
+    name = EXCLUDED.name,
+    account_type = EXCLUDED.account_type,
+    account_sub_type = EXCLUDED.account_sub_type,
+    classification = EXCLUDED.classification,
+    fully_qualified_name = EXCLUDED.fully_qualified_name,
+    active = EXCLUDED.active,
+    sync_token = EXCLUDED.sync_token,
+    updated_at = NOW(),
+    deleted_at = NULL
+`
+
+type UpsertAccountParams struct {
+	ID                 string
+	RealmID            string
+	Name               string
+	AccountType        string
+	AccountSubType     pgtype.Text
+	Classification     pgtype.Text
+	FullyQualifiedName pgtype.Text
+	Active             pgtype.Bool
+	SyncToken          string
+}
+
+// QBO Entity Queries
+// These queries handle upserting and soft-deleting QBO entities in the shadow database
+func (q *Queries) UpsertAccount(ctx context.Context, arg UpsertAccountParams) error {
+	_, err := q.db.Exec(ctx, upsertAccount,
+		arg.ID,
+		arg.RealmID,
+		arg.Name,
+		arg.AccountType,
+		arg.AccountSubType,
+		arg.Classification,
+		arg.FullyQualifiedName,
+		arg.Active,
+		arg.SyncToken,
+	)
+	return err
+}
+
+const upsertBill = `-- name: UpsertBill :exec
+INSERT INTO qbo.bills (
+    id, realm_id, vendor_id, doc_number, total_amount, balance, 
+    due_date, txn_date, sync_token, created_at, updated_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+ON CONFLICT (realm_id, id) DO UPDATE SET
+    vendor_id = EXCLUDED.vendor_id,
+    doc_number = EXCLUDED.doc_number,
+    total_amount = EXCLUDED.total_amount,
+    balance = EXCLUDED.balance,
+    due_date = EXCLUDED.due_date,
+    txn_date = EXCLUDED.txn_date,
+    sync_token = EXCLUDED.sync_token,
+    updated_at = NOW(),
+    deleted_at = NULL
+`
+
+type UpsertBillParams struct {
+	ID          string
+	RealmID     string
+	VendorID    pgtype.Text
+	DocNumber   pgtype.Text
+	TotalAmount pgtype.Numeric
+	Balance     pgtype.Numeric
+	DueDate     pgtype.Date
+	TxnDate     pgtype.Date
+	SyncToken   string
+}
+
+func (q *Queries) UpsertBill(ctx context.Context, arg UpsertBillParams) error {
+	_, err := q.db.Exec(ctx, upsertBill,
+		arg.ID,
+		arg.RealmID,
+		arg.VendorID,
+		arg.DocNumber,
+		arg.TotalAmount,
+		arg.Balance,
+		arg.DueDate,
+		arg.TxnDate,
+		arg.SyncToken,
+	)
+	return err
+}
+
+const upsertCustomer = `-- name: UpsertCustomer :exec
+INSERT INTO qbo.customers (
+    id, realm_id, display_name, sync_token, created_at, updated_at
+)
+VALUES ($1, $2, $3, $4, NOW(), NOW())
+ON CONFLICT (realm_id, id) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    sync_token = EXCLUDED.sync_token,
+    updated_at = NOW(),
+    deleted_at = NULL
+`
+
+type UpsertCustomerParams struct {
+	ID          string
+	RealmID     string
+	DisplayName string
+	SyncToken   string
+}
+
+func (q *Queries) UpsertCustomer(ctx context.Context, arg UpsertCustomerParams) error {
+	_, err := q.db.Exec(ctx, upsertCustomer,
+		arg.ID,
+		arg.RealmID,
+		arg.DisplayName,
+		arg.SyncToken,
+	)
+	return err
+}
+
+const upsertInvoice = `-- name: UpsertInvoice :exec
+INSERT INTO qbo.invoices (
+    id, realm_id, customer_id, doc_number, total_amount, balance, 
+    due_date, txn_date, sync_token, created_at, updated_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+ON CONFLICT (realm_id, id) DO UPDATE SET
+    customer_id = EXCLUDED.customer_id,
+    doc_number = EXCLUDED.doc_number,
+    total_amount = EXCLUDED.total_amount,
+    balance = EXCLUDED.balance,
+    due_date = EXCLUDED.due_date,
+    txn_date = EXCLUDED.txn_date,
+    sync_token = EXCLUDED.sync_token,
+    updated_at = NOW(),
+    deleted_at = NULL
+`
+
+type UpsertInvoiceParams struct {
+	ID          string
+	RealmID     string
+	CustomerID  pgtype.Text
+	DocNumber   pgtype.Text
+	TotalAmount pgtype.Numeric
+	Balance     pgtype.Numeric
+	DueDate     pgtype.Date
+	TxnDate     pgtype.Date
+	SyncToken   string
+}
+
+func (q *Queries) UpsertInvoice(ctx context.Context, arg UpsertInvoiceParams) error {
+	_, err := q.db.Exec(ctx, upsertInvoice,
+		arg.ID,
+		arg.RealmID,
+		arg.CustomerID,
+		arg.DocNumber,
+		arg.TotalAmount,
+		arg.Balance,
+		arg.DueDate,
+		arg.TxnDate,
+		arg.SyncToken,
+	)
+	return err
+}
+
 const upsertQBOTokens = `-- name: UpsertQBOTokens :exec
+
 INSERT INTO qbo_connections (realm_id, access_token, refresh_token, expires_at, tenant_id)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (realm_id) 
@@ -76,6 +1026,7 @@ type UpsertQBOTokensParams struct {
 	TenantID     pgtype.UUID
 }
 
+// Token Management Queries (existing functionality)
 func (q *Queries) UpsertQBOTokens(ctx context.Context, arg UpsertQBOTokensParams) error {
 	_, err := q.db.Exec(ctx, upsertQBOTokens,
 		arg.RealmID,
@@ -83,6 +1034,64 @@ func (q *Queries) UpsertQBOTokens(ctx context.Context, arg UpsertQBOTokensParams
 		arg.RefreshToken,
 		arg.ExpiresAt,
 		arg.TenantID,
+	)
+	return err
+}
+
+const upsertVectorSyncState = `-- name: UpsertVectorSyncState :exec
+INSERT INTO qbo.vector_sync_state (
+    realm_id, last_coa_sync, coa_vector_count
+)
+VALUES ($1, $2, $3)
+ON CONFLICT (realm_id) DO UPDATE SET
+    last_coa_sync = $2,
+    coa_vector_count = $3,
+    updated_at = NOW()
+`
+
+type UpsertVectorSyncStateParams struct {
+	RealmID        string
+	LastCoaSync    pgtype.Timestamptz
+	CoaVectorCount pgtype.Int4
+}
+
+func (q *Queries) UpsertVectorSyncState(ctx context.Context, arg UpsertVectorSyncStateParams) error {
+	_, err := q.db.Exec(ctx, upsertVectorSyncState, arg.RealmID, arg.LastCoaSync, arg.CoaVectorCount)
+	return err
+}
+
+const upsertVendor = `-- name: UpsertVendor :exec
+INSERT INTO qbo.vendors (
+    id, realm_id, display_name, sync_token, last_known_account_id, 
+    ai_synonyms, created_at, updated_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+ON CONFLICT (realm_id, id) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    sync_token = EXCLUDED.sync_token,
+    last_known_account_id = EXCLUDED.last_known_account_id,
+    ai_synonyms = EXCLUDED.ai_synonyms,
+    updated_at = NOW(),
+    deleted_at = NULL
+`
+
+type UpsertVendorParams struct {
+	ID                 string
+	RealmID            string
+	DisplayName        string
+	SyncToken          string
+	LastKnownAccountID pgtype.Text
+	AiSynonyms         []byte
+}
+
+func (q *Queries) UpsertVendor(ctx context.Context, arg UpsertVendorParams) error {
+	_, err := q.db.Exec(ctx, upsertVendor,
+		arg.ID,
+		arg.RealmID,
+		arg.DisplayName,
+		arg.SyncToken,
+		arg.LastKnownAccountID,
+		arg.AiSynonyms,
 	)
 	return err
 }

@@ -46,10 +46,19 @@ func (p *Publisher) Ping(ctx context.Context) error {
 
 // PublishWebhookEvent publishes a webhook event to the NATS JetStream.
 // It uses a circuit breaker to prevent cascading failures.
-// The subject is dynamically constructed as "raw.ingest.{provider}".
+// The subject is dynamically constructed based on provider:
+// - QBO: "qbo_webhook" (dedicated subject for sync service)
+// - Others: "raw.ingest.{provider}"
 func (p *Publisher) PublishWebhookEvent(ctx context.Context, provider, connID, toroEventID, providerEventID, providerEventType string, body []byte) error {
 	_, err := p.breaker.Execute(func() (interface{}, error) {
-		subject := fmt.Sprintf("raw.ingest.%s", provider)
+		// Route QBO webhooks to dedicated subject for sync service
+		var subject string
+		if provider == "qbo" {
+			subject = "qbo_webhook"
+		} else {
+			subject = fmt.Sprintf("raw.ingest.%s", provider)
+		}
+
 		msg := nats.NewMsg(subject)
 		msg.Data = body
 		msg.Header.Set("Toro-Conn-ID", connID)

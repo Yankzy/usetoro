@@ -1,0 +1,7 @@
+---
+trigger: always_on
+---
+
+1. The entire project runs inside docker containers
+2. Run all tests and terminal commands inside the relevant container
+3. Make unittests for everything!

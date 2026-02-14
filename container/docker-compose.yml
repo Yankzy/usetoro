@@ -39,6 +39,10 @@ services:
       QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
       QBO_REDIRECT_URI: ${QBO_REDIRECT_URI}
       QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION}
+      AUTH_PUBLIC_KEY: ${AUTH_PUBLIC_KEY}
+
+    volumes:
+      - ../keys:/keys:ro
     depends_on:
       db:
         condition: service_healthy
@@ -190,22 +194,22 @@ services:
     networks:
       - toro-net
 
-  svix-ui:
-    build:
-      context: ../svixUI
-      dockerfile: Dockerfile
-    restart: always
-    environment:
-      SVIX_TOKEN: ${SVIX_EXAMPLE_TOKEN}
-      SVIX_WEBHOOK_SECRET: ${SVIX_EXAMPLE_WEBHOOK_SECRET}
-      SVIX_SERVER_URL: http://svix-server:8071
-      NEXT_PUBLIC_SVIX_API_URL: http://localhost:8071/api/v1
-    ports:
-      - "3000:3000"
-    depends_on:
-      - svix-server
-    networks:
-      - toro-net
+  # svix-ui:
+  #   build:
+  #     context: ../svixUI
+  #     dockerfile: Dockerfile
+  #   restart: always
+  #   environment:
+  #     SVIX_TOKEN: ${SVIX_EXAMPLE_TOKEN}
+  #     SVIX_WEBHOOK_SECRET: ${SVIX_EXAMPLE_WEBHOOK_SECRET}
+  #     SVIX_SERVER_URL: http://svix-server:8071
+  #     NEXT_PUBLIC_SVIX_API_URL: http://localhost:8071/api/v1
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     - svix-server
+  #   networks:
+  #     - toro-net
 
   graphql:
     build:

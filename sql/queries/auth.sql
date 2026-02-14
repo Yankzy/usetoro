@@ -14,3 +14,12 @@ VALUES ($1, $2, $3, $4, $5);
 
 -- name: GetUserByID :one
 SELECT * FROM users WHERE id = $1;
+
+-- name: GetUsersByIDs :many
+SELECT * FROM users WHERE id = ANY($1::uuid[]);
+
+-- name: GetRefreshToken :one
+SELECT * FROM refresh_tokens WHERE token_hash = $1;
+
+-- name: DeleteRefreshToken :exec
+DELETE FROM refresh_tokens WHERE token_hash = $1;

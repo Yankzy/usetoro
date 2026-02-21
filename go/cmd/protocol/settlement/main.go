@@ -12,15 +12,22 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/tap/pkg/contract"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/store"
-	"github.com/Yankzy/usetoro/tap/pkg/tap"
 	"github.com/Yankzy/usetoro/tap/pkg/transport"
 )
 
 func main() {
+	// Load Configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Configuration Loading Failed: %v", err)
+	}
+
 	// 1. Connect to NATS
-	url := os.Getenv("NATS_URL")
+	url := cfg.NATS.URL
 	if url == "" {
 		url = nats.DefaultURL
 	}
@@ -54,83 +61,103 @@ func main() {
 
 	// 4. Handlers
 
-	// Handler: Contract Locking
-	nc.Subscribe("contracts.request", func(msg *nats.Msg) {
-		var req tap.Contract
-		if err := json.Unmarshal(msg.Data, &req); err != nil {
-			return
-		}
+	// 4. Handlers (Config-driven)
+	settlementConfig, ok := cfg.NATS.Services["settlement"]
+	if !ok {
+		log.Fatalf("❌ Settlement service configuration not found")
+	}
 
-		lockedContract, err := contract.Lock(&req)
-		if err != nil {
-			log.Printf("Failed to lock: %v", err)
-			return
-		}
+	for _, subject := range settlementConfig.JetStream.Subjects {
+		log.Printf("Listening on subject: %s", subject)
+		nc.Subscribe(subject, func(msg *nats.Msg) {
+			// Router logic based on subject match
+			// This is a simple router. In a real app, we might want a map or cleaner router.
+			// But since we are looping, we need to dispatch based on actual subject.
 
-		// Publish Event
-		eventData, _ := json.Marshal(lockedContract)
-		nc.Publish("events.contract.locked", eventData)
-		log.Printf("🔒 Contract Locked: %s", lockedContract.ID)
-	})
+			switch msg.Subject {
+			case "contracts.request":
+				handleContractRequest(msg, contract, nc)
+			case "proof.submit":
+				handleProofSubmit(msg, contract, nc)
+			case "raw.ingest.samsara":
+				handleSamsaraIngest(msg, nc)
+			default:
+				log.Printf("Unknown subject: %s", msg.Subject)
+			}
+		})
+	}
+}
 
-	// Handler: Proof / Settlement
-	nc.Subscribe("proof.submit", func(msg *nats.Msg) {
-		var proof tap.Proof
-		if err := json.Unmarshal(msg.Data, &proof); err != nil {
-			return
-		}
+func handleContractRequest(msg *nats.Msg, contract *contract.Machine, nc *nats.Conn) {
+	var req core.Contract
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		return
+	}
 
-		contract, settled, err := contract.Settle(&proof)
-		if err != nil {
-			log.Printf("Error processing proof: %v", err)
-			return
-		}
+	lockedContract, err := contract.Lock(&req)
+	if err != nil {
+		log.Printf("Failed to lock: %v", err)
+		return
+	}
 
-		if settled {
-			eventData, _ := json.Marshal(contract)
-			nc.Publish("events.contract.settled", eventData)
-			log.Printf("💰 Contract Settled: %s", contract.ID)
-		}
-	})
+	// Publish Event
+	eventData, _ := json.Marshal(lockedContract)
+	nc.Publish("events.contract.locked", eventData)
+	log.Printf("🔒 Contract Locked: %s", lockedContract.ID)
+}
 
-	// Handler: Raw Samsara Ingest (Replaces Oracle Gateway)
-	nc.Subscribe("raw.ingest.samsara", func(msg *nats.Msg) {
-		// 1. Parse Raw Webhook
-		// We define the struct inline or reuse a shared one if available.
-		// Matching oracle-gateway's expectation:
-		type WebhookPayload struct {
-			SourceID string          `json:"source_id"`
-			TaskID   string          `json:"task_id"`
-			Data     json.RawMessage `json:"data"`
-		}
+func handleProofSubmit(msg *nats.Msg, contract *contract.Machine, nc *nats.Conn) {
+	var proof core.Proof
+	if err := json.Unmarshal(msg.Data, &proof); err != nil {
+		return
+	}
 
-		var hook WebhookPayload
-		if err := json.Unmarshal(msg.Data, &hook); err != nil {
-			log.Printf("Error unmarshalling samsara webhook: %v", err)
-			return
-		}
+	compContract, settled, err := contract.Settle(&proof)
+	if err != nil {
+		log.Printf("Error processing proof: %v", err)
+		return
+	}
 
-		log.Printf("Received Webhook for Task %s via Gate", hook.TaskID)
+	if settled {
+		eventData, _ := json.Marshal(compContract)
+		nc.Publish("events.contract.settled", eventData)
+		log.Printf("💰 Contract Settled: %s", compContract.ID)
+	}
+}
 
-		// 2. Transform to TAP Proof
-		// Hive Engine acts as the trusted oracle/signer here.
-		proof := tap.Proof{
-			TaskID:    hook.TaskID,
-			Type:      tap.ProofGPS, // Mapping /ingest/samsara to GPS proof type
-			Timestamp: time.Now().Unix(),
-			Data:      hook.Data,
-			Signature: "sig_hive_converted_123", // Signed by Hive (as Oracle)
-		}
+func handleSamsaraIngest(msg *nats.Msg, nc *nats.Conn) {
+	// 1. Parse Raw Webhook
+	type WebhookPayload struct {
+		SourceID string          `json:"source_id"`
+		TaskID   string          `json:"task_id"`
+		Data     json.RawMessage `json:"data"`
+	}
 
-		// 3. Publish to Proof Funnel
-		proofBytes, _ := json.Marshal(proof)
-		if err := nc.Publish("proof.submit", proofBytes); err != nil {
-			log.Printf("Error publishing proof: %v", err)
-			return
-		}
+	var hook WebhookPayload
+	if err := json.Unmarshal(msg.Data, &hook); err != nil {
+		log.Printf("Error unmarshalling samsara webhook: %v", err)
+		return
+	}
 
-		log.Printf("Proof Submitted for Task %s", hook.TaskID)
-	})
+	log.Printf("Received Webhook for Task %s via Gate", hook.TaskID)
+
+	// 2. Transform to TAP Proof
+	proof := core.Proof{
+		TaskID:    hook.TaskID,
+		Type:      core.ProofGPS,
+		Timestamp: time.Now().Unix(),
+		Data:      hook.Data,
+		Signature: "sig_hive_converted_123",
+	}
+
+	// 3. Publish to Proof Funnel
+	proofBytes, _ := json.Marshal(proof)
+	if err := nc.Publish("proof.submit", proofBytes); err != nil {
+		log.Printf("Error publishing proof: %v", err)
+		return
+	}
+
+	log.Printf("Proof Submitted for Task %s", hook.TaskID)
 
 	log.Println("🏛️  Settlement Engine Running (Redis Backed)...")
 

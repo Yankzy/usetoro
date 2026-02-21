@@ -7,7 +7,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/Yankzy/usetoro/tap/pkg/tap"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 // RedisStore is the Redis-backed implementation for production use.
@@ -21,7 +21,7 @@ func NewRedisStore(rdb *redis.Client) *RedisStore {
 }
 
 // SaveContract stores a contract in Redis as JSON.
-func (r *RedisStore) SaveContract(c *tap.Contract) error {
+func (r *RedisStore) SaveContract(c *core.Contract) error {
 	ctx := context.Background()
 	key := fmt.Sprintf("hive:contract:%s", c.ID)
 
@@ -40,7 +40,7 @@ func (r *RedisStore) SaveContract(c *tap.Contract) error {
 }
 
 // GetContract retrieves a contract from Redis by ID.
-func (r *RedisStore) GetContract(id string) (*tap.Contract, error) {
+func (r *RedisStore) GetContract(id string) (*core.Contract, error) {
 	ctx := context.Background()
 	key := fmt.Sprintf("hive:contract:%s", id)
 
@@ -53,7 +53,7 @@ func (r *RedisStore) GetContract(id string) (*tap.Contract, error) {
 	}
 
 	// Unmarshal JSON
-	var contract tap.Contract
+	var contract core.Contract
 	if err := json.Unmarshal([]byte(data), &contract); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal contract: %w", err)
 	}
@@ -62,7 +62,7 @@ func (r *RedisStore) GetContract(id string) (*tap.Contract, error) {
 }
 
 // UpdateStatus updates the status of a contract in Redis.
-func (r *RedisStore) UpdateStatus(id string, status tap.ContractStatus) error {
+func (r *RedisStore) UpdateStatus(id string, status core.ContractStatus) error {
 	// Fetch the contract
 	contract, err := r.GetContract(id)
 	if err != nil {

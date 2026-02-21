@@ -24,7 +24,7 @@ func UserLoader(ctx context.Context, userID uuid.UUID) (*model.User, error) {
 		return nil, err
 	}
 
-	user, ok := result.(database.User)
+	user, ok := result.(database.ToroCoreUser)
 	if !ok {
 		return nil, fmt.Errorf("system error: invalid user type")
 	}
@@ -33,7 +33,7 @@ func UserLoader(ctx context.Context, userID uuid.UUID) (*model.User, error) {
 		ID:       uuid.UUID(user.ID.Bytes).String(),
 		Email:    user.Email,
 		Role:     user.Role.String,
-		TenantID: uuid.UUID(user.TenantID.Bytes).String(),
+		TenantID: uuid.UUID(user.EntityID.Bytes).String(),
 	}, nil
 }
 
@@ -47,19 +47,19 @@ func checkPassword(password, hash string) bool {
 	return hashPassword(password) == hash
 }
 
-func generateTokens(user database.User, privKey ed25519.PrivateKey) (string, string, time.Time, error) {
+func generateTokens(user database.ToroCoreUser, privKey ed25519.PrivateKey) (string, string, time.Time, error) {
 	userID, err := uuid.FromBytes(user.ID.Bytes[:])
 	if err != nil {
 		return "", "", time.Time{}, fmt.Errorf("invalid user uuid: %w", err)
 	}
-	tenantID, err := uuid.FromBytes(user.TenantID.Bytes[:])
+	entityID, err := uuid.FromBytes(user.EntityID.Bytes[:])
 	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("invalid tenant uuid: %w", err)
+		return "", "", time.Time{}, fmt.Errorf("invalid entity uuid: %w", err)
 	}
 
 	claims := auth.UserClaims{
 		UserID:   userID,
-		TenantID: tenantID,
+		EntityID: entityID,
 		Role:     user.Role.String,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),

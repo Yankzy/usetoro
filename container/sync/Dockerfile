@@ -20,4 +20,7 @@ WORKDIR /
 
 COPY --from=builder /sync /usr/local/bin/sync
 
+# Copy config
+COPY go/internal/config/defaults.yaml /internal/config/defaults.yaml
+
 ENTRYPOINT ["sync"]

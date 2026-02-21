@@ -14,19 +14,19 @@ import (
 // For now, we will add a flag or skip if no DB connection string is present,
 // or just write the test code assuming a test helper exists.
 
-func TestTenantIsolation_Structural(t *testing.T) {
+func TestEntityIsolation_Structural(t *testing.T) {
 	// This is a placeholder to ensure the function compiles.
 	// Real RLS testing requires a live DB.
 	// ctx := context.Background()
-	tenantID := uuid.New().String()
+	entityID := uuid.New().String()
 
 	// Mock Store (conceptually)
 	// In a real scenario, we would connect to a test database.
 	// s := NewTestStore(t)
-	// s.ExecTx(ctx, tenantID, func(q *db.Queries) error { ... })
+	// s.ExecTx(ctx, entityID, func(q *database.Queries) error { ... })
 
 	// For now, we just assert validity of the types
-	if tenantID == "" {
-		t.Fatal("Tenant ID should not be empty")
+	if entityID == "" {
+		t.Fatal("Entity ID should not be empty")
 	}
 }

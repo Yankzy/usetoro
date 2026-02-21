@@ -9,9 +9,9 @@ import (
 
 const DIDPrefix = "did:toro:"
 
-// DIDFromPubKey creates a distributed ID from an Ed25519 public key.
+// CreateDID creates a distributed ID from an Ed25519 public key.
 // Format: did:toro:<hex_encoded_pub_key>
-func DIDFromPubKey(pub ed25519.PublicKey) string {
+func CreateDID(pub ed25519.PublicKey) string {
 	return fmt.Sprintf("%s%s", DIDPrefix, hex.EncodeToString(pub))
 }
 

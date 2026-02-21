@@ -21,9 +21,9 @@ import (
 // SecretGetter defines the interface for retrieving webhook secrets and checking health.
 type SecretGetter interface {
 	GetWebhookSecret(ctx context.Context, connID string) (string, error)
-	SaveQBOTokens(ctx context.Context, tenantID, realmID, accessToken, refreshToken string, expiresAt time.Time) error
+	SaveQBOTokens(ctx context.Context, entityID, realmID, accessToken, refreshToken string, expiresAt time.Time) error
 	GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, error)
-	GetQBOConnection(ctx context.Context, tenantID string) (*database.QboConnection, error)
+	GetQBOConnection(ctx context.Context, entityID string) (*database.ToroCoreQboConnection, error)
 	Ping(ctx context.Context) error
 }
 
@@ -254,7 +254,7 @@ type OAuthContext struct {
 	// Extracted Data
 	Code     string
 	RealmID  string
-	TenantID string // <-- Added
+	EntityID string // The toro_core.entities UUID
 
 	// Result Data
 	Token *oauth2.Token
@@ -320,9 +320,9 @@ func ExtractParamsTask(ctx *OAuthContext) error {
 		return fmt.Errorf("missing state parameter")
 	}
 
-	// 1. Try to parse as valid Tenant UUID (Legacy / Direct)
+	// 1. Try to parse as valid Entity UUID (Legacy / Direct)
 	if _, err := uuid.Parse(stateParam); err == nil {
-		ctx.TenantID = stateParam
+		ctx.EntityID = stateParam
 		return nil
 	}
 
@@ -331,8 +331,8 @@ func ExtractParamsTask(ctx *OAuthContext) error {
 		// Note: VerifyToken checks signature and expiration
 		claims, err := ctx.Handler.Authenticator.VerifyToken(ctx.Request.Context(), stateParam)
 		if err == nil {
-			ctx.TenantID = claims.TenantID.String()
-			ctx.Log.Info("Resolved TenantID from JWT state", "tenant_id", ctx.TenantID)
+			ctx.EntityID = claims.EntityID.String()
+			ctx.Log.Info("Resolved EntityID from JWT state", "entity_id", ctx.EntityID)
 			return nil
 		}
 		// If fails, we log it but fall through to error
@@ -415,7 +415,7 @@ func ExchangeTokenTask(ctx *OAuthContext) error {
 func SaveTokensTask(ctx *OAuthContext) error {
 	err := ctx.Handler.Store.SaveQBOTokens(
 		ctx.Request.Context(),
-		ctx.TenantID,
+		ctx.EntityID,
 		ctx.RealmID,
 		ctx.Token.AccessToken,
 		ctx.Token.RefreshToken,

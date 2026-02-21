@@ -22,12 +22,12 @@ type Connector interface {
 // QBOConnector integrates with QuickBooks Online.
 type QBOConnector struct {
 	logger       *slog.Logger
-	cfg          config.Config
+	cfg          *config.Config
 	store        *store.Store
 	vectorWorker *ai.VectorSyncWorker
 }
 
-func NewQBOConnector(logger *slog.Logger, cfg config.Config, store *store.Store, vw *ai.VectorSyncWorker) *QBOConnector {
+func NewQBOConnector(logger *slog.Logger, cfg *config.Config, store *store.Store, vw *ai.VectorSyncWorker) *QBOConnector {
 	return &QBOConnector{
 		logger:       logger,
 		cfg:          cfg,
@@ -118,31 +118,31 @@ func (c *QBOConnector) softDeleteEntity(ctx context.Context, realmID, entityType
 		err = c.store.Queries.SoftDeleteAccount(ctx, database.SoftDeleteAccountParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
-			ID:        entityID,
+			QboID:     entityID,
 		})
 	case "Vendor":
 		err = c.store.Queries.SoftDeleteVendor(ctx, database.SoftDeleteVendorParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
-			ID:        entityID,
+			QboID:     entityID,
 		})
 	case "Customer":
 		err = c.store.Queries.SoftDeleteCustomer(ctx, database.SoftDeleteCustomerParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
-			ID:        entityID,
+			QboID:     entityID,
 		})
 	case "Invoice":
 		err = c.store.Queries.SoftDeleteInvoice(ctx, database.SoftDeleteInvoiceParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
-			ID:        entityID,
+			QboID:     entityID,
 		})
 	case "Bill":
 		err = c.store.Queries.SoftDeleteBill(ctx, database.SoftDeleteBillParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
-			ID:        entityID,
+			QboID:     entityID,
 		})
 	default:
 		return fmt.Errorf("unsupported entity type: %s", entityType)
@@ -164,7 +164,7 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 	case "Account":
 		acct := data.(*quickbooks.Account)
 		err = c.store.Queries.UpsertAccount(ctx, database.UpsertAccountParams{
-			ID:                 acct.Id,
+			QboID:              acct.Id,
 			RealmID:            realmID,
 			Name:               acct.Name,
 			AccountType:        acct.AccountType,
@@ -178,18 +178,18 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 	case "Vendor":
 		vendor := data.(*quickbooks.Vendor)
 		err = c.store.Queries.UpsertVendor(ctx, database.UpsertVendorParams{
-			ID:                 vendor.Id,
-			RealmID:            realmID,
-			DisplayName:        vendor.DisplayName,
-			SyncToken:          vendor.SyncToken,
-			LastKnownAccountID: pgtype.Text{String: "", Valid: false}, // TODO: extract from QBO data
-			AiSynonyms:         nil,                                   // TODO: generate from company name variants
+			QboID:                 vendor.Id,
+			RealmID:               realmID,
+			DisplayName:           vendor.DisplayName,
+			SyncToken:             vendor.SyncToken,
+			LastKnownAccountQboID: pgtype.Text{String: "", Valid: false}, // TODO: extract from QBO data
+			AiSynonyms:            nil,                                   // TODO: generate from company name variants
 		})
 
 	case "Customer":
 		cust := data.(*quickbooks.Customer)
 		err = c.store.Queries.UpsertCustomer(ctx, database.UpsertCustomerParams{
-			ID:          cust.Id,
+			QboID:       cust.Id,
 			RealmID:     realmID,
 			DisplayName: cust.DisplayName,
 			SyncToken:   cust.SyncToken,
@@ -204,15 +204,15 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 		}
 
 		err = c.store.Queries.UpsertInvoice(ctx, database.UpsertInvoiceParams{
-			ID:          invoice.Id,
-			RealmID:     realmID,
-			CustomerID:  pgtype.Text{String: customerID, Valid: customerID != ""},
-			DocNumber:   pgtype.Text{String: invoice.DocNumber, Valid: invoice.DocNumber != ""},
-			TotalAmount: pgtype.Numeric{}, // TODO: convert json.Number to pgtype.Numeric
-			Balance:     pgtype.Numeric{}, // TODO: convert json.Number to pgtype.Numeric
-			DueDate:     pgtype.Date{},    // TODO: parse date
-			TxnDate:     pgtype.Date{},    // TODO: parse date
-			SyncToken:   invoice.SyncToken,
+			QboID:         invoice.Id,
+			RealmID:       realmID,
+			CustomerQboID: pgtype.Text{String: customerID, Valid: customerID != ""},
+			DocNumber:     pgtype.Text{String: invoice.DocNumber, Valid: invoice.DocNumber != ""},
+			TotalAmount:   pgtype.Numeric{}, // TODO: convert json.Number to pgtype.Numeric
+			Balance:       pgtype.Numeric{}, // TODO: convert json.Number to pgtype.Numeric
+			DueDate:       pgtype.Date{},    // TODO: parse date
+			TxnDate:       pgtype.Date{},    // TODO: parse date
+			SyncToken:     invoice.SyncToken,
 		})
 
 	case "Bill":
@@ -224,9 +224,9 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 		}
 
 		err = c.store.Queries.UpsertBill(ctx, database.UpsertBillParams{
-			ID:          bill.Id,
+			QboID:       bill.Id,
 			RealmID:     realmID,
-			VendorID:    pgtype.Text{String: vendorID, Valid: vendorID != ""},
+			VendorQboID: pgtype.Text{String: vendorID, Valid: vendorID != ""},
 			DocNumber:   pgtype.Text{String: bill.DocNumber, Valid: bill.DocNumber != ""},
 			TotalAmount: pgtype.Numeric{}, // TODO: convert json.Number to pgtype.Numeric
 			Balance:     pgtype.Numeric{}, // TODO: convert json.Number to pgtype.Numeric
@@ -454,7 +454,7 @@ func (c *QBOConnector) batchUpsertAccounts(ctx context.Context, realmID string, 
 
 	for _, account := range accounts {
 		if err := qtx.UpsertAccount(ctx, database.UpsertAccountParams{
-			ID:                 account.Id,
+			QboID:              account.Id,
 			RealmID:            realmID,
 			Name:               account.Name,
 			AccountType:        account.AccountType,
@@ -488,12 +488,12 @@ func (c *QBOConnector) batchUpsertVendors(ctx context.Context, realmID string, v
 
 	for _, vendor := range vendors {
 		if err := qtx.UpsertVendor(ctx, database.UpsertVendorParams{
-			ID:                 vendor.Id,
-			RealmID:            realmID,
-			DisplayName:        vendor.DisplayName,
-			SyncToken:          vendor.SyncToken,
-			LastKnownAccountID: pgtype.Text{String: "", Valid: false},
-			AiSynonyms:         nil,
+			QboID:                 vendor.Id,
+			RealmID:               realmID,
+			DisplayName:           vendor.DisplayName,
+			SyncToken:             vendor.SyncToken,
+			LastKnownAccountQboID: pgtype.Text{String: "", Valid: false},
+			AiSynonyms:            nil,
 		}); err != nil {
 			return fmt.Errorf("failed to upsert vendor %s: %w", vendor.Id, err)
 		}
@@ -519,7 +519,7 @@ func (c *QBOConnector) batchUpsertCustomers(ctx context.Context, realmID string,
 
 	for _, customer := range customers {
 		if err := qtx.UpsertCustomer(ctx, database.UpsertCustomerParams{
-			ID:          customer.Id,
+			QboID:       customer.Id,
 			RealmID:     realmID,
 			DisplayName: customer.DisplayName,
 			SyncToken:   customer.SyncToken,
@@ -553,15 +553,15 @@ func (c *QBOConnector) batchUpsertInvoices(ctx context.Context, realmID string, 
 		}
 
 		if err := qtx.UpsertInvoice(ctx, database.UpsertInvoiceParams{
-			ID:          invoice.Id,
-			RealmID:     realmID,
-			CustomerID:  pgtype.Text{String: customerID, Valid: customerID != ""},
-			DocNumber:   pgtype.Text{String: invoice.DocNumber, Valid: invoice.DocNumber != ""},
-			TotalAmount: pgtype.Numeric{},
-			Balance:     pgtype.Numeric{},
-			DueDate:     pgtype.Date{},
-			TxnDate:     pgtype.Date{},
-			SyncToken:   invoice.SyncToken,
+			QboID:         invoice.Id,
+			RealmID:       realmID,
+			CustomerQboID: pgtype.Text{String: customerID, Valid: customerID != ""},
+			DocNumber:     pgtype.Text{String: invoice.DocNumber, Valid: invoice.DocNumber != ""},
+			TotalAmount:   pgtype.Numeric{},
+			Balance:       pgtype.Numeric{},
+			DueDate:       pgtype.Date{},
+			TxnDate:       pgtype.Date{},
+			SyncToken:     invoice.SyncToken,
 		}); err != nil {
 			return fmt.Errorf("failed to upsert invoice %s: %w", invoice.Id, err)
 		}
@@ -592,9 +592,9 @@ func (c *QBOConnector) batchUpsertBills(ctx context.Context, realmID string, bil
 		}
 
 		if err := qtx.UpsertBill(ctx, database.UpsertBillParams{
-			ID:          bill.Id,
+			QboID:       bill.Id,
 			RealmID:     realmID,
-			VendorID:    pgtype.Text{String: vendorID, Valid: vendorID != ""},
+			VendorQboID: pgtype.Text{String: vendorID, Valid: vendorID != ""},
 			DocNumber:   pgtype.Text{String: bill.DocNumber, Valid: bill.DocNumber != ""},
 			TotalAmount: pgtype.Numeric{},
 			Balance:     pgtype.Numeric{},

@@ -34,11 +34,11 @@ func main() {
 	}
 }
 
-func run(cfg config.Config, logger *slog.Logger) error {
+func run(cfg *config.Config, logger *slog.Logger) error {
 	ctx := context.Background()
 
 	// 1. NATS Connection
-	q, err := queue.NewClient(cfg.NatsURL,
+	q, err := queue.NewClient(cfg.NATS.URL,
 		nats.Name("toro-sync"),
 		nats.MaxReconnects(-1),
 	)

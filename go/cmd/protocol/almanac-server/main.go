@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"log"
 	"os"
 	"os/signal"
@@ -13,33 +15,59 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 
-	// Import local packages
-	"github.com/Yankzy/usetoro/tap/pkg/identity"
-	"github.com/Yankzy/usetoro/tap/pkg/resolver"
+	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/tap/pkg/lookup"
 )
 
 // --- Data Structures ---
 
-// AgentRecord is the internal storage format for the Almanac
 type AgentRecord struct {
-	DID          string                            `json:"did"`
-	Endpoints    []string                          `json:"endpoints"`
-	Capabilities []resolver.RegistrationCapability `json:"capabilities"`
-	LastSeen     time.Time                         `json:"last_seen"`
-	Expiry       time.Time                         `json:"expiry"`
+	DID          string                          `json:"did"`
+	Endpoints    []string                        `json:"endpoints"`
+	Capabilities []lookup.RegistrationCapability `json:"capabilities"`
+	LastSeen     time.Time                       `json:"last_seen"`
+	Expiry       time.Time                       `json:"expiry"`
+	// We store the serial number for revocation checks later
+	CertSerial string `json:"cert_serial"`
 }
 
-// AlmanacServer holds the state and NATS connection
 type AlmanacServer struct {
-	nc  *nats.Conn
-	rdb *redis.Client
+	nc      *nats.Conn
+	rdb     *redis.Client
+	rootCAs *x509.CertPool // The Trust Anchor
 }
 
 // --- Main Entry Point ---
 
 func main() {
-	// 1. Connect to NATS
-	url := os.Getenv("NATS_URL")
+	// 1. Setup Logging
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Config Load Failed: %v", err)
+	}
+
+	// 2. Load Root CA (The Authority)
+	// We need this to verify that the Agents aren't fake
+	caPath := os.Getenv("TORO_ROOT_CA_PATH")
+	if caPath == "" {
+		caPath = "/etc/toro/certs/root_ca.crt" // Default path in Docker
+	}
+
+	caCertPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		log.Fatalf("❌ Failed to read Root CA from %s: %v", caPath, err)
+	}
+
+	rootCAs := x509.NewCertPool()
+	if ok := rootCAs.AppendCertsFromPEM(caCertPEM); !ok {
+		log.Fatalf("❌ Failed to parse Root CA PEM")
+	}
+	log.Println("🔐 Loaded Toro Root CA")
+
+	// 3. Connect to NATS
+	url := cfg.NATS.URL
 	if url == "" {
 		url = nats.DefaultURL
 	}
@@ -49,7 +77,7 @@ func main() {
 	}
 	defer nc.Close()
 
-	// 2. Connect to Redis
+	// 4. Connect to Redis
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
 		redisURL = "redis://localhost:6379"
@@ -60,93 +88,110 @@ func main() {
 	}
 	rdb := redis.NewClient(opt)
 
-	// Ping Redis to ensure connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Fatalf("❌ Failed to connect to Redis: %v", err)
-	}
-
 	server := &AlmanacServer{
-		nc:  nc,
-		rdb: rdb,
+		nc:      nc,
+		rdb:     rdb,
+		rootCAs: rootCAs,
 	}
 
-	// 3. Subscribe to Registration Heartbeats
-	// Queue Group "almanac_workers" ensures load balancing if we run multiple servers
+	// 5. Configure Subscriptions
+	// We use the Queue Group "almanac_workers" to load balance registrations
 	_, err = nc.QueueSubscribe("almanac.register", "almanac_workers", server.handleRegister)
 	if err != nil {
-		log.Fatalf("❌ Failed to subscribe to register: %v", err)
+		log.Fatalf("❌ Sub error: %v", err)
 	}
 
-	// 4. Subscribe to Queries
 	_, err = nc.QueueSubscribe("almanac.query", "almanac_workers", server.handleQuery)
 	if err != nil {
-		log.Fatalf("❌ Failed to subscribe to query: %v", err)
+		log.Fatalf("❌ Sub error: %v", err)
 	}
 
-	log.Println("📖 Almanac Server Online (Redis Backed). Listening for Agents...")
+	log.Println("📖 Almanac Server Online (CA Verified). Listening...")
 
-	// 5. Wait for Shutdown Signal
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
-	log.Println("🔻 Shutting down Almanac Server...")
 }
 
 // --- Handlers ---
 
-// handleRegister processes new agent heartbeats
 func (s *AlmanacServer) handleRegister(msg *nats.Msg) {
-	var payload resolver.RegistrationPayload
+	var payload lookup.RegistrationPayload
 	if err := json.Unmarshal(msg.Data, &payload); err != nil {
 		log.Printf("⚠️ Malformed registration: %v", err)
 		return
 	}
 
-	// 1. Validate Signature (Security Critical)
-	_, err := identity.PubKeyFromDID(payload.DID)
-	if err != nil {
-		log.Printf("⚠️ Invalid DID format: %s", payload.DID)
+	// --- STEP 1: CA Verification (The Gatekeeper) ---
+
+	// A. Parse the PEM Block from the payload
+	block, _ := pem.Decode([]byte(payload.CertificatePEM))
+	if block == nil {
+		log.Printf("❌ Registration Rejected: Invalid PEM for DID %s", payload.DID)
 		return
 	}
 
-	// 2. Transform to Internal Record
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		log.Printf("❌ Registration Rejected: Unparseable Cert for DID %s", payload.DID)
+		return
+	}
+
+	// B. Verify the Chain of Trust
+	// Removed explicit ExtKeyUsage to allow general validation
+	opts := x509.VerifyOptions{
+		Roots:       s.rootCAs,
+		CurrentTime: time.Now(),
+	}
+
+	if _, err := cert.Verify(opts); err != nil {
+		log.Printf("❌ Registration Rejected: Untrusted Cert for DID %s (Err: %v)", payload.DID, err)
+		// TODO: Publish a "Registration Failed" event back to the agent?
+		return
+	}
+
+	// C. Verify Ownership (DID Match)
+	// The CommonName (CN) or URI SAN in the cert MUST match the DID claiming to register
+	// Assuming CN holds the DID for simplicity
+	if cert.Subject.CommonName != payload.DID {
+		log.Printf("❌ Registration Rejected: Cert CN (%s) does not match DID (%s)", cert.Subject.CommonName, payload.DID)
+		return
+	}
+
+	// --- STEP 2: Persistence ---
+
+	// Store internal record
 	record := &AgentRecord{
 		DID:          payload.DID,
 		Endpoints:    payload.Endpoints,
-		Capabilities: payload.Capabilities, // Store full structure
+		Capabilities: payload.Capabilities,
 		LastSeen:     time.Now().UTC(),
 		Expiry:       payload.Expiry,
+		CertSerial:   cert.SerialNumber.String(),
 	}
 
-	recordBytes, err := json.Marshal(record)
-	if err != nil {
-		log.Printf("⚠️ Failed to marshal record: %v", err)
-		return
-	}
-
-	// 3. Write to Redis
+	recordBytes, _ := json.Marshal(record)
 	ctx := context.Background()
 	pipe := s.rdb.Pipeline()
 
-	// Key for Agent Record
-	agentKey := "almanac:agent:" + payload.DID
+	// Logic: Use the Expiry from the payload, but cap it at Cert Expiry
 	ttl := time.Until(payload.Expiry)
+	if time.Now().Add(ttl).After(cert.NotAfter) {
+		ttl = time.Until(cert.NotAfter) // Don't let them register past their cert life
+	}
 	if ttl < 0 {
-		ttl = time.Second // Expire immediately if already past
+		log.Printf("⚠️ Cert expired for %s", payload.DID)
+		return
 	}
 
-	// Store the record with TTL
-	// Use Set to store the JSON string
+	// Main Record
+	agentKey := "almanac:agent:" + payload.DID
 	pipe.Set(ctx, agentKey, recordBytes, ttl)
 
-	// Index Capabilities (Case Insensitive Indexing)
+	// Capability Indexing
 	for _, cap := range record.Capabilities {
 		capKey := "almanac:cap:" + strings.ToLower(cap.Type)
 		pipe.SAdd(ctx, capKey, payload.DID)
-		// We don't set TTL on the Set itself because other agents might be in it.
-		// We handle stale members lazily in Query.
 	}
 
 	_, err = pipe.Exec(ctx)
@@ -155,18 +200,36 @@ func (s *AlmanacServer) handleRegister(msg *nats.Msg) {
 		return
 	}
 
-	log.Printf("✅ Registered Agent: %s (%d capabilities)", payload.DID, len(record.Capabilities))
+	log.Printf("✅ Verified & Registered: %s", payload.DID)
 }
 
-// handleQuery processes "FindAgents" requests
 func (s *AlmanacServer) handleQuery(msg *nats.Msg) {
 	// Parse the query
-	var query resolver.AlmanacQuery
+	var query lookup.AlmanacQuery
 	if err := json.Unmarshal(msg.Data, &query); err != nil {
 		return // Ignore bad requests
 	}
 
 	ctx := context.Background()
+
+	// 0. Direct DID Lookup (Fast Path)
+	if query.DID != "" {
+		val, err := s.rdb.Get(ctx, "almanac:agent:"+query.DID).Result()
+		if err == nil {
+			var record AgentRecord
+			// We return a list of 1 for consistency
+			if err := json.Unmarshal([]byte(val), &record); err == nil {
+				s.sendReply(msg, []AgentRecord{record})
+				log.Printf("🔍 Query for DID '%s' -> Found", query.DID)
+				return
+			}
+		}
+		// If not found or error, return empty list
+		s.sendReply(msg, []AgentRecord{})
+		log.Printf("🔍 Query for DID '%s' -> Not Found", query.DID)
+		return
+	}
+
 	// Use case-insensitive search to match registration behavior
 	capKey := "almanac:cap:" + strings.ToLower(query.CapabilityType)
 
@@ -221,15 +284,17 @@ func (s *AlmanacServer) handleQuery(msg *nats.Msg) {
 		}()
 	}
 
-	// Send Reply
-	respBytes, _ := json.Marshal(matches)
-	s.nc.Publish(msg.Reply, respBytes)
-
+	s.sendReply(msg, matches)
 	log.Printf("🔍 Query for '%s' (Meta: %v) -> Found %d agents", query.CapabilityType, query.MetaFilter, len(matches))
 }
 
+func (s *AlmanacServer) sendReply(msg *nats.Msg, matches []AgentRecord) {
+	respBytes, _ := json.Marshal(matches)
+	s.nc.Publish(msg.Reply, respBytes)
+}
+
 // matchMeta checks if the agent has a capability of the given type that generally matches the filters
-func matchMeta(caps []resolver.RegistrationCapability, targetType string, filter map[string]interface{}) bool {
+func matchMeta(caps []lookup.RegistrationCapability, targetType string, filter map[string]interface{}) bool {
 	targetType = strings.ToLower(targetType)
 	for _, c := range caps {
 		// Only check capabilities of the requested type

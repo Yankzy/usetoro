@@ -34,17 +34,17 @@ func NewStore(pool *pgxpool.Pool, cache *ristretto.Cache, encryptionKey []byte) 
 	}, nil
 }
 
-// ExecTx runs a callback function within a secure, tenant-isolated transaction.
-func (s *Store) ExecTx(ctx context.Context, tenantID string, fn func(*database.Queries) error) error {
+// ExecTx runs a callback function within a secure, entity-isolated transaction.
+func (s *Store) ExecTx(ctx context.Context, entityID string, fn func(*database.Queries) error) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, "SET LOCAL app.current_tenant = $1", tenantID)
+	_, err = tx.Exec(ctx, "SET LOCAL app.current_entity = $1", entityID)
 	if err != nil {
-		return fmt.Errorf("failed to set tenant context: %w", err)
+		return fmt.Errorf("failed to set entity context: %w", err)
 	}
 
 	qTx := s.Queries.WithTx(tx)

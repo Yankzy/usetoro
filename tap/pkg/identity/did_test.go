@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-func TestDIDFromPubKey(t *testing.T) {
+func TestCreateDID(t *testing.T) {
 	pub, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	did := DIDFromPubKey(pub)
+	did := CreateDID(pub)
 	expectedPrefix := "did:toro:"
 	if len(did) <= len(expectedPrefix) {
 		t.Errorf("DID is too short: %s", did)
@@ -34,7 +34,7 @@ func TestPubKeyFromDID(t *testing.T) {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	did := DIDFromPubKey(pub)
+	did := CreateDID(pub)
 	extractedPubHex, err := PubKeyFromDID(did)
 	if err != nil {
 		t.Fatalf("PubKeyFromDID failed: %v", err)

@@ -2,6 +2,7 @@ package queue
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -79,7 +80,19 @@ func (c *Client) EnsureStream(cfg *nats.StreamConfig) error {
 		// Stream exists, update if needed
 		// Check if subjects need to be updated
 		if !containsAllSubjects(info.Config.Subjects, cfg.Subjects) {
-			_, err = c.js.UpdateStream(cfg)
+			updateCfg := info.Config
+			// merge subjects
+			subjectMap := make(map[string]bool)
+			for _, s := range updateCfg.Subjects {
+				subjectMap[s] = true
+			}
+			for _, s := range cfg.Subjects {
+				if !subjectMap[s] {
+					updateCfg.Subjects = append(updateCfg.Subjects, s)
+				}
+			}
+
+			_, err = c.js.UpdateStream(&updateCfg)
 			if err != nil {
 				return fmt.Errorf("failed to update stream: %w", err)
 			}
@@ -100,15 +113,49 @@ func (c *Client) EnsureStream(cfg *nats.StreamConfig) error {
 }
 
 // containsAllSubjects checks if all required subjects are present in the stream config.
+// It supports NATS wildcards (* and >) to determine if existing subjects cover the required ones.
 func containsAllSubjects(existing, required []string) bool {
-	subjectMap := make(map[string]bool)
-	for _, s := range existing {
-		subjectMap[s] = true
-	}
-	for _, s := range required {
-		if !subjectMap[s] {
+	for _, req := range required {
+		covered := false
+		for _, ex := range existing {
+			if subjectIsCovered(req, ex) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
 			return false
 		}
 	}
 	return true
+}
+
+// subjectIsCovered returns true if the required subject is subsumed by the existing NATS pattern.
+func subjectIsCovered(req, existing string) bool {
+	if req == existing {
+		return true
+	}
+
+	reqTokens := strings.Split(req, ".")
+	exTokens := strings.Split(existing, ".")
+
+	for i, exToken := range exTokens {
+		// Existing subject ends with wide wildcard, covering everything from here
+		if exToken == ">" {
+			return true
+		}
+
+		// Existing subject requires more tokens than required subject provides
+		if i >= len(reqTokens) {
+			return false
+		}
+
+		// Direct match or single-level wildcard
+		if exToken != "*" && exToken != reqTokens[i] {
+			return false
+		}
+	}
+
+	// Make sure they have the exact same number of tokens unless > matched early
+	return len(reqTokens) == len(exTokens)
 }

@@ -46,7 +46,7 @@ func main() {
 	}
 }
 
-func run(cfg config.Config, logger *slog.Logger) error {
+func run(cfg *config.Config, logger *slog.Logger) error {
 	ctx := context.Background()
 
 	// =========================================================================
@@ -79,7 +79,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	logger.Info("✅ Connected to PostgreSQL")
 
 	// 2. NATS JetStream (Durability Layer)
-	q, err := queue.NewClient(cfg.NatsURL,
+	q, err := queue.NewClient(cfg.NATS.URL,
 		nats.Name("toro-ingress"),
 		nats.MaxReconnects(10),
 		nats.ReconnectWait(2*time.Second),

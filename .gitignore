@@ -33,6 +33,9 @@ go.work.sum
 **/db_data
 **/redis_data
 container/postgres/db_data
+**/pki/bin
+**/pki/ca-server/
+**/pki/bootstrap-client
 
 # Editor/IDE
 # .idea/

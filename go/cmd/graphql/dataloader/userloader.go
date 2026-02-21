@@ -47,7 +47,7 @@ func NewUserLoader(db *pgxpool.Pool) *UserLoader {
 			}
 
 			// Map users to results in standard O(n) way
-			userMap := make(map[string]database.User)
+			userMap := make(map[string]database.ToroCoreUser)
 			for _, u := range users {
 				userMap[fmt.Sprintf("%x", u.ID.Bytes)] = u // using hex string of bytes as key match
 			}

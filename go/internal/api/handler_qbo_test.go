@@ -21,11 +21,11 @@ func TestExtractParamsTask(t *testing.T) {
 	authenticator := &auth.Authenticator{PublicKey: pub}
 
 	// Create a valid token
-	tenantID := uuid.New().String()
+	entityID := uuid.New().String()
 	userID := uuid.New()
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, &auth.UserClaims{
 		UserID:   userID,
-		TenantID: uuid.MustParse(tenantID),
+		EntityID: uuid.MustParse(entityID),
 		Role:     "user",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
@@ -47,8 +47,8 @@ func TestExtractParamsTask(t *testing.T) {
 			name:           "Valid UUID State (Legacy)",
 			code:           "auth_code",
 			realmID:        "12345",
-			state:          tenantID,
-			expectedTenant: tenantID,
+			state:          entityID,
+			expectedTenant: entityID,
 			expectError:    false,
 		},
 		{
@@ -56,7 +56,7 @@ func TestExtractParamsTask(t *testing.T) {
 			code:           "auth_code",
 			realmID:        "12345",
 			state:          validTokenString,
-			expectedTenant: tenantID,
+			expectedTenant: entityID,
 			expectError:    false,
 		},
 		{
@@ -98,8 +98,8 @@ func TestExtractParamsTask(t *testing.T) {
 				if err != nil {
 					t.Errorf("Unexpected error: %v", err)
 				}
-				if ctx.TenantID != tc.expectedTenant {
-					t.Errorf("Expected TenantID %s, got %s", tc.expectedTenant, ctx.TenantID)
+				if ctx.EntityID != tc.expectedTenant {
+					t.Errorf("Expected EntityID %s, got %s", tc.expectedTenant, ctx.EntityID)
 				}
 			}
 		})

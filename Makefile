@@ -14,7 +14,7 @@ else
 endif
 
 # App Services
-SERVICES := redis db svix-server gate migrator nginx svix-ui ws graphql nats-1 nats-2 nats-3
+SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker
 
 .PHONY: deploy up-scanner down-scanner build-scanner
 deploy:
@@ -174,3 +174,7 @@ clean_db:
 	$(DOCKER_COMPOSE) down
 	sudo rm -rf container/postgres/db_data
 	$(MAKE) upd
+
+
+start_root_ca:
+	docker-compose -f tap/pki/root_ca/docker-compose-root.yaml up -d

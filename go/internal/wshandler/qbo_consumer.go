@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/nats-io/nats.go"
 )
@@ -14,18 +15,20 @@ type QBOEventConsumer struct {
 	client *queue.Client
 	hub    *Hub
 	logger *slog.Logger
+	cfg    *config.Config
 	sub    *nats.Subscription
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
 // NewQBOEventConsumer creates a new QBO event consumer
-func NewQBOEventConsumer(client *queue.Client, hub *Hub, logger *slog.Logger) *QBOEventConsumer {
+func NewQBOEventConsumer(client *queue.Client, hub *Hub, logger *slog.Logger, cfg *config.Config) *QBOEventConsumer {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &QBOEventConsumer{
 		client: client,
 		hub:    hub,
 		logger: logger,
+		cfg:    cfg,
 		ctx:    ctx,
 		cancel: cancel,
 	}
@@ -33,9 +36,17 @@ func NewQBOEventConsumer(client *queue.Client, hub *Hub, logger *slog.Logger) *Q
 
 // Start begins consuming QBO connection events from NATS
 func (c *QBOEventConsumer) Start() error {
-	// Subscribe to QBO connected events
+	// Subscribe to QBO connected events (Config-driven)
+	// Subscribe to QBO connected events (Config-driven)
+	// We use the 'ws' service configuration
+	wsConfig, ok := c.cfg.NATS.Services["ws"]
+	subject := "qbo.events.connected" // Default fallback
+	if ok && len(wsConfig.JetStream.Subjects) > 0 {
+		subject = wsConfig.JetStream.Subjects[0]
+	}
+
 	sub, err := c.client.JetStream().Subscribe(
-		"qbo.events.connected",
+		subject,
 		c.handleQBOConnectedEvent,
 		nats.DeliverNew(),
 		nats.AckExplicit(),
@@ -47,7 +58,7 @@ func (c *QBOEventConsumer) Start() error {
 	}
 
 	c.sub = sub
-	c.logger.Info("QBO event consumer started", "subject", "qbo.events.connected")
+	c.logger.Info("QBO event consumer started", "subject", subject)
 	return nil
 }
 

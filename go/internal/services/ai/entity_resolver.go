@@ -77,7 +77,7 @@ func (r *EntityResolver) layer1DBMatch(ctx context.Context, realmID, entityType,
 		})
 		if err == nil {
 			return &EntityMatch{
-				ID:         vendor.ID,
+				ID:         vendor.QboID,
 				Score:      1.0,
 				Name:       vendor.DisplayName,
 				Source:     "db",
@@ -85,20 +85,19 @@ func (r *EntityResolver) layer1DBMatch(ctx context.Context, realmID, entityType,
 			}, nil
 		}
 	case "customer":
-		// Assuming similar query for customer exists or will be added
-		customers, err := r.store.Queries.GetAllCustomersForRealm(ctx, realmID)
+		// Optimized: Push search to DB
+		customer, err := r.store.Queries.GetCustomerByName(ctx, database.GetCustomerByNameParams{
+			RealmID:     realmID,
+			DisplayName: name,
+		})
 		if err == nil {
-			for _, c := range customers {
-				if strings.EqualFold(c.DisplayName, name) {
-					return &EntityMatch{
-						ID:         c.ID,
-						Score:      1.0,
-						Name:       c.DisplayName,
-						Source:     "db",
-						EntityType: "customer",
-					}, nil
-				}
-			}
+			return &EntityMatch{
+				ID:         customer.QboID,
+				Score:      1.0,
+				Name:       customer.DisplayName,
+				Source:     "db",
+				EntityType: "customer",
+			}, nil
 		}
 	}
 	return nil, nil
@@ -124,10 +123,17 @@ func (r *EntityResolver) layer2VectorMatch(ctx context.Context, realmID, entityT
 		if m.Score < r.threshold {
 			continue
 		}
+
+		// Safe extraction to prevent panic
+		name, ok := m.Metadata["name"].(string)
+		if !ok {
+			continue // Skip malformed results
+		}
+
 		results = append(results, EntityMatch{
 			ID:         m.ID,
 			Score:      m.Score,
-			Name:       m.Metadata["name"].(string),
+			Name:       name,
 			Source:     "vector",
 			EntityType: entityType,
 		})
@@ -140,36 +146,37 @@ func (r *EntityResolver) layer3FuzzyRank(target string, candidates []EntityMatch
 		return nil
 	}
 
-	// Use Levenshtein distance to verify the top semantic candidate
-	// if the semantic score is high but string distance is also high, it might be a false positive
-	best := &candidates[0]
+	var bestMatch *EntityMatch
+	var maxScore float64 = -1.0
 
-	// Check all candidates for a better fuzzy match
 	for i := range candidates {
-		// Calculate Levenshtein distance (lower is better)
-		// We normalize it: 1 - (distance / maxLen)
-		distance := fuzzy.LevenshteinDistance(strings.ToLower(target), strings.ToLower(candidates[i].Name))
+		candidate := &candidates[i] // Pointer to avoid copying
+
+		// Normalized Levenshtein (0.0 to 1.0 where 1.0 is exact match)
+		dist := fuzzy.LevenshteinDistance(strings.ToLower(target), strings.ToLower(candidate.Name))
 		maxLen := len(target)
-		if len(candidates[i].Name) > maxLen {
-			maxLen = len(candidates[i].Name)
+		if len(candidate.Name) > maxLen {
+			maxLen = len(candidate.Name)
 		}
 
-		fuzzyScore := 1.0
+		fuzzyScore := 0.0
 		if maxLen > 0 {
-			fuzzyScore = 1.0 - (float64(distance) / float64(maxLen))
+			fuzzyScore = 1.0 - (float64(dist) / float64(maxLen))
 		}
 
-		// Combined score: 60% Semantic, 40% Fuzzy
-		combinedScore := (candidates[i].Score * 0.6) + (fuzzyScore * 0.4)
+		// Weighted Score: 70% Semantic (Vector), 30% Syntax (Fuzzy)
+		// Adjust weights based on real-world testing
+		finalScore := (candidate.Score * 0.7) + (fuzzyScore * 0.3)
 
-		if combinedScore > (best.Score*0.6+0.4) || (i == 0) {
-			best = &candidates[i]
-			// We can decide to update the score to the combined one
-			// best.Score = combinedScore
+		if finalScore > maxScore {
+			maxScore = finalScore
+			bestMatch = candidate
+			bestMatch.Score = finalScore // Update the score to reflect the hybrid confidence
+			bestMatch.Source = "hybrid_vector_fuzzy"
 		}
 	}
 
-	return best
+	return bestMatch
 }
 
 // Learn updates the shadow DB based on user corrections to improve future matching
@@ -179,10 +186,13 @@ func (r *EntityResolver) Learn(ctx context.Context, realmID, rawInput, userCorre
 		return nil
 	}
 
+	// TODO: Async Job - Re-embed this vendor with the new synonym included in the text to improve semantic matching for future variations.
+
 	// 1. Get the vendor being corrected to
-	vendor, err := r.store.Queries.GetVendorByID(ctx, database.GetVendorByIDParams{
+	// 1. Get the vendor being corrected to
+	vendor, err := r.store.Queries.GetVendorByQBOID(ctx, database.GetVendorByQBOIDParams{
 		RealmID: realmID,
-		ID:      userCorrectionID,
+		QboID:   userCorrectionID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to fetch vendor for learning: %w", err)
@@ -209,9 +219,10 @@ func (r *EntityResolver) Learn(ctx context.Context, realmID, rawInput, userCorre
 		synonyms = append(synonyms, rawInput)
 		data, _ := json.Marshal(synonyms)
 		// 4. Update vendor synonyms in DB
-		return r.store.Queries.UpdateVendorSynonyms(ctx, database.UpdateVendorSynonymsParams{
+		// 4. Update vendor synonyms in DB
+		return r.store.Queries.UpdateVendorSynonymsByQBOID(ctx, database.UpdateVendorSynonymsByQBOIDParams{
 			RealmID:    realmID,
-			ID:         userCorrectionID,
+			QboID:      userCorrectionID,
 			AiSynonyms: data,
 		})
 	}

@@ -24,7 +24,7 @@ type Server struct {
 // Note: We inject the store and publisher here rather than creating them inside.
 // This allows for better testability (mocking) and separation of concerns.
 func NewServer(
-	cfg config.Config,
+	cfg *config.Config,
 	logger *slog.Logger,
 	st *store.Store,
 	pub *ingest.Publisher,

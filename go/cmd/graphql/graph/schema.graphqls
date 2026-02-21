@@ -77,9 +77,47 @@ type EntityMatch {
   entityType: String!
 }
 
+type Tenant {
+  id: ID!
+  name: String!
+  status: String!
+  planTier: String!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+}
+
+type TenantConnection {
+  nodes: [Tenant!]!
+  totalCount: Int!
+  pageInfo: PageInfo!
+}
+
 type Query {
   user: User
   qboConnection: QBOCompany
   suggestAccounts(description: String!): [AccountMatch!]!
   resolveEntity(entityType: String!, name: String!): EntityMatch
+  qbo_account(realmId: ID!): [Account!]!
+  # Protected: Requires authentication token
+  tenants(limit: Int!, offset: Int!): TenantConnection!
+}
+
+type Account {
+  id: ID!
+  realmId: String!
+  name: String!
+  classification: String
+  accountType: String
+  accountSubType: String
+  fullyQualifiedName: String
+  active: Boolean
+  syncToken: String!
+  createdAt: Time!
+  updatedAt: Time!
+  deletedAt: Time
 }

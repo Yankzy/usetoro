@@ -31,7 +31,7 @@ func main() {
 
 	// Generate Identity
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
-	did := identity.DIDFromPubKey(pub)
+	did := identity.CreateDID(pub)
 
 	// Register
 	payload := RegistrationPayload{

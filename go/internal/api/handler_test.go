@@ -36,11 +36,11 @@ func (m *MockStore) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (m *MockStore) SaveQBOTokens(ctx context.Context, tenantID, realmID, accessToken, refreshToken string, expiresAt time.Time) error {
+func (m *MockStore) SaveQBOTokens(ctx context.Context, entityID, realmID, accessToken, refreshToken string, expiresAt time.Time) error {
 	return nil
 }
 
-func (m *MockStore) GetQBOConnection(ctx context.Context, tenantID string) (*database.QboConnection, error) {
+func (m *MockStore) GetQBOConnection(ctx context.Context, entityID string) (*database.ToroCoreQboConnection, error) {
 	return nil, nil
 }
 

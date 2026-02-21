@@ -213,7 +213,7 @@ Each agent has a **DID** derived from its Ed25519 public key:
 
 ```go
 kp, _ := identity.GenerateKeyPair()
-did := identity.DIDFromPubKey(kp.Public)
+did := identity.CreateDID(kp.Public)
 // => "did:toro:a1b2c3d4e5f6..."
 ```
 
@@ -227,7 +227,7 @@ TAP defines three core data structures:
 - **Contract**: A binding agreement between two agents with dual signatures
 - **Proof**: Evidence of task completion (GPS trace, classification result, API response)
 
-See: [`pkg/tap/primitives.go`](pkg/tap/primitives.go)
+See: [`pkg/core/primitives.go`](pkg/core/primitives.go)
 
 ### 5️⃣ **NATS Topics**
 
@@ -264,7 +264,7 @@ Import the SDK:
 
 ```go
 import (
-    "github.com/Yankzy/usetoro/tap/pkg/tap"
+    "github.com/Yankzy/usetoro/tap/pkg/core"
     "github.com/Yankzy/usetoro/tap/pkg/identity"
     "github.com/Yankzy/usetoro/tap/pkg/transport"
 )
@@ -311,7 +311,7 @@ Let's build a simple agent that listens for accounting tasks and processes them.
 
 ```go
 kp, _ := identity.GenerateKeyPair()
-did := identity.DIDFromPubKey(kp.Public)
+did := identity.CreateDID(kp.Public)
 log.Printf("Agent DID: %s", did)
 ```
 
@@ -330,7 +330,7 @@ defer nc.Close()
 ```go
 registration := resolver.RegistrationPayload{
     DID: did,
-    Endpoints: []string{tap.BuildAgentInbox(did)},
+    Endpoints: []string{core.BuildAgentInbox(did)},
     Capabilities: []resolver.RegistrationCapability{
         {Type: "accounting.audit"},
     },
@@ -344,10 +344,10 @@ nc.Publish("almanac.register", data)
 
 ```go
 nc.Subscribe("tasks.accounting.>", func(msg *nats.Msg) {
-    var env tap.Envelope
+    var env core.Envelope
     json.Unmarshal(msg.Data, &env)
     
-    if env.Performative == tap.CFP {
+    if env.Performative == core.CFP {
         log.Printf("New job: %s", env.ConversationID)
         // Send proposal, negotiate, execute...
     }
@@ -362,18 +362,18 @@ proposal := map[string]interface{}{
     "eta": "30m",
 }
 
-replyEnv, _ := tap.NewEnvelope(
+replyEnv, _ := core.NewEnvelope(
     "msg_123",
     did,
     env.SenderDID,
     env.ConversationID,
-    tap.PROPOSE,
+    core.PROPOSE,
     proposal,
 )
 replyEnv.Signature = kp.Sign(replyEnv.Body)
 
 replyBytes, _ := json.Marshal(replyEnv)
-nc.Publish(tap.BuildAgentInbox(env.SenderDID), replyBytes)
+nc.Publish(core.BuildAgentInbox(env.SenderDID), replyBytes)
 ```
 
 **Full Example**: See [`examples/simple-trucker/main.go`](examples/simple-trucker/main.go)
@@ -382,7 +382,7 @@ nc.Publish(tap.BuildAgentInbox(env.SenderDID), replyBytes)
 
 ## 📚 SDK Reference
 
-### `pkg/tap` - Core Primitives
+### `pkg/core` - Core Primitives
 
 Defines the fundamental types:
 
@@ -392,10 +392,10 @@ Defines the fundamental types:
 - **`Proof`**: Evidence of completion
 
 **Files:**
-- [`primitives.go`](pkg/tap/primitives.go) - Business objects
-- [`envelope.go`](pkg/tap/envelope.go) - Message structure
-- [`verbs.go`](pkg/tap/verbs.go) - Performative constants
-- [`topics.go`](pkg/tap/topics.go) - Topic builders
+- [`primitives.go`](pkg/core/primitives.go) - Business objects
+- [`envelope.go`](pkg/core/envelope.go) - Message structure
+- [`verbs.go`](pkg/core/verbs.go) - Performative constants
+- [`topics.go`](pkg/core/topics.go) - Topic builders
 
 ### `pkg/identity` - Cryptography & DIDs
 
@@ -406,7 +406,7 @@ Ed25519-based identity management:
 kp, _ := identity.GenerateKeyPair()
 
 // Create DID from public key
-did := identity.DIDFromPubKey(kp.Public)
+did := identity.CreateDID(kp.Public)
 
 // Sign data
 signature := kp.Sign([]byte("hello"))

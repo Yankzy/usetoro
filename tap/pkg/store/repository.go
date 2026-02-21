@@ -4,30 +4,30 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/Yankzy/usetoro/tap/pkg/tap"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 var ErrNotFound = errors.New("contract not found")
 
 // Repository defines the interface for state persistence.
 type Repository interface {
-	SaveContract(c *tap.Contract) error
-	GetContract(id string) (*tap.Contract, error)
-	UpdateStatus(id string, status tap.ContractStatus) error
+	SaveContract(c *core.Contract) error
+	GetContract(id string) (*core.Contract, error)
+	UpdateStatus(id string, status core.ContractStatus) error
 }
 
 type MemoryStore struct {
-	contracts map[string]*tap.Contract
+	contracts map[string]*core.Contract
 	mu        sync.RWMutex
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		contracts: make(map[string]*tap.Contract),
+		contracts: make(map[string]*core.Contract),
 	}
 }
 
-func (m *MemoryStore) SaveContract(c *tap.Contract) error {
+func (m *MemoryStore) SaveContract(c *core.Contract) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Deep copy could be done here for safety
@@ -35,7 +35,7 @@ func (m *MemoryStore) SaveContract(c *tap.Contract) error {
 	return nil
 }
 
-func (m *MemoryStore) GetContract(id string) (*tap.Contract, error) {
+func (m *MemoryStore) GetContract(id string) (*core.Contract, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	c, ok := m.contracts[id]
@@ -45,7 +45,7 @@ func (m *MemoryStore) GetContract(id string) (*tap.Contract, error) {
 	return c, nil
 }
 
-func (m *MemoryStore) UpdateStatus(id string, status tap.ContractStatus) error {
+func (m *MemoryStore) UpdateStatus(id string, status core.ContractStatus) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

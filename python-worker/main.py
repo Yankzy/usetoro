@@ -33,10 +33,10 @@ async def main():
         print(f"Processing message on [{subject}]: {data}", flush=True)
         
         # Determine skill based on subject
-        # e.g. skill.ocr -> perform OCR
+        # e.g. tasks.ocr -> perform OCR
         response = {}
         
-        if subject == "skill.ocr":
+        if subject == "tasks.ocr.v1.>":
             # Mock OCR processing
             response = {"processed": True, "text": "Extracted text from python worker", "original_len": len(data)}
         else:
@@ -51,8 +51,8 @@ async def main():
 
     # 3. Subscribe with Queue Group
     # "workers" queue group ensures load balancing if we run multiple instances
-    sub = await nc.subscribe("skill.>", queue="workers", cb=message_handler)
-    print("🎧 Subscribed to 'skill.>'", flush=True)
+    sub = await nc.subscribe("tasks.ocr.v1.>", queue="workers", cb=message_handler)
+    print("🎧 Subscribed to 'tasks.ocr.v1.>'", flush=True)
 
     # 4. Graceful Shutdown
     stop_event = asyncio.Event()

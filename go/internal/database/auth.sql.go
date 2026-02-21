@@ -11,8 +11,37 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countEntities = `-- name: CountEntities :one
+SELECT COUNT(*) FROM toro_core.entities
+`
+
+func (q *Queries) CountEntities(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countEntities)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createEntity = `-- name: CreateEntity :one
+INSERT INTO toro_core.entities (name, entity_type, plan_tier)
+VALUES ($1, $2, $3) RETURNING id
+`
+
+type CreateEntityParams struct {
+	Name       string
+	EntityType string
+	PlanTier   pgtype.Text
+}
+
+func (q *Queries) CreateEntity(ctx context.Context, arg CreateEntityParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, createEntity, arg.Name, arg.EntityType, arg.PlanTier)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createRefreshToken = `-- name: CreateRefreshToken :exec
-INSERT INTO refresh_tokens (token_hash, user_id, expires_at, ip_address, user_agent)
+INSERT INTO toro_core.refresh_tokens (token_hash, user_id, expires_at, ip_address, user_agent)
 VALUES ($1, $2, $3, $4, $5)
 `
 
@@ -35,29 +64,13 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 	return err
 }
 
-const createTenant = `-- name: CreateTenant :one
-INSERT INTO tenants (name, plan_tier) VALUES ($1, $2) RETURNING id
-`
-
-type CreateTenantParams struct {
-	Name     string
-	PlanTier pgtype.Text
-}
-
-func (q *Queries) CreateTenant(ctx context.Context, arg CreateTenantParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, createTenant, arg.Name, arg.PlanTier)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (tenant_id, email, password_hash, role) 
+INSERT INTO toro_core.users (entity_id, email, password_hash, role)
 VALUES ($1, $2, $3, $4) RETURNING id
 `
 
 type CreateUserParams struct {
-	TenantID     pgtype.UUID
+	EntityID     pgtype.UUID
 	Email        string
 	PasswordHash string
 	Role         pgtype.Text
@@ -65,7 +78,7 @@ type CreateUserParams struct {
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, createUser,
-		arg.TenantID,
+		arg.EntityID,
 		arg.Email,
 		arg.PasswordHash,
 		arg.Role,
@@ -76,7 +89,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.
 }
 
 const deleteRefreshToken = `-- name: DeleteRefreshToken :exec
-DELETE FROM refresh_tokens WHERE token_hash = $1
+DELETE FROM toro_core.refresh_tokens WHERE token_hash = $1
 `
 
 func (q *Queries) DeleteRefreshToken(ctx context.Context, tokenHash string) error {
@@ -84,13 +97,55 @@ func (q *Queries) DeleteRefreshToken(ctx context.Context, tokenHash string) erro
 	return err
 }
 
-const getRefreshToken = `-- name: GetRefreshToken :one
-SELECT token_hash, user_id, expires_at, ip_address, user_agent, created_at FROM refresh_tokens WHERE token_hash = $1
+const getEntities = `-- name: GetEntities :many
+SELECT id, parent_id, name, entity_type, erp_provider, erp_tenant_id, plan_tier, status, created_at, updated_at FROM toro_core.entities
+ORDER BY created_at DESC
+LIMIT $1 OFFSET $2
 `
 
-func (q *Queries) GetRefreshToken(ctx context.Context, tokenHash string) (RefreshToken, error) {
+type GetEntitiesParams struct {
+	Limit  int32
+	Offset int32
+}
+
+func (q *Queries) GetEntities(ctx context.Context, arg GetEntitiesParams) ([]ToroCoreEntity, error) {
+	rows, err := q.db.Query(ctx, getEntities, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreEntity
+	for rows.Next() {
+		var i ToroCoreEntity
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentID,
+			&i.Name,
+			&i.EntityType,
+			&i.ErpProvider,
+			&i.ErpTenantID,
+			&i.PlanTier,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRefreshToken = `-- name: GetRefreshToken :one
+SELECT token_hash, user_id, expires_at, ip_address, user_agent, created_at FROM toro_core.refresh_tokens WHERE token_hash = $1
+`
+
+func (q *Queries) GetRefreshToken(ctx context.Context, tokenHash string) (ToroCoreRefreshToken, error) {
 	row := q.db.QueryRow(ctx, getRefreshToken, tokenHash)
-	var i RefreshToken
+	var i ToroCoreRefreshToken
 	err := row.Scan(
 		&i.TokenHash,
 		&i.UserID,
@@ -103,15 +158,15 @@ func (q *Queries) GetRefreshToken(ctx context.Context, tokenHash string) (Refres
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, tenant_id, email, password_hash, full_name, role, is_active, created_at, updated_at FROM users WHERE email = $1
+SELECT id, entity_id, email, password_hash, full_name, role, is_active, created_at, updated_at FROM toro_core.users WHERE email = $1
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (ToroCoreUser, error) {
 	row := q.db.QueryRow(ctx, getUserByEmail, email)
-	var i User
+	var i ToroCoreUser
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.EntityID,
 		&i.Email,
 		&i.PasswordHash,
 		&i.FullName,
@@ -124,15 +179,15 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, tenant_id, email, password_hash, full_name, role, is_active, created_at, updated_at FROM users WHERE id = $1
+SELECT id, entity_id, email, password_hash, full_name, role, is_active, created_at, updated_at FROM toro_core.users WHERE id = $1
 `
 
-func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
+func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (ToroCoreUser, error) {
 	row := q.db.QueryRow(ctx, getUserByID, id)
-	var i User
+	var i ToroCoreUser
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.EntityID,
 		&i.Email,
 		&i.PasswordHash,
 		&i.FullName,
@@ -145,21 +200,21 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 }
 
 const getUsersByIDs = `-- name: GetUsersByIDs :many
-SELECT id, tenant_id, email, password_hash, full_name, role, is_active, created_at, updated_at FROM users WHERE id = ANY($1::uuid[])
+SELECT id, entity_id, email, password_hash, full_name, role, is_active, created_at, updated_at FROM toro_core.users WHERE id = ANY($1::uuid[])
 `
 
-func (q *Queries) GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]User, error) {
+func (q *Queries) GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]ToroCoreUser, error) {
 	rows, err := q.db.Query(ctx, getUsersByIDs, dollar_1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []User
+	var items []ToroCoreUser
 	for rows.Next() {
-		var i User
+		var i ToroCoreUser
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.EntityID,
 			&i.Email,
 			&i.PasswordHash,
 			&i.FullName,

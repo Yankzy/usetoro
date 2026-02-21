@@ -27,10 +27,10 @@ func TestQueryMiddleware(t *testing.T) {
 
 	// Create a valid token
 	userID := uuid.New()
-	tenantID := uuid.New()
+	entityID := uuid.New()
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, &UserClaims{
 		UserID:   userID,
-		TenantID: tenantID,
+		EntityID: entityID,
 		Role:     "user",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),

@@ -6,6 +6,21 @@ import (
 	"time"
 )
 
+type Account struct {
+	ID                 string     `json:"id"`
+	RealmID            string     `json:"realmId"`
+	Name               string     `json:"name"`
+	Classification     *string    `json:"classification,omitempty"`
+	AccountType        *string    `json:"accountType,omitempty"`
+	AccountSubType     *string    `json:"accountSubType,omitempty"`
+	FullyQualifiedName *string    `json:"fullyQualifiedName,omitempty"`
+	Active             *bool      `json:"active,omitempty"`
+	SyncToken          string     `json:"syncToken"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+	DeletedAt          *time.Time `json:"deletedAt,omitempty"`
+}
+
 type AccountMatch struct {
 	AccountID string  `json:"accountId"`
 	Score     float64 `json:"score"`
@@ -35,17 +50,22 @@ type LoginInput struct {
 type Mutation struct {
 }
 
+type PageInfo struct {
+	HasNextPage     bool `json:"hasNextPage"`
+	HasPreviousPage bool `json:"hasPreviousPage"`
+}
+
 type ProposedTransaction struct {
 	ID                 string     `json:"id"`
 	RealmID            string     `json:"realmId"`
 	SourceType         string     `json:"sourceType"`
 	RawAmount          float64    `json:"rawAmount"`
-	RawDate            *time.Time `json:"rawDate"`
-	RawDescription     *string    `json:"rawDescription"`
-	PredictedVendorID  *string    `json:"predictedVendorId"`
-	PredictedAccountID *string    `json:"predictedAccountId"`
+	RawDate            *time.Time `json:"rawDate,omitempty"`
+	RawDescription     *string    `json:"rawDescription,omitempty"`
+	PredictedVendorID  *string    `json:"predictedVendorId,omitempty"`
+	PredictedAccountID *string    `json:"predictedAccountId,omitempty"`
 	ConfidenceScore    float64    `json:"confidenceScore"`
-	AiReasoning        *string    `json:"aiReasoning"`
+	AiReasoning        *string    `json:"aiReasoning,omitempty"`
 }
 
 type QBOCompany struct {
@@ -54,22 +74,37 @@ type QBOCompany struct {
 	ConnectedAt *time.Time `json:"connectedAt,omitempty"`
 }
 
+type Query struct {
+}
+
 type RecordCorrectionInput struct {
 	RealmID         string   `json:"realmId"`
 	RawInput        string   `json:"rawInput"`
-	AiPrediction    *string  `json:"aiPrediction"`
+	AiPrediction    *string  `json:"aiPrediction,omitempty"`
 	UserCorrection  string   `json:"userCorrection"`
 	CorrectionType  string   `json:"correctionType"`
-	ConfidenceScore *float64 `json:"confidenceScore"`
-}
-
-type Query struct {
+	ConfidenceScore *float64 `json:"confidenceScore,omitempty"`
 }
 
 type SignupInput struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	OrgName  string `json:"orgName"`
+}
+
+type Tenant struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Status    string    `json:"status"`
+	PlanTier  string    `json:"planTier"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type TenantConnection struct {
+	Nodes      []*Tenant `json:"nodes"`
+	TotalCount int32     `json:"totalCount"`
+	PageInfo   *PageInfo `json:"pageInfo"`
 }
 
 type User struct {

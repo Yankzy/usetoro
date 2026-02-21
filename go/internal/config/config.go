@@ -3,123 +3,188 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
-	"os"
-	"strconv"
+	"strings"
 	"time"
+
+	"github.com/Yankzy/usetoro/tap/pkg/agent"
+	"github.com/spf13/viper"
 )
 
-// Config holds all configuration variables from the environment.
-// GO CONCEPT: Centralized Config
-// Instead of calling os.Getenv() all over the code, we load it once into a struct.
-// Benefit: We can validation all inputs at startup (Fail Fast) and pass 'cfg' around cleanly.
+// Config mirrors your defaults.yaml structure and environment variables.
 type Config struct {
-	Port        string
-	DatabaseURL string
-	NatsURL     string
+	Port        string `mapstructure:"port"`
+	DatabaseURL string `mapstructure:"database_url"`
 
 	// Infrastructure Knobs
-	DBMinConns int
-	DBMaxConns int
+	DBMinConns int `mapstructure:"db_min_conns"`
+	DBMaxConns int `mapstructure:"db_max_conns"`
 
 	// Timeouts
-	ReadTimeout        time.Duration
-	WriteTimeout       time.Duration
-	IdleTimeout        time.Duration
-	NATSPublishTimeout time.Duration
+	ReadTimeout        time.Duration `mapstructure:"server_read_timeout"`
+	WriteTimeout       time.Duration `mapstructure:"server_write_timeout"`
+	IdleTimeout        time.Duration `mapstructure:"server_idle_timeout"`
+	NATSPublishTimeout time.Duration `mapstructure:"nats_publish_timeout"`
 
 	// Limits
-	MaxWebhookBodySize int64
+	MaxWebhookBodySize int64 `mapstructure:"max_webhook_body_size"`
 
 	// QBO Config
-	QBOClientID     string
-	QBOClientSecret string
-	QBOIsProduction bool
+	QBOClientID     string `mapstructure:"qbo_client_id"`
+	QBOClientSecret string `mapstructure:"qbo_client_secret"`
+	QBOIsProduction bool   `mapstructure:"qbo_is_production"`
 
 	// CDC (Change Data Capture) Config
-	CDCEnabled      bool
-	CDCSyncInterval time.Duration
+	CDCEnabled      bool          `mapstructure:"cdc_enabled"`
+	CDCSyncInterval time.Duration `mapstructure:"cdc_sync_interval"`
 
 	// AI/Vector Config
-	PineconeIndex       string
-	EmbeddingModel      string
-	EmbeddingDimensions int
+	PineconeIndex       string `mapstructure:"pinecone_index"`
+	EmbeddingModel      string `mapstructure:"embedding_model"`
+	EmbeddingDimensions int    `mapstructure:"embedding_dimensions"`
 
 	// Security
-	EncryptionKey []byte
+	// We read this as a string first (base64) then decode it
+	EncryptionKeyString string `mapstructure:"encryption_key"`
+	EncryptionKey       []byte `mapstructure:"-"`
+
+	// NATS Config
+	NATS NATSConfig `mapstructure:"nats"`
+
+	// Agents Config
+	Agents []agent.AgentConfig `mapstructure:"agents"`
 }
 
-// Load returns the application configuration sourced from environment variables.
-// It returns an error if critical environment variables are missing.
-func Load() (Config, error) {
-	cfg := Config{
-		Port:        getEnv("PORT", "8080"),
-		DatabaseURL: os.Getenv("DATABASE_URL"),
-		NatsURL:     os.Getenv("NATS_URL"),
+type NATSConfig struct {
+	URL      string                   `mapstructure:"url"`
+	Services map[string]ServiceConfig `mapstructure:"streams"` // Mapping "streams" key to Services map
+}
 
-		// Defaults suitable for a small production pod, but configurable.
-		DBMinConns: getEnvInt("DB_MIN_CONNS", 10),
-		DBMaxConns: getEnvInt("DB_MAX_CONNS", 50),
+type ServiceConfig struct {
+	StreamName      string                     `mapstructure:"stream_name"`
+	SubjectTemplate string                     `mapstructure:"subject_template"`
+	JetStream       JetStreamConfig            `mapstructure:"jetstream"`
+	Components      map[string]ComponentConfig `mapstructure:"components"`
+}
 
-		// Timeouts
-		ReadTimeout:        getEnvDuration("SERVER_READ_TIMEOUT", 5*time.Second),
-		WriteTimeout:       getEnvDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),
-		IdleTimeout:        getEnvDuration("SERVER_IDLE_TIMEOUT", 120*time.Second),
-		NATSPublishTimeout: getEnvDuration("NATS_PUBLISH_TIMEOUT", 5*time.Second),
+type ComponentConfig struct {
+	StreamName string          `mapstructure:"stream_name"`
+	JetStream  JetStreamConfig `mapstructure:"jetstream"`
+}
 
-		// Limits
-		MaxWebhookBodySize: getEnvInt64("MAX_WEBHOOK_BODY_SIZE", 1<<20), // 1 MiB default
+type JetStreamConfig struct {
+	Replicas    int           `mapstructure:"replicas"`
+	MaxAge      time.Duration `mapstructure:"max_age"`
+	Subjects    []string      `mapstructure:"subjects"`
+	DenyDelete  bool          `mapstructure:"deny_delete"`
+	DenyPurge   bool          `mapstructure:"deny_purge"`
+	AllowRollup bool          `mapstructure:"allow_rollup"`
+	AllowDirect bool          `mapstructure:"allow_direct"`
+}
 
-		// QBO Config
-		QBOClientID:     os.Getenv("QBO_CLIENT_ID"),
-		QBOClientSecret: os.Getenv("QBO_CLIENT_SECRET"),
-		QBOIsProduction: getEnvBool("QBO_IS_PRODUCTION", false),
+// Load reads defaults.yaml and overrides with ENV variables
+func Load() (*Config, error) {
+	v := viper.New()
 
-		// CDC Config
-		CDCEnabled:      getEnvBool("CDC_ENABLED", true),
-		CDCSyncInterval: getEnvDuration("CDC_SYNC_INTERVAL", 1*time.Hour),
+	// 1. Tell Viper where to look
+	v.SetConfigName("defaults")
+	v.SetConfigType("yaml")
+	v.AddConfigPath("./internal/config")
+	v.AddConfigPath("./go/internal/config")
+	v.AddConfigPath(".")
 
-		// AI Config
-		PineconeIndex:       getEnv("PINECONE_INDEX", "toro-ai"),
-		EmbeddingModel:      getEnv("EMBEDDING_MODEL", "text-embedding-3-small"),
-		EmbeddingDimensions: getEnvInt("EMBEDDING_DIMENSIONS", 1536),
+	// 2. Setup Environment Variable Overrides
+	v.SetEnvPrefix("APP")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
 
-		// Security - EncryptionKey will be loaded and validated below
+	// Bind legacy environment variables explicitly
+	_ = v.BindEnv("port", "PORT")
+	_ = v.BindEnv("database_url", "DATABASE_URL")
+	_ = v.BindEnv("nats.url", "NATS_URL")
+	_ = v.BindEnv("db_min_conns", "DB_MIN_CONNS")
+	_ = v.BindEnv("db_max_conns", "DB_MAX_CONNS")
+	_ = v.BindEnv("server_read_timeout", "SERVER_READ_TIMEOUT")
+	_ = v.BindEnv("server_write_timeout", "SERVER_WRITE_TIMEOUT")
+	_ = v.BindEnv("server_idle_timeout", "SERVER_IDLE_TIMEOUT")
+	_ = v.BindEnv("nats_publish_timeout", "NATS_PUBLISH_TIMEOUT")
+	_ = v.BindEnv("max_webhook_body_size", "MAX_WEBHOOK_BODY_SIZE")
+	_ = v.BindEnv("qbo_client_id", "QBO_CLIENT_ID")
+	_ = v.BindEnv("qbo_client_secret", "QBO_CLIENT_SECRET")
+	_ = v.BindEnv("qbo_is_production", "QBO_IS_PRODUCTION")
+	_ = v.BindEnv("cdc_enabled", "CDC_ENABLED")
+	_ = v.BindEnv("cdc_sync_interval", "CDC_SYNC_INTERVAL")
+	_ = v.BindEnv("pinecone_index", "PINECONE_INDEX")
+	_ = v.BindEnv("embedding_model", "EMBEDDING_MODEL")
+	_ = v.BindEnv("embedding_dimensions", "EMBEDDING_DIMENSIONS")
+	_ = v.BindEnv("encryption_key", "ENCRYPTION_KEY")
+
+	// Set defaults corresponding to the old getEnv fallbacks
+	v.SetDefault("port", "8080")
+	v.SetDefault("db_min_conns", 10)
+	v.SetDefault("db_max_conns", 50)
+	v.SetDefault("server_read_timeout", 5*time.Second)
+	v.SetDefault("server_write_timeout", 10*time.Second)
+	v.SetDefault("server_idle_timeout", 120*time.Second)
+	v.SetDefault("nats_publish_timeout", 5*time.Second)
+	v.SetDefault("max_webhook_body_size", 1<<20)
+	v.SetDefault("qbo_is_production", false)
+	v.SetDefault("cdc_enabled", true)
+	v.SetDefault("cdc_sync_interval", 1*time.Hour)
+	v.SetDefault("pinecone_index", "toro-ai")
+	v.SetDefault("embedding_model", "text-embedding-3-small")
+	v.SetDefault("embedding_dimensions", 1536)
+
+	// 3. Actually read the file from disk
+	if err := v.ReadInConfig(); err != nil {
+		// It's okay if config file is missing IF we have all needed envs,
+		// but for NATS streams we likely need the file.
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("found config file but failed to read: %w", err)
+		}
+		// Log or proceed? We proceed and rely on valid env vars / defaults.
 	}
 
-	if cfg.DatabaseURL == "" {
-		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	// 4. Unmarshal into our strict Go struct
+	var c Config
+	if err := v.Unmarshal(&c); err != nil {
+		return nil, fmt.Errorf("failed to parse config into struct: %w", err)
 	}
 
-	if cfg.NatsURL == "" {
-		// We explicitly do NOT default to localhost for NATS in production-ready code.
-		// It must be provided.
-		return Config{}, fmt.Errorf("NATS_URL is required")
+	// Validation and post-processing
+
+	if c.DatabaseURL == "" {
+		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+
+	if c.NATS.URL == "" {
+		// Try to fallback to legacy NatsURL field if we were to support it,
+		// but we mapped NATS_URL to nats.url so it should be there.
+		return nil, fmt.Errorf("NATS_URL is required")
 	}
 
 	// Load encryption key
-	encryptionKeyStr := os.Getenv("ENCRYPTION_KEY")
-	if encryptionKeyStr == "" {
-		return Config{}, fmt.Errorf("ENCRYPTION_KEY is required")
+	if c.EncryptionKeyString == "" {
+		return nil, fmt.Errorf("ENCRYPTION_KEY is required")
 	}
 
 	// Decode base64 encryption key
-	encryptionKey, err := base64.StdEncoding.DecodeString(encryptionKeyStr)
+	encryptionKey, err := base64.StdEncoding.DecodeString(c.EncryptionKeyString)
 	if err != nil {
-		return Config{}, fmt.Errorf("ENCRYPTION_KEY must be base64-encoded: %w", err)
+		return nil, fmt.Errorf("ENCRYPTION_KEY must be base64-encoded: %w", err)
 	}
 
 	if len(encryptionKey) != 32 {
-		return Config{}, fmt.Errorf("ENCRYPTION_KEY must be exactly 32 bytes when decoded (got %d bytes)", len(encryptionKey))
+		return nil, fmt.Errorf("ENCRYPTION_KEY must be exactly 32 bytes when decoded (got %d bytes)", len(encryptionKey))
 	}
 
-	cfg.EncryptionKey = encryptionKey
+	c.EncryptionKey = encryptionKey
 
 	// Validate configuration
-	if err := cfg.Validate(); err != nil {
-		return Config{}, fmt.Errorf("config validation failed: %w", err)
+	if err := c.Validate(); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
-	return cfg, nil
+	return &c, nil
 }
 
 // Validate checks configuration for correctness
@@ -149,47 +214,4 @@ func (c Config) Validate() error {
 	}
 
 	return nil
-}
-
-func getEnv(key, fallback string) string {
-	if v, exists := os.LookupEnv(key); exists {
-		return v
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v, exists := os.LookupEnv(key); exists {
-		if i, err := strconv.Atoi(v); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
-
-func getEnvDuration(key string, fallback time.Duration) time.Duration {
-	if v, exists := os.LookupEnv(key); exists {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return fallback
-}
-
-func getEnvInt64(key string, fallback int64) int64 {
-	if v, exists := os.LookupEnv(key); exists {
-		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
-
-func getEnvBool(key string, fallback bool) bool {
-	if v, exists := os.LookupEnv(key); exists {
-		if b, err := strconv.ParseBool(v); err == nil {
-			return b
-		}
-	}
-	return fallback
 }

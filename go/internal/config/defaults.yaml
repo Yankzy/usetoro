@@ -1,0 +1,87 @@
+x-jetstream-default: &jetstream-default
+  replicas: 3
+  max_age: 72h
+  deny_delete: true
+  deny_purge: true
+  allow_rollup: false
+  allow_direct: true
+
+nats:
+  streams:
+    sync:
+      stream_name: SYNC
+      subject_template: cmd.sync.{{.CPAID}}.{{.RealmID}}.{{.Resource}}.{{.Action}}
+      jetstream:
+        <<: *jetstream-default
+        subjects: 
+          - cmd.sync.>
+      
+      # Components inside sync service
+      components:
+        qbo:
+          stream_name: QBO_EVENTS
+          jetstream:
+            <<: *jetstream-default
+            subjects: 
+              - qbo.>
+            
+    gate:
+      stream_name: GATE
+      jetstream:
+        <<: *jetstream-default
+        subjects:
+          - stripe.>
+          - plaid.>
+          - internal.>
+
+    ws:
+      stream_name: QBO_EVENTS # Consumes from QBO stream (defined in components)
+      jetstream:
+        <<: *jetstream-default
+        subjects:
+          - qbo.events.connected
+
+    settlement:
+      stream_name: SETTLEMENT
+      jetstream:
+        <<: *jetstream-default
+        subjects:
+          - contracts.request
+          - proof.submit
+          - raw.ingest.samsara
+
+    almanac:
+      stream_name: ALMANAC
+      jetstream:
+        <<: *jetstream-default
+        subjects:
+          - almanac.register
+          - almanac.query
+agents:
+  - did: "did:toro:agent:stripe_processor"
+    name: "Stripe Receipt Processor"
+    # The Trigger: What wakes me up?
+    subscription:
+      subject: "stripe.>" # Matches your Gate stream
+      queue_group: "stripe_processor_group"
+    
+    # The Logic: What do I do? (Linear Pipeline)
+    steps:
+      - name: "ocr"
+        skill: "tasks.ocr"
+        timeout: "5s"
+      
+      - name: "classify"
+        skill: "tasks.classify"
+        timeout: "10s"
+
+  - did: "did:toro:agent:chaser"
+    name: "Invoice Chaser"
+    subscription:
+      subject: "qbo.invoice.overdue"
+      queue_group: "chaser_group"
+    steps:
+      - name: "generate_message"
+        skill: "tasks.draft_email"
+      - name: "send_whatsapp"
+        skill: "tasks.send"

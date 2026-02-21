@@ -30,20 +30,21 @@ func (r *mutationResolver) Signup(ctx context.Context, input model.SignupInput) 
 
 	q := database.New(r.DB).WithTx(tx)
 
-	// 1. Create Tenant
-	tenantID, err := q.CreateTenant(ctx, database.CreateTenantParams{
-		Name:     input.OrgName,
-		PlanTier: pgtype.Text{String: "pro", Valid: true},
+	// 1. Create Entity (replaces old Tenant)
+	entityID, err := q.CreateEntity(ctx, database.CreateEntityParams{
+		Name:       input.OrgName,
+		EntityType: "client",
+		PlanTier:   pgtype.Text{String: "pro", Valid: true},
 	})
 	if err != nil {
-		r.Logger.Error("Failed to create tenant", "error", err)
+		r.Logger.Error("Failed to create entity", "error", err)
 		return nil, fmt.Errorf("internal server error")
 	}
 
 	// 2. Create User
 	pwdHash := hashPassword(input.Password)
 	userID, err := q.CreateUser(ctx, database.CreateUserParams{
-		TenantID:     tenantID,
+		EntityID:     entityID,
 		Email:        input.Email,
 		PasswordHash: pwdHash,
 		Role:         pgtype.Text{String: "owner", Valid: true},
@@ -54,9 +55,9 @@ func (r *mutationResolver) Signup(ctx context.Context, input model.SignupInput) 
 	}
 
 	// 3. Generate Tokens
-	user := database.User{
+	user := database.ToroCoreUser{
 		ID:       userID,
-		TenantID: tenantID,
+		EntityID: entityID,
 		Role:     pgtype.Text{String: "owner", Valid: true},
 	}
 	acc, ref, exp, err := generateTokens(user, r.PrivateKey)
@@ -96,7 +97,7 @@ func (r *mutationResolver) Signup(ctx context.Context, input model.SignupInput) 
 			ID:       userID.String(),
 			Email:    input.Email,
 			Role:     "owner",
-			TenantID: tenantID.String(),
+			TenantID: entityID.String(),
 		},
 	}, nil
 }
@@ -142,18 +143,18 @@ func (r *mutationResolver) Login(ctx context.Context, input model.LoginInput) (*
 	}
 
 	// Convert UUIDs to strings
-	userID := uuid.UUID(user.ID.Bytes).String()
-	tenantID := uuid.UUID(user.TenantID.Bytes).String()
+	userIDStr := uuid.UUID(user.ID.Bytes).String()
+	entityIDStr := uuid.UUID(user.EntityID.Bytes).String()
 
 	return &model.AuthPayload{
 		AccessToken:  acc,
 		RefreshToken: ref,
 		ExpiresAt:    exp,
 		User: &model.User{
-			ID:       userID,
+			ID:       userIDStr,
 			Email:    user.Email,
 			Role:     user.Role.String,
-			TenantID: tenantID,
+			TenantID: entityIDStr,
 		},
 	}, nil
 }
@@ -231,18 +232,18 @@ func (r *mutationResolver) RefreshToken(ctx context.Context, refreshToken string
 	}
 
 	// Return Payload
-	userID := uuid.UUID(user.ID.Bytes).String()
-	tenantID := uuid.UUID(user.TenantID.Bytes).String()
+	userIDStr := uuid.UUID(user.ID.Bytes).String()
+	entityIDStr := uuid.UUID(user.EntityID.Bytes).String()
 
 	return &model.AuthPayload{
 		AccessToken:  acc,
 		RefreshToken: ref,
 		ExpiresAt:    exp,
 		User: &model.User{
-			ID:       userID,
+			ID:       userIDStr,
 			Email:    user.Email,
 			Role:     user.Role.String,
-			TenantID: tenantID,
+			TenantID: entityIDStr,
 		},
 	}, nil
 }
@@ -266,113 +267,6 @@ func (r *mutationResolver) DeleteToken(ctx context.Context, refreshToken string)
 	}
 
 	return true, nil
-}
-
-// User is the resolver for the user field.
-func (r *queryResolver) User(ctx context.Context) (*model.User, error) {
-	// Extract userID from context (requires auth middleware)
-	userID, ok := ctx.Value(auth.UserIDKey).(uuid.UUID)
-	if !ok {
-		return nil, fmt.Errorf("unauthorized")
-	}
-
-	// Use Data Loader
-	// We need to import `github.com/Yankzy/usetoro/cmd/graphql/dataloader` here.
-	// Note: imports are already there in the file header.
-	return UserLoader(ctx, userID)
-}
-
-// QboConnection is the resolver for the qboConnection field.
-func (r *queryResolver) QboConnection(ctx context.Context) (*model.QBOCompany, error) {
-	tenantID, _ := ctx.Value(auth.TenantIDKey).(uuid.UUID)
-	if tenantID == uuid.Nil {
-		return nil, fmt.Errorf("unauthorized")
-	}
-
-	conn, err := r.Store.GetQBOConnection(ctx, tenantID.String())
-	if err != nil {
-		// handle not found as null
-		if err == pgx.ErrNoRows {
-			return nil, nil // No connection
-		}
-		r.Logger.Error("Failed to fetch QBO connection", "error", err)
-		return nil, fmt.Errorf("internal server error")
-	}
-
-	return &model.QBOCompany{
-		RealmID:     conn.RealmID,
-		CompanyName: "QuickBooks Linked Company", // We might want to store this in DB later
-		ConnectedAt: &conn.CreatedAt.Time,
-	}, nil
-}
-
-// SuggestAccounts is the resolver for the suggestAccounts field.
-func (r *queryResolver) SuggestAccounts(ctx context.Context, description string) ([]*model.AccountMatch, error) {
-	if r.CoAMapper == nil {
-		return nil, fmt.Errorf("AI services not configured")
-	}
-
-	tenantID, _ := ctx.Value(auth.TenantIDKey).(uuid.UUID)
-	if tenantID == uuid.Nil {
-		return nil, fmt.Errorf("unauthorized")
-	}
-
-	conn, err := r.Store.GetQBOConnection(ctx, tenantID.String())
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch QBO connection: %w", err)
-	}
-
-	matches, err := r.CoAMapper.MapDescriptionToAccount(ctx, conn.RealmID, description, 5)
-	if err != nil {
-		r.Logger.Error("Failed to map description to account", "error", err)
-		return nil, fmt.Errorf("internal server error")
-	}
-
-	var results []*model.AccountMatch
-	for _, m := range matches {
-		results = append(results, &model.AccountMatch{
-			AccountID: m.AccountID,
-			Score:     m.Score,
-			Name:      m.Name,
-		})
-	}
-
-	return results, nil
-}
-
-// ResolveEntity is the resolver for the resolveEntity field.
-func (r *queryResolver) ResolveEntity(ctx context.Context, entityType string, name string) (*model.EntityMatch, error) {
-	if r.EntityResolver == nil {
-		return nil, fmt.Errorf("AI services not configured")
-	}
-
-	tenantID, _ := ctx.Value(auth.TenantIDKey).(uuid.UUID)
-	if tenantID == uuid.Nil {
-		return nil, fmt.Errorf("unauthorized")
-	}
-
-	conn, err := r.Store.GetQBOConnection(ctx, tenantID.String())
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch QBO connection: %w", err)
-	}
-
-	match, err := r.EntityResolver.ResolveEntity(ctx, conn.RealmID, entityType, name)
-	if err != nil {
-		r.Logger.Error("Failed to resolve entity", "error", err)
-		return nil, fmt.Errorf("internal server error")
-	}
-
-	if match == nil {
-		return nil, nil
-	}
-
-	return &model.EntityMatch{
-		ID:         match.ID,
-		Score:      match.Score,
-		Name:       match.Name,
-		Source:     match.Source,
-		EntityType: match.EntityType,
-	}, nil
 }
 
 // RecordCorrection is the resolver for the recordCorrection field.
@@ -415,60 +309,223 @@ func (r *mutationResolver) RecordCorrection(ctx context.Context, input model.Rec
 	return true, nil
 }
 
-// AmbiguousProposals is the resolver for the ambiguousProposals field.
-func (r *queryResolver) AmbiguousProposals(ctx context.Context, realmID *string, threshold float64) ([]*model.ProposedTransaction, error) {
-	tenantID, _ := ctx.Value(auth.TenantIDKey).(uuid.UUID)
-	if tenantID == uuid.Nil {
+// User is the resolver for the user field.
+func (r *queryResolver) User(ctx context.Context) (*model.User, error) {
+	// Extract userID from context (requires auth middleware)
+	userID, ok := ctx.Value(auth.UserIDKey).(uuid.UUID)
+	if !ok {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	// Use Data Loader
+	// We need to import `github.com/Yankzy/usetoro/cmd/graphql/dataloader` here.
+	// Note: imports are already there in the file header.
+	return UserLoader(ctx, userID)
+}
+
+// QboConnection is the resolver for the qboConnection field.
+func (r *queryResolver) QboConnection(ctx context.Context) (*model.QBOCompany, error) {
+	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+	if entityID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, entityID.String())
+	if err != nil {
+		// handle not found as null
+		if err == pgx.ErrNoRows {
+			return nil, nil // No connection
+		}
+		r.Logger.Error("Failed to fetch QBO connection", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	return &model.QBOCompany{
+		RealmID:     conn.RealmID,
+		CompanyName: "QuickBooks Linked Company", // We might want to store this in DB later
+		ConnectedAt: &conn.CreatedAt.Time,
+	}, nil
+}
+
+// SuggestAccounts is the resolver for the suggestAccounts field.
+func (r *queryResolver) SuggestAccounts(ctx context.Context, description string) ([]*model.AccountMatch, error) {
+	if r.CoAMapper == nil {
+		return nil, fmt.Errorf("AI services not configured")
+	}
+
+	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+	if entityID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, entityID.String())
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch QBO connection: %w", err)
+	}
+
+	matches, err := r.CoAMapper.MapDescriptionToAccount(ctx, conn.RealmID, description, 5)
+	if err != nil {
+		r.Logger.Error("Failed to map description to account", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	var results []*model.AccountMatch
+	for _, m := range matches {
+		results = append(results, &model.AccountMatch{
+			AccountID: m.AccountID,
+			Score:     m.Score,
+			Name:      m.Name,
+		})
+	}
+
+	return results, nil
+}
+
+// ResolveEntity is the resolver for the resolveEntity field.
+func (r *queryResolver) ResolveEntity(ctx context.Context, entityType string, name string) (*model.EntityMatch, error) {
+	if r.EntityResolver == nil {
+		return nil, fmt.Errorf("AI services not configured")
+	}
+
+	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+	if entityID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, entityID.String())
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch QBO connection: %w", err)
+	}
+
+	match, err := r.EntityResolver.ResolveEntity(ctx, conn.RealmID, entityType, name)
+	if err != nil {
+		r.Logger.Error("Failed to resolve entity", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	if match == nil {
+		return nil, nil
+	}
+
+	return &model.EntityMatch{
+		ID:         match.ID,
+		Score:      match.Score,
+		Name:       match.Name,
+		Source:     match.Source,
+		EntityType: match.EntityType,
+	}, nil
+}
+
+// QboAccount is the resolver for the qbo_account field.
+func (r *queryResolver) QboAccount(ctx context.Context, realmID string) ([]*model.Account, error) {
+	// Fetch accounts from database
+	accounts, err := r.Store.Queries.GetAllAccountsForRealms(ctx, []string{realmID})
+	if err != nil {
+		r.Logger.Error("Failed to fetch accounts for realm", "error", err, "realm_id", realmID)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	var modelAccounts []*model.Account
+	for _, a := range accounts {
+		// Handle nil pointers for optional fields
+		var classification *string
+		if a.Classification.Valid {
+			classification = &a.Classification.String
+		}
+
+		var accountType *string
+		if a.AccountType != "" {
+			t := a.AccountType
+			accountType = &t
+		}
+
+		var accountSubType *string
+		if a.AccountSubType.Valid {
+			accountSubType = &a.AccountSubType.String
+		}
+
+		var fullyQualifiedName *string
+		if a.FullyQualifiedName.Valid {
+			fullyQualifiedName = &a.FullyQualifiedName.String
+		}
+
+		var active *bool
+		if a.Active.Valid {
+			active = &a.Active.Bool
+		}
+
+		var deletedAt *time.Time
+		if a.DeletedAt.Valid {
+			deletedAt = &a.DeletedAt.Time
+		}
+
+		modelAccounts = append(modelAccounts, &model.Account{
+			ID:                 uuid.UUID(a.ID.Bytes).String(),
+			RealmID:            a.RealmID,
+			Name:               a.Name,
+			Classification:     classification,
+			AccountType:        accountType,
+			AccountSubType:     accountSubType,
+			FullyQualifiedName: fullyQualifiedName,
+			Active:             active,
+			SyncToken:          a.SyncToken,
+			CreatedAt:          a.CreatedAt.Time,
+			UpdatedAt:          a.UpdatedAt.Time,
+			DeletedAt:          deletedAt,
+		})
+	}
+
+	return modelAccounts, nil
+}
+
+// Entities is the resolver for the tenants field (now backed by toro_core.entities).
+func (r *queryResolver) Tenants(ctx context.Context, limit int32, offset int32) (*model.TenantConnection, error) {
+	// 1. Auth check: Requires valid user session
+	userID, ok := ctx.Value(auth.UserIDKey).(uuid.UUID)
+	if !ok || userID == uuid.Nil {
 		return nil, fmt.Errorf("unauthorized")
 	}
 
 	q := database.New(r.DB)
-	var realmIDs []string
 
-	if realmID != nil && *realmID != "" {
-		// CPA / Specific Realm use case
-		realmIDs = append(realmIDs, *realmID)
-	} else {
-		// Mobile / Cross-realm use case
-		realms, err := q.GetRealmsByTenant(ctx, pgtype.UUID{Bytes: tenantID, Valid: true})
-		if err != nil {
-			r.Logger.Error("Failed to fetch realms for tenant", "error", err)
-			return nil, fmt.Errorf("internal server error")
-		}
-		realmIDs = realms
+	// 2. Fetch Total Count
+	totalCount, err := q.CountEntities(ctx)
+	if err != nil {
+		r.Logger.Error("Failed to count entities", "error", err)
+		return nil, fmt.Errorf("internal server error")
 	}
 
-	var results []*model.ProposedTransaction
-	confThreshold := pgtype.Numeric{}
-	confThreshold.Scan(fmt.Sprintf("%f", threshold))
+	// 3. Fetch Paginated Entities
+	entities, err := q.GetEntities(ctx, database.GetEntitiesParams{
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		r.Logger.Error("Failed to fetch entities", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
 
-	for _, rid := range realmIDs {
-		proposals, err := q.GetAmbiguousProposals(ctx, database.GetAmbiguousProposalsParams{
-			RealmID:         rid,
-			ConfidenceScore: confThreshold,
+	// 4. Convert and build connection
+	var nodes []*model.Tenant
+	for _, t := range entities {
+		nodes = append(nodes, &model.Tenant{
+			ID:        uuid.UUID(t.ID.Bytes).String(),
+			Name:      t.Name,
+			Status:    t.Status.String,
+			PlanTier:  t.PlanTier.String,
+			CreatedAt: t.CreatedAt.Time,
+			UpdatedAt: t.UpdatedAt.Time,
 		})
-		if err != nil {
-			r.Logger.Error("Failed to fetch ambiguous proposals", "error", err, "realm_id", rid)
-			continue
-		}
-
-		for _, p := range proposals {
-			results = append(results, &model.ProposedTransaction{
-				ID:                 p.ID.String(),
-				RealmID:            p.RealmID,
-				SourceType:         p.SourceType,
-				RawAmount:          float64(p.RawAmount.Int.Int64()), // Simplified conversion
-				RawDate:            &p.RawDate.Time,
-				RawDescription:     &p.RawDescription.String,
-				PredictedVendorID:  &p.PredictedVendorID.String,
-				PredictedAccountID: &p.PredictedAccountID.String,
-				ConfidenceScore:    float64(p.ConfidenceScore.Int.Int64()), // Simplified conversion
-				AiReasoning:        &p.AiReasoning.String,
-			})
-		}
 	}
 
-	return results, nil
+	return &model.TenantConnection{
+		Nodes:      nodes,
+		TotalCount: int32(totalCount),
+		PageInfo: &model.PageInfo{
+			HasNextPage:     int64(offset+limit) < totalCount,
+			HasPreviousPage: offset > 0,
+		},
+	}, nil
 }
 
 // Mutation returns MutationResolver implementation.

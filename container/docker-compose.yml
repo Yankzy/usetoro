@@ -7,6 +7,7 @@ services:
   db:
     image: timescale/timescaledb:latest-pg18
     restart: always
+    command: [ "postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=5", "-c", "max_wal_senders=5" ]
     environment:
       POSTGRES_DB: toro
       POSTGRES_USER: toro
@@ -40,6 +41,7 @@ services:
       QBO_REDIRECT_URI: ${QBO_REDIRECT_URI}
       QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION}
       AUTH_PUBLIC_KEY: ${AUTH_PUBLIC_KEY}
+      PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
 
     volumes:
       - ../keys:/keys:ro
@@ -91,6 +93,27 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      QBO_CLIENT_ID: ${QBO_CLIENT_ID}
+      QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
+      QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION}
+      PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
+    depends_on:
+      db:
+        condition: service_healthy
+      nats-1:
+        condition: service_healthy
+    networks:
+      - toro-net
+
+  cdc-worker:
+    build:
+      context: ../
+      dockerfile: container/cdc-worker/Dockerfile
+    restart: always
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
     depends_on:
       db:
         condition: service_healthy
@@ -108,16 +131,21 @@ services:
       - "8081:8080"
     environment:
       WS_ADDR: :8080
+      DATABASE_URL: ${DATABASE_URL}
       QBO_CLIENT_ID: ${QBO_CLIENT_ID}
       QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
       QBO_REDIRECT_URI: ${QBO_REDIRECT_URI:-http://localhost/api/auth/qbo/callback}
       QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION:-false}
       AUTH_PUBLIC_KEY: ${AUTH_PUBLIC_KEY}
       REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
     volumes:
       - ../keys:/keys:ro
     depends_on:
+      db:
+        condition: service_healthy
       redis:
         condition: service_started
       nats-1:
@@ -169,30 +197,30 @@ services:
     volumes:
       - nats_3_data:/data
 
-  svix-redis:
-    image: redis:alpine
-    restart: always
-    command: [ "redis-server", "--appendonly", "yes" ]
-    volumes:
-      - svix_redis_data:/data
-    networks:
-      - toro-net
+  # svix-redis:
+  #   image: redis:alpine
+  #   restart: always
+  #   command: [ "redis-server", "--appendonly", "yes" ]
+  #   volumes:
+  #     - svix_redis_data:/data
+  #   networks:
+  #     - toro-net
 
-  svix-server:
-    image: svix/svix-server:v1.84.1
-    restart: always
-    environment:
-      SVIX_QUEUE_TYPE: redis
-      SVIX_DB_DSN: postgresql://toro:toro_password@db:5432/svix
-      SVIX_REDIS_DSN: redis://svix-redis:6379
-      SVIX_JWT_SECRET: ${SVIX_JWT_SECRET}
-    ports:
-      - "8071:8071"
-    depends_on:
-      - svix-redis
-      - db
-    networks:
-      - toro-net
+  # svix-server:
+  #   image: svix/svix-server:v1.84.1
+  #   restart: always
+  #   environment:
+  #     SVIX_QUEUE_TYPE: redis
+  #     SVIX_DB_DSN: postgresql://toro:toro_password@db:5432/svix
+  #     SVIX_REDIS_DSN: redis://svix-redis:6379
+  #     SVIX_JWT_SECRET: ${SVIX_JWT_SECRET}
+  #   ports:
+  #     - "8071:8071"
+  #   depends_on:
+  #     - svix-redis
+  #     - db
+  #   networks:
+  #     - toro-net
 
   # svix-ui:
   #   build:
@@ -223,6 +251,12 @@ services:
       REDIS_URL: redis://redis:6379
       AUTH_PRIVATE_KEY: ${AUTH_PRIVATE_KEY}
       PORT: 8080
+      PINECONE_API_KEY: ${PINECONE_API_KEY}
+      PINECONE_INDEX: ${PINECONE_INDEX}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
+      PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
     volumes:
       - ../keys:/keys # Mount keys directory
     depends_on:
@@ -242,13 +276,12 @@ services:
     depends_on:
       - gate
       - graphql
-      - svix-server
     networks:
       - toro-net
 
   migrator:
     image: gomicro/goose
-    command: "goose -dir /migrations postgres \"user=toro password=toro_password dbname=toro host=db sslmode=disable\" up"
+    command: "goose -dir /migrations postgres \"user=toro password=toro_password dbname=toro host=db sslmode=disable options=-c\\ search_path=toro_core,shadow_erp,public\" up"
     volumes:
       - ../sql/schema:/migrations
     depends_on:

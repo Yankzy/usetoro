@@ -13,12 +13,12 @@ import (
 // Manager handles the lifecycle of connectors (Plaid, QBO).
 type Manager struct {
 	logger       *slog.Logger
-	cfg          config.Config
+	cfg          *config.Config
 	connectors   map[string]Connector
 	vectorWorker *ai.VectorSyncWorker
 }
 
-func NewManager(logger *slog.Logger, cfg config.Config, store *store.Store, vw *ai.VectorSyncWorker) *Manager {
+func NewManager(logger *slog.Logger, cfg *config.Config, store *store.Store, vw *ai.VectorSyncWorker) *Manager {
 	m := &Manager{
 		logger:       logger,
 		cfg:          cfg,

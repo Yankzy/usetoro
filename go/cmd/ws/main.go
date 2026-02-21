@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/auth"
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/wshandler"
 	"github.com/nats-io/nats.go"
@@ -24,7 +25,14 @@ func main() {
 	// Setup structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	// Get configuration from environment
+	// Load Configuration
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("Configuration Loading Failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Get configuration from environment (or config if mapped)
 	addr := os.Getenv("WS_ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -176,7 +184,7 @@ func main() {
 	go hub.Run()
 
 	// Create and start QBO event consumer
-	qboConsumer := wshandler.NewQBOEventConsumer(queueClient, hub, logger)
+	qboConsumer := wshandler.NewQBOEventConsumer(queueClient, hub, logger, cfg)
 	if err := qboConsumer.Start(); err != nil {
 		logger.Error("Failed to start QBO event consumer", "error", err)
 		os.Exit(1)

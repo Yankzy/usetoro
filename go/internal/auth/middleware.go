@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 )
@@ -20,10 +22,13 @@ type contextKey string
 
 const (
 	UserIDKey   contextKey = "user_id"
-	TenantIDKey contextKey = "tenant_id"
+	EntityIDKey contextKey = "entity_id"
 	RoleKey     contextKey = "role"
 	// JTIKey is the JWT ID, used for revocation
 	JTIKey contextKey = "jti"
+
+	// AuthorizedEntityIDsKey is the context key for the resolved array of authorized entity UUIDs
+	AuthorizedEntityIDsKey contextKey = "authorized_entity_ids"
 )
 
 type Authenticator struct {
@@ -92,7 +97,7 @@ func (a *Authenticator) RevokeToken(ctx context.Context, jti string, expiration 
 // injectContext puts the claims into the request context
 func injectContext(r *http.Request, claims *UserClaims) *http.Request {
 	ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
-	ctx = context.WithValue(ctx, TenantIDKey, claims.TenantID)
+	ctx = context.WithValue(ctx, EntityIDKey, claims.EntityID)
 	ctx = context.WithValue(ctx, RoleKey, claims.Role)
 	ctx = context.WithValue(ctx, JTIKey, claims.ID)
 	return r.WithContext(ctx)
@@ -191,5 +196,84 @@ func AdminOnly(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// ---------------------------------------------------------------------
+// Middleware 4: RBAC Hierarchy (Multi-tenant data isolation)
+// Computes and injects all authorized descendant entity IDs into the Context.
+// ---------------------------------------------------------------------
+func (a *Authenticator) RBACMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		// 1. Get current user's entity ID (must have run standard Middleware first)
+		val := ctx.Value(EntityIDKey)
+		if val == nil {
+			// If no auth, proceed without hierarchy (public endpoints)
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		entityID, ok := val.(uuid.UUID)
+		if !ok {
+			http.Error(w, "Internal error: Invalid entity format in context", http.StatusInternalServerError)
+			return
+		}
+
+		cacheKey := "auth_tree:" + entityID.String()
+		var authorizedIDs []uuid.UUID
+
+		// 2. Try Redis Cache
+		if a.Redis != nil {
+			cached, err := a.Redis.Get(ctx, cacheKey).Bytes()
+			if err == nil && len(cached) > 0 {
+				// We expect CSV of UUIDs or JSON array. Let's assume JSON for safety
+				var strIDs []string
+				if err := json.Unmarshal(cached, &strIDs); err == nil {
+					for _, strID := range strIDs {
+						if u, err := uuid.Parse(strID); err == nil {
+							authorizedIDs = append(authorizedIDs, u)
+						}
+					}
+				}
+			}
+		}
+
+		// 3. Fallback to Database Cache Miss
+		if len(authorizedIDs) == 0 && a.DB != nil {
+			pgID := pgtype.UUID{Bytes: entityID, Valid: true}
+			dbIDs, err := a.DB.GetEntityDescendants(ctx, pgID)
+
+			if err == nil && len(dbIDs) > 0 {
+				var strIDs []string
+				for _, dbID := range dbIDs {
+					if dbID.Valid {
+						u := uuid.UUID(dbID.Bytes)
+						authorizedIDs = append(authorizedIDs, u)
+						strIDs = append(strIDs, u.String())
+					}
+				}
+
+				// Cache the result in Redis for 15 minutes
+				if a.Redis != nil {
+					if cached, err := json.Marshal(strIDs); err == nil {
+						a.Redis.Set(ctx, cacheKey, cached, 15*time.Minute)
+					}
+				}
+			} else {
+				// Edge case: if tree is completely empty or err, just authorize the user themselves
+				authorizedIDs = []uuid.UUID{entityID}
+			}
+		}
+
+		// Final fallback: If DB and Redis both failed, at least allow the entity itself
+		if len(authorizedIDs) == 0 {
+			authorizedIDs = []uuid.UUID{entityID}
+		}
+
+		// 4. Inject `[]uuid.UUID` into Context
+		ctx = context.WithValue(ctx, AuthorizedEntityIDsKey, authorizedIDs)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

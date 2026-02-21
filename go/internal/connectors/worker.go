@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
+	"strings"
 
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/nats-io/nats.go"
@@ -28,48 +28,124 @@ func NewWorker(logger *slog.Logger, q *queue.Client, manager *Manager) *Worker {
 func (w *Worker) Start(ctx context.Context) error {
 	w.logger.Info("⚙️ Sync Worker starting...")
 
-	// 1. Ensure Stream Exists
-	err := w.q.EnsureStream(&nats.StreamConfig{
-		Name:        "SYNC",
-		Subjects:    []string{"cmd.sync.*", "qbo_webhook"},
-		MaxAge:      24 * time.Hour,
-		DenyDelete:  true,
-		DenyPurge:   true,
-		AllowRollup: false,
-		AllowDirect: true,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to ensure stream: %w", err)
+	// 1. Ensure Stream Exists (Config-driven)
+	syncConfig, ok := w.manager.cfg.NATS.Services["sync"]
+	if !ok {
+		return fmt.Errorf("sync service configuration not found")
 	}
 
-	// 2. Listen for sync commands
-	// Subject: cmd.sync.fetch
+	// 1a. Create Service Stream (e.g., SYNC)
+	serviceStreamConfig := &nats.StreamConfig{
+		Name:        syncConfig.StreamName,
+		Subjects:    syncConfig.JetStream.Subjects,
+		MaxAge:      syncConfig.JetStream.MaxAge,
+		Replicas:    syncConfig.JetStream.Replicas,
+		DenyDelete:  syncConfig.JetStream.DenyDelete,
+		DenyPurge:   syncConfig.JetStream.DenyPurge,
+		AllowRollup: syncConfig.JetStream.AllowRollup,
+		AllowDirect: syncConfig.JetStream.AllowDirect,
+	}
+
+	// Iterate components
+	for _, comp := range syncConfig.Components {
+		if comp.StreamName != "" {
+			// Case A: Component has its own stream (e.g. QBO_EVENTS)
+			// Create a separate stream for this component
+			compStreamConfig := &nats.StreamConfig{
+				Name:        comp.StreamName,
+				Subjects:    comp.JetStream.Subjects,
+				MaxAge:      comp.JetStream.MaxAge,
+				Replicas:    comp.JetStream.Replicas,
+				DenyDelete:  comp.JetStream.DenyDelete,
+				DenyPurge:   comp.JetStream.DenyPurge,
+				AllowRollup: comp.JetStream.AllowRollup,
+				AllowDirect: comp.JetStream.AllowDirect,
+			}
+			err := w.q.EnsureStream(compStreamConfig)
+			if err != nil {
+				return fmt.Errorf("failed to ensure component stream %s: %w", comp.StreamName, err)
+			}
+			w.logger.Info("✅ Ensured component stream", "stream", comp.StreamName)
+		} else {
+			// Case B: Component shares service stream
+			// Append subjects to the main service stream
+			serviceStreamConfig.Subjects = append(serviceStreamConfig.Subjects, comp.JetStream.Subjects...)
+		}
+	}
+
+	// 1b. Create/Update Service Stream (with appended subjects if any)
+	err := w.q.EnsureStream(serviceStreamConfig)
+	if err != nil {
+		w.logger.Warn("failed to ensure service stream using config", "error", err)
+		return fmt.Errorf("failed to ensure service stream: %w", err)
+	}
+	w.logger.Info("✅ Ensured service stream", "stream", serviceStreamConfig.Name)
+
+	// 2. Subscribe to Streams
 	js := w.q.JetStream()
-	sub, err := js.Subscribe("cmd.sync.fetch", func(msg *nats.Msg) {
-		w.processFetch(msg)
-	}, nats.Durable("toro-sync-worker"), nats.ManualAck())
+	var subs []*nats.Subscription
 
-	if err != nil {
-		return fmt.Errorf("failed to subscribe: %w", err)
+	// A. Sync Service Subjects (Config-driven)
+	for _, subject := range syncConfig.JetStream.Subjects {
+		w.logger.Info("Subscribe to sync subject", "subject", subject)
+
+		durableName := "toro-sync-worker"
+		sub, err := js.Subscribe(subject, func(msg *nats.Msg) {
+			w.processFetch(msg)
+		}, nats.Durable(durableName), nats.ManualAck())
+
+		if err != nil {
+			// Check for consumer mismatch (e.g. subject mismatch or configuration change)
+			if strings.Contains(err.Error(), "consumer already exists") || strings.Contains(err.Error(), "subject does not match") || strings.Contains(err.Error(), "name already in use") {
+				w.logger.Warn("⚠️ Consumer mismatch, recreating consumer...", "subject", subject, "durable", durableName, "error", err)
+
+				// Delete the problematic consumer
+				if delErr := js.DeleteConsumer(serviceStreamConfig.Name, durableName); delErr != nil {
+					w.logger.Error("Failed to delete conflicting consumer", "error", delErr)
+					return fmt.Errorf("failed to delete consumer %s: %w", durableName, delErr)
+				}
+
+				// Retry subscription
+				sub, err = js.Subscribe(subject, func(msg *nats.Msg) {
+					w.processFetch(msg)
+				}, nats.Durable(durableName), nats.ManualAck())
+				if err != nil {
+					return fmt.Errorf("failed to resubscribe to %s: %w", subject, err)
+				}
+				w.logger.Info("✅ Recreated consumer and subscribed", "subject", subject)
+			} else {
+				return fmt.Errorf("failed to subscribe to %s: %w", subject, err)
+			}
+		}
+		subs = append(subs, sub)
 	}
 
-	// 3. Listen for QBO webhooks
-	// Subject: qbo_webhook
-	qboSub, err := js.Subscribe("qbo_webhook", func(msg *nats.Msg) {
-		w.processQBOWebhook(msg)
-	}, nats.Durable("toro-qbo-webhook-consumer"), nats.ManualAck())
+	// B. Component Subjects (Config-driven)
+	for compName, compConfig := range syncConfig.Components {
+		for _, subject := range compConfig.JetStream.Subjects {
+			w.logger.Info("Subscribe to component subject", "component", compName, "subject", subject)
 
-	if err != nil {
-		sub.Unsubscribe()
-		return fmt.Errorf("failed to subscribe to qbo_webhook: %w", err)
+			// Map component to handler
+			// TODO: Dynamic mapping if needed. For now, specific check.
+			if compName == "qbo" {
+				sub, err := js.Subscribe(subject, func(msg *nats.Msg) {
+					w.processQBOWebhook(msg)
+				}, nats.Durable(fmt.Sprintf("toro-%s-webhook-consumer", compName)), nats.ManualAck())
+				if err != nil {
+					return fmt.Errorf("failed to subscribe to %s: %w", subject, err)
+				}
+				subs = append(subs, sub)
+			}
+		}
 	}
 
-	w.logger.Info("⚙️ Listening on cmd.sync.fetch and qbo_webhook")
+	w.logger.Info("⚙️ specific subscriptions started")
 	<-ctx.Done()
 
 	// Cleanup subscriptions
-	sub.Unsubscribe()
-	qboSub.Unsubscribe()
+	for _, sub := range subs {
+		sub.Unsubscribe()
+	}
 	return nil
 }
 

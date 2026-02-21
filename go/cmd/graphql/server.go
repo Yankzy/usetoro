@@ -162,7 +162,7 @@ func run(logger *slog.Logger) error {
 			}
 		}
 	} else {
-		logger.Warn("AI services skipped: PINECONE_API_KEY or OPENAI_API_KEY mission")
+		logger.Warn("AI services skipped: PINECONE_API_KEY or OPENAI_API_KEY missing")
 	}
 
 	// 5. Setup GraphQL Server

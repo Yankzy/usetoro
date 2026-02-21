@@ -4,9 +4,9 @@ import (
 	"log"
 	"time"
 
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/identity"
 	"github.com/Yankzy/usetoro/tap/pkg/store"
-	"github.com/Yankzy/usetoro/tap/pkg/tap"
 )
 
 // Machine orchestrates the state transitions of a contract.
@@ -19,7 +19,7 @@ func NewContract(repo store.Repository) *Machine {
 }
 
 // Lock validates signatures and transitions a contract to LOCKED.
-func (m *Machine) Lock(req *tap.Contract) (*tap.Contract, error) {
+func (m *Machine) Lock(req *core.Contract) (*core.Contract, error) {
 	log.Printf("⚙️ Engine: Attempting to LOCK contract %s", req.ID)
 
 	// 1. Verify Initiator Signature
@@ -35,7 +35,7 @@ func (m *Machine) Lock(req *tap.Contract) (*tap.Contract, error) {
 	}
 
 	// 3. Transition State
-	req.Status = tap.ContractLocked
+	req.Status = core.ContractLocked
 	req.CreatedAt = time.Now().UTC()
 
 	// 4. Persist
@@ -47,14 +47,14 @@ func (m *Machine) Lock(req *tap.Contract) (*tap.Contract, error) {
 }
 
 // Settle validates a proof and transitions a contract to SETTLED.
-func (m *Machine) Settle(proof *tap.Proof) (*tap.Contract, bool, error) {
+func (m *Machine) Settle(proof *core.Proof) (*core.Contract, bool, error) {
 	// 1. Fetch State
 	contract, err := m.repo.GetContract(proof.TaskID)
 	if err != nil {
 		return nil, false, err
 	}
 
-	if contract.Status != tap.ContractLocked {
+	if contract.Status != core.ContractLocked {
 		return contract, false, nil // Not ready or already settled
 	}
 
@@ -62,7 +62,7 @@ func (m *Machine) Settle(proof *tap.Proof) (*tap.Contract, bool, error) {
 	// In production, this would call specific sub-validators based on contract.Domain
 	isValid := false
 	switch proof.Type {
-	case tap.ProofGPS, tap.ProofClassification, tap.ProofAPI:
+	case core.ProofGPS, core.ProofClassification, core.ProofAPI:
 		// Trust the signature (assuming we verified sender is a valid Oracle/Validator)
 		isValid = true
 	}
@@ -72,11 +72,11 @@ func (m *Machine) Settle(proof *tap.Proof) (*tap.Contract, bool, error) {
 	}
 
 	// 3. Transition State
-	if err := m.repo.UpdateStatus(contract.ID, tap.ContractSettled); err != nil {
+	if err := m.repo.UpdateStatus(contract.ID, core.ContractSettled); err != nil {
 		return nil, false, err
 	}
 
-	contract.Status = tap.ContractSettled
+	contract.Status = core.ContractSettled
 	return contract, true, nil
 }
 

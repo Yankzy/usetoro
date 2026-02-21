@@ -130,7 +130,7 @@ func (w *VectorSyncWorker) syncAccounts(ctx context.Context, realmID string, sin
 			text = acc.FullyQualifiedName.String
 		}
 		items[i] = batchItem{
-			id:   acc.ID,
+			id:   acc.QboID,
 			text: text,
 			metadata: map[string]interface{}{
 				"name":        acc.Name,
@@ -173,7 +173,7 @@ func (w *VectorSyncWorker) syncVendors(ctx context.Context, realmID string, sinc
 	var latestUpdate time.Time
 	for i, v := range vendors {
 		items[i] = batchItem{
-			id:   v.ID,
+			id:   v.QboID,
 			text: v.DisplayName,
 			metadata: map[string]interface{}{
 				"name":        v.DisplayName,
@@ -214,7 +214,7 @@ func (w *VectorSyncWorker) syncCustomers(ctx context.Context, realmID string, si
 	var latestUpdate time.Time
 	for i, c := range customers {
 		items[i] = batchItem{
-			id:   c.ID,
+			id:   c.QboID,
 			text: c.DisplayName,
 			metadata: map[string]interface{}{
 				"name":        c.DisplayName,

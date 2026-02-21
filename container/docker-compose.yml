@@ -281,7 +281,7 @@ services:
 
   migrator:
     image: gomicro/goose
-    command: "goose -dir /migrations postgres \"user=toro password=toro_password dbname=toro host=db sslmode=disable options=-c\\ search_path=toro_core,shadow_erp,public\" up"
+    command: "goose -dir /migrations postgres \"postgres://toro:toro_password@db/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,public\" up"
     volumes:
       - ../sql/schema:/migrations
     depends_on:

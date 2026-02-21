@@ -445,6 +445,7 @@ func NotifyWSTask(ctx *OAuthContext) error {
 	successMsg := map[string]interface{}{
 		"type":      "qbo_connected",
 		"realm_id":  ctx.RealmID,
+		"entity_id": ctx.EntityID,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"status":    "success",
 	}

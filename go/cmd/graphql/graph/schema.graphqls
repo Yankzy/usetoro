@@ -61,6 +61,7 @@ type Mutation {
   refreshToken(refreshToken: String!): AuthPayload!
   deleteToken(refreshToken: String!): Boolean!
   recordCorrection(input: RecordCorrectionInput!): Boolean!
+  syncQboChartOfAccounts(realmId: ID!): Int!
 }
 
 type AccountMatch {

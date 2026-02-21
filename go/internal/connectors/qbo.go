@@ -442,6 +442,58 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 	return nil
 }
 
+// SyncFullChartOfAccounts performs a full Chart of Accounts sync for the specified realm.
+// If realmID is empty, it is resolved from tenantID.
+func (c *QBOConnector) SyncFullChartOfAccounts(ctx context.Context, tenantID, realmID string) (int, error) {
+	if realmID == "" && tenantID != "" {
+		conn, err := c.store.GetQBOConnection(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get QBO connection for tenant %s: %w", tenantID, err)
+		}
+		realmID = conn.RealmID
+	}
+
+	if realmID == "" {
+		return 0, fmt.Errorf("realmID is required")
+	}
+
+	c.logger.Info("🔄 Running full CoA sync", "realm_id", realmID, "tenant_id", tenantID)
+
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return 0, err
+	}
+
+	accounts, err := client.FindAccounts()
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch accounts: %w", err)
+	}
+
+	if err := c.batchUpsertAccounts(ctx, realmID, accounts); err != nil {
+		return 0, fmt.Errorf("failed to upsert accounts: %w", err)
+	}
+
+	if err := c.store.Queries.UpdateLastSyncTimestamp(ctx, database.UpdateLastSyncTimestampParams{
+		RealmID:           realmID,
+		LastSyncTimestamp: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		return 0, fmt.Errorf("failed to update last sync timestamp: %w", err)
+	}
+
+	if c.vectorWorker != nil {
+		c.logger.Info("🤖 Triggering vector sync after full CoA sync", "realm_id", realmID)
+		go func() {
+			bgCtx := context.Background()
+			if err := c.vectorWorker.SyncRealm(bgCtx, realmID); err != nil {
+				c.logger.Error("Failed to sync vectors after full CoA sync", "error", err, "realm_id", realmID)
+			}
+		}()
+	}
+
+	c.logger.Info("✅ Full CoA sync completed", "realm_id", realmID, "count", len(accounts))
+	return len(accounts), nil
+}
+
 // batchUpsertAccounts uses a PostgreSQL transaction to upsert multiple accounts efficiently
 func (c *QBOConnector) batchUpsertAccounts(ctx context.Context, realmID string, accounts []quickbooks.Account) error {
 	tx, err := c.store.Pool.Begin(ctx)

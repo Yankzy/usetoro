@@ -175,6 +175,3 @@ clean_db:
 	sudo rm -rf container/postgres/db_data
 	$(MAKE) upd
 
-
-start_root_ca:
-	docker-compose -f tap/pki/root_ca/docker-compose-root.yaml up -d

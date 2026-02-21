@@ -7,6 +7,17 @@
 *.dll
 *.so
 *.dylib
+# Explicitly ignore dynamically built Go binaries and extension-less executables
+go/*
+!go/*/
+!go/*.*
+
+go/cmd/*/*
+!go/cmd/*/*/
+!go/cmd/*/*.*
+
+bin/*
+!bin/*.sh
 
 # Test binary, built with `go test -c`
 *.test

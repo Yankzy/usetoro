@@ -8,10 +8,14 @@ package graph
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/cmd/graphql/graph/model"
 	"github.com/Yankzy/usetoro/internal/auth"
+	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/google/uuid"
 	pgx "github.com/jackc/pgx/v5"
@@ -307,6 +311,49 @@ func (r *mutationResolver) RecordCorrection(ctx context.Context, input model.Rec
 	}
 
 	return true, nil
+}
+
+// SyncQboChartOfAccounts is the resolver for the syncQboChartOfAccounts field.
+func (r *mutationResolver) SyncQboChartOfAccounts(ctx context.Context, realmID string) (int, error) {
+	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+	if entityID == uuid.Nil {
+		return 0, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, entityID.String())
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, fmt.Errorf("no qbo connection")
+		}
+		r.Logger.Error("Failed to fetch QBO connection", "error", err)
+		return 0, fmt.Errorf("internal server error")
+	}
+
+	if conn.RealmID != realmID {
+		return 0, fmt.Errorf("unauthorized")
+	}
+
+	clientID := os.Getenv("QBO_CLIENT_ID")
+	clientSecret := os.Getenv("QBO_CLIENT_SECRET")
+	if clientID == "" || clientSecret == "" {
+		return 0, fmt.Errorf("qbo client credentials not configured")
+	}
+
+	isProd := strings.EqualFold(os.Getenv("QBO_IS_PRODUCTION"), "true")
+	cfg := &config.Config{
+		QBOClientID:     clientID,
+		QBOClientSecret: clientSecret,
+		QBOIsProduction: isProd,
+	}
+
+	qboConn := connectors.NewQBOConnector(r.Logger, cfg, r.Store, nil)
+	count, err := qboConn.SyncFullChartOfAccounts(ctx, entityID.String(), realmID)
+	if err != nil {
+		r.Logger.Error("Full CoA sync failed", "error", err, "realm_id", realmID)
+		return 0, fmt.Errorf("sync failed")
+	}
+
+	return count, nil
 }
 
 // User is the resolver for the user field.

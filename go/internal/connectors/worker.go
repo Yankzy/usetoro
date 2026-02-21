@@ -2,6 +2,7 @@ package connectors
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -129,7 +130,7 @@ func (w *Worker) Start(ctx context.Context) error {
 			// TODO: Dynamic mapping if needed. For now, specific check.
 			if compName == "qbo" {
 				sub, err := js.Subscribe(subject, func(msg *nats.Msg) {
-					w.processQBOWebhook(msg)
+					w.processQBOEvent(msg)
 				}, nats.Durable(fmt.Sprintf("toro-%s-webhook-consumer", compName)), nats.ManualAck())
 				if err != nil {
 					return fmt.Errorf("failed to subscribe to %s: %w", subject, err)
@@ -147,6 +148,61 @@ func (w *Worker) Start(ctx context.Context) error {
 		sub.Unsubscribe()
 	}
 	return nil
+}
+
+func (w *Worker) processQBOEvent(msg *nats.Msg) {
+	if msg.Subject == "qbo.events.connected" {
+		w.processQBOConnected(msg)
+		return
+	}
+
+	w.processQBOWebhook(msg)
+}
+
+func (w *Worker) processQBOConnected(msg *nats.Msg) {
+	w.logger.Info("⚙️ Received QBO Connected Event", "subject", msg.Subject)
+
+	type connectedPayload struct {
+		RealmID  string `json:"realm_id"`
+		EntityID string `json:"entity_id"`
+		Status   string `json:"status"`
+	}
+
+	var payload connectedPayload
+	if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		w.logger.Error("Failed to parse QBO connected payload", "error", err)
+		msg.Nak()
+		return
+	}
+
+	if payload.RealmID == "" {
+		w.logger.Error("Missing realm_id in QBO connected payload")
+		msg.Nak()
+		return
+	}
+
+	connector, ok := w.manager.connectors["qbo"]
+	if !ok {
+		w.logger.Error("QBO connector not found for connected event")
+		msg.Nak()
+		return
+	}
+
+	qboConn, ok := connector.(*QBOConnector)
+	if !ok {
+		w.logger.Error("Connector is not a QBOConnector")
+		msg.Nak()
+		return
+	}
+
+	_, err := qboConn.SyncFullChartOfAccounts(context.Background(), payload.EntityID, payload.RealmID)
+	if err != nil {
+		w.logger.Error("Full CoA sync failed after QBO connect", "error", err, "realm_id", payload.RealmID)
+		msg.Nak()
+		return
+	}
+
+	msg.Ack()
 }
 
 func (w *Worker) processFetch(msg *nats.Msg) {

@@ -49,18 +49,27 @@ type DirectiveRoot struct {
 
 type ComplexityRoot struct {
 	Account struct {
-		AccountSubType     func(childComplexity int) int
-		AccountType        func(childComplexity int) int
-		Active             func(childComplexity int) int
-		Classification     func(childComplexity int) int
-		CreatedAt          func(childComplexity int) int
-		DeletedAt          func(childComplexity int) int
-		FullyQualifiedName func(childComplexity int) int
-		ID                 func(childComplexity int) int
-		Name               func(childComplexity int) int
-		RealmID            func(childComplexity int) int
-		SyncToken          func(childComplexity int) int
-		UpdatedAt          func(childComplexity int) int
+		AccountSubType                func(childComplexity int) int
+		AccountType                   func(childComplexity int) int
+		Active                        func(childComplexity int) int
+		Classification                func(childComplexity int) int
+		CreatedAt                     func(childComplexity int) int
+		CurrencyRefName               func(childComplexity int) int
+		CurrencyRefValue              func(childComplexity int) int
+		CurrentBalance                func(childComplexity int) int
+		CurrentBalanceWithSubAccounts func(childComplexity int) int
+		DeletedAt                     func(childComplexity int) int
+		Domain                        func(childComplexity int) int
+		FullyQualifiedName            func(childComplexity int) int
+		ID                            func(childComplexity int) int
+		Name                          func(childComplexity int) int
+		QboCreatedTime                func(childComplexity int) int
+		QboUpdatedTime                func(childComplexity int) int
+		RealmID                       func(childComplexity int) int
+		Sparse                        func(childComplexity int) int
+		SubAccount                    func(childComplexity int) int
+		SyncToken                     func(childComplexity int) int
+		UpdatedAt                     func(childComplexity int) int
 	}
 
 	AccountMatch struct {
@@ -85,13 +94,14 @@ type ComplexityRoot struct {
 	}
 
 	Mutation struct {
-		DeleteToken      func(childComplexity int, refreshToken string) int
-		Login            func(childComplexity int, input model.LoginInput) int
-		RecordCorrection func(childComplexity int, input model.RecordCorrectionInput) int
-		RefreshToken     func(childComplexity int, refreshToken string) int
-		RequestOtp       func(childComplexity int, email string) int
-		Signup           func(childComplexity int, input model.SignupInput) int
-		VerifyOtp        func(childComplexity int, email string, otp string) int
+		DeleteToken            func(childComplexity int, refreshToken string) int
+		Login                  func(childComplexity int, input model.LoginInput) int
+		RecordCorrection       func(childComplexity int, input model.RecordCorrectionInput) int
+		RefreshToken           func(childComplexity int, refreshToken string) int
+		RequestOtp             func(childComplexity int, email string) int
+		Signup                 func(childComplexity int, input model.SignupInput) int
+		SyncQboChartOfAccounts func(childComplexity int, realmID string) int
+		VerifyOtp              func(childComplexity int, email string, otp string) int
 	}
 
 	PageInfo struct {
@@ -158,6 +168,7 @@ type MutationResolver interface {
 	RefreshToken(ctx context.Context, refreshToken string) (*model.AuthPayload, error)
 	DeleteToken(ctx context.Context, refreshToken string) (bool, error)
 	RecordCorrection(ctx context.Context, input model.RecordCorrectionInput) (bool, error)
+	SyncQboChartOfAccounts(ctx context.Context, realmID string) (int32, error)
 }
 type QueryResolver interface {
 	User(ctx context.Context) (*model.User, error)
@@ -217,12 +228,42 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Account.CreatedAt(childComplexity), true
+	case "Account.currencyRefName":
+		if e.complexity.Account.CurrencyRefName == nil {
+			break
+		}
+
+		return e.complexity.Account.CurrencyRefName(childComplexity), true
+	case "Account.currencyRefValue":
+		if e.complexity.Account.CurrencyRefValue == nil {
+			break
+		}
+
+		return e.complexity.Account.CurrencyRefValue(childComplexity), true
+	case "Account.currentBalance":
+		if e.complexity.Account.CurrentBalance == nil {
+			break
+		}
+
+		return e.complexity.Account.CurrentBalance(childComplexity), true
+	case "Account.currentBalanceWithSubAccounts":
+		if e.complexity.Account.CurrentBalanceWithSubAccounts == nil {
+			break
+		}
+
+		return e.complexity.Account.CurrentBalanceWithSubAccounts(childComplexity), true
 	case "Account.deletedAt":
 		if e.complexity.Account.DeletedAt == nil {
 			break
 		}
 
 		return e.complexity.Account.DeletedAt(childComplexity), true
+	case "Account.domain":
+		if e.complexity.Account.Domain == nil {
+			break
+		}
+
+		return e.complexity.Account.Domain(childComplexity), true
 	case "Account.fullyQualifiedName":
 		if e.complexity.Account.FullyQualifiedName == nil {
 			break
@@ -241,12 +282,36 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Account.Name(childComplexity), true
+	case "Account.qboCreatedTime":
+		if e.complexity.Account.QboCreatedTime == nil {
+			break
+		}
+
+		return e.complexity.Account.QboCreatedTime(childComplexity), true
+	case "Account.qboUpdatedTime":
+		if e.complexity.Account.QboUpdatedTime == nil {
+			break
+		}
+
+		return e.complexity.Account.QboUpdatedTime(childComplexity), true
 	case "Account.realmId":
 		if e.complexity.Account.RealmID == nil {
 			break
 		}
 
 		return e.complexity.Account.RealmID(childComplexity), true
+	case "Account.sparse":
+		if e.complexity.Account.Sparse == nil {
+			break
+		}
+
+		return e.complexity.Account.Sparse(childComplexity), true
+	case "Account.subAccount":
+		if e.complexity.Account.SubAccount == nil {
+			break
+		}
+
+		return e.complexity.Account.SubAccount(childComplexity), true
 	case "Account.syncToken":
 		if e.complexity.Account.SyncToken == nil {
 			break
@@ -401,6 +466,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.Signup(childComplexity, args["input"].(model.SignupInput)), true
+	case "Mutation.syncQboChartOfAccounts":
+		if e.complexity.Mutation.SyncQboChartOfAccounts == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_syncQboChartOfAccounts_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.SyncQboChartOfAccounts(childComplexity, args["realmId"].(string)), true
 	case "Mutation.verifyOTP":
 		if e.complexity.Mutation.VerifyOtp == nil {
 			break
@@ -837,6 +913,17 @@ func (ec *executionContext) field_Mutation_signup_args(ctx context.Context, rawA
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_syncQboChartOfAccounts_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "realmId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["realmId"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_verifyOTP_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1226,6 +1313,267 @@ func (ec *executionContext) fieldContext_Account_syncToken(_ context.Context, fi
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Account_domain(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Account_domain,
+		func(ctx context.Context) (any, error) {
+			return obj.Domain, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Account_domain(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Account",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Account_currencyRefName(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Account_currencyRefName,
+		func(ctx context.Context) (any, error) {
+			return obj.CurrencyRefName, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Account_currencyRefName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Account",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Account_currencyRefValue(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Account_currencyRefValue,
+		func(ctx context.Context) (any, error) {
+			return obj.CurrencyRefValue, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Account_currencyRefValue(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Account",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Account_currentBalanceWithSubAccounts(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Account_currentBalanceWithSubAccounts,
+		func(ctx context.Context) (any, error) {
+			return obj.CurrentBalanceWithSubAccounts, nil
+		},
+		nil,
+		ec.marshalOFloat2ᚖfloat64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Account_currentBalanceWithSubAccounts(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Account",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Account_sparse(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Account_sparse,
+		func(ctx context.Context) (any, error) {
+			return obj.Sparse, nil
+		},
+		nil,
+		ec.marshalOBoolean2ᚖbool,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Account_sparse(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Account",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Account_qboCreatedTime(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Account_qboCreatedTime,
+		func(ctx context.Context) (any, error) {
+			return obj.QboCreatedTime, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Account_qboCreatedTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Account",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Account_qboUpdatedTime(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Account_qboUpdatedTime,
+		func(ctx context.Context) (any, error) {
+			return obj.QboUpdatedTime, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Account_qboUpdatedTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Account",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Account_currentBalance(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Account_currentBalance,
+		func(ctx context.Context) (any, error) {
+			return obj.CurrentBalance, nil
+		},
+		nil,
+		ec.marshalOFloat2ᚖfloat64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Account_currentBalance(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Account",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Account_subAccount(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Account_subAccount,
+		func(ctx context.Context) (any, error) {
+			return obj.SubAccount, nil
+		},
+		nil,
+		ec.marshalOBoolean2ᚖbool,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Account_subAccount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Account",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
 		},
 	}
 	return fc, nil
@@ -2003,6 +2351,47 @@ func (ec *executionContext) fieldContext_Mutation_recordCorrection(ctx context.C
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_syncQboChartOfAccounts(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_syncQboChartOfAccounts,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().SyncQboChartOfAccounts(ctx, fc.Args["realmId"].(string))
+		},
+		nil,
+		ec.marshalNInt2int32,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_syncQboChartOfAccounts(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_syncQboChartOfAccounts_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _PageInfo_hasNextPage(ctx context.Context, field graphql.CollectedField, obj *model.PageInfo) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2659,6 +3048,24 @@ func (ec *executionContext) fieldContext_Query_qbo_account(ctx context.Context, 
 				return ec.fieldContext_Account_active(ctx, field)
 			case "syncToken":
 				return ec.fieldContext_Account_syncToken(ctx, field)
+			case "domain":
+				return ec.fieldContext_Account_domain(ctx, field)
+			case "currencyRefName":
+				return ec.fieldContext_Account_currencyRefName(ctx, field)
+			case "currencyRefValue":
+				return ec.fieldContext_Account_currencyRefValue(ctx, field)
+			case "currentBalanceWithSubAccounts":
+				return ec.fieldContext_Account_currentBalanceWithSubAccounts(ctx, field)
+			case "sparse":
+				return ec.fieldContext_Account_sparse(ctx, field)
+			case "qboCreatedTime":
+				return ec.fieldContext_Account_qboCreatedTime(ctx, field)
+			case "qboUpdatedTime":
+				return ec.fieldContext_Account_qboUpdatedTime(ctx, field)
+			case "currentBalance":
+				return ec.fieldContext_Account_currentBalance(ctx, field)
+			case "subAccount":
+				return ec.fieldContext_Account_subAccount(ctx, field)
 			case "createdAt":
 				return ec.fieldContext_Account_createdAt(ctx, field)
 			case "updatedAt":
@@ -4869,6 +5276,24 @@ func (ec *executionContext) _Account(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "domain":
+			out.Values[i] = ec._Account_domain(ctx, field, obj)
+		case "currencyRefName":
+			out.Values[i] = ec._Account_currencyRefName(ctx, field, obj)
+		case "currencyRefValue":
+			out.Values[i] = ec._Account_currencyRefValue(ctx, field, obj)
+		case "currentBalanceWithSubAccounts":
+			out.Values[i] = ec._Account_currentBalanceWithSubAccounts(ctx, field, obj)
+		case "sparse":
+			out.Values[i] = ec._Account_sparse(ctx, field, obj)
+		case "qboCreatedTime":
+			out.Values[i] = ec._Account_qboCreatedTime(ctx, field, obj)
+		case "qboUpdatedTime":
+			out.Values[i] = ec._Account_qboUpdatedTime(ctx, field, obj)
+		case "currentBalance":
+			out.Values[i] = ec._Account_currentBalance(ctx, field, obj)
+		case "subAccount":
+			out.Values[i] = ec._Account_subAccount(ctx, field, obj)
 		case "createdAt":
 			out.Values[i] = ec._Account_createdAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -5130,6 +5555,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "recordCorrection":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_recordCorrection(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "syncQboChartOfAccounts":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_syncQboChartOfAccounts(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++

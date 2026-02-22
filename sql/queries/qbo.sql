@@ -85,9 +85,16 @@ WHERE realm_id = $1;
 -- name: UpsertAccount :exec
 INSERT INTO shadow_erp.accounts (
     qbo_id, realm_id, name, account_type, account_sub_type, classification,
-    fully_qualified_name, active, sync_token, created_at, updated_at
+    fully_qualified_name, active, sync_token, 
+    domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts,
+    sparse, qbo_created_time, qbo_updated_time, current_balance, sub_account,
+    created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, 
+    $10, $11, $12, $13, $14, $15, $16, $17, $18,
+    NOW(), NOW()
+)
 ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     name                 = EXCLUDED.name,
     account_type         = EXCLUDED.account_type,
@@ -96,6 +103,15 @@ ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     fully_qualified_name = EXCLUDED.fully_qualified_name,
     active               = EXCLUDED.active,
     sync_token           = EXCLUDED.sync_token,
+    domain               = EXCLUDED.domain,
+    currency_ref_name    = EXCLUDED.currency_ref_name,
+    currency_ref_value   = EXCLUDED.currency_ref_value,
+    current_balance_with_sub_accounts = EXCLUDED.current_balance_with_sub_accounts,
+    sparse               = EXCLUDED.sparse,
+    qbo_created_time     = EXCLUDED.qbo_created_time,
+    qbo_updated_time     = EXCLUDED.qbo_updated_time,
+    current_balance      = EXCLUDED.current_balance,
+    sub_account          = EXCLUDED.sub_account,
     updated_at           = NOW(),
     deleted_at           = NULL;
 

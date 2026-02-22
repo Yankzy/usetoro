@@ -257,6 +257,10 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
+      QBO_CLIENT_ID: ${QBO_CLIENT_ID}
+      QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
+      QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION:-false}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
     volumes:
       - ../keys:/keys # Mount keys directory
     depends_on:

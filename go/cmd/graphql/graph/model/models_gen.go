@@ -7,18 +7,27 @@ import (
 )
 
 type Account struct {
-	ID                 string     `json:"id"`
-	RealmID            string     `json:"realmId"`
-	Name               string     `json:"name"`
-	Classification     *string    `json:"classification,omitempty"`
-	AccountType        *string    `json:"accountType,omitempty"`
-	AccountSubType     *string    `json:"accountSubType,omitempty"`
-	FullyQualifiedName *string    `json:"fullyQualifiedName,omitempty"`
-	Active             *bool      `json:"active,omitempty"`
-	SyncToken          string     `json:"syncToken"`
-	CreatedAt          time.Time  `json:"createdAt"`
-	UpdatedAt          time.Time  `json:"updatedAt"`
-	DeletedAt          *time.Time `json:"deletedAt,omitempty"`
+	ID                            string     `json:"id"`
+	RealmID                       string     `json:"realmId"`
+	Name                          string     `json:"name"`
+	Classification                *string    `json:"classification,omitempty"`
+	AccountType                   *string    `json:"accountType,omitempty"`
+	AccountSubType                *string    `json:"accountSubType,omitempty"`
+	FullyQualifiedName            *string    `json:"fullyQualifiedName,omitempty"`
+	Active                        *bool      `json:"active,omitempty"`
+	SyncToken                     string     `json:"syncToken"`
+	Domain                        *string    `json:"domain,omitempty"`
+	CurrencyRefName               *string    `json:"currencyRefName,omitempty"`
+	CurrencyRefValue              *string    `json:"currencyRefValue,omitempty"`
+	CurrentBalanceWithSubAccounts *float64   `json:"currentBalanceWithSubAccounts,omitempty"`
+	Sparse                        *bool      `json:"sparse,omitempty"`
+	QboCreatedTime                *time.Time `json:"qboCreatedTime,omitempty"`
+	QboUpdatedTime                *time.Time `json:"qboUpdatedTime,omitempty"`
+	CurrentBalance                *float64   `json:"currentBalance,omitempty"`
+	SubAccount                    *bool      `json:"subAccount,omitempty"`
+	CreatedAt                     time.Time  `json:"createdAt"`
+	UpdatedAt                     time.Time  `json:"updatedAt"`
+	DeletedAt                     *time.Time `json:"deletedAt,omitempty"`
 }
 
 type AccountMatch struct {

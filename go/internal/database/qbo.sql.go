@@ -12,7 +12,7 @@ import (
 )
 
 const getAccountByQBOID = `-- name: GetAccountByQBOID :one
-SELECT id, qbo_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at FROM shadow_erp.accounts
+SELECT id, qbo_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, qbo_created_time, qbo_updated_time, current_balance, sub_account FROM shadow_erp.accounts
 WHERE realm_id = $1 AND qbo_id = $2
 `
 
@@ -38,12 +38,21 @@ func (q *Queries) GetAccountByQBOID(ctx context.Context, arg GetAccountByQBOIDPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Domain,
+		&i.CurrencyRefName,
+		&i.CurrencyRefValue,
+		&i.CurrentBalanceWithSubAccounts,
+		&i.Sparse,
+		&i.QboCreatedTime,
+		&i.QboUpdatedTime,
+		&i.CurrentBalance,
+		&i.SubAccount,
 	)
 	return i, err
 }
 
 const getAccountsUpdatedSince = `-- name: GetAccountsUpdatedSince :many
-SELECT id, qbo_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at FROM shadow_erp.accounts
+SELECT id, qbo_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, qbo_created_time, qbo_updated_time, current_balance, sub_account FROM shadow_erp.accounts
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
 ORDER BY updated_at ASC
 `
@@ -76,6 +85,15 @@ func (q *Queries) GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUp
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Domain,
+			&i.CurrencyRefName,
+			&i.CurrencyRefValue,
+			&i.CurrentBalanceWithSubAccounts,
+			&i.Sparse,
+			&i.QboCreatedTime,
+			&i.QboUpdatedTime,
+			&i.CurrentBalance,
+			&i.SubAccount,
 		); err != nil {
 			return nil, err
 		}
@@ -88,7 +106,7 @@ func (q *Queries) GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUp
 }
 
 const getAllAccountsForRealms = `-- name: GetAllAccountsForRealms :many
-SELECT id, qbo_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at FROM shadow_erp.accounts
+SELECT id, qbo_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, qbo_created_time, qbo_updated_time, current_balance, sub_account FROM shadow_erp.accounts
 WHERE realm_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY name ASC
 `
@@ -116,6 +134,15 @@ func (q *Queries) GetAllAccountsForRealms(ctx context.Context, realmIds []string
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Domain,
+			&i.CurrencyRefName,
+			&i.CurrencyRefValue,
+			&i.CurrentBalanceWithSubAccounts,
+			&i.Sparse,
+			&i.QboCreatedTime,
+			&i.QboUpdatedTime,
+			&i.CurrentBalance,
+			&i.SubAccount,
 		); err != nil {
 			return nil, err
 		}
@@ -991,9 +1018,16 @@ const upsertAccount = `-- name: UpsertAccount :exec
 
 INSERT INTO shadow_erp.accounts (
     qbo_id, realm_id, name, account_type, account_sub_type, classification,
-    fully_qualified_name, active, sync_token, created_at, updated_at
+    fully_qualified_name, active, sync_token, 
+    domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts,
+    sparse, qbo_created_time, qbo_updated_time, current_balance, sub_account,
+    created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, 
+    $10, $11, $12, $13, $14, $15, $16, $17, $18,
+    NOW(), NOW()
+)
 ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     name                 = EXCLUDED.name,
     account_type         = EXCLUDED.account_type,
@@ -1002,20 +1036,38 @@ ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     fully_qualified_name = EXCLUDED.fully_qualified_name,
     active               = EXCLUDED.active,
     sync_token           = EXCLUDED.sync_token,
+    domain               = EXCLUDED.domain,
+    currency_ref_name    = EXCLUDED.currency_ref_name,
+    currency_ref_value   = EXCLUDED.currency_ref_value,
+    current_balance_with_sub_accounts = EXCLUDED.current_balance_with_sub_accounts,
+    sparse               = EXCLUDED.sparse,
+    qbo_created_time     = EXCLUDED.qbo_created_time,
+    qbo_updated_time     = EXCLUDED.qbo_updated_time,
+    current_balance      = EXCLUDED.current_balance,
+    sub_account          = EXCLUDED.sub_account,
     updated_at           = NOW(),
     deleted_at           = NULL
 `
 
 type UpsertAccountParams struct {
-	QboID              string
-	RealmID            string
-	Name               string
-	AccountType        string
-	AccountSubType     pgtype.Text
-	Classification     pgtype.Text
-	FullyQualifiedName pgtype.Text
-	Active             pgtype.Bool
-	SyncToken          string
+	QboID                         string
+	RealmID                       string
+	Name                          string
+	AccountType                   string
+	AccountSubType                pgtype.Text
+	Classification                pgtype.Text
+	FullyQualifiedName            pgtype.Text
+	Active                        pgtype.Bool
+	SyncToken                     string
+	Domain                        pgtype.Text
+	CurrencyRefName               pgtype.Text
+	CurrencyRefValue              pgtype.Text
+	CurrentBalanceWithSubAccounts pgtype.Numeric
+	Sparse                        pgtype.Bool
+	QboCreatedTime                pgtype.Timestamptz
+	QboUpdatedTime                pgtype.Timestamptz
+	CurrentBalance                pgtype.Numeric
+	SubAccount                    pgtype.Bool
 }
 
 // =========================================================================
@@ -1032,6 +1084,15 @@ func (q *Queries) UpsertAccount(ctx context.Context, arg UpsertAccountParams) er
 		arg.FullyQualifiedName,
 		arg.Active,
 		arg.SyncToken,
+		arg.Domain,
+		arg.CurrencyRefName,
+		arg.CurrencyRefValue,
+		arg.CurrentBalanceWithSubAccounts,
+		arg.Sparse,
+		arg.QboCreatedTime,
+		arg.QboUpdatedTime,
+		arg.CurrentBalance,
+		arg.SubAccount,
 	)
 	return err
 }

@@ -118,6 +118,15 @@ type Account {
   fullyQualifiedName: String
   active: Boolean
   syncToken: String!
+  domain: String
+  currencyRefName: String
+  currencyRefValue: String
+  currentBalanceWithSubAccounts: Float
+  sparse: Boolean
+  qboCreatedTime: Time
+  qboUpdatedTime: Time
+  currentBalance: Float
+  subAccount: Boolean
   createdAt: Time!
   updatedAt: Time!
   deletedAt: Time

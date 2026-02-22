@@ -314,7 +314,7 @@ func (r *mutationResolver) RecordCorrection(ctx context.Context, input model.Rec
 }
 
 // SyncQboChartOfAccounts is the resolver for the syncQboChartOfAccounts field.
-func (r *mutationResolver) SyncQboChartOfAccounts(ctx context.Context, realmID string) (int, error) {
+func (r *mutationResolver) SyncQboChartOfAccounts(ctx context.Context, realmID string) (int32, error) {
 	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
 	if entityID == uuid.Nil {
 		return 0, fmt.Errorf("unauthorized")
@@ -353,7 +353,7 @@ func (r *mutationResolver) SyncQboChartOfAccounts(ctx context.Context, realmID s
 		return 0, fmt.Errorf("sync failed")
 	}
 
-	return count, nil
+	return int32(count), nil
 }
 
 // User is the resolver for the user field.
@@ -506,19 +506,75 @@ func (r *queryResolver) QboAccount(ctx context.Context, realmID string) ([]*mode
 			deletedAt = &a.DeletedAt.Time
 		}
 
+		var domain *string
+		if a.Domain.Valid {
+			domain = &a.Domain.String
+		}
+
+		var currencyRefName *string
+		if a.CurrencyRefName.Valid {
+			currencyRefName = &a.CurrencyRefName.String
+		}
+
+		var currencyRefValue *string
+		if a.CurrencyRefValue.Valid {
+			currencyRefValue = &a.CurrencyRefValue.String
+		}
+
+		var currentBalanceWithSubAccounts *float64
+		if a.CurrentBalanceWithSubAccounts.Valid {
+			v, _ := a.CurrentBalanceWithSubAccounts.Float64Value()
+			currentBalanceWithSubAccounts = &v.Float64
+		}
+
+		var sparse *bool
+		if a.Sparse.Valid {
+			sparse = &a.Sparse.Bool
+		}
+
+		var qboCreatedTime *time.Time
+		if a.QboCreatedTime.Valid {
+			qboCreatedTime = &a.QboCreatedTime.Time
+		}
+
+		var qboUpdatedTime *time.Time
+		if a.QboUpdatedTime.Valid {
+			qboUpdatedTime = &a.QboUpdatedTime.Time
+		}
+
+		var currentBalance *float64
+		if a.CurrentBalance.Valid {
+			v, _ := a.CurrentBalance.Float64Value()
+			currentBalance = &v.Float64
+		}
+
+		var subAccount *bool
+		if a.SubAccount.Valid {
+			subAccount = &a.SubAccount.Bool
+		}
+
 		modelAccounts = append(modelAccounts, &model.Account{
-			ID:                 uuid.UUID(a.ID.Bytes).String(),
-			RealmID:            a.RealmID,
-			Name:               a.Name,
-			Classification:     classification,
-			AccountType:        accountType,
-			AccountSubType:     accountSubType,
-			FullyQualifiedName: fullyQualifiedName,
-			Active:             active,
-			SyncToken:          a.SyncToken,
-			CreatedAt:          a.CreatedAt.Time,
-			UpdatedAt:          a.UpdatedAt.Time,
-			DeletedAt:          deletedAt,
+			ID:                            uuid.UUID(a.ID.Bytes).String(),
+			RealmID:                       a.RealmID,
+			Name:                          a.Name,
+			Classification:                classification,
+			AccountType:                   accountType,
+			AccountSubType:                accountSubType,
+			FullyQualifiedName:            fullyQualifiedName,
+			Active:                        active,
+			SyncToken:                     a.SyncToken,
+			Domain:                        domain,
+			CurrencyRefName:               currencyRefName,
+			CurrencyRefValue:              currencyRefValue,
+			CurrentBalanceWithSubAccounts: currentBalanceWithSubAccounts,
+			Sparse:                        sparse,
+			QboCreatedTime:                qboCreatedTime,
+			QboUpdatedTime:                qboUpdatedTime,
+			CurrentBalance:                currentBalance,
+			SubAccount:                    subAccount,
+			CreatedAt:                     a.CreatedAt.Time,
+			UpdatedAt:                     a.UpdatedAt.Time,
+			DeletedAt:                     deletedAt,
 		})
 	}
 

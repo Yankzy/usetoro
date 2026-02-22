@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"log/slog"
@@ -107,12 +108,22 @@ func run(logger *slog.Logger) error {
 
 	// 4.5 Initialize Store dependencies (Cache + Encryption)
 	// We need an encryption key from env
-	encryptionKey := os.Getenv("ENCRYPTION_KEY")
-	if encryptionKey == "" {
+	encryptionKeyStr := os.Getenv("ENCRYPTION_KEY")
+	if encryptionKeyStr == "" {
 		// For dev, verify length or default?
 		// Ensure it's 32 bytes if we use AES-256
 		logger.Warn("ENCRYPTION_KEY is missing, using dummy key for dev (INSECURE)")
-		encryptionKey = "12345678901234567890123456789012"
+		// Generate a dummy base64 string that decodes to 32 bytes
+		encryptionKeyStr = base64.StdEncoding.EncodeToString([]byte("12345678901234567890123456789012"))
+	}
+
+	encryptionKeyBytes, err := base64.StdEncoding.DecodeString(encryptionKeyStr)
+	if err != nil {
+		return fmt.Errorf("ENCRYPTION_KEY must be base64-encoded: %w", err)
+	}
+
+	if len(encryptionKeyBytes) != 32 {
+		return fmt.Errorf("ENCRYPTION_KEY must be exactly 32 bytes when decoded (got %d bytes)", len(encryptionKeyBytes))
 	}
 
 	// Initialize Ristretto Cache (using nil for now since we don't strictly need it for QBO yet or use simple default)
@@ -120,7 +131,7 @@ func run(logger *slog.Logger) error {
 	// We'll import ristretto and init it.
 
 	// Create Store
-	storeObj, err := store.NewStore(dbPool, nil, []byte(encryptionKey))
+	storeObj, err := store.NewStore(dbPool, nil, encryptionKeyBytes)
 	if err != nil {
 		return fmt.Errorf("failed to create store: %w", err)
 	}

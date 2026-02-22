@@ -17,19 +17,28 @@ type AgentPerformanceHourly struct {
 }
 
 type ShadowErpAccount struct {
-	ID                 pgtype.UUID
-	QboID              string
-	RealmID            string
-	Name               string
-	AccountType        string
-	AccountSubType     pgtype.Text
-	Classification     pgtype.Text
-	FullyQualifiedName pgtype.Text
-	Active             pgtype.Bool
-	SyncToken          string
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	DeletedAt          pgtype.Timestamptz
+	ID                            pgtype.UUID
+	QboID                         string
+	RealmID                       string
+	Name                          string
+	AccountType                   string
+	AccountSubType                pgtype.Text
+	Classification                pgtype.Text
+	FullyQualifiedName            pgtype.Text
+	Active                        pgtype.Bool
+	SyncToken                     string
+	CreatedAt                     pgtype.Timestamptz
+	UpdatedAt                     pgtype.Timestamptz
+	DeletedAt                     pgtype.Timestamptz
+	Domain                        pgtype.Text
+	CurrencyRefName               pgtype.Text
+	CurrencyRefValue              pgtype.Text
+	CurrentBalanceWithSubAccounts pgtype.Numeric
+	Sparse                        pgtype.Bool
+	QboCreatedTime                pgtype.Timestamptz
+	QboUpdatedTime                pgtype.Timestamptz
+	CurrentBalance                pgtype.Numeric
+	SubAccount                    pgtype.Bool
 }
 
 // Records when users correct AI predictions for learning and synonym updates

@@ -2,6 +2,7 @@ package connectors
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -164,15 +165,24 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 	case "Account":
 		acct := data.(*quickbooks.Account)
 		err = c.store.Queries.UpsertAccount(ctx, database.UpsertAccountParams{
-			QboID:              acct.Id,
-			RealmID:            realmID,
-			Name:               acct.Name,
-			AccountType:        acct.AccountType,
-			AccountSubType:     pgtype.Text{String: acct.AccountSubType, Valid: acct.AccountSubType != ""},
-			Classification:     pgtype.Text{String: acct.Classification, Valid: acct.Classification != ""},
-			FullyQualifiedName: pgtype.Text{String: acct.FullyQualifiedName, Valid: acct.FullyQualifiedName != ""},
-			Active:             pgtype.Bool{Bool: acct.Active, Valid: true},
-			SyncToken:          acct.SyncToken,
+			QboID:                         acct.Id,
+			RealmID:                       realmID,
+			Name:                          acct.Name,
+			AccountType:                   acct.AccountType,
+			AccountSubType:                pgtype.Text{String: acct.AccountSubType, Valid: acct.AccountSubType != ""},
+			Classification:                pgtype.Text{String: acct.Classification, Valid: acct.Classification != ""},
+			FullyQualifiedName:            pgtype.Text{String: acct.FullyQualifiedName, Valid: acct.FullyQualifiedName != ""},
+			Active:                        pgtype.Bool{Bool: acct.Active, Valid: true},
+			SyncToken:                     acct.SyncToken,
+			Domain:                        pgtype.Text{String: acct.Domain, Valid: acct.Domain != ""},
+			CurrencyRefName:               pgtype.Text{String: acct.CurrencyRef.Name, Valid: acct.CurrencyRef.Name != ""},
+			CurrencyRefValue:              pgtype.Text{String: acct.CurrencyRef.Value, Valid: acct.CurrencyRef.Value != ""},
+			CurrentBalanceWithSubAccounts: jsonNumberToNumeric(acct.CurrentBalanceWithSubAccounts),
+			Sparse:                        pgtype.Bool{Bool: acct.Sparse, Valid: true},
+			QboCreatedTime:                pgtype.Timestamptz{Time: acct.MetaData.CreateTime.Time, Valid: !acct.MetaData.CreateTime.IsZero()},
+			QboUpdatedTime:                pgtype.Timestamptz{Time: acct.MetaData.LastUpdatedTime.Time, Valid: !acct.MetaData.LastUpdatedTime.IsZero()},
+			CurrentBalance:                jsonNumberToNumeric(acct.CurrentBalance),
+			SubAccount:                    pgtype.Bool{Bool: acct.SubAccount, Valid: true},
 		})
 
 	case "Vendor":
@@ -494,6 +504,16 @@ func (c *QBOConnector) SyncFullChartOfAccounts(ctx context.Context, tenantID, re
 	return len(accounts), nil
 }
 
+func jsonNumberToNumeric(n json.Number) pgtype.Numeric {
+	s := string(n)
+	if s == "" {
+		return pgtype.Numeric{Valid: false}
+	}
+	var num pgtype.Numeric
+	_ = num.Scan(s)
+	return num
+}
+
 // batchUpsertAccounts uses a PostgreSQL transaction to upsert multiple accounts efficiently
 func (c *QBOConnector) batchUpsertAccounts(ctx context.Context, realmID string, accounts []quickbooks.Account) error {
 	tx, err := c.store.Pool.Begin(ctx)
@@ -506,15 +526,24 @@ func (c *QBOConnector) batchUpsertAccounts(ctx context.Context, realmID string, 
 
 	for _, account := range accounts {
 		if err := qtx.UpsertAccount(ctx, database.UpsertAccountParams{
-			QboID:              account.Id,
-			RealmID:            realmID,
-			Name:               account.Name,
-			AccountType:        account.AccountType,
-			AccountSubType:     pgtype.Text{String: account.AccountSubType, Valid: account.AccountSubType != ""},
-			Classification:     pgtype.Text{String: account.Classification, Valid: account.Classification != ""},
-			FullyQualifiedName: pgtype.Text{String: account.FullyQualifiedName, Valid: account.FullyQualifiedName != ""},
-			Active:             pgtype.Bool{Bool: account.Active, Valid: true},
-			SyncToken:          account.SyncToken,
+			QboID:                         account.Id,
+			RealmID:                       realmID,
+			Name:                          account.Name,
+			AccountType:                   account.AccountType,
+			AccountSubType:                pgtype.Text{String: account.AccountSubType, Valid: account.AccountSubType != ""},
+			Classification:                pgtype.Text{String: account.Classification, Valid: account.Classification != ""},
+			FullyQualifiedName:            pgtype.Text{String: account.FullyQualifiedName, Valid: account.FullyQualifiedName != ""},
+			Active:                        pgtype.Bool{Bool: account.Active, Valid: true},
+			SyncToken:                     account.SyncToken,
+			Domain:                        pgtype.Text{String: account.Domain, Valid: account.Domain != ""},
+			CurrencyRefName:               pgtype.Text{String: account.CurrencyRef.Name, Valid: account.CurrencyRef.Name != ""},
+			CurrencyRefValue:              pgtype.Text{String: account.CurrencyRef.Value, Valid: account.CurrencyRef.Value != ""},
+			CurrentBalanceWithSubAccounts: jsonNumberToNumeric(account.CurrentBalanceWithSubAccounts),
+			Sparse:                        pgtype.Bool{Bool: account.Sparse, Valid: true},
+			QboCreatedTime:                pgtype.Timestamptz{Time: account.MetaData.CreateTime.Time, Valid: !account.MetaData.CreateTime.IsZero()},
+			QboUpdatedTime:                pgtype.Timestamptz{Time: account.MetaData.LastUpdatedTime.Time, Valid: !account.MetaData.LastUpdatedTime.IsZero()},
+			CurrentBalance:                jsonNumberToNumeric(account.CurrentBalance),
+			SubAccount:                    pgtype.Bool{Bool: account.SubAccount, Valid: true},
 		}); err != nil {
 			return fmt.Errorf("failed to upsert account %s: %w", account.Id, err)
 		}

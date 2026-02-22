@@ -44,6 +44,8 @@ type Account struct {
 	TaxCodeRef                    ReferenceType `json:",omitempty"`
 	AccountSubType                string        `json:",omitempty"`
 	CurrentBalance                json.Number   `json:",omitempty"`
+	Domain                        string        `json:"domain,omitempty"`
+	Sparse                        bool          `json:"sparse,omitempty"`
 }
 
 // CreateAccount creates the given account within QuickBooks

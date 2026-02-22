@@ -117,6 +117,43 @@ type ShadowErpProposedTransaction struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+type ShadowErpRuleAuditLog struct {
+	ID            int32
+	RealmID       string
+	TransactionID pgtype.UUID
+	RuleGroupID   pgtype.Int4
+	Matched       bool
+	// Verbose match explanation: JSON containing condition-level results (maps to MatchExplanation struct)
+	MatchInfo           []byte
+	HumanReadableReason string
+	CreatedAt           pgtype.Timestamptz
+}
+
+type ShadowErpRuleCondition struct {
+	ID          int32
+	RuleGroupID int32
+	Field       string
+	Operator    string
+	Value       string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type ShadowErpRuleGroup struct {
+	ID              int32
+	RealmID         string
+	Name            string
+	Logic           string
+	Priority        int32
+	Keywords        pgtype.Text
+	Active          bool
+	TargetAccountID pgtype.UUID
+	TargetVendorID  pgtype.UUID
+	ParentID        pgtype.Int4
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 // Tracks Pinecone vector database sync state per ERP realm
 type ShadowErpVectorSyncState struct {
 	RealmID string

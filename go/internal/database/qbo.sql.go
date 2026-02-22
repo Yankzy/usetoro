@@ -366,6 +366,37 @@ func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousPro
 	return items, nil
 }
 
+const getBillByQBOID = `-- name: GetBillByQBOID :one
+SELECT id, qbo_id, realm_id, vendor_id, doc_number, total_amount, balance, due_date, txn_date, sync_token, created_at, updated_at, deleted_at FROM shadow_erp.bills
+WHERE realm_id = $1 AND qbo_id = $2
+`
+
+type GetBillByQBOIDParams struct {
+	RealmID string
+	QboID   string
+}
+
+func (q *Queries) GetBillByQBOID(ctx context.Context, arg GetBillByQBOIDParams) (ShadowErpBill, error) {
+	row := q.db.QueryRow(ctx, getBillByQBOID, arg.RealmID, arg.QboID)
+	var i ShadowErpBill
+	err := row.Scan(
+		&i.ID,
+		&i.QboID,
+		&i.RealmID,
+		&i.VendorID,
+		&i.DocNumber,
+		&i.TotalAmount,
+		&i.Balance,
+		&i.DueDate,
+		&i.TxnDate,
+		&i.SyncToken,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getConnectionWithWebhookTimes = `-- name: GetConnectionWithWebhookTimes :one
 SELECT
     realm_id,
@@ -500,6 +531,37 @@ func (q *Queries) GetCustomersUpdatedSince(ctx context.Context, arg GetCustomers
 		return nil, err
 	}
 	return items, nil
+}
+
+const getInvoiceByQBOID = `-- name: GetInvoiceByQBOID :one
+SELECT id, qbo_id, realm_id, customer_id, doc_number, total_amount, balance, due_date, txn_date, sync_token, created_at, updated_at, deleted_at FROM shadow_erp.invoices
+WHERE realm_id = $1 AND qbo_id = $2
+`
+
+type GetInvoiceByQBOIDParams struct {
+	RealmID string
+	QboID   string
+}
+
+func (q *Queries) GetInvoiceByQBOID(ctx context.Context, arg GetInvoiceByQBOIDParams) (ShadowErpInvoice, error) {
+	row := q.db.QueryRow(ctx, getInvoiceByQBOID, arg.RealmID, arg.QboID)
+	var i ShadowErpInvoice
+	err := row.Scan(
+		&i.ID,
+		&i.QboID,
+		&i.RealmID,
+		&i.CustomerID,
+		&i.DocNumber,
+		&i.TotalAmount,
+		&i.Balance,
+		&i.DueDate,
+		&i.TxnDate,
+		&i.SyncToken,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }
 
 const getProposedTransactionByValues = `-- name: GetProposedTransactionByValues :one

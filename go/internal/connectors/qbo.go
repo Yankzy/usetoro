@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/config"
@@ -87,15 +88,60 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 
 	switch entityType {
 	case "Account":
-		entityData, err2 = client.FindAccountById(entityID)
+		qboEntity, err := client.FindAccountById(entityID)
+		err2 = err
+		if err2 == nil {
+			localEntity, dbErr := c.store.Queries.GetAccountByQBOID(ctx, database.GetAccountByQBOIDParams{RealmID: realmID, QboID: entityID})
+			if dbErr == nil && shouldSkipSync(localEntity.SyncToken, qboEntity.SyncToken) {
+				c.logger.Info("Skipping Echo Event for Account", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
+				return nil
+			}
+			entityData = qboEntity
+		}
 	case "Vendor":
-		entityData, err2 = client.FindVendorById(entityID)
+		qboEntity, err := client.FindVendorById(entityID)
+		err2 = err
+		if err2 == nil {
+			localEntity, dbErr := c.store.Queries.GetVendorByQBOID(ctx, database.GetVendorByQBOIDParams{RealmID: realmID, QboID: entityID})
+			if dbErr == nil && shouldSkipSync(localEntity.SyncToken, qboEntity.SyncToken) {
+				c.logger.Info("Skipping Echo Event for Vendor", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
+				return nil
+			}
+			entityData = qboEntity
+		}
 	case "Customer":
-		entityData, err2 = client.FindCustomerById(entityID)
+		qboEntity, err := client.FindCustomerById(entityID)
+		err2 = err
+		if err2 == nil {
+			localEntity, dbErr := c.store.Queries.GetCustomerByQBOID(ctx, database.GetCustomerByQBOIDParams{RealmID: realmID, QboID: entityID})
+			if dbErr == nil && shouldSkipSync(localEntity.SyncToken, qboEntity.SyncToken) {
+				c.logger.Info("Skipping Echo Event for Customer", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
+				return nil
+			}
+			entityData = qboEntity
+		}
 	case "Invoice":
-		entityData, err2 = client.FindInvoiceById(entityID)
+		qboEntity, err := client.FindInvoiceById(entityID)
+		err2 = err
+		if err2 == nil {
+			localEntity, dbErr := c.store.Queries.GetInvoiceByQBOID(ctx, database.GetInvoiceByQBOIDParams{RealmID: realmID, QboID: entityID})
+			if dbErr == nil && shouldSkipSync(localEntity.SyncToken, qboEntity.SyncToken) {
+				c.logger.Info("Skipping Echo Event for Invoice", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
+				return nil
+			}
+			entityData = qboEntity
+		}
 	case "Bill":
-		entityData, err2 = client.FindBillById(entityID)
+		qboEntity, err := client.FindBillById(entityID)
+		err2 = err
+		if err2 == nil {
+			localEntity, dbErr := c.store.Queries.GetBillByQBOID(ctx, database.GetBillByQBOIDParams{RealmID: realmID, QboID: entityID})
+			if dbErr == nil && shouldSkipSync(localEntity.SyncToken, qboEntity.SyncToken) {
+				c.logger.Info("Skipping Echo Event for Bill", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
+				return nil
+			}
+			entityData = qboEntity
+		}
 	default:
 		c.logger.Warn("Unsupported entity type for sync", "entity_type", entityType)
 		return nil // Not an error, just not supported yet
@@ -991,4 +1037,16 @@ func getMaxTime(webhookTime, fallbackTime, maxLookback time.Time) time.Time {
 	}
 
 	return chosen
+}
+
+// shouldSkipSync parses SyncTokens as integers and returns true if the local token is greater than or equal to the remote token.
+// This handles cases where a webhook provides an older or identical state to what we already have.
+func shouldSkipSync(localToken, remoteToken string) bool {
+	localInt, err1 := strconv.Atoi(localToken)
+	remoteInt, err2 := strconv.Atoi(remoteToken)
+	if err1 == nil && err2 == nil {
+		return localInt >= remoteInt
+	}
+	// Fallback to string comparison if not parseable as int
+	return localToken == remoteToken
 }

@@ -324,6 +324,14 @@ WHERE realm_id = $1 AND qbo_id = $2;
 SELECT * FROM shadow_erp.customers
 WHERE realm_id = $1 AND qbo_id = $2;
 
+-- name: GetInvoiceByQBOID :one
+SELECT * FROM shadow_erp.invoices
+WHERE realm_id = $1 AND qbo_id = $2;
+
+-- name: GetBillByQBOID :one
+SELECT * FROM shadow_erp.bills
+WHERE realm_id = $1 AND qbo_id = $2;
+
 -- name: GetAccountsUpdatedSince :many
 SELECT * FROM shadow_erp.accounts
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
@@ -338,3 +346,31 @@ ORDER BY updated_at ASC;
 SELECT * FROM shadow_erp.customers
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
 ORDER BY updated_at ASC;
+
+-- =========================================================================
+-- Transaction Proposal & Audit
+-- =========================================================================
+
+-- name: GetProposedTransactionByValues :one
+SELECT * FROM shadow_erp.proposed_transactions
+WHERE realm_id = $1
+  AND predicted_vendor_id = $2
+  AND raw_date = $3
+  AND raw_amount = $4
+LIMIT 1;
+
+-- name: CreateProposedTransaction :one
+INSERT INTO shadow_erp.proposed_transactions (
+    realm_id, source_type, raw_amount, raw_date, raw_description,
+    predicted_vendor_id, predicted_account_id, confidence_score,
+    ai_reasoning, sync_status, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
+)
+RETURNING *;
+
+-- name: UpdateProposedTransactionSyncStatus :exec
+UPDATE shadow_erp.proposed_transactions
+SET sync_status = $2, qbo_transaction_id = $3, error_message = $4, updated_at = NOW()
+WHERE id = $1;

@@ -214,6 +214,10 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		go h.retryPublishWithBackoff(retryData)
+
+		w.Header().Set("X-Request-ID", requestID)
+		JSONError(w, logger, http.StatusServiceUnavailable, "NATS unavailable")
+		return
 	} else {
 		publishLatency := time.Since(publishStart)
 		logger.Info("Webhook ingested",

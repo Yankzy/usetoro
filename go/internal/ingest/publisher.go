@@ -56,7 +56,7 @@ func (p *Publisher) PublishWebhookEvent(ctx context.Context, provider, connID, t
 		if providerEventType != "" {
 			// If we have a specific event type, use it as the subject suffix
 			// We trust the provider/payload to provide a valid subject string
-			subject = providerEventType
+			subject = fmt.Sprintf("%s.%s", provider, providerEventType)
 		} else {
 			// Fallback: provider.webhook
 			subject = fmt.Sprintf("%s.webhook", provider)

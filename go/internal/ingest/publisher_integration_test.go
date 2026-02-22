@@ -3,6 +3,7 @@ package ingest_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -22,20 +23,31 @@ func TestPublisher_Integration(t *testing.T) {
 
 	ctx := context.Background()
 
-	// 1. Start NATS Container
-	natsContainer, err := nats_module.Run(ctx, "nats:2.9-alpine", testcontainers.WithWaitStrategy(wait.ForLog(".*Server is ready.*").AsRegexp()))
-	if err != nil {
-		t.Fatalf("failed to start nats container: %s", err)
+	// 1. Resolve NATS URL
+	uri := os.Getenv("NATS_URL")
+	if uri == "" {
+		// Prefer an isolated testcontainer if NATS_URL is empty
+		// We commented out the short-circuit to local NATS to ensure isolated testing.
 	}
-	defer func() {
-		if err := natsContainer.Terminate(ctx); err != nil {
-			t.Fatalf("failed to terminate container: %s", err)
-		}
-	}()
 
-	uri, err := natsContainer.ConnectionString(ctx)
-	if err != nil {
-		t.Fatalf("failed to get nats connection string: %s", err)
+	var natsContainer *nats_module.NATSContainer
+	var err error
+	if uri == "" {
+		// Fall back to starting a test container.
+		natsContainer, err = nats_module.Run(ctx, "nats:2.9-alpine", testcontainers.WithWaitStrategy(wait.ForLog(".*Server is ready.*").AsRegexp()))
+		if err != nil {
+			t.Fatalf("failed to start nats container: %s", err)
+		}
+		defer func() {
+			if err := natsContainer.Terminate(ctx); err != nil {
+				t.Fatalf("failed to terminate container: %s", err)
+			}
+		}()
+
+		uri, err = natsContainer.ConnectionString(ctx)
+		if err != nil {
+			t.Fatalf("failed to get nats connection string: %s", err)
+		}
 	}
 
 	// 2. Connect to NATS via Queue Client
@@ -49,8 +61,8 @@ func TestPublisher_Integration(t *testing.T) {
 
 	// 3. Setup Stream
 	streamName := "STRIPE_INGEST"
-	subject := "raw.ingest.stripe"
-	_, err = js.AddStream(&nats.StreamConfig{
+	subject := "stripe.>"
+	err = q.EnsureStream(&nats.StreamConfig{
 		Name:     streamName,
 		Subjects: []string{subject},
 	})

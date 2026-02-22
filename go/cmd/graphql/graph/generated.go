@@ -94,13 +94,16 @@ type ComplexityRoot struct {
 	}
 
 	Mutation struct {
+		CreateQboAccount       func(childComplexity int, input model.CreateQboAccountInput) int
 		DeleteToken            func(childComplexity int, refreshToken string) int
 		Login                  func(childComplexity int, input model.LoginInput) int
 		RecordCorrection       func(childComplexity int, input model.RecordCorrectionInput) int
 		RefreshToken           func(childComplexity int, refreshToken string) int
 		RequestOtp             func(childComplexity int, email string) int
 		Signup                 func(childComplexity int, input model.SignupInput) int
+		SoftDeleteQboAccount   func(childComplexity int, input model.SoftDeleteQboAccountInput) int
 		SyncQboChartOfAccounts func(childComplexity int, realmID string) int
+		UpdateQboAccount       func(childComplexity int, input model.UpdateQboAccountInput) int
 		VerifyOtp              func(childComplexity int, email string, otp string) int
 	}
 
@@ -169,6 +172,9 @@ type MutationResolver interface {
 	DeleteToken(ctx context.Context, refreshToken string) (bool, error)
 	RecordCorrection(ctx context.Context, input model.RecordCorrectionInput) (bool, error)
 	SyncQboChartOfAccounts(ctx context.Context, realmID string) (int32, error)
+	CreateQboAccount(ctx context.Context, input model.CreateQboAccountInput) (*model.Account, error)
+	UpdateQboAccount(ctx context.Context, input model.UpdateQboAccountInput) (*model.Account, error)
+	SoftDeleteQboAccount(ctx context.Context, input model.SoftDeleteQboAccountInput) (*model.Account, error)
 }
 type QueryResolver interface {
 	User(ctx context.Context) (*model.User, error)
@@ -400,6 +406,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.EntityMatch.Source(childComplexity), true
 
+	case "Mutation.createQboAccount":
+		if e.complexity.Mutation.CreateQboAccount == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createQboAccount_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.CreateQboAccount(childComplexity, args["input"].(model.CreateQboAccountInput)), true
 	case "Mutation.deleteToken":
 		if e.complexity.Mutation.DeleteToken == nil {
 			break
@@ -466,6 +483,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.Signup(childComplexity, args["input"].(model.SignupInput)), true
+	case "Mutation.softDeleteQboAccount":
+		if e.complexity.Mutation.SoftDeleteQboAccount == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_softDeleteQboAccount_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.SoftDeleteQboAccount(childComplexity, args["input"].(model.SoftDeleteQboAccountInput)), true
 	case "Mutation.syncQboChartOfAccounts":
 		if e.complexity.Mutation.SyncQboChartOfAccounts == nil {
 			break
@@ -477,6 +505,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.SyncQboChartOfAccounts(childComplexity, args["realmId"].(string)), true
+	case "Mutation.updateQboAccount":
+		if e.complexity.Mutation.UpdateQboAccount == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateQboAccount_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.UpdateQboAccount(childComplexity, args["input"].(model.UpdateQboAccountInput)), true
 	case "Mutation.verifyOTP":
 		if e.complexity.Mutation.VerifyOtp == nil {
 			break
@@ -728,9 +767,12 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	opCtx := graphql.GetOperationContext(ctx)
 	ec := executionContext{opCtx, e, 0, 0, make(chan graphql.DeferredResult)}
 	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
+		ec.unmarshalInputCreateQboAccountInput,
 		ec.unmarshalInputLoginInput,
 		ec.unmarshalInputRecordCorrectionInput,
 		ec.unmarshalInputSignupInput,
+		ec.unmarshalInputSoftDeleteQboAccountInput,
+		ec.unmarshalInputUpdateQboAccountInput,
 	)
 	first := true
 
@@ -847,6 +889,17 @@ var parsedSchema = gqlparser.MustLoadSchema(sources...)
 
 // region    ***************************** args.gotpl *****************************
 
+func (ec *executionContext) field_Mutation_createQboAccount_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNCreateQboAccountInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCreateQboAccountInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_deleteToken_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -913,6 +966,17 @@ func (ec *executionContext) field_Mutation_signup_args(ctx context.Context, rawA
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_softDeleteQboAccount_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNSoftDeleteQboAccountInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐSoftDeleteQboAccountInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_syncQboChartOfAccounts_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -921,6 +985,17 @@ func (ec *executionContext) field_Mutation_syncQboChartOfAccounts_args(ctx conte
 		return nil, err
 	}
 	args["realmId"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateQboAccount_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNUpdateQboAccountInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐUpdateQboAccountInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
 	return args, nil
 }
 
@@ -2386,6 +2461,261 @@ func (ec *executionContext) fieldContext_Mutation_syncQboChartOfAccounts(ctx con
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_syncQboChartOfAccounts_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createQboAccount(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_createQboAccount,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().CreateQboAccount(ctx, fc.Args["input"].(model.CreateQboAccountInput))
+		},
+		nil,
+		ec.marshalNAccount2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAccount,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_createQboAccount(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Account_id(ctx, field)
+			case "realmId":
+				return ec.fieldContext_Account_realmId(ctx, field)
+			case "name":
+				return ec.fieldContext_Account_name(ctx, field)
+			case "classification":
+				return ec.fieldContext_Account_classification(ctx, field)
+			case "accountType":
+				return ec.fieldContext_Account_accountType(ctx, field)
+			case "accountSubType":
+				return ec.fieldContext_Account_accountSubType(ctx, field)
+			case "fullyQualifiedName":
+				return ec.fieldContext_Account_fullyQualifiedName(ctx, field)
+			case "active":
+				return ec.fieldContext_Account_active(ctx, field)
+			case "syncToken":
+				return ec.fieldContext_Account_syncToken(ctx, field)
+			case "domain":
+				return ec.fieldContext_Account_domain(ctx, field)
+			case "currencyRefName":
+				return ec.fieldContext_Account_currencyRefName(ctx, field)
+			case "currencyRefValue":
+				return ec.fieldContext_Account_currencyRefValue(ctx, field)
+			case "currentBalanceWithSubAccounts":
+				return ec.fieldContext_Account_currentBalanceWithSubAccounts(ctx, field)
+			case "sparse":
+				return ec.fieldContext_Account_sparse(ctx, field)
+			case "qboCreatedTime":
+				return ec.fieldContext_Account_qboCreatedTime(ctx, field)
+			case "qboUpdatedTime":
+				return ec.fieldContext_Account_qboUpdatedTime(ctx, field)
+			case "currentBalance":
+				return ec.fieldContext_Account_currentBalance(ctx, field)
+			case "subAccount":
+				return ec.fieldContext_Account_subAccount(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Account_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Account_updatedAt(ctx, field)
+			case "deletedAt":
+				return ec.fieldContext_Account_deletedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Account", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createQboAccount_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateQboAccount(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_updateQboAccount,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().UpdateQboAccount(ctx, fc.Args["input"].(model.UpdateQboAccountInput))
+		},
+		nil,
+		ec.marshalNAccount2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAccount,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_updateQboAccount(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Account_id(ctx, field)
+			case "realmId":
+				return ec.fieldContext_Account_realmId(ctx, field)
+			case "name":
+				return ec.fieldContext_Account_name(ctx, field)
+			case "classification":
+				return ec.fieldContext_Account_classification(ctx, field)
+			case "accountType":
+				return ec.fieldContext_Account_accountType(ctx, field)
+			case "accountSubType":
+				return ec.fieldContext_Account_accountSubType(ctx, field)
+			case "fullyQualifiedName":
+				return ec.fieldContext_Account_fullyQualifiedName(ctx, field)
+			case "active":
+				return ec.fieldContext_Account_active(ctx, field)
+			case "syncToken":
+				return ec.fieldContext_Account_syncToken(ctx, field)
+			case "domain":
+				return ec.fieldContext_Account_domain(ctx, field)
+			case "currencyRefName":
+				return ec.fieldContext_Account_currencyRefName(ctx, field)
+			case "currencyRefValue":
+				return ec.fieldContext_Account_currencyRefValue(ctx, field)
+			case "currentBalanceWithSubAccounts":
+				return ec.fieldContext_Account_currentBalanceWithSubAccounts(ctx, field)
+			case "sparse":
+				return ec.fieldContext_Account_sparse(ctx, field)
+			case "qboCreatedTime":
+				return ec.fieldContext_Account_qboCreatedTime(ctx, field)
+			case "qboUpdatedTime":
+				return ec.fieldContext_Account_qboUpdatedTime(ctx, field)
+			case "currentBalance":
+				return ec.fieldContext_Account_currentBalance(ctx, field)
+			case "subAccount":
+				return ec.fieldContext_Account_subAccount(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Account_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Account_updatedAt(ctx, field)
+			case "deletedAt":
+				return ec.fieldContext_Account_deletedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Account", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateQboAccount_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_softDeleteQboAccount(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_softDeleteQboAccount,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().SoftDeleteQboAccount(ctx, fc.Args["input"].(model.SoftDeleteQboAccountInput))
+		},
+		nil,
+		ec.marshalNAccount2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAccount,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_softDeleteQboAccount(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Account_id(ctx, field)
+			case "realmId":
+				return ec.fieldContext_Account_realmId(ctx, field)
+			case "name":
+				return ec.fieldContext_Account_name(ctx, field)
+			case "classification":
+				return ec.fieldContext_Account_classification(ctx, field)
+			case "accountType":
+				return ec.fieldContext_Account_accountType(ctx, field)
+			case "accountSubType":
+				return ec.fieldContext_Account_accountSubType(ctx, field)
+			case "fullyQualifiedName":
+				return ec.fieldContext_Account_fullyQualifiedName(ctx, field)
+			case "active":
+				return ec.fieldContext_Account_active(ctx, field)
+			case "syncToken":
+				return ec.fieldContext_Account_syncToken(ctx, field)
+			case "domain":
+				return ec.fieldContext_Account_domain(ctx, field)
+			case "currencyRefName":
+				return ec.fieldContext_Account_currencyRefName(ctx, field)
+			case "currencyRefValue":
+				return ec.fieldContext_Account_currencyRefValue(ctx, field)
+			case "currentBalanceWithSubAccounts":
+				return ec.fieldContext_Account_currentBalanceWithSubAccounts(ctx, field)
+			case "sparse":
+				return ec.fieldContext_Account_sparse(ctx, field)
+			case "qboCreatedTime":
+				return ec.fieldContext_Account_qboCreatedTime(ctx, field)
+			case "qboUpdatedTime":
+				return ec.fieldContext_Account_qboUpdatedTime(ctx, field)
+			case "currentBalance":
+				return ec.fieldContext_Account_currentBalance(ctx, field)
+			case "subAccount":
+				return ec.fieldContext_Account_subAccount(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Account_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Account_updatedAt(ctx, field)
+			case "deletedAt":
+				return ec.fieldContext_Account_deletedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Account", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_softDeleteQboAccount_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -5090,6 +5420,96 @@ func (ec *executionContext) fieldContext___Type_isOneOf(_ context.Context, field
 
 // region    **************************** input.gotpl *****************************
 
+func (ec *executionContext) unmarshalInputCreateQboAccountInput(ctx context.Context, obj any) (model.CreateQboAccountInput, error) {
+	var it model.CreateQboAccountInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"realmId", "name", "accountType", "accountSubType", "classification", "description", "active", "subAccount", "parentRefValue", "currencyRefValue"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "realmId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("realmId"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RealmID = data
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "accountType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("accountType"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AccountType = data
+		case "accountSubType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("accountSubType"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AccountSubType = data
+		case "classification":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("classification"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Classification = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
+		case "active":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("active"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Active = data
+		case "subAccount":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("subAccount"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.SubAccount = data
+		case "parentRefValue":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("parentRefValue"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ParentRefValue = data
+		case "currencyRefValue":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("currencyRefValue"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.CurrencyRefValue = data
+		}
+	}
+
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputLoginInput(ctx context.Context, obj any) (model.LoginInput, error) {
 	var it model.LoginInput
 	asMap := map[string]any{}
@@ -5221,6 +5641,109 @@ func (ec *executionContext) unmarshalInputSignupInput(ctx context.Context, obj a
 				return it, err
 			}
 			it.OrgName = data
+		}
+	}
+
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputSoftDeleteQboAccountInput(ctx context.Context, obj any) (model.SoftDeleteQboAccountInput, error) {
+	var it model.SoftDeleteQboAccountInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"realmId", "accountId"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "realmId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("realmId"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RealmID = data
+		case "accountId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("accountId"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AccountID = data
+		}
+	}
+
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputUpdateQboAccountInput(ctx context.Context, obj any) (model.UpdateQboAccountInput, error) {
+	var it model.UpdateQboAccountInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"realmId", "accountId", "name", "accountType", "accountSubType", "description", "active"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "realmId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("realmId"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RealmID = data
+		case "accountId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("accountId"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AccountID = data
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "accountType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("accountType"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AccountType = data
+		case "accountSubType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("accountSubType"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AccountSubType = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
+		case "active":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("active"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Active = data
 		}
 	}
 
@@ -5562,6 +6085,27 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "syncQboChartOfAccounts":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_syncQboChartOfAccounts(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createQboAccount":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createQboAccount(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateQboAccount":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateQboAccount(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "softDeleteQboAccount":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_softDeleteQboAccount(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -6423,6 +6967,10 @@ func (ec *executionContext) ___Type(ctx context.Context, sel ast.SelectionSet, o
 
 // region    ***************************** type.gotpl *****************************
 
+func (ec *executionContext) marshalNAccount2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAccount(ctx context.Context, sel ast.SelectionSet, v model.Account) graphql.Marshaler {
+	return ec._Account(ctx, sel, &v)
+}
+
 func (ec *executionContext) marshalNAccount2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAccountᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Account) graphql.Marshaler {
 	ret := make(graphql.Array, len(v))
 	var wg sync.WaitGroup
@@ -6561,6 +7109,11 @@ func (ec *executionContext) marshalNBoolean2bool(ctx context.Context, sel ast.Se
 	return res
 }
 
+func (ec *executionContext) unmarshalNCreateQboAccountInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCreateQboAccountInput(ctx context.Context, v any) (model.CreateQboAccountInput, error) {
+	res, err := ec.unmarshalInputCreateQboAccountInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalNFloat2float64(ctx context.Context, v any) (float64, error) {
 	res, err := graphql.UnmarshalFloatContext(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -6631,6 +7184,11 @@ func (ec *executionContext) unmarshalNRecordCorrectionInput2githubᚗcomᚋYankz
 
 func (ec *executionContext) unmarshalNSignupInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐSignupInput(ctx context.Context, v any) (model.SignupInput, error) {
 	res, err := ec.unmarshalInputSignupInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNSoftDeleteQboAccountInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐSoftDeleteQboAccountInput(ctx context.Context, v any) (model.SoftDeleteQboAccountInput, error) {
+	res, err := ec.unmarshalInputSoftDeleteQboAccountInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
@@ -6732,6 +7290,11 @@ func (ec *executionContext) marshalNTime2timeᚐTime(ctx context.Context, sel as
 		}
 	}
 	return res
+}
+
+func (ec *executionContext) unmarshalNUpdateQboAccountInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐUpdateQboAccountInput(ctx context.Context, v any) (model.UpdateQboAccountInput, error) {
+	res, err := ec.unmarshalInputUpdateQboAccountInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) marshalNUser2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {

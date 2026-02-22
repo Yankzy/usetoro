@@ -13,6 +13,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/infrastructure/vector"
 	"github.com/Yankzy/usetoro/internal/queue"
+	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/dgraph-io/ristretto"
@@ -87,22 +88,26 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 
 	// 5. Initialize AI Infrastructure (Optional)
 	var vectorWorker *ai.VectorSyncWorker
+	var pc *vector.PineconeClient
+	var emb *vector.Embedder
 	if os.Getenv("PINECONE_API_KEY") != "" && os.Getenv("OPENAI_API_KEY") != "" {
-		pc, err := vector.NewPineconeClient(
+		var pcErr error
+		pc, pcErr = vector.NewPineconeClient(
 			os.Getenv("PINECONE_API_KEY"),
 			cfg.PineconeIndex,
 			cfg.EmbeddingDimensions,
 		)
-		if err != nil {
-			logger.Warn("Failed to initialize Pinecone client", "error", err)
+		if pcErr != nil {
+			logger.Warn("Failed to initialize Pinecone client", "error", pcErr)
 		} else {
-			emb, err := vector.NewEmbedder(
+			var embErr error
+			emb, embErr = vector.NewEmbedder(
 				os.Getenv("OPENAI_API_KEY"),
 				cfg.EmbeddingModel,
 				cfg.EmbeddingDimensions,
 			)
-			if err != nil {
-				logger.Warn("Failed to initialize OpenAI embedder", "error", err)
+			if embErr != nil {
+				logger.Warn("Failed to initialize OpenAI embedder", "error", embErr)
 			} else {
 				vectorWorker = ai.NewVectorSyncWorker(logger, st, pc, emb, 1*time.Hour)
 				logger.Info("✅ AI infrastructure initialized")
@@ -113,6 +118,29 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	// 6. Initialize Logic
 	mgr := connectors.NewManager(logger, cfg, st, vectorWorker)
 	worker := connectors.NewWorker(logger, q, mgr)
+
+	// 6a. Initialize Accounting Services (requires AI infra + QBO connector)
+	// These are available for on-demand use by GraphQL resolvers or NATS handlers.
+	qboConn := mgr.GetConnector("qbo").(*connectors.QBOConnector)
+	qboClientFn := accounting.QBOClientFn(qboConn.ClientForRealm)
+	var txService *accounting.TransactionService
+	var attachService *accounting.AttachableService
+	ruleEngineService := accounting.NewRuleEngineService(logger, st.Queries, cache)
+
+	if vectorWorker != nil {
+		coaMapper := ai.NewCoAMapper(pc, emb, cfg.AIThreshold)
+		entityResolver := ai.NewEntityResolver(st, pc, emb, cfg.AIThreshold)
+		txService = accounting.NewTransactionService(logger, st.Queries, entityResolver, coaMapper, qboClientFn, ruleEngineService)
+		attachService = accounting.NewAttachableService(logger, qboClientFn)
+		logger.Info("✅ Accounting services initialized (AI-assisted)")
+	} else {
+		// No AI infra: services still usable with explicit AccountHint/VendorHint
+		txService = accounting.NewTransactionService(logger, st.Queries, nil, nil, qboClientFn, ruleEngineService)
+		attachService = accounting.NewAttachableService(logger, qboClientFn)
+		logger.Info("✅ Accounting services initialized (manual hints only)")
+	}
+	_ = txService     // available for future GraphQL resolver / NATS handler wiring
+	_ = attachService // available for future GraphQL resolver / NATS handler wiring
 
 	// 6. Initialize CDC Worker (if enabled)
 	var cdcWorker *connectors.CDCWorker

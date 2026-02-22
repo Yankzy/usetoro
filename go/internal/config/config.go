@@ -38,9 +38,10 @@ type Config struct {
 	CDCSyncInterval time.Duration `mapstructure:"cdc_sync_interval"`
 
 	// AI/Vector Config
-	PineconeIndex       string `mapstructure:"pinecone_index"`
-	EmbeddingModel      string `mapstructure:"embedding_model"`
-	EmbeddingDimensions int    `mapstructure:"embedding_dimensions"`
+	PineconeIndex       string  `mapstructure:"pinecone_index"`
+	EmbeddingModel      string  `mapstructure:"embedding_model"`
+	EmbeddingDimensions int     `mapstructure:"embedding_dimensions"`
+	AIThreshold         float64 `mapstructure:"ai_threshold"`
 
 	// Security
 	// We read this as a string first (base64) then decode it
@@ -116,6 +117,7 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("pinecone_index", "PINECONE_INDEX")
 	_ = v.BindEnv("embedding_model", "EMBEDDING_MODEL")
 	_ = v.BindEnv("embedding_dimensions", "EMBEDDING_DIMENSIONS")
+	_ = v.BindEnv("ai_threshold", "AI_THRESHOLD")
 	_ = v.BindEnv("encryption_key", "ENCRYPTION_KEY")
 
 	// Set defaults corresponding to the old getEnv fallbacks
@@ -133,6 +135,7 @@ func Load() (*Config, error) {
 	v.SetDefault("pinecone_index", "toro-ai")
 	v.SetDefault("embedding_model", "text-embedding-3-small")
 	v.SetDefault("embedding_dimensions", 1536)
+	v.SetDefault("ai_threshold", 0.75)
 
 	// 3. Actually read the file from disk
 	if err := v.ReadInConfig(); err != nil {

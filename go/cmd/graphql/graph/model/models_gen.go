@@ -43,6 +43,19 @@ type AuthPayload struct {
 	User         *User     `json:"user"`
 }
 
+type CreateQboAccountInput struct {
+	RealmID          string  `json:"realmId"`
+	Name             string  `json:"name"`
+	AccountType      string  `json:"accountType"`
+	AccountSubType   *string `json:"accountSubType,omitempty"`
+	Classification   *string `json:"classification,omitempty"`
+	Description      *string `json:"description,omitempty"`
+	Active           *bool   `json:"active,omitempty"`
+	SubAccount       *bool   `json:"subAccount,omitempty"`
+	ParentRefValue   *string `json:"parentRefValue,omitempty"`
+	CurrencyRefValue *string `json:"currencyRefValue,omitempty"`
+}
+
 type EntityMatch struct {
 	ID         string  `json:"id"`
 	Score      float64 `json:"score"`
@@ -101,6 +114,11 @@ type SignupInput struct {
 	OrgName  string `json:"orgName"`
 }
 
+type SoftDeleteQboAccountInput struct {
+	RealmID   string `json:"realmId"`
+	AccountID string `json:"accountId"`
+}
+
 type Tenant struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -114,6 +132,16 @@ type TenantConnection struct {
 	Nodes      []*Tenant `json:"nodes"`
 	TotalCount int32     `json:"totalCount"`
 	PageInfo   *PageInfo `json:"pageInfo"`
+}
+
+type UpdateQboAccountInput struct {
+	RealmID        string  `json:"realmId"`
+	AccountID      string  `json:"accountId"`
+	Name           *string `json:"name,omitempty"`
+	AccountType    *string `json:"accountType,omitempty"`
+	AccountSubType *string `json:"accountSubType,omitempty"`
+	Description    *string `json:"description,omitempty"`
+	Active         *bool   `json:"active,omitempty"`
 }
 
 type User struct {

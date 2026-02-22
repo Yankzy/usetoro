@@ -11,6 +11,65 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createProposedTransaction = `-- name: CreateProposedTransaction :one
+INSERT INTO shadow_erp.proposed_transactions (
+    realm_id, source_type, raw_amount, raw_date, raw_description,
+    predicted_vendor_id, predicted_account_id, confidence_score,
+    ai_reasoning, sync_status, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
+)
+RETURNING id, realm_id, source_type, raw_amount, raw_date, raw_description, predicted_vendor_id, predicted_account_id, confidence_score, ai_reasoning, qbo_transaction_id, sync_status, error_message, created_at, updated_at
+`
+
+type CreateProposedTransactionParams struct {
+	RealmID            string
+	SourceType         string
+	RawAmount          pgtype.Numeric
+	RawDate            pgtype.Date
+	RawDescription     pgtype.Text
+	PredictedVendorID  pgtype.UUID
+	PredictedAccountID pgtype.UUID
+	ConfidenceScore    pgtype.Numeric
+	AiReasoning        pgtype.Text
+	SyncStatus         pgtype.Text
+}
+
+func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreateProposedTransactionParams) (ShadowErpProposedTransaction, error) {
+	row := q.db.QueryRow(ctx, createProposedTransaction,
+		arg.RealmID,
+		arg.SourceType,
+		arg.RawAmount,
+		arg.RawDate,
+		arg.RawDescription,
+		arg.PredictedVendorID,
+		arg.PredictedAccountID,
+		arg.ConfidenceScore,
+		arg.AiReasoning,
+		arg.SyncStatus,
+	)
+	var i ShadowErpProposedTransaction
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.SourceType,
+		&i.RawAmount,
+		&i.RawDate,
+		&i.RawDescription,
+		&i.PredictedVendorID,
+		&i.PredictedAccountID,
+		&i.ConfidenceScore,
+		&i.AiReasoning,
+		&i.QboTransactionID,
+		&i.SyncStatus,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getAccountByQBOID = `-- name: GetAccountByQBOID :one
 SELECT id, qbo_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, qbo_created_time, qbo_updated_time, current_balance, sub_account FROM shadow_erp.accounts
 WHERE realm_id = $1 AND qbo_id = $2
@@ -441,6 +500,54 @@ func (q *Queries) GetCustomersUpdatedSince(ctx context.Context, arg GetCustomers
 		return nil, err
 	}
 	return items, nil
+}
+
+const getProposedTransactionByValues = `-- name: GetProposedTransactionByValues :one
+
+SELECT id, realm_id, source_type, raw_amount, raw_date, raw_description, predicted_vendor_id, predicted_account_id, confidence_score, ai_reasoning, qbo_transaction_id, sync_status, error_message, created_at, updated_at FROM shadow_erp.proposed_transactions
+WHERE realm_id = $1
+  AND predicted_vendor_id = $2
+  AND raw_date = $3
+  AND raw_amount = $4
+LIMIT 1
+`
+
+type GetProposedTransactionByValuesParams struct {
+	RealmID           string
+	PredictedVendorID pgtype.UUID
+	RawDate           pgtype.Date
+	RawAmount         pgtype.Numeric
+}
+
+// =========================================================================
+// Transaction Proposal & Audit
+// =========================================================================
+func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetProposedTransactionByValuesParams) (ShadowErpProposedTransaction, error) {
+	row := q.db.QueryRow(ctx, getProposedTransactionByValues,
+		arg.RealmID,
+		arg.PredictedVendorID,
+		arg.RawDate,
+		arg.RawAmount,
+	)
+	var i ShadowErpProposedTransaction
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.SourceType,
+		&i.RawAmount,
+		&i.RawDate,
+		&i.RawDescription,
+		&i.PredictedVendorID,
+		&i.PredictedAccountID,
+		&i.ConfidenceScore,
+		&i.AiReasoning,
+		&i.QboTransactionID,
+		&i.SyncStatus,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getQBOConnection = `-- name: GetQBOConnection :one
@@ -960,6 +1067,29 @@ type UpdateLastWebhookVendorParams struct {
 
 func (q *Queries) UpdateLastWebhookVendor(ctx context.Context, arg UpdateLastWebhookVendorParams) error {
 	_, err := q.db.Exec(ctx, updateLastWebhookVendor, arg.RealmID, arg.LastWebhookVendor)
+	return err
+}
+
+const updateProposedTransactionSyncStatus = `-- name: UpdateProposedTransactionSyncStatus :exec
+UPDATE shadow_erp.proposed_transactions
+SET sync_status = $2, qbo_transaction_id = $3, error_message = $4, updated_at = NOW()
+WHERE id = $1
+`
+
+type UpdateProposedTransactionSyncStatusParams struct {
+	ID               pgtype.UUID
+	SyncStatus       pgtype.Text
+	QboTransactionID pgtype.Text
+	ErrorMessage     pgtype.Text
+}
+
+func (q *Queries) UpdateProposedTransactionSyncStatus(ctx context.Context, arg UpdateProposedTransactionSyncStatusParams) error {
+	_, err := q.db.Exec(ctx, updateProposedTransactionSyncStatus,
+		arg.ID,
+		arg.SyncStatus,
+		arg.QboTransactionID,
+		arg.ErrorMessage,
+	)
 	return err
 }
 

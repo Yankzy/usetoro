@@ -1,6 +1,7 @@
 package quickbooks
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ============================================================================
@@ -122,12 +126,91 @@ type ConditionResult struct {
 	Result      bool   `json:"result"`
 }
 
+// HumanReadableReason translates the MatchExplanation JSON trace into a human-readable string.
+func (m *MatchExplanation) HumanReadableReason() string {
+	if !m.FinalResult {
+		return ""
+	}
+
+	var reasons []string
+
+	// Format individual conditions
+	for _, c := range m.ConditionExp {
+		if c.Result {
+			reasons = append(reasons, formatConditionReason(c))
+		}
+	}
+
+	// Format child groups recursively
+	for _, child := range m.ChildrenExp {
+		if child.FinalResult {
+			// Extract just the "Because X or Y" part from the child
+			childReason := child.HumanReadableReason()
+			if strings.HasPrefix(childReason, "Categorized by Rule:") {
+				parts := strings.SplitN(childReason, "Because ", 2)
+				if len(parts) == 2 {
+					reasons = append(reasons, parts[1])
+				}
+			}
+		}
+	}
+
+	if len(reasons) == 0 {
+		return fmt.Sprintf("Categorized by Rule: %s.", m.GroupName)
+	}
+
+	joinWord := " and "
+	if strings.ToUpper(m.Logic) == "OR" {
+		joinWord = " or "
+	}
+
+	return fmt.Sprintf("Categorized by Rule: %s. Because %s.", m.GroupName, strings.Join(reasons, joinWord))
+}
+
+func formatConditionReason(c ConditionResult) string {
+	field := c.Field
+	val := c.TargetValue
+	if c.Field == "amount" {
+		val = "$" + val
+	}
+
+	switch c.Operator {
+	case string(OpEquals), string(OpEqualsCS):
+		return fmt.Sprintf("the %s was exactly '%s'", field, val)
+	case string(OpContains), string(OpContainsCS):
+		return fmt.Sprintf("the %s contained '%s'", field, val)
+	case string(OpStartsWith):
+		return fmt.Sprintf("the %s started with '%s'", field, val)
+	case string(OpEndsWith):
+		return fmt.Sprintf("the %s ended with '%s'", field, val)
+	case string(OpGt):
+		return fmt.Sprintf("the %s was greater than %s", field, val)
+	case string(OpGte):
+		return fmt.Sprintf("the %s was greater than or equal to %s", field, val)
+	case string(OpLt):
+		return fmt.Sprintf("the %s was less than %s", field, val)
+	case string(OpLte):
+		return fmt.Sprintf("the %s was less than or equal to %s", field, val)
+	case string(OpIsNull):
+		return fmt.Sprintf("the %s was empty", field)
+	case string(OpIsNotNull):
+		return fmt.Sprintf("the %s was not empty", field)
+	case string(OpIn):
+		return fmt.Sprintf("the %s was one of %s", field, val)
+	case string(OpNotIn):
+		return fmt.Sprintf("the %s was not one of %s", field, val)
+	case string(OpRegex):
+		return fmt.Sprintf("the %s matched the pattern '%s'", field, val)
+	default:
+		return fmt.Sprintf("the %s matched '%s'", field, val)
+	}
+}
+
 // ============================================================================
 //  3. Management Logic (Validation & Auto-Keywords)
 // ============================================================================
 
-// Validate mirrors the Python 'clean()' method.
-// It checks for circular dependencies and malformed values.
+// Validate checks for circular dependencies and malformed values.
 func (g *RuleGroup) Validate() error {
 	// 1. Check Circular Dependency
 	if g.Parent != nil {
@@ -158,8 +241,7 @@ func (g *RuleGroup) Validate() error {
 	return nil
 }
 
-// DeriveKeywords mirrors the Python '_derive_keywords_from_conditions'.
-// It scans conditions to auto-generate search tokens.
+// DeriveKeywords scans conditions to auto-generate search tokens.
 func (g *RuleGroup) DeriveKeywords() string {
 	uniqueKeywords := make(map[string]struct{})
 
@@ -318,7 +400,12 @@ func keywordsMatch(ruleKw string, txTokens map[string]struct{}) bool {
 //  5. Evaluation Logic (The Engine)
 // ============================================================================
 
-func (g *RuleGroup) Evaluate(tx Transaction) (bool, MatchExplanation) {
+// Evaluate runs the transaction through the rule group and its conditions.
+// The queries interface is optional (can be nil); if provided, it will save
+// the match explanation to the shadow_erp.rule_audit_logs database table.
+func (g *RuleGroup) Evaluate(ctx context.Context, tx Transaction, queries interface {
+	CreateRuleAuditLog(context.Context, database.CreateRuleAuditLogParams) (database.ShadowErpRuleAuditLog, error)
+}) (bool, MatchExplanation) {
 	exp := MatchExplanation{
 		GroupID:      g.ID,
 		GroupName:    g.Name,
@@ -344,7 +431,7 @@ func (g *RuleGroup) Evaluate(tx Transaction) (bool, MatchExplanation) {
 		if !child.Active {
 			continue
 		}
-		pass, childExp := child.Evaluate(tx)
+		pass, childExp := child.Evaluate(ctx, tx, nil) // Don't persist child evaluations duplicating inserts
 		exp.ChildrenExp = append(exp.ChildrenExp, childExp)
 		results = append(results, pass)
 	}
@@ -352,10 +439,7 @@ func (g *RuleGroup) Evaluate(tx Transaction) (bool, MatchExplanation) {
 	// 3. Final Logic
 	if len(results) == 0 {
 		exp.FinalResult = false
-		return false, exp
-	}
-
-	if g.Logic == LogicAnd {
+	} else if g.Logic == LogicAnd {
 		exp.FinalResult = true
 		for _, r := range results {
 			if !r {
@@ -369,6 +453,38 @@ func (g *RuleGroup) Evaluate(tx Transaction) (bool, MatchExplanation) {
 			if r {
 				exp.FinalResult = true
 				break
+			}
+		}
+	}
+
+	// 4. Save Execution Log to Database
+	if queries != nil && g.Parent == nil { // Only persist at the top-level
+		if matchInfoJSON, err := json.Marshal(exp); err == nil {
+
+			var txUUID pgtype.UUID
+			if tx.ID != "" {
+				txUUID.Scan(tx.ID)
+			}
+
+			var ruleGroupID pgtype.Int4
+			if exp.FinalResult {
+				ruleGroupID.Scan(int32(g.ID))
+			}
+
+			// We launch this in a goroutine (or could be synchronous depending on needs)
+			// For safety within a request lifecycle, synchronous is usually safer unless
+			// we pass a detached background context.
+			_, persistErr := queries.CreateRuleAuditLog(context.Background(), database.CreateRuleAuditLogParams{
+				RealmID:             tx.EntityID, // EntityID in Transaction maps to RealmID in QBO context
+				TransactionID:       txUUID,
+				RuleGroupID:         ruleGroupID,
+				Matched:             exp.FinalResult,
+				MatchInfo:           matchInfoJSON,
+				HumanReadableReason: exp.HumanReadableReason(),
+			})
+			if persistErr != nil {
+				// We don't fail the transaction evaluation if logging fails
+				fmt.Printf("Warning: failed to insert rule audit log: %v\n", persistErr)
 			}
 		}
 	}

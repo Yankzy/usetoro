@@ -53,6 +53,34 @@ input LoginInput {
   password: String!
 }
 
+input CreateQboAccountInput {
+  realmId: ID!
+  name: String!
+  accountType: String!
+  accountSubType: String
+  classification: String
+  description: String
+  active: Boolean
+  subAccount: Boolean
+  parentRefValue: String
+  currencyRefValue: String
+}
+
+input UpdateQboAccountInput {
+  realmId: ID!
+  accountId: ID!
+  name: String
+  accountType: String
+  accountSubType: String
+  description: String
+  active: Boolean
+}
+
+input SoftDeleteQboAccountInput {
+  realmId: ID!
+  accountId: ID!
+}
+
 type Mutation {
   signup(input: SignupInput!): AuthPayload!
   login(input: LoginInput!): AuthPayload!
@@ -62,6 +90,10 @@ type Mutation {
   deleteToken(refreshToken: String!): Boolean!
   recordCorrection(input: RecordCorrectionInput!): Boolean!
   syncQboChartOfAccounts(realmId: ID!): Int!
+  
+  createQboAccount(input: CreateQboAccountInput!): Account!
+  updateQboAccount(input: UpdateQboAccountInput!): Account!
+  softDeleteQboAccount(input: SoftDeleteQboAccountInput!): Account!
 }
 
 type AccountMatch {

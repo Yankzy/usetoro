@@ -299,6 +299,13 @@ func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) 
 	return client, nil
 }
 
+// ClientForRealm returns an authenticated QBO client for the given realmID.
+// Exposed so that higher-level services (e.g. accounting.TransactionService)
+// can obtain a client without being tightly coupled to QBOConnector internals.
+func (c *QBOConnector) ClientForRealm(ctx context.Context, realmID string) (*quickbooks.Client, error) {
+	return c.getClient(ctx, "", realmID)
+}
+
 // SyncCDC performs a CDC (Change Data Capture) sync for the specified realm.
 // This fetches all entities that have changed since the last sync and upserts them to the shadow DB.
 // Optimization: Uses event-driven timestamps (last successful webhook) per entity type instead of fixed schedule.
@@ -450,6 +457,65 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 	}
 
 	return nil
+}
+
+// CreateAccount creates an account in QBO and upserts it to the shadow DB.
+func (c *QBOConnector) CreateAccount(ctx context.Context, tenantID, realmID string, account *quickbooks.Account) (*quickbooks.Account, error) {
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return nil, err
+	}
+
+	createdAccount, err := client.CreateAccount(account)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create account in QBO: %w", err)
+	}
+
+	if err := c.upsertEntity(ctx, realmID, "Account", createdAccount.Id, createdAccount); err != nil {
+		return nil, fmt.Errorf("failed to upsert created account to shadow db: %w", err)
+	}
+
+	return createdAccount, nil
+}
+
+// UpdateAccount updates an account in QBO using sparse fields and upserts it to the shadow DB.
+func (c *QBOConnector) UpdateAccount(ctx context.Context, tenantID, realmID string, account *quickbooks.Account) (*quickbooks.Account, error) {
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return nil, err
+	}
+
+	updatedAccount, err := client.UpdateAccount(account)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update account in QBO: %w", err)
+	}
+
+	if err := c.upsertEntity(ctx, realmID, "Account", updatedAccount.Id, updatedAccount); err != nil {
+		return nil, fmt.Errorf("failed to upsert updated account to shadow db: %w", err)
+	}
+
+	return updatedAccount, nil
+}
+
+// SoftDeleteAccount soft deletes an account in QBO (sets active to false) and updates the shadow DB.
+func (c *QBOConnector) SoftDeleteAccount(ctx context.Context, tenantID, realmID string, id string) (*quickbooks.Account, error) {
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return nil, err
+	}
+
+	deactivatedAccount, err := client.DeactivateAccount(id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deactivate account in QBO: %w", err)
+	}
+
+	if err := c.upsertEntity(ctx, realmID, "Account", deactivatedAccount.Id, deactivatedAccount); err != nil {
+		c.logger.Error("failed to upsert deactivated account to shadow db, using local soft delete", "error", err)
+		// Fallback to local soft delete if full upsert fails
+		c.softDeleteEntity(ctx, realmID, "Account", id)
+	}
+
+	return deactivatedAccount, nil
 }
 
 // SyncFullChartOfAccounts performs a full Chart of Accounts sync for the specified realm.

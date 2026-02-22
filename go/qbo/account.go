@@ -167,3 +167,34 @@ func (c *Client) UpdateAccount(account *Account) (*Account, error) {
 
 	return &accountData.Account, err
 }
+
+// DeactivateAccount cleanly soft deletes an account (sets active to false).
+// We use a map payload to bypass the omitempty behavior on boolean fields.
+func (c *Client) DeactivateAccount(id string) (*Account, error) {
+	if id == "" {
+		return nil, errors.New("missing account id")
+	}
+
+	existingAccount, err := c.FindAccountById(id)
+	if err != nil {
+		return nil, err
+	}
+
+	payload := map[string]interface{}{
+		"Id":        id,
+		"SyncToken": existingAccount.SyncToken,
+		"Active":    false,
+		"sparse":    true,
+	}
+
+	var accountData struct {
+		Account Account
+		Time    Date
+	}
+
+	if err = c.post("account", payload, &accountData, nil); err != nil {
+		return nil, err
+	}
+
+	return &accountData.Account, err
+}

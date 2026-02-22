@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/sony/gobreaker"
 	"golang.org/x/oauth2"
+	"golang.org/x/time/rate"
 )
 
 // Client is your handle to the QuickBooks API.
@@ -31,6 +34,12 @@ type Client struct {
 	realmId string
 	// Flag set if the limit of 500req/s has been hit (source: https://developer.intuit.com/app/developer/qbo/docs/learn/rest-api-features#limits-and-throttles)
 	throttled bool
+	// Rate Limiter
+	limiter *rate.Limiter
+	// Concurrency limiter
+	concurrencySem chan struct{}
+	// Circuit breaker
+	breaker *gobreaker.CircuitBreaker
 }
 
 // TokenUpdatedFunc is a callback that is triggered when the token is refreshed.
@@ -43,11 +52,30 @@ func NewClient(clientId string, clientSecret string, realmId string, isProductio
 	}
 
 	client := Client{
-		clientId:     clientId,
-		clientSecret: clientSecret,
-		minorVersion: minorVersion,
-		realmId:      realmId,
-		throttled:    false,
+		clientId:       clientId,
+		clientSecret:   clientSecret,
+		minorVersion:   minorVersion,
+		realmId:        realmId,
+		throttled:      false,
+		limiter:        rate.NewLimiter(rate.Limit(8.0), 10), // ~500/min approx 8.3/s
+		concurrencySem: make(chan struct{}, 10),              // 10 concurrent requests max
+		breaker: gobreaker.NewCircuitBreaker(gobreaker.Settings{
+			Name:        fmt.Sprintf("QBO-API-%s", realmId),
+			MaxRequests: 5,
+			Interval:    1 * time.Minute,
+			Timeout:     30 * time.Second,
+			IsSuccessful: func(err error) bool {
+				if err == nil {
+					return true
+				}
+				// Application errors shouldn't trip the breaker
+				return IsQBOApplicationError(err)
+			},
+			ReadyToTrip: func(counts gobreaker.Counts) bool {
+				failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+				return counts.Requests >= 5 && failureRatio >= 0.6 // 60% failure rate over 5+ reqs
+			},
+		}),
 	}
 
 	var endpoint string
@@ -172,29 +200,49 @@ func (c *Client) req(method string, endpoint string, payloadData interface{}, re
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Content-Type", "application/json")
 
-	// Client.Do will automatically refresh token if needed due to ReuseTokenSource
-	resp, err := c.Client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to make request: %v", err)
+	// Enforce Rate Limit and Concurrency
+	if err := c.limiter.Wait(context.Background()); err != nil {
+		return fmt.Errorf("rate limiter wait failed: %v", err)
 	}
 
-	defer resp.Body.Close()
+	c.concurrencySem <- struct{}{}
+	defer func() { <-c.concurrencySem }()
 
-	switch resp.StatusCode {
-	case http.StatusOK:
-		break
-	case http.StatusTooManyRequests:
-		c.throttled = true
-		go func(c *Client) {
-			time.Sleep(1 * time.Minute)
-			c.throttled = false
-		}(c)
-	default:
-		return parseFailure(resp)
+	executeRes, breakerErr := c.breaker.Execute(func() (interface{}, error) {
+		// Client.Do will automatically refresh token if needed due to ReuseTokenSource
+		resp, err := c.Client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to make request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		switch resp.StatusCode {
+		case http.StatusOK:
+			bodyBytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			return bodyBytes, nil
+		case http.StatusTooManyRequests:
+			c.throttled = true
+			go func(c *Client) {
+				time.Sleep(1 * time.Minute)
+				c.throttled = false
+			}(c)
+			return nil, errors.New("rate limited by QBO")
+		default:
+			// parseFailure reads from resp.Body
+			return nil, parseFailure(resp)
+		}
+	})
+
+	if breakerErr != nil {
+		return breakerErr
 	}
 
+	bodyBytes := executeRes.([]byte)
 	if responseObject != nil {
-		if err = json.NewDecoder(resp.Body).Decode(&responseObject); err != nil {
+		if err = json.Unmarshal(bodyBytes, &responseObject); err != nil {
 			return fmt.Errorf("failed to unmarshal response into object: %v", err)
 		}
 	}

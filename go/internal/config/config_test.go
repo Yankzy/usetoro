@@ -11,6 +11,7 @@ import (
 func TestLoad_Defaults(t *testing.T) {
 	// Setup: ensure no env vars interfere
 	os.Unsetenv("PORT")
+	os.Unsetenv("AI_THRESHOLD")
 
 	// Required fields
 	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
@@ -29,6 +30,26 @@ func TestLoad_Defaults(t *testing.T) {
 
 	assert.Equal(t, "8080", cfg.Port)
 	assert.Equal(t, "nats://test:4222", cfg.NATS.URL)
+	assert.InDelta(t, 0.75, cfg.AIThreshold, 1e-9, "AIThreshold should default to 0.75")
+}
+
+func TestLoad_AIThresholdEnvOverride(t *testing.T) {
+	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	dummyKey := "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="
+	os.Setenv("ENCRYPTION_KEY", dummyKey)
+	os.Setenv("NATS_URL", "nats://test:4222")
+	os.Setenv("AI_THRESHOLD", "0.85")
+
+	defer func() {
+		os.Unsetenv("DATABASE_URL")
+		os.Unsetenv("ENCRYPTION_KEY")
+		os.Unsetenv("NATS_URL")
+		os.Unsetenv("AI_THRESHOLD")
+	}()
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.InDelta(t, 0.85, cfg.AIThreshold, 1e-9)
 }
 
 func TestLoad_EnvOverrides(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/database"
+	quickbooks "github.com/Yankzy/usetoro/qbo"
 	"github.com/google/uuid"
 	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -356,6 +357,162 @@ func (r *mutationResolver) SyncQboChartOfAccounts(ctx context.Context, realmID s
 	return int32(count), nil
 }
 
+// CreateQboAccount is the resolver for the createQboAccount field.
+func (r *mutationResolver) CreateQboAccount(ctx context.Context, input model.CreateQboAccountInput) (*model.Account, error) {
+	qboConn, entityID, err := r.getQBOConnectorHelper(ctx, input.RealmID)
+	if err != nil {
+		return nil, err
+	}
+
+	qboAccount := &quickbooks.Account{
+		Name:        input.Name,
+		AccountType: input.AccountType,
+	}
+	if input.AccountSubType != nil {
+		qboAccount.AccountSubType = *input.AccountSubType
+	}
+	if input.Classification != nil {
+		qboAccount.Classification = *input.Classification
+	}
+	if input.Description != nil {
+		qboAccount.Description = *input.Description
+	}
+	if input.Active != nil {
+		qboAccount.Active = *input.Active
+	} else {
+		qboAccount.Active = true // QBO accounts are active by default
+	}
+	if input.SubAccount != nil {
+		qboAccount.SubAccount = *input.SubAccount
+	}
+	if input.ParentRefValue != nil {
+		qboAccount.ParentRef = quickbooks.ReferenceType{Value: *input.ParentRefValue}
+	}
+	if input.CurrencyRefValue != nil {
+		qboAccount.CurrencyRef = quickbooks.ReferenceType{Value: *input.CurrencyRefValue}
+	}
+
+	created, err := qboConn.CreateAccount(ctx, entityID.String(), input.RealmID, qboAccount)
+	if err != nil {
+		r.Logger.Error("Failed to create QBO account", "error", err, "realm_id", input.RealmID)
+		return nil, fmt.Errorf("failed to create account")
+	}
+
+	// Fetch from DB to return
+	dbAccount, err := r.Store.Queries.GetAccountByQBOID(ctx, database.GetAccountByQBOIDParams{
+		RealmID: input.RealmID,
+		QboID:   created.Id,
+	})
+	if err != nil {
+		r.Logger.Error("Failed to fetch created QBO account from shadow db", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	return mapDatabaseAccountToModel(&dbAccount), nil
+}
+
+// UpdateQboAccount is the resolver for the updateQboAccount field.
+func (r *mutationResolver) UpdateQboAccount(ctx context.Context, input model.UpdateQboAccountInput) (*model.Account, error) {
+	qboConn, entityID, err := r.getQBOConnectorHelper(ctx, input.RealmID)
+	if err != nil {
+		return nil, err
+	}
+
+	uid, err := uuid.Parse(input.AccountID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid account id format")
+	}
+
+	var qboID string
+	err = r.DB.QueryRow(ctx, "SELECT qbo_id FROM shadow_erp.accounts WHERE id = $1 AND realm_id = $2 AND deleted_at IS NULL", uid, input.RealmID).Scan(&qboID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("account not found")
+		}
+		r.Logger.Error("Failed to fetch QBO ID for account", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	qboAccount := &quickbooks.Account{
+		Id: qboID,
+	}
+	if input.Name != nil {
+		qboAccount.Name = *input.Name
+	}
+	if input.AccountType != nil {
+		qboAccount.AccountType = *input.AccountType
+	}
+	if input.AccountSubType != nil {
+		qboAccount.AccountSubType = *input.AccountSubType
+	}
+	if input.Description != nil {
+		qboAccount.Description = *input.Description
+	}
+	if input.Active != nil {
+		qboAccount.Active = *input.Active
+	} else {
+		// Do not set false, UpdateAccount uses sparse which omits false unless explicitly sent.
+		// Wait, omitempty on Active bool means we can't send Active: false here.
+		// That's why we have DeactivateAccount for explicitly setting active=false.
+		// For update, if Active is true, we set it. The user shouldn't pass false to Update if we have SoftDelete!
+	}
+
+	updated, err := qboConn.UpdateAccount(ctx, entityID.String(), input.RealmID, qboAccount)
+	if err != nil {
+		r.Logger.Error("Failed to update QBO account", "error", err, "realm_id", input.RealmID)
+		return nil, err
+	}
+
+	dbAccount, err := r.Store.Queries.GetAccountByQBOID(ctx, database.GetAccountByQBOIDParams{
+		RealmID: input.RealmID,
+		QboID:   updated.Id,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch updated account")
+	}
+
+	return mapDatabaseAccountToModel(&dbAccount), nil
+}
+
+// SoftDeleteQboAccount is the resolver for the softDeleteQboAccount field.
+func (r *mutationResolver) SoftDeleteQboAccount(ctx context.Context, input model.SoftDeleteQboAccountInput) (*model.Account, error) {
+	qboConn, entityID, err := r.getQBOConnectorHelper(ctx, input.RealmID)
+	if err != nil {
+		return nil, err
+	}
+
+	uid, err := uuid.Parse(input.AccountID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid account id format")
+	}
+
+	var qboID string
+	err = r.DB.QueryRow(ctx, "SELECT qbo_id FROM shadow_erp.accounts WHERE id = $1 AND realm_id = $2", uid, input.RealmID).Scan(&qboID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("account not found")
+		}
+		r.Logger.Error("Failed to fetch QBO ID for account", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	deactivated, err := qboConn.SoftDeleteAccount(ctx, entityID.String(), input.RealmID, qboID)
+	if err != nil {
+		r.Logger.Error("Failed to deactivate QBO account", "error", err, "realm_id", input.RealmID)
+		return nil, err
+	}
+
+	dbAccount, err := r.Store.Queries.GetAccountByQBOID(ctx, database.GetAccountByQBOIDParams{
+		RealmID: input.RealmID,
+		QboID:   deactivated.Id,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch deactivated account")
+	}
+
+	return mapDatabaseAccountToModel(&dbAccount), nil
+}
+
 // User is the resolver for the user field.
 func (r *queryResolver) User(ctx context.Context) (*model.User, error) {
 	// Extract userID from context (requires auth middleware)
@@ -474,108 +631,7 @@ func (r *queryResolver) QboAccount(ctx context.Context, realmID string) ([]*mode
 
 	var modelAccounts []*model.Account
 	for _, a := range accounts {
-		// Handle nil pointers for optional fields
-		var classification *string
-		if a.Classification.Valid {
-			classification = &a.Classification.String
-		}
-
-		var accountType *string
-		if a.AccountType != "" {
-			t := a.AccountType
-			accountType = &t
-		}
-
-		var accountSubType *string
-		if a.AccountSubType.Valid {
-			accountSubType = &a.AccountSubType.String
-		}
-
-		var fullyQualifiedName *string
-		if a.FullyQualifiedName.Valid {
-			fullyQualifiedName = &a.FullyQualifiedName.String
-		}
-
-		var active *bool
-		if a.Active.Valid {
-			active = &a.Active.Bool
-		}
-
-		var deletedAt *time.Time
-		if a.DeletedAt.Valid {
-			deletedAt = &a.DeletedAt.Time
-		}
-
-		var domain *string
-		if a.Domain.Valid {
-			domain = &a.Domain.String
-		}
-
-		var currencyRefName *string
-		if a.CurrencyRefName.Valid {
-			currencyRefName = &a.CurrencyRefName.String
-		}
-
-		var currencyRefValue *string
-		if a.CurrencyRefValue.Valid {
-			currencyRefValue = &a.CurrencyRefValue.String
-		}
-
-		var currentBalanceWithSubAccounts *float64
-		if a.CurrentBalanceWithSubAccounts.Valid {
-			v, _ := a.CurrentBalanceWithSubAccounts.Float64Value()
-			currentBalanceWithSubAccounts = &v.Float64
-		}
-
-		var sparse *bool
-		if a.Sparse.Valid {
-			sparse = &a.Sparse.Bool
-		}
-
-		var qboCreatedTime *time.Time
-		if a.QboCreatedTime.Valid {
-			qboCreatedTime = &a.QboCreatedTime.Time
-		}
-
-		var qboUpdatedTime *time.Time
-		if a.QboUpdatedTime.Valid {
-			qboUpdatedTime = &a.QboUpdatedTime.Time
-		}
-
-		var currentBalance *float64
-		if a.CurrentBalance.Valid {
-			v, _ := a.CurrentBalance.Float64Value()
-			currentBalance = &v.Float64
-		}
-
-		var subAccount *bool
-		if a.SubAccount.Valid {
-			subAccount = &a.SubAccount.Bool
-		}
-
-		modelAccounts = append(modelAccounts, &model.Account{
-			ID:                            uuid.UUID(a.ID.Bytes).String(),
-			RealmID:                       a.RealmID,
-			Name:                          a.Name,
-			Classification:                classification,
-			AccountType:                   accountType,
-			AccountSubType:                accountSubType,
-			FullyQualifiedName:            fullyQualifiedName,
-			Active:                        active,
-			SyncToken:                     a.SyncToken,
-			Domain:                        domain,
-			CurrencyRefName:               currencyRefName,
-			CurrencyRefValue:              currencyRefValue,
-			CurrentBalanceWithSubAccounts: currentBalanceWithSubAccounts,
-			Sparse:                        sparse,
-			QboCreatedTime:                qboCreatedTime,
-			QboUpdatedTime:                qboUpdatedTime,
-			CurrentBalance:                currentBalance,
-			SubAccount:                    subAccount,
-			CreatedAt:                     a.CreatedAt.Time,
-			UpdatedAt:                     a.UpdatedAt.Time,
-			DeletedAt:                     deletedAt,
-		})
+		modelAccounts = append(modelAccounts, mapDatabaseAccountToModel(&a))
 	}
 
 	return modelAccounts, nil
@@ -639,3 +695,5 @@ func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 
 type mutationResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
+
+// getQBOConnectorHelper initializes the QBO connector after validating the user

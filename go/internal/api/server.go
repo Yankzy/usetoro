@@ -8,7 +8,9 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/ingest"
+	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -42,7 +44,10 @@ func NewServer(
 	// Future HMAC-based providers can be registered similarly:
 	// registry.Register(NewHMACVerifier("plaid", "x-plaid-signature", crypto.SHA256))
 
-	h := NewHandler(logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig, authenticator, redisClient) // Passed redisClient to NewHandler
+	connector := connectors.NewQBOConnector(logger, cfg, st, nil)
+	reconciler := accounting.NewReconciliationService(logger, st.Queries, connector.ClientForRealm)
+
+	h := NewHandler(logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig, authenticator, redisClient, st.Queries, reconciler)
 	mux := NewRouter(h)
 
 	srv := &http.Server{

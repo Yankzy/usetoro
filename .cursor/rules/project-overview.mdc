@@ -1,0 +1,43 @@
+---
+description: Toro platform architecture and stack overview — financial SaaS backend
+alwaysApply: true
+---
+
+# Toro Platform Overview
+
+## Stack
+
+- **Language**: Go 1.25 (primary), Python (NATS worker)
+- **APIs**: GraphQL (gqlgen), REST (net/http with Go 1.22+ routing)
+- **Database**: PostgreSQL 18 (TimescaleDB), accessed via **sqlc** (type-safe SQL → Go)
+- **Migrations**: Goose (sequential SQL in `sql/schema/`)
+- **Messaging**: NATS JetStream (3-node cluster, at-least-once delivery)
+- **Cache**: Ristretto (in-memory L1, 100MB) + Redis (distributed L2, revocation)
+- **Auth**: Ed25519 JWT, Argon2id password hashing, Redis token blacklist
+- **AI/ML**: OpenAI embeddings → Pinecone vector DB
+- **Integrations**: QuickBooks Online, Plaid, Stripe
+- **Infra**: Docker Compose, Nginx reverse proxy, `toro-net` network
+
+## Repository Layout
+
+```
+go/cmd/          — Executable services (gate, graphql, ws, sync, cdc-worker, protocol, analytics)
+go/internal/     — Private packages (auth, api, store, database, queue, services, config, resilience)
+go/qbo/          — QuickBooks Online client
+tap/             — Toro Agent Protocol submodule (separate go.mod)
+sql/schema/      — Goose migration files
+sql/queries/     — sqlc query definitions
+container/       — Dockerfiles and docker-compose configs
+python-worker/   — Python NATS subscriber
+```
+
+## Multi-Tenancy Model
+
+Hierarchical entity tree: `Apex CPA → Sub CPA → Client`. Row-Level Security enforced via `SET LOCAL app.current_entity` in transactions. Entity descendant tree resolved once per request, passed as `authorized_entity_ids` to queries.
+
+## Key Commands
+
+- `make up` — start dev stack
+- `make sqlc` — regenerate sqlc + run migrations
+- `make test` — `go test ./...`
+- `make migrate` — run Goose migrations

@@ -90,6 +90,7 @@ type Mutation {
   deleteToken(refreshToken: String!): Boolean!
   recordCorrection(input: RecordCorrectionInput!): Boolean!
   syncQboChartOfAccounts(realmId: ID!): Int!
+  syncQboCustomers(realmId: ID!): Int!
   
   createQboAccount(input: CreateQboAccountInput!): Account!
   updateQboAccount(input: UpdateQboAccountInput!): Account!
@@ -130,14 +131,42 @@ type TenantConnection {
   pageInfo: PageInfo!
 }
 
+type Vendor {
+  id: ID!
+  realmId: String!
+  qboId: String!
+  displayName: String!
+  syncToken: String!
+  lastKnownAccountId: String
+  createdAt: Time!
+  updatedAt: Time!
+  deletedAt: Time
+}
+
 type Query {
   user: User
   qboConnection: QBOCompany
   suggestAccounts(description: String!): [AccountMatch!]!
   resolveEntity(entityType: String!, name: String!): EntityMatch
   qbo_account(realmId: ID!): [Account!]!
+  qboCustomers(realmId: ID!): [Customer!]!
+  qboCustomersByTenant(tenantId: ID!, includeChildren: Boolean = false): [Customer!]!
   # Protected: Requires authentication token
   tenants(limit: Int!, offset: Int!): TenantConnection!
+  # Vendors: by realm, by single entity, or by tenant tree (including children)
+  qboVendors(realmId: ID!): [Vendor!]!
+  qboVendorsByEntity(entityId: ID!): [Vendor!]!
+  qboVendorsByTenant(tenantId: ID!): [Vendor!]!
+}
+
+type Customer {
+  id: ID!
+  realmId: String!
+  displayName: String!
+  syncToken: String!
+  createdAt: Time!
+  updatedAt: Time!
+  deletedAt: Time
 }
 
 type Account {

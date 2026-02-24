@@ -1,0 +1,60 @@
+---
+description: GraphQL API patterns using gqlgen
+globs: "{**/graph/**/*.go,**/*.graphqls,**/dataloader/**/*.go}"
+alwaysApply: false
+---
+
+# GraphQL Conventions (gqlgen)
+
+## File Layout
+
+```
+cmd/graphql/
+  server.go              — HTTP server setup, middleware chain
+  graph/
+    schema.graphqls      — Schema definition (single file)
+    resolver.go          — Resolver struct with dependencies (hand-edited)
+    schema.resolvers.go  — Resolver implementations (gqlgen regenerates scaffold)
+    generated.go         — DO NOT EDIT (gqlgen output)
+    helpers.go           — Shared helpers (hashing, token generation)
+    model/models_gen.go  — DO NOT EDIT (gqlgen output)
+  dataloader/
+    dataloaders.go       — Loader registry
+    middleware.go        — Dataloader injection middleware
+    *loader.go           — Individual loader implementations
+```
+
+## Resolver Pattern
+
+- The `Resolver` struct holds all dependencies (DB pool, Redis, Store, Logger, keys)
+- Resolvers extract auth claims from context — never trust client input for identity
+- Use `auth.UserIDKey`, `auth.EntityIDKey`, `auth.RoleKey` context keys
+
+```go
+userID, ok := ctx.Value(auth.UserIDKey).(uuid.UUID)
+if !ok {
+    return nil, fmt.Errorf("unauthorized")
+}
+```
+
+## N+1 Prevention
+
+Use dataloaders for any field that resolves a related entity. Loader pattern:
+
+```go
+loader := dataloader.For(ctx).UserLoader
+thunk := loader.Load(ctx, dataloader.StringKey(id))
+result, err := thunk()
+```
+
+## Middleware Chain
+
+`Auth → RBAC → Dataloader → GraphQL Handler`
+
+Auth middleware is non-blocking — it injects claims if valid, skips if missing. Protected resolvers check for claims presence. Public resolvers (login, signup, introspection) work without auth.
+
+## Error Handling
+
+- Return `fmt.Errorf("internal server error")` for user-facing errors
+- Log actual errors with `r.Logger.Error(...)` before returning
+- Never leak internal details (DB errors, stack traces) to the client

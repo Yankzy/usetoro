@@ -80,7 +80,7 @@ func TestExtractParamsTask(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/?code="+tc.code+"&realmId="+tc.realmID+"&state="+tc.state, nil)
 			w := httptest.NewRecorder()
 
-			handler := NewHandler(logger, nil, nil, nil, 0, nil, authenticator, nil)
+			handler := NewHandler(logger, nil, nil, nil, 0, nil, authenticator, nil, nil, nil)
 			ctx := &OAuthContext{
 				Request:  req,
 				Response: w,

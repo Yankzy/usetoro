@@ -1,0 +1,50 @@
+---
+description: Docker, deployment, and infrastructure conventions
+globs: "{**/container/**,**/Dockerfile,**/docker-compose*.yml,Makefile}"
+alwaysApply: false
+---
+
+# Infrastructure Conventions
+
+## Docker Services
+
+All services run in Docker Compose on the `toro-net` network:
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| gate | 8080 | Webhook ingress (REST) |
+| graphql | 8082 | GraphQL API |
+| ws | 8081 | WebSocket server |
+| sync | — | QBO/Plaid background sync |
+| cdc-worker | — | Change Data Capture |
+| protocol | — | Agent protocol service |
+| python-worker | — | Python NATS subscriber |
+| nginx | 80 | Reverse proxy |
+| db | 5435 | PostgreSQL (TimescaleDB) |
+| redis | 6380 | Cache + token blacklist |
+| nats-1/2/3 | — | JetStream cluster |
+
+## Docker Compose
+
+- `container/docker-compose.yml` — development
+- `container/docker-compose.prod.yml` — production overrides
+- `ENVIRONMENT` determined by `PRODUCTION_SERVER` env var
+
+## Build & Deploy
+
+- `make build` — build all service images
+- `make up` — start dev stack (creates `toro-net` if missing)
+- `make deploy` — git-based deployment trigger
+- Each service has its own `container/<service>/Dockerfile`
+
+## Configuration
+
+- Viper reads `defaults.yaml` + environment variable overrides
+- Config struct validated at startup — fail fast on invalid config
+- Secrets (encryption keys, JWT keys) via env vars, never committed
+- Connection pool sizes, timeouts, and limits are configurable
+
+## Health Checks
+
+- `GET /health/live` — liveness probe (process running)
+- `GET /health/ready` — readiness probe (DB + NATS reachable)

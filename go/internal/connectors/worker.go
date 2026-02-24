@@ -195,9 +195,22 @@ func (w *Worker) processQBOConnected(msg *nats.Msg) {
 		return
 	}
 
-	_, err := qboConn.SyncFullChartOfAccounts(context.Background(), payload.EntityID, payload.RealmID)
-	if err != nil {
+	bgCtx := context.Background()
+
+	if err := qboConn.SyncCompanyInfo(bgCtx, payload.EntityID, payload.RealmID); err != nil {
+		w.logger.Error("Company info sync failed after QBO connect", "error", err, "realm_id", payload.RealmID)
+		msg.Nak()
+		return
+	}
+
+	if _, err := qboConn.SyncFullChartOfAccounts(bgCtx, payload.EntityID, payload.RealmID); err != nil {
 		w.logger.Error("Full CoA sync failed after QBO connect", "error", err, "realm_id", payload.RealmID)
+		msg.Nak()
+		return
+	}
+
+	if _, err := qboConn.SyncFullCustomers(bgCtx, payload.EntityID, payload.RealmID); err != nil {
+		w.logger.Error("Full Customers sync failed after QBO connect", "error", err, "realm_id", payload.RealmID)
 		msg.Nak()
 		return
 	}

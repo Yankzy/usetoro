@@ -39,25 +39,18 @@ func NewQBOConnector(logger *slog.Logger, cfg *config.Config, store *store.Store
 }
 
 func (c *QBOConnector) Fetch(ctx context.Context, tenantID string) error {
-	c.logger.Info("📊 QBO Fetching data...", "tenant_id", tenantID)
-
-	client, err := c.getClient(ctx, tenantID, "")
-	if err != nil {
-		return err
+	if err := c.SyncCompanyInfo(ctx, tenantID, ""); err != nil {
+		return fmt.Errorf("fetch company info: %w", err)
 	}
-
-	c.logger.Info("✅ QBO Client initialized", "endpoint", client.GetEndpoint())
-
-	// 4. Fetch the data (Placeholder)
-	//In a real scenario, we would use 'client' to fetch data.
-	companyInfo, err := client.FindCompanyInfo()
-	if err != nil {
-		// Log error but don't fail the whole sync? Or fail?
-		// For now, let's just log and return error
-		return fmt.Errorf("failed to fetch company info: %w", err)
+	if _, err := c.SyncFullChartOfAccounts(ctx, tenantID, ""); err != nil {
+		return fmt.Errorf("fetch CoA: %w", err)
 	}
-	c.logger.Info("🏢 Company Info", "company_name", companyInfo.CompanyName)
-
+	if _, err := c.SyncFullCustomers(ctx, tenantID, ""); err != nil {
+		return fmt.Errorf("fetch customers: %w", err)
+	}
+	if _, err := c.SyncFullVendors(ctx, tenantID, ""); err != nil {
+		return fmt.Errorf("fetch vendors: %w", err)
+	}
 	return nil
 }
 
@@ -152,7 +145,10 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 	}
 
 	// 5. Upsert to shadow DB
-	return c.upsertEntity(ctx, realmID, entityType, entityID, entityData)
+	if err := c.upsertEntity(ctx, realmID, entityType, entityID, entityData); err != nil {
+		return err
+	}
+	return c.updateLastWebhookTime(ctx, realmID, entityType, time.Now())
 }
 
 // softDeleteEntity marks an entity as deleted in the shadow DB using sqlc
@@ -233,13 +229,14 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 
 	case "Vendor":
 		vendor := data.(*quickbooks.Vendor)
+		apAcct := vendor.APAccountRef.Value
 		err = c.store.Queries.UpsertVendor(ctx, database.UpsertVendorParams{
 			QboID:                 vendor.Id,
 			RealmID:               realmID,
 			DisplayName:           vendor.DisplayName,
 			SyncToken:             vendor.SyncToken,
-			LastKnownAccountQboID: pgtype.Text{String: "", Valid: false}, // TODO: extract from QBO data
-			AiSynonyms:            nil,                                   // TODO: generate from company name variants
+			LastKnownAccountQboID: pgtype.Text{String: apAcct, Valid: apAcct != ""},
+			AiSynonyms:            nil,
 		})
 
 	case "Customer":
@@ -264,10 +261,10 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 			RealmID:       realmID,
 			CustomerQboID: pgtype.Text{String: customerID, Valid: customerID != ""},
 			DocNumber:     pgtype.Text{String: invoice.DocNumber, Valid: invoice.DocNumber != ""},
-			TotalAmount:   pgtype.Numeric{}, // TODO: convert json.Number to pgtype.Numeric
-			Balance:       pgtype.Numeric{}, // TODO: convert json.Number to pgtype.Numeric
-			DueDate:       pgtype.Date{},    // TODO: parse date
-			TxnDate:       pgtype.Date{},    // TODO: parse date
+			TotalAmount:   jsonNumberToNumeric(invoice.TotalAmt),
+			Balance:       jsonNumberToNumeric(invoice.Balance),
+			DueDate:       pgtype.Date{Time: invoice.DueDate.Time, Valid: !invoice.DueDate.IsZero()},
+			TxnDate:       pgtype.Date{Time: invoice.TxnDate.Time, Valid: !invoice.TxnDate.IsZero()},
 			SyncToken:     invoice.SyncToken,
 		})
 
@@ -284,10 +281,10 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 			RealmID:     realmID,
 			VendorQboID: pgtype.Text{String: vendorID, Valid: vendorID != ""},
 			DocNumber:   pgtype.Text{String: bill.DocNumber, Valid: bill.DocNumber != ""},
-			TotalAmount: pgtype.Numeric{}, // TODO: convert json.Number to pgtype.Numeric
-			Balance:     pgtype.Numeric{}, // TODO: convert json.Number to pgtype.Numeric
-			DueDate:     pgtype.Date{},    // TODO: parse date
-			TxnDate:     pgtype.Date{},    // TODO: parse date
+			TotalAmount: jsonNumberToNumeric(bill.TotalAmt),
+			Balance:     jsonNumberToNumeric(bill.Balance),
+			DueDate:     pgtype.Date{Time: bill.DueDate.Time, Valid: !bill.DueDate.IsZero()},
+			TxnDate:     pgtype.Date{Time: bill.TxnDate.Time, Valid: !bill.TxnDate.IsZero()},
 			SyncToken:   bill.SyncToken,
 		})
 
@@ -327,7 +324,7 @@ func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) 
 		c.cfg.QBOClientSecret,
 		realmID,
 		c.cfg.QBOIsProduction,
-		"",
+		c.cfg.QBOMinorVersion,
 		&quickbooks.BearerToken{
 			AccessToken:  accessToken,
 			RefreshToken: refreshToken,
@@ -616,6 +613,199 @@ func (c *QBOConnector) SyncFullChartOfAccounts(ctx context.Context, tenantID, re
 	return len(accounts), nil
 }
 
+// SyncFullCustomers performs a full Customer sync for the specified realm.
+// If realmID is empty, it is resolved from tenantID.
+func (c *QBOConnector) SyncFullCustomers(ctx context.Context, tenantID, realmID string) (int, error) {
+	if realmID == "" && tenantID != "" {
+		conn, err := c.store.GetQBOConnection(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get QBO connection for tenant %s: %w", tenantID, err)
+		}
+		realmID = conn.RealmID
+	}
+
+	if realmID == "" {
+		return 0, fmt.Errorf("realmID is required")
+	}
+
+	c.logger.Info("🔄 Running full Customers sync", "realm_id", realmID, "tenant_id", tenantID)
+
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return 0, err
+	}
+
+	customers, err := client.FindCustomers()
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch customers: %w", err)
+	}
+
+	if err := c.batchUpsertCustomers(ctx, realmID, customers); err != nil {
+		return 0, fmt.Errorf("failed to upsert customers: %w", err)
+	}
+
+	if c.vectorWorker != nil {
+		c.logger.Info("🤖 Triggering vector sync after full Customers sync", "realm_id", realmID)
+		go func() {
+			bgCtx := context.Background()
+			if err := c.vectorWorker.SyncRealm(bgCtx, realmID); err != nil {
+				c.logger.Error("Failed to sync vectors after full Customers sync", "error", err, "realm_id", realmID)
+			}
+		}()
+	}
+
+	c.logger.Info("✅ Full Customers sync completed", "realm_id", realmID, "count", len(customers))
+	return len(customers), nil
+}
+
+// SyncFullVendors performs a full vendor sync for the specified realm.
+// If realmID is empty, it is resolved from tenantID.
+func (c *QBOConnector) SyncFullVendors(ctx context.Context, tenantID, realmID string) (int, error) {
+	if realmID == "" && tenantID != "" {
+		conn, err := c.store.GetQBOConnection(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get QBO connection for tenant %s: %w", tenantID, err)
+		}
+		realmID = conn.RealmID
+	}
+
+	if realmID == "" {
+		return 0, fmt.Errorf("realmID is required")
+	}
+
+	c.logger.Info("🔄 Running full vendor sync", "realm_id", realmID, "tenant_id", tenantID)
+
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return 0, err
+	}
+
+	vendors, err := client.FindVendors()
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch vendors: %w", err)
+	}
+
+	if err := c.batchUpsertVendors(ctx, realmID, vendors); err != nil {
+		return 0, fmt.Errorf("failed to upsert vendors: %w", err)
+	}
+
+	if err := c.store.Queries.UpdateLastSyncTimestamp(ctx, database.UpdateLastSyncTimestampParams{
+		RealmID:           realmID,
+		LastSyncTimestamp: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		return 0, fmt.Errorf("failed to update last sync timestamp: %w", err)
+	}
+
+	if c.vectorWorker != nil {
+		c.logger.Info("🤖 Triggering vector sync after full vendor sync", "realm_id", realmID)
+		go func() {
+			bgCtx := context.Background()
+			if err := c.vectorWorker.SyncRealm(bgCtx, realmID); err != nil {
+				c.logger.Error("Failed to sync vectors after full vendor sync", "error", err, "realm_id", realmID)
+			}
+		}()
+	}
+
+	c.logger.Info("✅ Full vendor sync completed", "realm_id", realmID, "count", len(vendors))
+	return len(vendors), nil
+}
+
+// SyncCompanyInfo fetches the QBO CompanyInfo for the given realm and upserts it
+// into shadow_erp.company_info. It is lightweight (single API call, no pagination)
+// and should run at connection time and periodically via CDC.
+func (c *QBOConnector) SyncCompanyInfo(ctx context.Context, tenantID, realmID string) error {
+	if realmID == "" && tenantID != "" {
+		conn, err := c.store.GetQBOConnection(ctx, tenantID)
+		if err != nil {
+			return fmt.Errorf("failed to get QBO connection for tenant %s: %w", tenantID, err)
+		}
+		realmID = conn.RealmID
+	}
+	if realmID == "" {
+		return fmt.Errorf("realmID is required")
+	}
+
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return err
+	}
+
+	info, err := client.FindCompanyInfoContext(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch company info from QBO: %w", err)
+	}
+
+	// Marshal address and name-value blobs to JSONB
+	companyAddrJSON, err := json.Marshal(info.CompanyAddr)
+	if err != nil {
+		return fmt.Errorf("failed to marshal company_addr: %w", err)
+	}
+	legalAddrJSON, err := json.Marshal(info.LegalAddr)
+	if err != nil {
+		return fmt.Errorf("failed to marshal legal_addr: %w", err)
+	}
+	nameValuesJSON, err := json.Marshal(info.NameValue)
+	if err != nil {
+		return fmt.Errorf("failed to marshal name_values: %w", err)
+	}
+
+	phone := ""
+	if info.PrimaryPhone != nil {
+		phone = info.PrimaryPhone.FreeFormNumber
+	}
+	email := ""
+	if info.Email != nil {
+		email = info.Email.Address
+	}
+	webAddr := ""
+	if info.WebAddr != nil {
+		webAddr = info.WebAddr.URI
+	}
+
+	params := database.UpsertCompanyInfoParams{
+		RealmID:     realmID,
+		QboID:       info.Id,
+		SyncToken:   info.SyncToken,
+		CompanyName: info.CompanyName,
+		LegalName:   pgtype.Text{String: info.LegalName, Valid: info.LegalName != ""},
+		Domain:      pgtype.Text{String: info.Domain, Valid: info.Domain != ""},
+		Country:     pgtype.Text{String: info.Country, Valid: info.Country != ""},
+		FiscalYearStartMonth: pgtype.Text{
+			String: info.FiscalYearStartMonth,
+			Valid:  info.FiscalYearStartMonth != "",
+		},
+		CompanyStartDate: pgtype.Date{
+			Time:  info.CompanyStartDate.Time,
+			Valid: !info.CompanyStartDate.IsZero(),
+		},
+		SupportedLanguages: pgtype.Text{
+			String: info.SupportedLanguages,
+			Valid:  info.SupportedLanguages != "",
+		},
+		CompanyAddr:  companyAddrJSON,
+		LegalAddr:    legalAddrJSON,
+		PrimaryPhone: pgtype.Text{String: phone, Valid: phone != ""},
+		Email:        pgtype.Text{String: email, Valid: email != ""},
+		WebAddr:      pgtype.Text{String: webAddr, Valid: webAddr != ""},
+		NameValues:   nameValuesJSON,
+		QboCreatedTime: pgtype.Timestamptz{
+			Time:  info.Metadata.CreateTime.Time,
+			Valid: info.Metadata != nil && !info.Metadata.CreateTime.IsZero(),
+		},
+		QboUpdatedTime: pgtype.Timestamptz{
+			Time:  info.Metadata.LastUpdatedTime.Time,
+			Valid: info.Metadata != nil && !info.Metadata.LastUpdatedTime.IsZero(),
+		},
+	}
+
+	if err := c.store.Queries.UpsertCompanyInfo(ctx, params); err != nil {
+		return fmt.Errorf("failed to upsert company info: %w", err)
+	}
+
+	c.logger.Info("✅ Company info synced", "realm_id", realmID, "company", info.CompanyName)
+	return nil
+}
+
 func jsonNumberToNumeric(n json.Number) pgtype.Numeric {
 	s := string(n)
 	if s == "" {
@@ -680,12 +870,13 @@ func (c *QBOConnector) batchUpsertVendors(ctx context.Context, realmID string, v
 	qtx := c.store.Queries.WithTx(tx)
 
 	for _, vendor := range vendors {
+		apAcct := vendor.APAccountRef.Value
 		if err := qtx.UpsertVendor(ctx, database.UpsertVendorParams{
 			QboID:                 vendor.Id,
 			RealmID:               realmID,
 			DisplayName:           vendor.DisplayName,
 			SyncToken:             vendor.SyncToken,
-			LastKnownAccountQboID: pgtype.Text{String: "", Valid: false},
+			LastKnownAccountQboID: pgtype.Text{String: apAcct, Valid: apAcct != ""},
 			AiSynonyms:            nil,
 		}); err != nil {
 			return fmt.Errorf("failed to upsert vendor %s: %w", vendor.Id, err)
@@ -750,10 +941,10 @@ func (c *QBOConnector) batchUpsertInvoices(ctx context.Context, realmID string, 
 			RealmID:       realmID,
 			CustomerQboID: pgtype.Text{String: customerID, Valid: customerID != ""},
 			DocNumber:     pgtype.Text{String: invoice.DocNumber, Valid: invoice.DocNumber != ""},
-			TotalAmount:   pgtype.Numeric{},
-			Balance:       pgtype.Numeric{},
-			DueDate:       pgtype.Date{},
-			TxnDate:       pgtype.Date{},
+			TotalAmount:   jsonNumberToNumeric(invoice.TotalAmt),
+			Balance:       jsonNumberToNumeric(invoice.Balance),
+			DueDate:       pgtype.Date{Time: invoice.DueDate.Time, Valid: !invoice.DueDate.IsZero()},
+			TxnDate:       pgtype.Date{Time: invoice.TxnDate.Time, Valid: !invoice.TxnDate.IsZero()},
 			SyncToken:     invoice.SyncToken,
 		}); err != nil {
 			return fmt.Errorf("failed to upsert invoice %s: %w", invoice.Id, err)
@@ -789,10 +980,10 @@ func (c *QBOConnector) batchUpsertBills(ctx context.Context, realmID string, bil
 			RealmID:     realmID,
 			VendorQboID: pgtype.Text{String: vendorID, Valid: vendorID != ""},
 			DocNumber:   pgtype.Text{String: bill.DocNumber, Valid: bill.DocNumber != ""},
-			TotalAmount: pgtype.Numeric{},
-			Balance:     pgtype.Numeric{},
-			DueDate:     pgtype.Date{},
-			TxnDate:     pgtype.Date{},
+			TotalAmount: jsonNumberToNumeric(bill.TotalAmt),
+			Balance:     jsonNumberToNumeric(bill.Balance),
+			DueDate:     pgtype.Date{Time: bill.DueDate.Time, Valid: !bill.DueDate.IsZero()},
+			TxnDate:     pgtype.Date{Time: bill.TxnDate.Time, Valid: !bill.TxnDate.IsZero()},
 			SyncToken:   bill.SyncToken,
 		}); err != nil {
 			return fmt.Errorf("failed to upsert bill %s: %w", bill.Id, err)
@@ -843,151 +1034,134 @@ func (c *QBOConnector) updateLastWebhookTime(ctx context.Context, realmID, entit
 	}
 }
 
-// batchCreateToQBO creates multiple entities in QBO using the Batch API
-// This is separate from batchUpsert* which handles local DB operations
-func (c *QBOConnector) batchCreateToQBO(ctx context.Context, realmID, entityType string, entities interface{}) (*quickbooks.BatchResponse, error) {
-	client, err := c.getClient(ctx, "", realmID)
-	if err != nil {
-		return nil, err
+// executeBatched chunks a typed slice into ≤BatchMaxSize groups and fires one
+// BatchContext call per chunk. All BatchItemResponse objects are aggregated and
+// returned. The first network/API error short-circuits and returns what was
+// collected up to that point alongside the error.
+func executeBatched[T any](
+	ctx context.Context,
+	client *quickbooks.Client,
+	entityType string,
+	entities []T,
+	addFn func(*quickbooks.BatchBuilder, T),
+) ([]quickbooks.BatchItemResponse, error) {
+	if len(entities) == 0 {
+		return nil, nil
 	}
 
-	// Build batch request
-	builder := quickbooks.NewBatchBuilder()
-
-	switch entityType {
-	case "Vendor":
-		vendors := entities.([]quickbooks.Vendor)
-		for _, vendor := range vendors {
-			builder.AddCreate("Vendor", vendor)
+	var all []quickbooks.BatchItemResponse
+	for i := 0; i < len(entities); i += quickbooks.BatchMaxSize {
+		end := min(i+quickbooks.BatchMaxSize, len(entities))
+		builder := quickbooks.NewBatchBuilder()
+		for _, e := range entities[i:end] {
+			addFn(builder, e)
 		}
-	case "Customer":
-		customers := entities.([]quickbooks.Customer)
-		for _, customer := range customers {
-			builder.AddCreate("Customer", customer)
+		resp, err := client.BatchContext(ctx, builder.Build())
+		if err != nil {
+			return all, fmt.Errorf("batch chunk [%d:%d] for %s: %w", i, end, entityType, err)
 		}
-	case "Bill":
-		bills := entities.([]quickbooks.Bill)
-		for _, bill := range bills {
-			builder.AddCreate("Bill", bill)
-		}
-	case "Invoice":
-		invoices := entities.([]quickbooks.Invoice)
-		for _, invoice := range invoices {
-			builder.AddCreate("Invoice", invoice)
-		}
-	default:
-		return nil, fmt.Errorf("unsupported entity type for batch create: %s", entityType)
+		all = append(all, resp.BatchItemResponse...)
 	}
-
-	c.logger.Info("🚀 Sending batch create to QBO",
-		"entity_type", entityType,
-		"count", builder.Count(),
-		"realm_id", realmID,
-	)
-
-	// Execute batch
-	response, err := client.Batch(builder.Build())
-	if err != nil {
-		c.trackRateLimit(client, false)
-		return nil, fmt.Errorf("batch create failed for %s: %w", entityType, err)
-	}
-
-	c.trackRateLimit(client, true)
-
-	// Log partial failures
-	var failureCount int
-	for _, item := range response.BatchItemResponse {
-		if item.HasError() {
-			failureCount++
-			c.logger.Warn("Batch item failed",
-				"bId", item.BId,
-				"error", item.GetError(),
-			)
-		}
-	}
-
-	if failureCount > 0 {
-		c.logger.Warn("Batch create completed with partial failures",
-			"entity_type", entityType,
-			"total", builder.Count(),
-			"failures", failureCount,
-		)
-	}
-
-	return response, nil
+	return all, nil
 }
 
-// batchUpdateToQBO updates multiple entities in QBO using the Batch API
-func (c *QBOConnector) batchUpdateToQBO(ctx context.Context, realmID, entityType string, entities interface{}) (*quickbooks.BatchResponse, error) {
+// batchSendToQBO is the shared implementation for create/update batch operations.
+// It chunks large entity lists, respects the 40 req/min batch limit via BatchContext,
+// and logs any per-item partial failures.
+func (c *QBOConnector) batchSendToQBO(
+	ctx context.Context,
+	realmID, entityType, operation string,
+	entities interface{},
+) (*quickbooks.BatchResponse, error) {
 	client, err := c.getClient(ctx, "", realmID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build batch request
-	builder := quickbooks.NewBatchBuilder()
+	var items []quickbooks.BatchItemResponse
 
-	switch entityType {
-	case "Vendor":
-		vendors := entities.([]quickbooks.Vendor)
-		for _, vendor := range vendors {
-			builder.AddUpdate("Vendor", vendor)
+	switch operation {
+	case "create":
+		switch entityType {
+		case "Vendor":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Vendor),
+				func(b *quickbooks.BatchBuilder, v quickbooks.Vendor) { b.AddCreate(entityType, v) })
+		case "Customer":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Customer),
+				func(b *quickbooks.BatchBuilder, cu quickbooks.Customer) { b.AddCreate(entityType, cu) })
+		case "Bill":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Bill),
+				func(b *quickbooks.BatchBuilder, bi quickbooks.Bill) { b.AddCreate(entityType, bi) })
+		case "Invoice":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Invoice),
+				func(b *quickbooks.BatchBuilder, inv quickbooks.Invoice) { b.AddCreate(entityType, inv) })
+		default:
+			return nil, fmt.Errorf("unsupported entity type for batch create: %s", entityType)
 		}
-	case "Customer":
-		customers := entities.([]quickbooks.Customer)
-		for _, customer := range customers {
-			builder.AddUpdate("Customer", customer)
-		}
-	case "Bill":
-		bills := entities.([]quickbooks.Bill)
-		for _, bill := range bills {
-			builder.AddUpdate("Bill", bill)
-		}
-	case "Invoice":
-		invoices := entities.([]quickbooks.Invoice)
-		for _, invoice := range invoices {
-			builder.AddUpdate("Invoice", invoice)
+	case "update":
+		switch entityType {
+		case "Vendor":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Vendor),
+				func(b *quickbooks.BatchBuilder, v quickbooks.Vendor) { b.AddUpdate(entityType, v) })
+		case "Customer":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Customer),
+				func(b *quickbooks.BatchBuilder, cu quickbooks.Customer) { b.AddUpdate(entityType, cu) })
+		case "Bill":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Bill),
+				func(b *quickbooks.BatchBuilder, bi quickbooks.Bill) { b.AddUpdate(entityType, bi) })
+		case "Invoice":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Invoice),
+				func(b *quickbooks.BatchBuilder, inv quickbooks.Invoice) { b.AddUpdate(entityType, inv) })
+		default:
+			return nil, fmt.Errorf("unsupported entity type for batch update: %s", entityType)
 		}
 	default:
-		return nil, fmt.Errorf("unsupported entity type for batch update: %s", entityType)
+		return nil, fmt.Errorf("unsupported batch operation: %s", operation)
 	}
 
-	c.logger.Info("🚀 Sending batch update to QBO",
-		"entity_type", entityType,
-		"count", builder.Count(),
-		"realm_id", realmID,
-	)
-
-	// Execute batch
-	response, err := client.Batch(builder.Build())
 	if err != nil {
 		c.trackRateLimit(client, false)
-		return nil, fmt.Errorf("batch update failed for %s: %w", entityType, err)
+		return nil, fmt.Errorf("batch %s failed for %s: %w", operation, entityType, err)
 	}
 
 	c.trackRateLimit(client, true)
 
-	// Log partial failures
+	c.logger.Info("🚀 Batch operation completed",
+		"operation", operation,
+		"entity_type", entityType,
+		"total", len(items),
+		"realm_id", realmID,
+	)
+
 	var failureCount int
-	for _, item := range response.BatchItemResponse {
+	for _, item := range items {
 		if item.HasError() {
 			failureCount++
-			c.logger.Warn("Batch item failed",
-				"bId", item.BId,
-				"error", item.GetError(),
-			)
+			c.logger.Warn("Batch item failed", "bId", item.BId, "error", item.GetError())
 		}
 	}
-
 	if failureCount > 0 {
-		c.logger.Warn("Batch update completed with partial failures",
+		c.logger.Warn("Batch operation completed with partial failures",
+			"operation", operation,
 			"entity_type", entityType,
-			"total", builder.Count(),
+			"total", len(items),
 			"failures", failureCount,
 		)
 	}
 
-	return response, nil
+	return &quickbooks.BatchResponse{BatchItemResponse: items}, nil
+}
+
+// batchCreateToQBO creates multiple entities in QBO using the Batch API.
+// Large slices are automatically chunked into ≤30-item batches.
+func (c *QBOConnector) batchCreateToQBO(ctx context.Context, realmID, entityType string, entities interface{}) (*quickbooks.BatchResponse, error) {
+	return c.batchSendToQBO(ctx, realmID, entityType, "create", entities)
+}
+
+// batchUpdateToQBO updates multiple entities in QBO using the Batch API.
+// Large slices are automatically chunked into ≤30-item batches.
+func (c *QBOConnector) batchUpdateToQBO(ctx context.Context, realmID, entityType string, entities interface{}) (*quickbooks.BatchResponse, error) {
+	return c.batchSendToQBO(ctx, realmID, entityType, "update", entities)
 }
 
 // trackRateLimit logs rate limit information from the QBO client

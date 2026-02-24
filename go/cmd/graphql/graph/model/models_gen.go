@@ -56,6 +56,16 @@ type CreateQboAccountInput struct {
 	CurrencyRefValue *string `json:"currencyRefValue,omitempty"`
 }
 
+type Customer struct {
+	ID          string     `json:"id"`
+	RealmID     string     `json:"realmId"`
+	DisplayName string     `json:"displayName"`
+	SyncToken   string     `json:"syncToken"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+	DeletedAt   *time.Time `json:"deletedAt,omitempty"`
+}
+
 type EntityMatch struct {
 	ID         string  `json:"id"`
 	Score      float64 `json:"score"`
@@ -149,4 +159,16 @@ type User struct {
 	Email    string `json:"email"`
 	Role     string `json:"role"`
 	TenantID string `json:"tenantId"`
+}
+
+type Vendor struct {
+	ID                 string     `json:"id"`
+	RealmID            string     `json:"realmId"`
+	QboID              string     `json:"qboId"`
+	DisplayName        string     `json:"displayName"`
+	SyncToken          string     `json:"syncToken"`
+	LastKnownAccountID *string    `json:"lastKnownAccountId,omitempty"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+	DeletedAt          *time.Time `json:"deletedAt,omitempty"`
 }

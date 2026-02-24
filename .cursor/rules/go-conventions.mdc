@@ -1,0 +1,93 @@
+---
+description: Go coding conventions, patterns, and idioms for the Toro backend
+globs: "**/*.go"
+alwaysApply: false
+---
+
+# Go Conventions
+
+## Project Structure
+
+- `cmd/<service>/` for executables — each service has its own `main.go`/`server.go`
+- `internal/` for private packages — never import from outside the module
+- Small, focused interfaces defined at the consumer site (e.g. `SecretGetter`, `EventPublisher`)
+
+## Error Handling
+
+Always wrap with context using `fmt.Errorf`:
+
+```go
+// ✅
+return nil, fmt.Errorf("failed to begin tx: %w", err)
+
+// ❌
+return nil, err
+```
+
+For user-facing APIs, return generic messages and log the real error:
+
+```go
+r.Logger.Error("Failed to create entity", "error", err)
+return nil, fmt.Errorf("internal server error")
+```
+
+## Dependency Injection
+
+Constructor functions return structs with interface dependencies:
+
+```go
+type Handler struct {
+    Logger *slog.Logger
+    Store  SecretGetter
+    Pub    EventPublisher
+}
+
+func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher) *Handler {
+    return &Handler{Logger: logger, Store: store, Pub: pub}
+}
+```
+
+## Logging
+
+Use `log/slog` with structured key-value pairs. Create child loggers with request context:
+
+```go
+logger := h.Logger.With("request_id", requestID, "provider", provider)
+logger.Error("Publish failed", "error", err, "latency_ms", latency.Milliseconds())
+```
+
+## Context
+
+- Propagate `context.Context` as the first parameter in all functions that do I/O
+- Use typed context keys (`type contextKey string`) to avoid collisions
+- Set timeouts for external calls: `context.WithTimeout(ctx, 2*time.Second)`
+
+## HTTP Handlers
+
+- Use Go 1.22+ routing: `mux.HandleFunc("POST /webhooks/{provider}/{conn_id}", h.HandleWebhook)`
+- Extract path values: `r.PathValue("provider")`
+- JSON errors via `JSONError(w, logger, status, msg)`
+- Apply `http.MaxBytesReader` before reading request bodies
+
+## Store / Transaction Pattern
+
+Entity-isolated transactions with RLS:
+
+```go
+s.ExecTx(ctx, entityID, func(q *database.Queries) error {
+    // All queries inside run with SET LOCAL app.current_entity = entityID
+    return q.SomeQuery(ctx, params)
+})
+```
+
+## Testing
+
+- Standard `testing` package with `testify/assert`
+- Integration tests use `testcontainers-go` for NATS, PostgreSQL
+- Test files live alongside source: `*_test.go`
+
+## Resilience
+
+- Circuit breakers (`sony/gobreaker`) for NATS and external services
+- Rate limiters (`golang.org/x/time/rate`) per-connection
+- Retry with exponential backoff for async NATS publishes

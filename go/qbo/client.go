@@ -2,6 +2,7 @@ package quickbooks
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,8 +35,10 @@ type Client struct {
 	realmId string
 	// Flag set if the limit of 500req/s has been hit (source: https://developer.intuit.com/app/developer/qbo/docs/learn/rest-api-features#limits-and-throttles)
 	throttled bool
-	// Rate Limiter
+	// Rate Limiter for general API calls (~500/min)
 	limiter *rate.Limiter
+	// Rate limiter for the batch endpoint specifically (40 req/min per realmID per QBO docs)
+	batchLimiter *rate.Limiter
 	// Concurrency limiter
 	concurrencySem chan struct{}
 	// Circuit breaker
@@ -47,18 +50,16 @@ type TokenUpdatedFunc func(token *BearerToken) error
 
 // NewClient initializes a new QuickBooks client for interacting with their Online API
 func NewClient(clientId string, clientSecret string, realmId string, isProduction bool, minorVersion string, token *BearerToken, onTokenUpdated TokenUpdatedFunc) (c *Client, err error) {
-	if minorVersion == "" {
-		minorVersion = "65"
-	}
-
+	minorVersion = cmp.Or(minorVersion, "75")
 	client := Client{
 		clientId:       clientId,
 		clientSecret:   clientSecret,
 		minorVersion:   minorVersion,
 		realmId:        realmId,
 		throttled:      false,
-		limiter:        rate.NewLimiter(rate.Limit(8.0), 10), // ~500/min approx 8.3/s
-		concurrencySem: make(chan struct{}, 10),              // 10 concurrent requests max
+		limiter:        rate.NewLimiter(rate.Limit(8.0), 10),              // ~500/min ≈ 8.3/s
+		batchLimiter:   rate.NewLimiter(rate.Limit(40.0/60.0), 1),        // 40/min (QBO batch endpoint limit)
+		concurrencySem: make(chan struct{}, 10),                            // 10 concurrent requests max
 		breaker: gobreaker.NewCircuitBreaker(gobreaker.Settings{
 			Name:        fmt.Sprintf("QBO-API-%s", realmId),
 			MaxRequests: 5,
@@ -163,7 +164,10 @@ func GetAuthURL(clientId, scope, state, redirectUri, authEndpoint string) (strin
 }
 
 func (c *Client) req(method string, endpoint string, payloadData interface{}, responseObject interface{}, queryParameters map[string]string) error {
-	// TODO: possibly just wait until c.throttled is false, and continue the request?
+	return c.reqContext(context.Background(), method, endpoint, payloadData, responseObject, queryParameters)
+}
+
+func (c *Client) reqContext(ctx context.Context, method string, endpoint string, payloadData interface{}, responseObject interface{}, queryParameters map[string]string) error {
 	if c.throttled {
 		return errors.New("waiting for rate limit")
 	}
@@ -172,36 +176,29 @@ func (c *Client) req(method string, endpoint string, payloadData interface{}, re
 	endpointUrl.Path += endpoint
 	urlValues := url.Values{}
 
-	if len(queryParameters) > 0 {
-		for param, value := range queryParameters {
-			urlValues.Add(param, value)
-		}
+	for param, value := range queryParameters {
+		urlValues.Add(param, value)
 	}
-
 	urlValues.Set("minorversion", c.minorVersion)
-	urlValues.Encode()
 	endpointUrl.RawQuery = urlValues.Encode()
 
-	var err error
 	var marshalledJson []byte
-
 	if payloadData != nil {
+		var err error
 		marshalledJson, err = json.Marshal(payloadData)
 		if err != nil {
 			return fmt.Errorf("failed to marshal payload: %v", err)
 		}
 	}
 
-	req, err := http.NewRequest(method, endpointUrl.String(), bytes.NewBuffer(marshalledJson))
+	req, err := http.NewRequestWithContext(ctx, method, endpointUrl.String(), bytes.NewBuffer(marshalledJson))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
-
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Content-Type", "application/json")
 
-	// Enforce Rate Limit and Concurrency
-	if err := c.limiter.Wait(context.Background()); err != nil {
+	if err := c.limiter.Wait(ctx); err != nil {
 		return fmt.Errorf("rate limiter wait failed: %v", err)
 	}
 
@@ -209,7 +206,6 @@ func (c *Client) req(method string, endpoint string, payloadData interface{}, re
 	defer func() { <-c.concurrencySem }()
 
 	executeRes, breakerErr := c.breaker.Execute(func() (interface{}, error) {
-		// Client.Do will automatically refresh token if needed due to ReuseTokenSource
 		resp, err := c.Client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to make request: %v", err)
@@ -231,7 +227,6 @@ func (c *Client) req(method string, endpoint string, payloadData interface{}, re
 			}(c)
 			return nil, errors.New("rate limited by QBO")
 		default:
-			// parseFailure reads from resp.Body
 			return nil, parseFailure(resp)
 		}
 	})
@@ -246,30 +241,38 @@ func (c *Client) req(method string, endpoint string, payloadData interface{}, re
 			return fmt.Errorf("failed to unmarshal response into object: %v", err)
 		}
 	}
-
 	return nil
 }
 
-// Batch executes multiple operations in a single API call.
-// Returns responses mapped by bId, and any top-level errors.
-// Maximum of 30 operations per batch (QBO recommendation).
-func (c *Client) Batch(requests []BatchItemRequest) (*BatchResponse, error) {
+// BatchContext executes multiple operations in a single API call, respecting context cancellation.
+// Enforces QBO rules: max 30 operations per call, 40 calls/min per realmID.
+func (c *Client) BatchContext(ctx context.Context, requests []BatchItemRequest) (*BatchResponse, error) {
 	if len(requests) == 0 {
 		return nil, errors.New("batch request cannot be empty")
 	}
-	if len(requests) > 30 {
-		return nil, fmt.Errorf("batch request exceeds maximum of 30 operations (got %d)", len(requests))
+	if len(requests) > BatchMaxSize {
+		return nil, fmt.Errorf("batch request exceeds maximum of %d operations (got %d)", BatchMaxSize, len(requests))
+	}
+
+	// Enforce the 40 req/min batch-endpoint limit before consuming a general-limiter token.
+	if err := c.batchLimiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("batch rate limiter: %w", err)
 	}
 
 	batchReq := BatchRequest{BatchItemRequest: requests}
 	var response BatchResponse
 
-	err := c.post("batch", batchReq, &response, nil)
-	if err != nil {
+	if err := c.postContext(ctx, "batch", batchReq, &response, nil); err != nil {
 		return nil, fmt.Errorf("batch request failed: %w", err)
 	}
 
 	return &response, nil
+}
+
+// Batch executes multiple operations in a single API call.
+// Deprecated: prefer BatchContext to propagate cancellation.
+func (c *Client) Batch(requests []BatchItemRequest) (*BatchResponse, error) {
+	return c.BatchContext(context.Background(), requests)
 }
 
 // IsThrottled returns true if the client has hit QBO's rate limit
@@ -278,11 +281,19 @@ func (c *Client) IsThrottled() bool {
 }
 
 func (c *Client) get(endpoint string, responseObject interface{}, queryParameters map[string]string) error {
-	return c.req("GET", endpoint, nil, responseObject, queryParameters)
+	return c.reqContext(context.Background(), "GET", endpoint, nil, responseObject, queryParameters)
 }
 
 func (c *Client) post(endpoint string, payloadData interface{}, responseObject interface{}, queryParameters map[string]string) error {
-	return c.req("POST", endpoint, payloadData, responseObject, queryParameters)
+	return c.reqContext(context.Background(), "POST", endpoint, payloadData, responseObject, queryParameters)
+}
+
+func (c *Client) getContext(ctx context.Context, endpoint string, responseObject interface{}, queryParameters map[string]string) error {
+	return c.reqContext(ctx, "GET", endpoint, nil, responseObject, queryParameters)
+}
+
+func (c *Client) postContext(ctx context.Context, endpoint string, payloadData interface{}, responseObject interface{}, queryParameters map[string]string) error {
+	return c.reqContext(ctx, "POST", endpoint, payloadData, responseObject, queryParameters)
 }
 
 // query makes the specified QBO `query` and unmarshals the result into `responseObject`

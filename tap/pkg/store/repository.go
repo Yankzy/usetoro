@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"sync"
 
@@ -11,9 +12,9 @@ var ErrNotFound = errors.New("contract not found")
 
 // Repository defines the interface for state persistence.
 type Repository interface {
-	SaveContract(c *core.Contract) error
-	GetContract(id string) (*core.Contract, error)
-	UpdateStatus(id string, status core.ContractStatus) error
+	SaveContract(ctx context.Context, c *core.Contract) error
+	GetContract(ctx context.Context, id string) (*core.Contract, error)
+	UpdateContractStatus(ctx context.Context, id string, status core.ContractStatus) error
 }
 
 type MemoryStore struct {
@@ -27,15 +28,14 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
-func (m *MemoryStore) SaveContract(c *core.Contract) error {
+func (m *MemoryStore) SaveContract(_ context.Context, c *core.Contract) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Deep copy could be done here for safety
 	m.contracts[c.ID] = c
 	return nil
 }
 
-func (m *MemoryStore) GetContract(id string) (*core.Contract, error) {
+func (m *MemoryStore) GetContract(_ context.Context, id string) (*core.Contract, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	c, ok := m.contracts[id]
@@ -45,16 +45,13 @@ func (m *MemoryStore) GetContract(id string) (*core.Contract, error) {
 	return c, nil
 }
 
-func (m *MemoryStore) UpdateStatus(id string, status core.ContractStatus) error {
+func (m *MemoryStore) UpdateContractStatus(_ context.Context, id string, status core.ContractStatus) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	c, ok := m.contracts[id]
 	if !ok {
 		return ErrNotFound
 	}
-
 	c.Status = status
-	// In a real DB, updated_at would be handled automatically or explicitly here
 	return nil
 }

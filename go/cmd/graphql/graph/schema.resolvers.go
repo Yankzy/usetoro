@@ -7,7 +7,10 @@ package graph
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"fmt"
+	"math/big"
 	"os"
 	"strings"
 	"time"
@@ -166,12 +169,95 @@ func (r *mutationResolver) Login(ctx context.Context, input model.LoginInput) (*
 
 // RequestOtp is the resolver for the requestOTP field.
 func (r *mutationResolver) RequestOtp(ctx context.Context, email string) (bool, error) {
-	panic(fmt.Errorf("not implemented: RequestOtp - requestOTP"))
+	q := database.New(r.DB)
+
+	// Look up user; ignore not-found to avoid leaking user enumeration
+	_, err := q.GetUserByEmail(ctx, email)
+	if err != nil && err != pgx.ErrNoRows {
+		r.Logger.Error("Failed to look up user for OTP", "error", err)
+		return false, fmt.Errorf("internal server error")
+	}
+
+	// Generate cryptographically secure 6-digit OTP
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		r.Logger.Error("Failed to generate OTP", "error", err)
+		return false, fmt.Errorf("internal server error")
+	}
+	otp := fmt.Sprintf("%06d", n.Int64())
+
+	// Store in Redis with 10-minute TTL
+	if err := r.Redis.Set(ctx, "otp:"+email, otp, 10*time.Minute).Err(); err != nil {
+		r.Logger.Error("Failed to store OTP in Redis", "error", err)
+		return false, fmt.Errorf("internal server error")
+	}
+
+	if err := r.EmailSender.SendOTP(email, otp); err != nil {
+		r.Logger.Error("Failed to send OTP email", "email", email, "error", err)
+		return false, fmt.Errorf("internal server error")
+	}
+
+	return true, nil
 }
 
 // VerifyOtp is the resolver for the verifyOTP field.
 func (r *mutationResolver) VerifyOtp(ctx context.Context, email string, otp string) (*model.AuthPayload, error) {
-	panic(fmt.Errorf("not implemented: VerifyOtp - verifyOTP"))
+	// 1. Fetch stored OTP from Redis
+	stored, err := r.Redis.Get(ctx, "otp:"+email).Result()
+	if err != nil {
+		return nil, fmt.Errorf("OTP expired or not requested")
+	}
+
+	// 2. Constant-time compare to prevent timing attacks
+	if subtle.ConstantTimeCompare([]byte(stored), []byte(otp)) != 1 {
+		return nil, fmt.Errorf("invalid OTP")
+	}
+
+	// 3. Delete OTP immediately (single-use)
+	r.Redis.Del(ctx, "otp:"+email)
+
+	// 4. Fetch user
+	q := database.New(r.DB)
+	user, err := q.GetUserByEmail(ctx, email)
+	if err != nil {
+		r.Logger.Error("Failed to fetch user after OTP verification", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	// 5. Generate tokens
+	acc, ref, exp, err := generateTokens(user, r.PrivateKey)
+	if err != nil {
+		r.Logger.Error("Failed to generate tokens", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	// 6. Persist refresh token to DB
+	if err := q.CreateRefreshToken(ctx, database.CreateRefreshTokenParams{
+		TokenHash: ref,
+		UserID:    user.ID,
+		ExpiresAt: pgtype.Timestamptz{Time: exp, Valid: true},
+	}); err != nil {
+		r.Logger.Error("Failed to save refresh token", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	// Cache refresh token in Redis
+	if err := r.Redis.Set(ctx, "refresh_token:"+ref, user.ID.String(), 7*24*time.Hour).Err(); err != nil {
+		r.Logger.Warn("Failed to cache refresh token in Redis", "error", err)
+	}
+
+	// 7. Return AuthPayload
+	return &model.AuthPayload{
+		AccessToken:  acc,
+		RefreshToken: ref,
+		ExpiresAt:    exp,
+		User: &model.User{
+			ID:       uuid.UUID(user.ID.Bytes).String(),
+			Email:    user.Email,
+			Role:     user.Role.String,
+			TenantID: uuid.UUID(user.EntityID.Bytes).String(),
+		},
+	}, nil
 }
 
 // RefreshToken is the resolver for the refreshToken field.
@@ -351,6 +437,49 @@ func (r *mutationResolver) SyncQboChartOfAccounts(ctx context.Context, realmID s
 	count, err := qboConn.SyncFullChartOfAccounts(ctx, entityID.String(), realmID)
 	if err != nil {
 		r.Logger.Error("Full CoA sync failed", "error", err, "realm_id", realmID)
+		return 0, fmt.Errorf("sync failed")
+	}
+
+	return int32(count), nil
+}
+
+// SyncQboCustomers is the resolver for the syncQboCustomers field.
+func (r *mutationResolver) SyncQboCustomers(ctx context.Context, realmID string) (int32, error) {
+	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+	if entityID == uuid.Nil {
+		return 0, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, entityID.String())
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, fmt.Errorf("no qbo connection")
+		}
+		r.Logger.Error("Failed to fetch QBO connection", "error", err)
+		return 0, fmt.Errorf("internal server error")
+	}
+
+	if conn.RealmID != realmID {
+		return 0, fmt.Errorf("unauthorized")
+	}
+
+	clientID := os.Getenv("QBO_CLIENT_ID")
+	clientSecret := os.Getenv("QBO_CLIENT_SECRET")
+	if clientID == "" || clientSecret == "" {
+		return 0, fmt.Errorf("qbo client credentials not configured")
+	}
+
+	isProd := strings.EqualFold(os.Getenv("QBO_IS_PRODUCTION"), "true")
+	cfg := &config.Config{
+		QBOClientID:     clientID,
+		QBOClientSecret: clientSecret,
+		QBOIsProduction: isProd,
+	}
+
+	qboConn := connectors.NewQBOConnector(r.Logger, cfg, r.Store, nil)
+	count, err := qboConn.SyncFullCustomers(ctx, entityID.String(), realmID)
+	if err != nil {
+		r.Logger.Error("Full Customers sync failed", "error", err, "realm_id", realmID)
 		return 0, fmt.Errorf("sync failed")
 	}
 
@@ -544,9 +673,14 @@ func (r *queryResolver) QboConnection(ctx context.Context) (*model.QBOCompany, e
 		return nil, fmt.Errorf("internal server error")
 	}
 
+	companyName := ""
+	if info, err := r.Store.Queries.GetCompanyInfo(ctx, conn.RealmID); err == nil {
+		companyName = info.CompanyName
+	}
+
 	return &model.QBOCompany{
 		RealmID:     conn.RealmID,
-		CompanyName: "QuickBooks Linked Company", // We might want to store this in DB later
+		CompanyName: companyName,
 		ConnectedAt: &conn.CreatedAt.Time,
 	}, nil
 }
@@ -637,6 +771,60 @@ func (r *queryResolver) QboAccount(ctx context.Context, realmID string) ([]*mode
 	return modelAccounts, nil
 }
 
+// QboCustomers is the resolver for the qboCustomers field.
+func (r *queryResolver) QboCustomers(ctx context.Context, realmID string) ([]*model.Customer, error) {
+	rows, err := r.Store.Queries.GetAllCustomersForRealms(ctx, []string{realmID})
+	if err != nil {
+		r.Logger.Error("Failed to fetch customers for realm", "error", err, "realm_id", realmID)
+		return nil, fmt.Errorf("internal server error")
+	}
+	out := make([]*model.Customer, 0, len(rows))
+	for i := range rows {
+		out = append(out, mapDatabaseCustomerToModel(&rows[i]))
+	}
+	return out, nil
+}
+
+// QboCustomersByTenant is the resolver for the qboCustomersByTenant field.
+func (r *queryResolver) QboCustomersByTenant(ctx context.Context, tenantID string, includeChildren *bool) ([]*model.Customer, error) {
+	entityUUID, err := uuid.Parse(tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid tenant id")
+	}
+	pgID := pgtype.UUID{Bytes: entityUUID, Valid: true}
+
+	var entityIDs []pgtype.UUID
+	if includeChildren != nil && *includeChildren {
+		entityIDs, err = r.Store.Queries.GetEntityDescendants(ctx, pgID)
+		if err != nil {
+			r.Logger.Error("Failed to resolve entity descendants", "error", err, "tenant_id", tenantID)
+			return nil, fmt.Errorf("internal server error")
+		}
+	} else {
+		entityIDs = []pgtype.UUID{pgID}
+	}
+
+	realmIDs, err := r.Store.Queries.GetRealmsForEntities(ctx, entityIDs)
+	if err != nil {
+		r.Logger.Error("Failed to resolve realms for tenant", "error", err, "tenant_id", tenantID)
+		return nil, fmt.Errorf("internal server error")
+	}
+	if len(realmIDs) == 0 {
+		return []*model.Customer{}, nil
+	}
+
+	rows, err := r.Store.Queries.GetAllCustomersForRealms(ctx, realmIDs)
+	if err != nil {
+		r.Logger.Error("Failed to fetch customers for tenant", "error", err, "tenant_id", tenantID)
+		return nil, fmt.Errorf("internal server error")
+	}
+	out := make([]*model.Customer, 0, len(rows))
+	for i := range rows {
+		out = append(out, mapDatabaseCustomerToModel(&rows[i]))
+	}
+	return out, nil
+}
+
 // Entities is the resolver for the tenants field (now backed by toro_core.entities).
 func (r *queryResolver) Tenants(ctx context.Context, limit int32, offset int32) (*model.TenantConnection, error) {
 	// 1. Auth check: Requires valid user session
@@ -687,6 +875,84 @@ func (r *queryResolver) Tenants(ctx context.Context, limit int32, offset int32) 
 	}, nil
 }
 
+// QboVendors is the resolver for the qboVendors field.
+func (r *queryResolver) QboVendors(ctx context.Context, realmID string) ([]*model.Vendor, error) {
+	rows, err := r.Store.Queries.GetAllVendorsForRealms(ctx, []string{realmID})
+	if err != nil {
+		r.Logger.Error("Failed to fetch vendors for realm", "error", err, "realm_id", realmID)
+		return nil, fmt.Errorf("internal server error")
+	}
+	out := make([]*model.Vendor, 0, len(rows))
+	for i := range rows {
+		out = append(out, mapDatabaseVendorToModel(&rows[i]))
+	}
+	return out, nil
+}
+
+// QboVendorsByEntity is the resolver for the qboVendorsByEntity field.
+func (r *queryResolver) QboVendorsByEntity(ctx context.Context, entityID string) ([]*model.Vendor, error) {
+	entityUUID, err := uuid.Parse(entityID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid entity id")
+	}
+	pgID := pgtype.UUID{Bytes: entityUUID, Valid: true}
+
+	realmIDs, err := r.Store.Queries.GetRealmsForEntities(ctx, []pgtype.UUID{pgID})
+	if err != nil {
+		r.Logger.Error("Failed to resolve realms for entity", "error", err, "entity_id", entityID)
+		return nil, fmt.Errorf("internal server error")
+	}
+	if len(realmIDs) == 0 {
+		return []*model.Vendor{}, nil
+	}
+
+	rows, err := r.Store.Queries.GetAllVendorsForRealms(ctx, realmIDs)
+	if err != nil {
+		r.Logger.Error("Failed to fetch vendors for entity", "error", err, "entity_id", entityID)
+		return nil, fmt.Errorf("internal server error")
+	}
+	out := make([]*model.Vendor, 0, len(rows))
+	for i := range rows {
+		out = append(out, mapDatabaseVendorToModel(&rows[i]))
+	}
+	return out, nil
+}
+
+// QboVendorsByTenant is the resolver for the qboVendorsByTenant field.
+func (r *queryResolver) QboVendorsByTenant(ctx context.Context, tenantID string) ([]*model.Vendor, error) {
+	entityUUID, err := uuid.Parse(tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid tenant id")
+	}
+	pgID := pgtype.UUID{Bytes: entityUUID, Valid: true}
+
+	entityIDs, err := r.Store.Queries.GetEntityDescendants(ctx, pgID)
+	if err != nil {
+		r.Logger.Error("Failed to resolve entity descendants", "error", err, "tenant_id", tenantID)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	realmIDs, err := r.Store.Queries.GetRealmsForEntities(ctx, entityIDs)
+	if err != nil {
+		r.Logger.Error("Failed to resolve realms for tenant", "error", err, "tenant_id", tenantID)
+		return nil, fmt.Errorf("internal server error")
+	}
+	if len(realmIDs) == 0 {
+		return []*model.Vendor{}, nil
+	}
+
+	rows, err := r.Store.Queries.GetAllVendorsForRealms(ctx, realmIDs)
+	if err != nil {
+		r.Logger.Error("Failed to fetch vendors for tenant", "error", err, "tenant_id", tenantID)
+		return nil, fmt.Errorf("internal server error")
+	}
+	out := make([]*model.Vendor, 0, len(rows))
+	for i := range rows {
+		out = append(out, mapDatabaseVendorToModel(&rows[i]))
+	}
+	return out, nil
+}
+
 // Mutation returns MutationResolver implementation.
 func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }
 
@@ -695,5 +961,3 @@ func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 
 type mutationResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
-
-// getQBOConnectorHelper initializes the QBO connector after validating the user

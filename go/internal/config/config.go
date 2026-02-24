@@ -32,6 +32,7 @@ type Config struct {
 	QBOClientID     string `mapstructure:"qbo_client_id"`
 	QBOClientSecret string `mapstructure:"qbo_client_secret"`
 	QBOIsProduction bool   `mapstructure:"qbo_is_production"`
+	QBOMinorVersion string `mapstructure:"qbo_minor_version"`
 
 	// CDC (Change Data Capture) Config
 	CDCEnabled      bool          `mapstructure:"cdc_enabled"`
@@ -112,6 +113,7 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("qbo_client_id", "QBO_CLIENT_ID")
 	_ = v.BindEnv("qbo_client_secret", "QBO_CLIENT_SECRET")
 	_ = v.BindEnv("qbo_is_production", "QBO_IS_PRODUCTION")
+	_ = v.BindEnv("qbo_minor_version", "QBO_MINOR_VERSION")
 	_ = v.BindEnv("cdc_enabled", "CDC_ENABLED")
 	_ = v.BindEnv("cdc_sync_interval", "CDC_SYNC_INTERVAL")
 	_ = v.BindEnv("pinecone_index", "PINECONE_INDEX")

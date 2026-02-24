@@ -13,10 +13,18 @@ import (
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/resilience"
+	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 )
+
+// TransactionApprover defines the interface for CPA transaction approval DB operations.
+type TransactionApprover interface {
+	GetProposedTransactionByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpProposedTransaction, error)
+	ApproveProposedTransaction(ctx context.Context, arg database.ApproveProposedTransactionParams) (database.ShadowErpProposedTransaction, error)
+}
 
 // SecretGetter defines the interface for retrieving webhook secrets and checking health.
 type SecretGetter interface {
@@ -54,10 +62,23 @@ type Handler struct {
 	QBOConfig         *QBOConfig
 	Authenticator     *auth.Authenticator
 	Redis             *redis.Client
+	Approver          TransactionApprover
+	Reconciler        *accounting.ReconciliationService
 }
 
 // NewHandler creates a new Handler.
-func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher, verifierRegistry *VerifierRegistry, maxBodySize int64, qboConfig *QBOConfig, authenticator *auth.Authenticator, redisClient *redis.Client) *Handler {
+func NewHandler(
+	logger *slog.Logger,
+	store SecretGetter,
+	pub EventPublisher,
+	verifierRegistry *VerifierRegistry,
+	maxBodySize int64,
+	qboConfig *QBOConfig,
+	authenticator *auth.Authenticator,
+	redisClient *redis.Client,
+	approver TransactionApprover,
+	reconciler *accounting.ReconciliationService,
+) *Handler {
 	return &Handler{
 		Logger:            logger,
 		Store:             store,
@@ -69,6 +90,8 @@ func NewHandler(logger *slog.Logger, store SecretGetter, pub EventPublisher, ver
 		QBOConfig:         qboConfig,
 		Authenticator:     authenticator,
 		Redis:             redisClient,
+		Approver:          approver,
+		Reconciler:        reconciler,
 	}
 }
 

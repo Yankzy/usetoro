@@ -53,6 +53,47 @@ func (r *mutationResolver) getQBOConnectorHelper(ctx context.Context, realmID st
 	return qboConn, entityID, nil
 }
 
+// mapDatabaseCustomerToModel maps a database ShadowErpCustomer to a GraphQL Customer model.
+func mapDatabaseCustomerToModel(c *database.ShadowErpCustomer) *model.Customer {
+	var deletedAt *time.Time
+	if c.DeletedAt.Valid {
+		deletedAt = &c.DeletedAt.Time
+	}
+	return &model.Customer{
+		ID:          uuid.UUID(c.ID.Bytes).String(),
+		RealmID:     c.RealmID,
+		DisplayName: c.DisplayName,
+		SyncToken:   c.SyncToken,
+		CreatedAt:   c.CreatedAt.Time,
+		UpdatedAt:   c.UpdatedAt.Time,
+		DeletedAt:   deletedAt,
+	}
+}
+
+// mapDatabaseVendorToModel maps a database ShadowErpVendor to a GraphQL Vendor model.
+func mapDatabaseVendorToModel(v *database.ShadowErpVendor) *model.Vendor {
+	var lastKnownAccountID *string
+	if v.LastKnownAccountID.Valid {
+		s := uuid.UUID(v.LastKnownAccountID.Bytes).String()
+		lastKnownAccountID = &s
+	}
+	var deletedAt *time.Time
+	if v.DeletedAt.Valid {
+		deletedAt = &v.DeletedAt.Time
+	}
+	return &model.Vendor{
+		ID:                 uuid.UUID(v.ID.Bytes).String(),
+		RealmID:            v.RealmID,
+		QboID:              v.QboID,
+		DisplayName:        v.DisplayName,
+		SyncToken:          v.SyncToken,
+		LastKnownAccountID: lastKnownAccountID,
+		CreatedAt:          v.CreatedAt.Time,
+		UpdatedAt:          v.UpdatedAt.Time,
+		DeletedAt:          deletedAt,
+	}
+}
+
 // mapDatabaseAccountToModel maps a database ShadowErpAccount to a GraphQL Account model
 func mapDatabaseAccountToModel(a *database.ShadowErpAccount) *model.Account {
 	var classification *string

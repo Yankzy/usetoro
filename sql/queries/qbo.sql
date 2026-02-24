@@ -3,13 +3,20 @@
 -- =========================================================================
 
 -- name: UpsertQBOTokens :exec
+-- Evict any connection the incoming entity already owns under a different realm
+-- before upserting, so the UNIQUE(entity_id) constraint never blocks a transfer.
+WITH evict AS (
+    DELETE FROM toro_core.qbo_connections
+    WHERE entity_id = $1 AND realm_id != $2
+)
 INSERT INTO toro_core.qbo_connections (entity_id, realm_id, access_token, refresh_token, expires_at)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (realm_id)
 DO UPDATE SET
-    access_token  = $3,
-    refresh_token = $4,
-    expires_at    = $5,
+    entity_id     = EXCLUDED.entity_id,
+    access_token  = EXCLUDED.access_token,
+    refresh_token = EXCLUDED.refresh_token,
+    expires_at    = EXCLUDED.expires_at,
     updated_at    = NOW();
 
 -- name: GetQBOTokens :one
@@ -85,15 +92,15 @@ WHERE realm_id = $1;
 -- name: UpsertAccount :exec
 INSERT INTO shadow_erp.accounts (
     qbo_id, realm_id, name, account_type, account_sub_type, classification,
-    fully_qualified_name, active, sync_token, 
+    fully_qualified_name, active, sync_token,
     domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts,
     sparse, qbo_created_time, qbo_updated_time, current_balance, sub_account,
-    created_at, updated_at
+    event_source, created_at, updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, 
+    $1, $2, $3, $4, $5, $6, $7, $8, $9,
     $10, $11, $12, $13, $14, $15, $16, $17, $18,
-    NOW(), NOW()
+    'qbo_sync', NOW(), NOW()
 )
 ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     name                 = EXCLUDED.name,
@@ -112,47 +119,50 @@ ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     qbo_updated_time     = EXCLUDED.qbo_updated_time,
     current_balance      = EXCLUDED.current_balance,
     sub_account          = EXCLUDED.sub_account,
+    event_source         = 'qbo_sync',
     updated_at           = NOW(),
     deleted_at           = NULL;
 
 -- name: UpsertVendor :exec
 INSERT INTO shadow_erp.vendors (
     qbo_id, realm_id, display_name, sync_token, last_known_account_id,
-    ai_synonyms, created_at, updated_at
+    ai_synonyms, event_source, created_at, updated_at
 )
 VALUES (
     $1, $2, $3, $4,
     (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.qbo_id = sqlc.narg('last_known_account_qbo_id') AND shadow_erp.accounts.realm_id = $2),
-    $5, NOW(), NOW()
+    $5, 'qbo_sync', NOW(), NOW()
 )
 ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     display_name          = EXCLUDED.display_name,
     sync_token            = EXCLUDED.sync_token,
     last_known_account_id = EXCLUDED.last_known_account_id,
     ai_synonyms           = EXCLUDED.ai_synonyms,
+    event_source          = 'qbo_sync',
     updated_at            = NOW(),
     deleted_at            = NULL;
 
 -- name: UpsertCustomer :exec
 INSERT INTO shadow_erp.customers (
-    qbo_id, realm_id, display_name, sync_token, created_at, updated_at
+    qbo_id, realm_id, display_name, sync_token, event_source, created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, NOW(), NOW())
+VALUES ($1, $2, $3, $4, 'qbo_sync', NOW(), NOW())
 ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     display_name = EXCLUDED.display_name,
     sync_token   = EXCLUDED.sync_token,
+    event_source = 'qbo_sync',
     updated_at   = NOW(),
     deleted_at   = NULL;
 
 -- name: UpsertInvoice :exec
 INSERT INTO shadow_erp.invoices (
     qbo_id, realm_id, customer_id, doc_number, total_amount, balance,
-    due_date, txn_date, sync_token, created_at, updated_at
+    due_date, txn_date, sync_token, event_source, created_at, updated_at
 )
 VALUES (
     $1, $2,
     (SELECT id FROM shadow_erp.customers WHERE shadow_erp.customers.qbo_id = sqlc.narg('customer_qbo_id') AND shadow_erp.customers.realm_id = $2),
-    $3, $4, $5, $6, $7, $8, NOW(), NOW()
+    $3, $4, $5, $6, $7, $8, 'qbo_sync', NOW(), NOW()
 )
 ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     customer_id  = EXCLUDED.customer_id,
@@ -162,18 +172,19 @@ ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     due_date     = EXCLUDED.due_date,
     txn_date     = EXCLUDED.txn_date,
     sync_token   = EXCLUDED.sync_token,
+    event_source = 'qbo_sync',
     updated_at   = NOW(),
     deleted_at   = NULL;
 
 -- name: UpsertBill :exec
 INSERT INTO shadow_erp.bills (
     qbo_id, realm_id, vendor_id, doc_number, total_amount, balance,
-    due_date, txn_date, sync_token, created_at, updated_at
+    due_date, txn_date, sync_token, event_source, created_at, updated_at
 )
 VALUES (
     $1, $2,
     (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.qbo_id = sqlc.narg('vendor_qbo_id') AND shadow_erp.vendors.realm_id = $2),
-    $3, $4, $5, $6, $7, $8, NOW(), NOW()
+    $3, $4, $5, $6, $7, $8, 'qbo_sync', NOW(), NOW()
 )
 ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     vendor_id    = EXCLUDED.vendor_id,
@@ -183,32 +194,33 @@ ON CONFLICT (realm_id, qbo_id) DO UPDATE SET
     due_date     = EXCLUDED.due_date,
     txn_date     = EXCLUDED.txn_date,
     sync_token   = EXCLUDED.sync_token,
+    event_source = 'qbo_sync',
     updated_at   = NOW(),
     deleted_at   = NULL;
 
 -- name: SoftDeleteAccount :exec
 UPDATE shadow_erp.accounts
-SET deleted_at = $1, updated_at = $1
+SET deleted_at = $1, updated_at = $1, event_source = 'qbo_sync'
 WHERE realm_id = $2 AND qbo_id = $3;
 
 -- name: SoftDeleteVendor :exec
 UPDATE shadow_erp.vendors
-SET deleted_at = $1, updated_at = $1
+SET deleted_at = $1, updated_at = $1, event_source = 'qbo_sync'
 WHERE realm_id = $2 AND qbo_id = $3;
 
 -- name: SoftDeleteCustomer :exec
 UPDATE shadow_erp.customers
-SET deleted_at = $1, updated_at = $1
+SET deleted_at = $1, updated_at = $1, event_source = 'qbo_sync'
 WHERE realm_id = $2 AND qbo_id = $3;
 
 -- name: SoftDeleteInvoice :exec
 UPDATE shadow_erp.invoices
-SET deleted_at = $1, updated_at = $1
+SET deleted_at = $1, updated_at = $1, event_source = 'qbo_sync'
 WHERE realm_id = $2 AND qbo_id = $3;
 
 -- name: SoftDeleteBill :exec
 UPDATE shadow_erp.bills
-SET deleted_at = $1, updated_at = $1
+SET deleted_at = $1, updated_at = $1, event_source = 'qbo_sync'
 WHERE realm_id = $2 AND qbo_id = $3;
 
 -- =========================================================================
@@ -363,14 +375,69 @@ LIMIT 1;
 INSERT INTO shadow_erp.proposed_transactions (
     realm_id, source_type, raw_amount, raw_date, raw_description,
     predicted_vendor_id, predicted_account_id, confidence_score,
-    ai_reasoning, sync_status, created_at, updated_at
+    ai_reasoning, sync_status, event_source, created_at, updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'toro_internal', NOW(), NOW()
 )
 RETURNING *;
 
 -- name: UpdateProposedTransactionSyncStatus :exec
 UPDATE shadow_erp.proposed_transactions
-SET sync_status = $2, qbo_transaction_id = $3, error_message = $4, updated_at = NOW()
+SET sync_status = $2, qbo_transaction_id = $3, error_message = $4,
+    event_source = 'toro_internal', updated_at = NOW()
 WHERE id = $1;
+
+-- name: GetProposedTransactionByID :one
+SELECT * FROM shadow_erp.proposed_transactions WHERE id = $1;
+
+-- name: ApproveProposedTransaction :one
+UPDATE shadow_erp.proposed_transactions
+SET predicted_account_id = $2,
+    predicted_vendor_id  = $3,
+    sync_status          = 'APPROVED',
+    event_source         = 'toro_internal',
+    updated_at           = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- =========================================================================
+-- Company Info
+-- =========================================================================
+
+-- name: UpsertCompanyInfo :exec
+INSERT INTO shadow_erp.company_info (
+    realm_id, qbo_id, sync_token, company_name, legal_name, domain, country,
+    fiscal_year_start_month, company_start_date, supported_languages,
+    company_addr, legal_addr, primary_phone, email, web_addr, name_values,
+    qbo_created_time, qbo_updated_time, event_source, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    $11, $12, $13, $14, $15, $16, $17, $18,
+    'qbo_sync', NOW(), NOW()
+)
+ON CONFLICT (realm_id) DO UPDATE SET
+    qbo_id                  = EXCLUDED.qbo_id,
+    sync_token              = EXCLUDED.sync_token,
+    company_name            = EXCLUDED.company_name,
+    legal_name              = EXCLUDED.legal_name,
+    domain                  = EXCLUDED.domain,
+    country                 = EXCLUDED.country,
+    fiscal_year_start_month = EXCLUDED.fiscal_year_start_month,
+    company_start_date      = EXCLUDED.company_start_date,
+    supported_languages     = EXCLUDED.supported_languages,
+    company_addr            = EXCLUDED.company_addr,
+    legal_addr              = EXCLUDED.legal_addr,
+    primary_phone           = EXCLUDED.primary_phone,
+    email                   = EXCLUDED.email,
+    web_addr                = EXCLUDED.web_addr,
+    name_values             = EXCLUDED.name_values,
+    qbo_created_time        = EXCLUDED.qbo_created_time,
+    qbo_updated_time        = EXCLUDED.qbo_updated_time,
+    event_source            = 'qbo_sync',
+    updated_at              = NOW();
+
+-- name: GetCompanyInfo :one
+SELECT * FROM shadow_erp.company_info
+WHERE realm_id = $1;

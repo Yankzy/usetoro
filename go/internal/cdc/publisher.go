@@ -23,6 +23,12 @@ func NewPublisher(js jetstream.JetStream) *Publisher {
 
 // PublishSync publishes the Toro Event synchronously and guarantees Exactly-Once Semantics via Nats-Msg-Id.
 func (p *Publisher) PublishSync(ctx context.Context, event *Event) error {
+	// Promote event_source from the row data into the top-level Source field so
+	// consumers can call event.IsInternal() without digging into Data.
+	if src, ok := event.Data["event_source"].(string); ok {
+		event.Source = src
+	}
+
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event payload: %w", err)

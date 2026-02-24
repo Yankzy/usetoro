@@ -15,6 +15,10 @@ func NewRouter(h *Handler) *http.ServeMux {
 	// QBO OAuth2 callback
 	mux.HandleFunc("GET /auth/qbo/callback", h.HandleQBOCallback)
 
+	// CPA Review Loop & Feedback
+	mux.HandleFunc("POST /transactions/{id}/approve", h.HandleApproveTransaction)
+	mux.HandleFunc("POST /reconcile/{realmId}", h.HandleReconcileMonth)
+
 	// Backward compatibility: specific Stripe endpoint
 	mux.HandleFunc("POST /webhooks/stripe/{conn_id}", h.HandleStripeWebhook)
 

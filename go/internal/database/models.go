@@ -39,6 +39,7 @@ type ShadowErpAccount struct {
 	QboUpdatedTime                pgtype.Timestamptz
 	CurrentBalance                pgtype.Numeric
 	SubAccount                    pgtype.Bool
+	EventSource                   string
 }
 
 // Records when users correct AI predictions for learning and synonym updates
@@ -54,6 +55,7 @@ type ShadowErpAiCorrection struct {
 	CorrectionType  string
 	ConfidenceScore pgtype.Numeric
 	CreatedAt       pgtype.Timestamptz
+	EventSource     string
 }
 
 type ShadowErpBill struct {
@@ -70,6 +72,33 @@ type ShadowErpBill struct {
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
+	EventSource string
+}
+
+// Mirror of QBO CompanyInfo; keyed by realm_id. One row per connected QBO company.
+type ShadowErpCompanyInfo struct {
+	ID                   pgtype.UUID
+	RealmID              string
+	QboID                string
+	SyncToken            string
+	CompanyName          string
+	LegalName            pgtype.Text
+	Domain               pgtype.Text
+	Country              pgtype.Text
+	FiscalYearStartMonth pgtype.Text
+	CompanyStartDate     pgtype.Date
+	SupportedLanguages   pgtype.Text
+	CompanyAddr          []byte
+	LegalAddr            []byte
+	PrimaryPhone         pgtype.Text
+	Email                pgtype.Text
+	WebAddr              pgtype.Text
+	NameValues           []byte
+	QboCreatedTime       pgtype.Timestamptz
+	QboUpdatedTime       pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	EventSource          string
 }
 
 type ShadowErpCustomer struct {
@@ -81,6 +110,7 @@ type ShadowErpCustomer struct {
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
+	EventSource string
 }
 
 type ShadowErpInvoice struct {
@@ -97,6 +127,7 @@ type ShadowErpInvoice struct {
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
+	EventSource string
 }
 
 type ShadowErpProposedTransaction struct {
@@ -115,6 +146,7 @@ type ShadowErpProposedTransaction struct {
 	ErrorMessage       pgtype.Text
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	EventSource        string
 }
 
 type ShadowErpRuleAuditLog struct {
@@ -167,6 +199,7 @@ type ShadowErpVectorSyncState struct {
 	CustomerVectorCount pgtype.Int4
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+	EventSource         string
 }
 
 type ShadowErpVendor struct {
@@ -180,6 +213,7 @@ type ShadowErpVendor struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	DeletedAt          pgtype.Timestamptz
+	EventSource        string
 }
 
 type TelemetryEvent struct {

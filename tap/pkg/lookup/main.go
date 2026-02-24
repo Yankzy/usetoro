@@ -72,7 +72,7 @@ func (c *Client) FindAgents(capability string, timeout time.Duration) ([]Almanac
 	return results, nil
 }
 
-// Resolve looks up a specific agent by DID
+// Resolve looks up agents by multiple criteria
 func (c *Client) Resolve(query AlmanacQuery, timeout time.Duration) (*AlmanacEntry, error) {
 	reqData, err := json.Marshal(query)
 	if err != nil {

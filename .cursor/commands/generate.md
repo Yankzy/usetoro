@@ -1,0 +1,1 @@
+Generate cursor rule for this project.

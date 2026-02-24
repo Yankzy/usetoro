@@ -12,8 +12,18 @@ type Event struct {
 	EventID   string         `json:"event_id"` // Matches the Postgres LSN (1A/2B3C)
 	Table     string         `json:"table"`
 	Action    string         `json:"action"` // INSERT, UPDATE, DELETE
+	// Source identifies who wrote this row: "toro_internal" or "qbo_sync".
+	// Populated by the publisher from the event_source column. Consumers must
+	// call IsInternal() before reacting to break the CDC write-back loop.
+	Source    string         `json:"source"`
 	Timestamp time.Time      `json:"timestamp"`
 	Data      map[string]any `json:"data"`
+}
+
+// IsInternal returns true when this event was caused by Toro's own code.
+// Consumers must check this and Ack+skip to prevent circular CDC loops.
+func (e *Event) IsInternal() bool {
+	return e.Source == "toro_internal"
 }
 
 // Decoder holds the replication stream state, mapping RelationIDs to schema metadata

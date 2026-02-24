@@ -2,6 +2,9 @@ package quickbooks
 
 import "fmt"
 
+// BatchMaxSize is the maximum number of operations allowed per QBO batch request.
+const BatchMaxSize = 30
+
 // BatchBuilder helps construct batch requests with automatic bId generation
 type BatchBuilder struct {
 	items   []BatchItemRequest

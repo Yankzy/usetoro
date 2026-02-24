@@ -91,3 +91,5 @@ s.ExecTx(ctx, entityID, func(q *database.Queries) error {
 - Circuit breakers (`sony/gobreaker`) for NATS and external services
 - Rate limiters (`golang.org/x/time/rate`) per-connection
 - Retry with exponential backoff for async NATS publishes
+
+NEVER EVER EDIT GENERATED FILES.

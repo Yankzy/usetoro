@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -43,24 +44,25 @@ func (s *Store) SaveQBOTokens(ctx context.Context, entityID, realmID, accessToke
 }
 
 // GetQBOTokens retrieves and decrypts the OAuth2 tokens for a QBO connection.
-func (s *Store) GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, error) {
+// Returns accessToken, refreshToken, expiresAt, entityID, error.
+func (s *Store) GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, string, error) {
 	row, err := s.Queries.GetQBOTokens(ctx, realmID)
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", "", time.Time{}, "", err
 	}
 
-	// Decrypt tokens
 	accessToken, err := s.Encryptor.Decrypt(row.AccessToken)
 	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("failed to decrypt access token: %w", err)
+		return "", "", time.Time{}, "", fmt.Errorf("failed to decrypt access token: %w", err)
 	}
 
 	refreshToken, err := s.Encryptor.Decrypt(row.RefreshToken)
 	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("failed to decrypt refresh token: %w", err)
+		return "", "", time.Time{}, "", fmt.Errorf("failed to decrypt refresh token: %w", err)
 	}
 
-	return accessToken, refreshToken, row.ExpiresAt.Time, nil
+	entityID := uuid.UUID(row.EntityID.Bytes).String()
+	return accessToken, refreshToken, row.ExpiresAt.Time, entityID, nil
 }
 
 // GetQBOConnection returns the basic connection info (no secrets) for an entity.

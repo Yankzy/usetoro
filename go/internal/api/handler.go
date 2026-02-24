@@ -30,7 +30,7 @@ type TransactionApprover interface {
 type SecretGetter interface {
 	GetWebhookSecret(ctx context.Context, connID string) (string, error)
 	SaveQBOTokens(ctx context.Context, entityID, realmID, accessToken, refreshToken string, expiresAt time.Time) error
-	GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, error)
+	GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, string, error)
 	GetQBOConnection(ctx context.Context, entityID string) (*database.ToroCoreQboConnection, error)
 	Ping(ctx context.Context) error
 }

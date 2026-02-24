@@ -314,9 +314,15 @@ func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) 
 		return nil, fmt.Errorf("realmID is required")
 	}
 
-	accessToken, refreshToken, expiresAt, err := c.store.GetQBOTokens(ctx, realmID)
+	accessToken, refreshToken, expiresAt, entityID, err := c.store.GetQBOTokens(ctx, realmID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get QBO tokens for realm %s: %w", realmID, err)
+	}
+
+	// Prefer the caller-supplied tenantID; fall back to the entityID stored alongside the tokens.
+	effectiveEntityID := tenantID
+	if effectiveEntityID == "" {
+		effectiveEntityID = entityID
 	}
 
 	client, err := quickbooks.NewClient(
@@ -331,8 +337,8 @@ func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) 
 			Expiry:       expiresAt,
 		},
 		func(token *quickbooks.BearerToken) error {
-			c.logger.Info("🔄 Auto-refreshed QBO token", "tenant_id", tenantID, "realm_id", realmID)
-			return c.store.SaveQBOTokens(ctx, tenantID, realmID, token.AccessToken, token.RefreshToken, token.Expiry)
+			c.logger.Info("Auto-refreshed QBO token", "realm_id", realmID)
+			return c.store.SaveQBOTokens(ctx, effectiveEntityID, realmID, token.AccessToken, token.RefreshToken, token.Expiry)
 		},
 	)
 	if err != nil {

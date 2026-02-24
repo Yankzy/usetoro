@@ -44,8 +44,8 @@ func (m *MockStore) GetQBOConnection(ctx context.Context, entityID string) (*dat
 	return nil, nil
 }
 
-func (m *MockStore) GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, error) {
-	return "", "", time.Time{}, nil
+func (m *MockStore) GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, string, error) {
+	return "", "", time.Time{}, "", nil
 }
 
 type MockPublisher struct {

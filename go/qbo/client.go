@@ -340,10 +340,9 @@ func (s *notifyTokenSource) Token() (*oauth2.Token, error) {
 				Expiry:       t.Expiry,
 				TokenType:    t.TokenType,
 			}
-			// Best effort callback, ignore error or log it?
-			// For now we ignore returning error to not block the request,
-			// but in a real app might want to log.
-			_ = s.onTokenUpdated(bt)
+			if err := s.onTokenUpdated(bt); err != nil {
+				return nil, fmt.Errorf("failed to persist refreshed token: %w", err)
+			}
 		}
 		s.lastKnownToken = t
 	}

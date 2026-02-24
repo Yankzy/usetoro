@@ -1279,6 +1279,32 @@ func (q *Queries) UpdateProposedTransactionSyncStatus(ctx context.Context, arg U
 	return err
 }
 
+const updateQBOTokensByRealm = `-- name: UpdateQBOTokensByRealm :exec
+UPDATE toro_core.qbo_connections
+SET access_token  = $2,
+    refresh_token = $3,
+    expires_at    = $4,
+    updated_at    = NOW()
+WHERE realm_id = $1
+`
+
+type UpdateQBOTokensByRealmParams struct {
+	RealmID      string
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateQBOTokensByRealm(ctx context.Context, arg UpdateQBOTokensByRealmParams) error {
+	_, err := q.db.Exec(ctx, updateQBOTokensByRealm,
+		arg.RealmID,
+		arg.AccessToken,
+		arg.RefreshToken,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
 const updateVendorSynonyms = `-- name: UpdateVendorSynonyms :exec
 UPDATE shadow_erp.vendors
 SET ai_synonyms = $3, updated_at = NOW()
@@ -1628,8 +1654,7 @@ func (q *Queries) UpsertInvoice(ctx context.Context, arg UpsertInvoiceParams) er
 }
 
 const upsertQBOTokens = `-- name: UpsertQBOTokens :exec
--- Evict any connection the incoming entity already owns under a different realm
--- before upserting, so the UNIQUE(entity_id) constraint never blocks a transfer.
+
 WITH evict AS (
     DELETE FROM toro_core.qbo_connections
     WHERE entity_id = $1 AND realm_id != $2
@@ -1656,6 +1681,8 @@ type UpsertQBOTokensParams struct {
 // =========================================================================
 // QBO Connection / Token Management
 // =========================================================================
+// Evict any connection the incoming entity already owns under a different realm
+// before upserting, so the UNIQUE(entity_id) constraint never blocks a transfer.
 func (q *Queries) UpsertQBOTokens(ctx context.Context, arg UpsertQBOTokensParams) error {
 	_, err := q.db.Exec(ctx, upsertQBOTokens,
 		arg.EntityID,

@@ -21,8 +21,8 @@ type Account struct {
 	CurrencyRefValue              *string    `json:"currencyRefValue,omitempty"`
 	CurrentBalanceWithSubAccounts *float64   `json:"currentBalanceWithSubAccounts,omitempty"`
 	Sparse                        *bool      `json:"sparse,omitempty"`
-	ErpCreatedTime                *time.Time `json:"qboCreatedTime,omitempty"`
-	ErpUpdatedTime                *time.Time `json:"qboUpdatedTime,omitempty"`
+	ErpCreatedTime                *time.Time `json:"erpCreatedTime,omitempty"`
+	ErpUpdatedTime                *time.Time `json:"erpUpdatedTime,omitempty"`
 	CurrentBalance                *float64   `json:"currentBalance,omitempty"`
 	SubAccount                    *bool      `json:"subAccount,omitempty"`
 	CreatedAt                     time.Time  `json:"createdAt"`
@@ -75,7 +75,7 @@ type CleanupRow struct {
 	OverrideAccountID    *string    `json:"overrideAccountId,omitempty"`
 	OverrideAccountName  *string    `json:"overrideAccountName,omitempty"`
 	Status               string     `json:"status"`
-	ErpTransactionID     *string    `json:"qboTransactionId,omitempty"`
+	ErpTransactionID     *string    `json:"erpTransactionId,omitempty"`
 	CreatedAt            time.Time  `json:"createdAt"`
 	UpdatedAt            time.Time  `json:"updatedAt"`
 }
@@ -197,6 +197,19 @@ type TenantConnection struct {
 	PageInfo   *PageInfo `json:"pageInfo"`
 }
 
+type Transaction struct {
+	ID          string    `json:"id"`
+	ExternalID  string    `json:"externalId"`
+	Amount      float64   `json:"amount"`
+	VendorName  *string   `json:"vendorName,omitempty"`
+	VendorID    *string   `json:"vendorId,omitempty"`
+	AccountID   *string   `json:"accountId,omitempty"`
+	Date        time.Time `json:"date"`
+	Description *string   `json:"description,omitempty"`
+	Memo        *string   `json:"memo,omitempty"`
+	SourceType  string    `json:"sourceType"`
+}
+
 type UpdateQboAccountInput struct {
 	RealmID        string  `json:"realmId"`
 	AccountID      string  `json:"accountId"`
@@ -217,7 +230,7 @@ type User struct {
 type Vendor struct {
 	ID                 string     `json:"id"`
 	RealmID            string     `json:"realmId"`
-	ErpID              string     `json:"qboId"`
+	ErpID              string     `json:"erpId"`
 	DisplayName        string     `json:"displayName"`
 	SyncToken          string     `json:"syncToken"`
 	LastKnownAccountID *string    `json:"lastKnownAccountId,omitempty"`

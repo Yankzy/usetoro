@@ -55,19 +55,21 @@ type QBOConfig struct {
 
 // Handler holds dependencies for HTTP handlers.
 type Handler struct {
-	Logger            *slog.Logger
-	Store             SecretGetter
-	Pub               EventPublisher
-	VerifierRegistry  *VerifierRegistry
-	RateLimiter       *resilience.RateLimiter
-	FailedAuthTracker *resilience.FailedAttemptsTracker
-	MaxBodySize       int64
-	QBOConfig         *QBOConfig
-	Authenticator     *auth.Authenticator
-	Redis             *redis.Client
-	Approver          TransactionApprover
-	Reconciler        *accounting.ReconciliationService
-	AttachableService *accounting.AttachableService
+	Logger             *slog.Logger
+	Store              SecretGetter
+	Pub                EventPublisher
+	VerifierRegistry   *VerifierRegistry
+	RateLimiter        *resilience.RateLimiter
+	FailedAuthTracker  *resilience.FailedAttemptsTracker
+	MaxBodySize        int64
+	QBOConfig          *QBOConfig
+	Authenticator      *auth.Authenticator
+	Redis              *redis.Client
+	Approver           TransactionApprover
+	Reconciler         *accounting.ReconciliationService
+	AttachableService  *accounting.AttachableService
+	TransactionService *accounting.TransactionService
+	EntityService      *accounting.EntityService
 
 	// Cleanup Mode dependencies
 	DBPool          *pgxpool.Pool
@@ -89,29 +91,33 @@ func NewHandler(
 	approver TransactionApprover,
 	reconciler *accounting.ReconciliationService,
 	attachableService *accounting.AttachableService,
+	transactionService *accounting.TransactionService,
+	entityService *accounting.EntityService,
 	dbPool *pgxpool.Pool,
 	cleanupDB *database.Queries,
 	cleanupNATS *queue.Client,
 	cleanupExporter CleanupExporter,
 ) *Handler {
 	return &Handler{
-		Logger:            logger,
-		Store:             store,
-		Pub:               pub,
-		VerifierRegistry:  verifierRegistry,
-		RateLimiter:       resilience.NewRateLimiter(100, 10), // 100 req/s, burst 10
-		FailedAuthTracker: resilience.NewFailedAttemptsTracker(5),
-		MaxBodySize:       maxBodySize,
-		QBOConfig:         qboConfig,
-		Authenticator:     authenticator,
-		Redis:             redisClient,
-		Approver:          approver,
-		Reconciler:        reconciler,
-		AttachableService: attachableService,
-		DBPool:            dbPool,
-		CleanupDB:         cleanupDB,
-		CleanupNATS:       cleanupNATS,
-		CleanupExporter:   cleanupExporter,
+		Logger:             logger,
+		Store:              store,
+		Pub:                pub,
+		VerifierRegistry:   verifierRegistry,
+		RateLimiter:        resilience.NewRateLimiter(100, 10), // 100 req/s, burst 10
+		FailedAuthTracker:  resilience.NewFailedAttemptsTracker(5),
+		MaxBodySize:        maxBodySize,
+		QBOConfig:          qboConfig,
+		Authenticator:      authenticator,
+		Redis:              redisClient,
+		Approver:           approver,
+		Reconciler:         reconciler,
+		AttachableService:  attachableService,
+		TransactionService: transactionService,
+		EntityService:      entityService,
+		DBPool:             dbPool,
+		CleanupDB:          cleanupDB,
+		CleanupNATS:        cleanupNATS,
+		CleanupExporter:    cleanupExporter,
 	}
 }
 

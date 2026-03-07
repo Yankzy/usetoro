@@ -153,6 +153,56 @@ func (q *Queries) GetAccountByERPID(ctx context.Context, arg GetAccountByERPIDPa
 	return i, err
 }
 
+const getAccountsByRealm = `-- name: GetAccountsByRealm :many
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source FROM shadow_erp.accounts
+WHERE realm_id = $1 AND deleted_at IS NULL
+ORDER BY name ASC
+`
+
+func (q *Queries) GetAccountsByRealm(ctx context.Context, realmID string) ([]ShadowErpAccount, error) {
+	rows, err := q.db.Query(ctx, getAccountsByRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ShadowErpAccount
+	for rows.Next() {
+		var i ShadowErpAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.ErpID,
+			&i.RealmID,
+			&i.Name,
+			&i.AccountType,
+			&i.AccountSubType,
+			&i.Classification,
+			&i.FullyQualifiedName,
+			&i.Active,
+			&i.SyncToken,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.Domain,
+			&i.CurrencyRefName,
+			&i.CurrencyRefValue,
+			&i.CurrentBalanceWithSubAccounts,
+			&i.Sparse,
+			&i.ErpCreatedTime,
+			&i.ErpUpdatedTime,
+			&i.CurrentBalance,
+			&i.SubAccount,
+			&i.EventSource,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAccountsUpdatedSince = `-- name: GetAccountsUpdatedSince :many
 SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source FROM shadow_erp.accounts
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
@@ -593,6 +643,42 @@ func (q *Queries) GetCustomerByName(ctx context.Context, arg GetCustomerByNamePa
 	return i, err
 }
 
+const getCustomersByRealm = `-- name: GetCustomersByRealm :many
+SELECT id, erp_id, realm_id, display_name, sync_token, created_at, updated_at, deleted_at, event_source FROM shadow_erp.customers
+WHERE realm_id = $1 AND deleted_at IS NULL
+ORDER BY display_name ASC
+`
+
+func (q *Queries) GetCustomersByRealm(ctx context.Context, realmID string) ([]ShadowErpCustomer, error) {
+	rows, err := q.db.Query(ctx, getCustomersByRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ShadowErpCustomer
+	for rows.Next() {
+		var i ShadowErpCustomer
+		if err := rows.Scan(
+			&i.ID,
+			&i.ErpID,
+			&i.RealmID,
+			&i.DisplayName,
+			&i.SyncToken,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.EventSource,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getCustomersUpdatedSince = `-- name: GetCustomersUpdatedSince :many
 SELECT id, erp_id, realm_id, display_name, sync_token, created_at, updated_at, deleted_at, event_source FROM shadow_erp.customers
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
@@ -753,7 +839,6 @@ func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID
 }
 
 const getProposedTransactionByValues = `-- name: GetProposedTransactionByValues :one
-
 SELECT id, realm_id, source_type, raw_amount, raw_date, raw_description, predicted_vendor_id, predicted_account_id, confidence_score, ai_reasoning, erp_transaction_id, sync_status, error_message, created_at, updated_at, event_source FROM shadow_erp.proposed_transactions
 WHERE realm_id = $1
   AND predicted_vendor_id = $2
@@ -769,9 +854,6 @@ type GetProposedTransactionByValuesParams struct {
 	RawAmount         pgtype.Numeric
 }
 
-// =========================================================================
-// Transaction Proposal & Audit
-// =========================================================================
 func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetProposedTransactionByValuesParams) (ShadowErpProposedTransaction, error) {
 	row := q.db.QueryRow(ctx, getProposedTransactionByValues,
 		arg.RealmID,
@@ -861,6 +943,112 @@ func (q *Queries) GetRecentCorrections(ctx context.Context, arg GetRecentCorrect
 			&i.ConfidenceScore,
 			&i.CreatedAt,
 			&i.EventSource,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getUnifiedTransactions = `-- name: GetUnifiedTransactions :many
+
+SELECT 
+    'Bill' as source_type,
+    b.id,
+    b.erp_id,
+    b.realm_id,
+    b.vendor_id as entity_id,
+    v.display_name as entity_name,
+    b.doc_number,
+    b.total_amount,
+    b.balance,
+    b.due_date,
+    b.txn_date,
+    b.sync_token,
+    b.created_at,
+    b.updated_at,
+    b.deleted_at
+FROM shadow_erp.bills b
+LEFT JOIN shadow_erp.vendors v ON b.vendor_id = v.id
+WHERE b.realm_id = $1
+
+UNION ALL
+
+SELECT 
+    'Invoice' as source_type,
+    i.id,
+    i.erp_id,
+    i.realm_id,
+    i.customer_id as entity_id,
+    c.display_name as entity_name,
+    i.doc_number,
+    i.total_amount,
+    i.balance,
+    i.due_date,
+    i.txn_date,
+    i.sync_token,
+    i.created_at,
+    i.updated_at,
+    i.deleted_at
+FROM shadow_erp.invoices i
+LEFT JOIN shadow_erp.customers c ON i.customer_id = c.id
+WHERE i.realm_id = $1
+
+ORDER BY txn_date DESC, created_at DESC
+`
+
+type GetUnifiedTransactionsRow struct {
+	SourceType  string
+	ID          pgtype.UUID
+	ErpID       string
+	RealmID     string
+	EntityID    pgtype.UUID
+	EntityName  pgtype.Text
+	DocNumber   pgtype.Text
+	TotalAmount pgtype.Numeric
+	Balance     pgtype.Numeric
+	DueDate     pgtype.Date
+	TxnDate     pgtype.Date
+	SyncToken   string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	DeletedAt   pgtype.Timestamptz
+}
+
+// =========================================================================
+// Transaction Proposal & Audit
+// =========================================================================
+// Retrieves a unified view of all transactions (Bills and Invoices) for a given realm,
+// including the vendor/customer names.
+func (q *Queries) GetUnifiedTransactions(ctx context.Context, realmID string) ([]GetUnifiedTransactionsRow, error) {
+	rows, err := q.db.Query(ctx, getUnifiedTransactions, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetUnifiedTransactionsRow
+	for rows.Next() {
+		var i GetUnifiedTransactionsRow
+		if err := rows.Scan(
+			&i.SourceType,
+			&i.ID,
+			&i.ErpID,
+			&i.RealmID,
+			&i.EntityID,
+			&i.EntityName,
+			&i.DocNumber,
+			&i.TotalAmount,
+			&i.Balance,
+			&i.DueDate,
+			&i.TxnDate,
+			&i.SyncToken,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -995,6 +1183,44 @@ func (q *Queries) GetVendorByNameOrSynonym(ctx context.Context, arg GetVendorByN
 		&i.EventSource,
 	)
 	return i, err
+}
+
+const getVendorsByRealm = `-- name: GetVendorsByRealm :many
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at, event_source FROM shadow_erp.vendors
+WHERE realm_id = $1 AND deleted_at IS NULL
+ORDER BY display_name ASC
+`
+
+func (q *Queries) GetVendorsByRealm(ctx context.Context, realmID string) ([]ShadowErpVendor, error) {
+	rows, err := q.db.Query(ctx, getVendorsByRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ShadowErpVendor
+	for rows.Next() {
+		var i ShadowErpVendor
+		if err := rows.Scan(
+			&i.ID,
+			&i.ErpID,
+			&i.RealmID,
+			&i.DisplayName,
+			&i.SyncToken,
+			&i.LastKnownAccountID,
+			&i.AiSynonyms,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.EventSource,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getVendorsUpdatedSince = `-- name: GetVendorsUpdatedSince :many

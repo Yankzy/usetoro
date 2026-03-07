@@ -23,6 +23,12 @@ func NewRouter(h *Handler) *http.ServeMux {
 	// Attachable & File Uploads
 	mux.HandleFunc("POST /realms/{realmId}/entities/{entityType}/{entityID}/attachable", h.HandleUploadAttachable)
 
+	// Local Data Pull API
+	mux.HandleFunc("GET /realms/{realmId}/transactions", h.HandleGetUnifiedTransactions)
+	mux.HandleFunc("GET /realms/{realmId}/accounts", h.HandleGetAccounts)
+	mux.HandleFunc("GET /realms/{realmId}/vendors", h.HandleGetVendors)
+	mux.HandleFunc("GET /realms/{realmId}/customers", h.HandleGetCustomers)
+
 	// Clean-Up Mode: CSV/XLSX ingestion and exports
 	mux.HandleFunc("POST /cleanup/upload", h.HandleCleanupUpload)
 	mux.HandleFunc("GET /cleanup/{session_id}/export", h.HandleCleanupExport)

@@ -23,6 +23,7 @@ type TransactionRepository interface {
 	GetAccountByERPID(ctx context.Context, arg database.GetAccountByERPIDParams) (database.ShadowErpAccount, error)
 	GetVendorByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpVendor, error)
 	GetAccountByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpAccount, error)
+	GetUnifiedTransactions(ctx context.Context, realmID string) ([]database.GetUnifiedTransactionsRow, error)
 }
 
 // It uses EntityResolver and CoAMapper to resolve vendor and account
@@ -283,4 +284,60 @@ func (s *TransactionService) postExpense(
 	)
 
 	return created, nil
+}
+
+// FetchUnifiedTransactions retrieves all unified transactions (Bills and Invoices) for a single realm from the shadow_erp mirroring database.
+func (s *TransactionService) FetchUnifiedTransactions(ctx context.Context, realmID string, statusFilter *string) ([]erp.Transaction, error) {
+	if realmID == "" {
+		return nil, fmt.Errorf("realmID is required")
+	}
+
+	rows, err := s.repo.GetUnifiedTransactions(ctx, realmID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unified transactions: %w", err)
+	}
+
+	var results []erp.Transaction
+	for _, r := range rows {
+		amount := 0.0
+		if r.TotalAmount.Valid {
+			if v, err := r.TotalAmount.Float64Value(); err == nil {
+				amount = v.Float64
+			}
+		}
+
+		txnDate := time.Time{}
+		if r.TxnDate.Valid {
+			txnDate = r.TxnDate.Time
+		}
+
+		name := ""
+		if r.EntityName.Valid {
+			name = r.EntityName.String
+		}
+
+		var entityID string
+		if r.EntityID.Valid {
+			bytes := r.EntityID.Bytes
+			entityID = fmt.Sprintf("%x-%x-%x-%x-%x", bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16])
+		}
+
+		txn := erp.Transaction{
+			ToroID:      fmt.Sprintf("%x-%x-%x-%x-%x", r.ID.Bytes[0:4], r.ID.Bytes[4:6], r.ID.Bytes[6:8], r.ID.Bytes[8:10], r.ID.Bytes[10:16]),
+			ExternalID:  r.ErpID,
+			Amount:      amount,
+			VendorName:  name,
+			VendorID:    entityID,
+			Date:        txnDate,
+			SourceType:  r.SourceType,
+			Description: r.DocNumber.String, // Using doc_number roughly as description if memo isn't joined
+		}
+
+		results = append(results, txn)
+	}
+
+	// TODO: Apply optional status filtering manually or using another DB query if needed
+	// (e.g., checking proposed_transactions for 'RECONCILED' state)
+
+	return results, nil
 }

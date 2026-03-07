@@ -145,7 +145,7 @@ type CleanupRow {
   overrideAccountName: String
   # Lifecycle
   status: String!
-  qboTransactionId: String
+  erpTransactionId: String
   createdAt: Time!
   updatedAt: Time!
 }
@@ -200,7 +200,7 @@ type TenantConnection {
 type Vendor {
   id: ID!
   realmId: String!
-  qboId: String!
+  erpId: String!
   displayName: String!
   syncToken: String!
   lastKnownAccountId: String
@@ -227,6 +227,14 @@ type Query {
   # realmId is optional — omit for sessions without a QBO connection.
   cleanupSessions(realmId: ID): [CleanupSession!]!
   cleanupRows(sessionId: ID!, status: String): [CleanupRow!]!
+  
+  # Transaction Data Pull
+  transactions(realmId: ID!, status: String): [Transaction!]!
+  
+  # Entity Data Pull
+  accounts(realmId: ID!, type: String, active: Boolean): [Account!]!
+  vendors(realmId: ID!, search: String): [Vendor!]!
+  customers(realmId: ID!, search: String): [Customer!]!
 }
 
 type Customer {
@@ -254,11 +262,24 @@ type Account {
   currencyRefValue: String
   currentBalanceWithSubAccounts: Float
   sparse: Boolean
-  qboCreatedTime: Time
-  qboUpdatedTime: Time
+  erpCreatedTime: Time
+  erpUpdatedTime: Time
   currentBalance: Float
   subAccount: Boolean
   createdAt: Time!
   updatedAt: Time!
   deletedAt: Time
+}
+
+type Transaction {
+  id: ID!
+  externalId: String!
+  amount: Float!
+  vendorName: String
+  vendorId: String
+  accountId: String
+  date: Time!
+  description: String
+  memo: String
+  sourceType: String!
 }

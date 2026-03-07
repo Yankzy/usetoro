@@ -60,11 +60,11 @@ type ComplexityRoot struct {
 		CurrentBalanceWithSubAccounts func(childComplexity int) int
 		DeletedAt                     func(childComplexity int) int
 		Domain                        func(childComplexity int) int
+		ErpCreatedTime                func(childComplexity int) int
+		ErpUpdatedTime                func(childComplexity int) int
 		FullyQualifiedName            func(childComplexity int) int
 		ID                            func(childComplexity int) int
 		Name                          func(childComplexity int) int
-		ErpCreatedTime                func(childComplexity int) int
-		ErpUpdatedTime                func(childComplexity int) int
 		RealmID                       func(childComplexity int) int
 		Sparse                        func(childComplexity int) int
 		SubAccount                    func(childComplexity int) int
@@ -97,6 +97,7 @@ type ComplexityRoot struct {
 		ConfidenceScore      func(childComplexity int) int
 		CreatedAt            func(childComplexity int) int
 		DuplicateOf          func(childComplexity int) int
+		ErpTransactionID     func(childComplexity int) int
 		ID                   func(childComplexity int) int
 		IsDuplicate          func(childComplexity int) int
 		IsRecurring          func(childComplexity int) int
@@ -110,7 +111,6 @@ type ComplexityRoot struct {
 		PredictedAccountType func(childComplexity int) int
 		PredictedVendorID    func(childComplexity int) int
 		PredictedVendorName  func(childComplexity int) int
-		ErpTransactionID     func(childComplexity int) int
 		RawAmount            func(childComplexity int) int
 		RawDate              func(childComplexity int) int
 		RawDescription       func(childComplexity int) int
@@ -195,8 +195,10 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
+		Accounts             func(childComplexity int, realmID string, typeArg *string, active *bool) int
 		CleanupRows          func(childComplexity int, sessionID string, status *string) int
 		CleanupSessions      func(childComplexity int, realmID *string) int
+		Customers            func(childComplexity int, realmID string, search *string) int
 		QboAccount           func(childComplexity int, realmID string) int
 		QboConnection        func(childComplexity int) int
 		QboCustomers         func(childComplexity int, realmID string) int
@@ -207,7 +209,9 @@ type ComplexityRoot struct {
 		ResolveEntity        func(childComplexity int, entityType string, name string) int
 		SuggestAccounts      func(childComplexity int, description string) int
 		Tenants              func(childComplexity int, limit int32, offset int32) int
+		Transactions         func(childComplexity int, realmID string, status *string) int
 		User                 func(childComplexity int) int
+		Vendors              func(childComplexity int, realmID string, search *string) int
 	}
 
 	Tenant struct {
@@ -225,6 +229,19 @@ type ComplexityRoot struct {
 		TotalCount func(childComplexity int) int
 	}
 
+	Transaction struct {
+		AccountID   func(childComplexity int) int
+		Amount      func(childComplexity int) int
+		Date        func(childComplexity int) int
+		Description func(childComplexity int) int
+		ExternalID  func(childComplexity int) int
+		ID          func(childComplexity int) int
+		Memo        func(childComplexity int) int
+		SourceType  func(childComplexity int) int
+		VendorID    func(childComplexity int) int
+		VendorName  func(childComplexity int) int
+	}
+
 	User struct {
 		Email    func(childComplexity int) int
 		ID       func(childComplexity int) int
@@ -236,9 +253,9 @@ type ComplexityRoot struct {
 		CreatedAt          func(childComplexity int) int
 		DeletedAt          func(childComplexity int) int
 		DisplayName        func(childComplexity int) int
+		ErpID              func(childComplexity int) int
 		ID                 func(childComplexity int) int
 		LastKnownAccountID func(childComplexity int) int
-		ErpID              func(childComplexity int) int
 		RealmID            func(childComplexity int) int
 		SyncToken          func(childComplexity int) int
 		UpdatedAt          func(childComplexity int) int
@@ -278,6 +295,10 @@ type QueryResolver interface {
 	QboVendorsByTenant(ctx context.Context, tenantID string) ([]*model.Vendor, error)
 	CleanupSessions(ctx context.Context, realmID *string) ([]*model.CleanupSession, error)
 	CleanupRows(ctx context.Context, sessionID string, status *string) ([]*model.CleanupRow, error)
+	Transactions(ctx context.Context, realmID string, status *string) ([]*model.Transaction, error)
+	Accounts(ctx context.Context, realmID string, typeArg *string, active *bool) ([]*model.Account, error)
+	Vendors(ctx context.Context, realmID string, search *string) ([]*model.Vendor, error)
+	Customers(ctx context.Context, realmID string, search *string) ([]*model.Customer, error)
 }
 
 type executableSchema struct {
@@ -365,6 +386,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Account.Domain(childComplexity), true
+	case "Account.erpCreatedTime":
+		if e.complexity.Account.ErpCreatedTime == nil {
+			break
+		}
+
+		return e.complexity.Account.ErpCreatedTime(childComplexity), true
+	case "Account.erpUpdatedTime":
+		if e.complexity.Account.ErpUpdatedTime == nil {
+			break
+		}
+
+		return e.complexity.Account.ErpUpdatedTime(childComplexity), true
 	case "Account.fullyQualifiedName":
 		if e.complexity.Account.FullyQualifiedName == nil {
 			break
@@ -383,18 +416,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Account.Name(childComplexity), true
-	case "Account.qboCreatedTime":
-		if e.complexity.Account.ErpCreatedTime == nil {
-			break
-		}
-
-		return e.complexity.Account.ErpCreatedTime(childComplexity), true
-	case "Account.qboUpdatedTime":
-		if e.complexity.Account.ErpUpdatedTime == nil {
-			break
-		}
-
-		return e.complexity.Account.ErpUpdatedTime(childComplexity), true
 	case "Account.realmId":
 		if e.complexity.Account.RealmID == nil {
 			break
@@ -519,6 +540,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.CleanupRow.DuplicateOf(childComplexity), true
+	case "CleanupRow.erpTransactionId":
+		if e.complexity.CleanupRow.ErpTransactionID == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.ErpTransactionID(childComplexity), true
 	case "CleanupRow.id":
 		if e.complexity.CleanupRow.ID == nil {
 			break
@@ -597,12 +624,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.CleanupRow.PredictedVendorName(childComplexity), true
-	case "CleanupRow.qboTransactionId":
-		if e.complexity.CleanupRow.ErpTransactionID == nil {
-			break
-		}
-
-		return e.complexity.CleanupRow.ErpTransactionID(childComplexity), true
 	case "CleanupRow.rawAmount":
 		if e.complexity.CleanupRow.RawAmount == nil {
 			break
@@ -1056,6 +1077,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.QBOCompany.RealmID(childComplexity), true
 
+	case "Query.accounts":
+		if e.complexity.Query.Accounts == nil {
+			break
+		}
+
+		args, err := ec.field_Query_accounts_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.Accounts(childComplexity, args["realmId"].(string), args["type"].(*string), args["active"].(*bool)), true
 	case "Query.cleanupRows":
 		if e.complexity.Query.CleanupRows == nil {
 			break
@@ -1078,6 +1110,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.CleanupSessions(childComplexity, args["realmId"].(*string)), true
+	case "Query.customers":
+		if e.complexity.Query.Customers == nil {
+			break
+		}
+
+		args, err := ec.field_Query_customers_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.Customers(childComplexity, args["realmId"].(string), args["search"].(*string)), true
 	case "Query.qbo_account":
 		if e.complexity.Query.QboAccount == nil {
 			break
@@ -1183,12 +1226,34 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.Tenants(childComplexity, args["limit"].(int32), args["offset"].(int32)), true
+	case "Query.transactions":
+		if e.complexity.Query.Transactions == nil {
+			break
+		}
+
+		args, err := ec.field_Query_transactions_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.Transactions(childComplexity, args["realmId"].(string), args["status"].(*string)), true
 	case "Query.user":
 		if e.complexity.Query.User == nil {
 			break
 		}
 
 		return e.complexity.Query.User(childComplexity), true
+	case "Query.vendors":
+		if e.complexity.Query.Vendors == nil {
+			break
+		}
+
+		args, err := ec.field_Query_vendors_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.Vendors(childComplexity, args["realmId"].(string), args["search"].(*string)), true
 
 	case "Tenant.createdAt":
 		if e.complexity.Tenant.CreatedAt == nil {
@@ -1246,6 +1311,67 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.TenantConnection.TotalCount(childComplexity), true
 
+	case "Transaction.accountId":
+		if e.complexity.Transaction.AccountID == nil {
+			break
+		}
+
+		return e.complexity.Transaction.AccountID(childComplexity), true
+	case "Transaction.amount":
+		if e.complexity.Transaction.Amount == nil {
+			break
+		}
+
+		return e.complexity.Transaction.Amount(childComplexity), true
+	case "Transaction.date":
+		if e.complexity.Transaction.Date == nil {
+			break
+		}
+
+		return e.complexity.Transaction.Date(childComplexity), true
+	case "Transaction.description":
+		if e.complexity.Transaction.Description == nil {
+			break
+		}
+
+		return e.complexity.Transaction.Description(childComplexity), true
+	case "Transaction.externalId":
+		if e.complexity.Transaction.ExternalID == nil {
+			break
+		}
+
+		return e.complexity.Transaction.ExternalID(childComplexity), true
+	case "Transaction.id":
+		if e.complexity.Transaction.ID == nil {
+			break
+		}
+
+		return e.complexity.Transaction.ID(childComplexity), true
+	case "Transaction.memo":
+		if e.complexity.Transaction.Memo == nil {
+			break
+		}
+
+		return e.complexity.Transaction.Memo(childComplexity), true
+	case "Transaction.sourceType":
+		if e.complexity.Transaction.SourceType == nil {
+			break
+		}
+
+		return e.complexity.Transaction.SourceType(childComplexity), true
+	case "Transaction.vendorId":
+		if e.complexity.Transaction.VendorID == nil {
+			break
+		}
+
+		return e.complexity.Transaction.VendorID(childComplexity), true
+	case "Transaction.vendorName":
+		if e.complexity.Transaction.VendorName == nil {
+			break
+		}
+
+		return e.complexity.Transaction.VendorName(childComplexity), true
+
 	case "User.email":
 		if e.complexity.User.Email == nil {
 			break
@@ -1289,6 +1415,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Vendor.DisplayName(childComplexity), true
+	case "Vendor.erpId":
+		if e.complexity.Vendor.ErpID == nil {
+			break
+		}
+
+		return e.complexity.Vendor.ErpID(childComplexity), true
 	case "Vendor.id":
 		if e.complexity.Vendor.ID == nil {
 			break
@@ -1301,12 +1433,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Vendor.LastKnownAccountID(childComplexity), true
-	case "Vendor.qboId":
-		if e.complexity.Vendor.ErpID == nil {
-			break
-		}
-
-		return e.complexity.Vendor.ErpID(childComplexity), true
 	case "Vendor.realmId":
 		if e.complexity.Vendor.RealmID == nil {
 			break
@@ -1665,6 +1791,27 @@ func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs
 	return args, nil
 }
 
+func (ec *executionContext) field_Query_accounts_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "realmId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["realmId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "type", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["type"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "active", ec.unmarshalOBoolean2ᚖbool)
+	if err != nil {
+		return nil, err
+	}
+	args["active"] = arg2
+	return args, nil
+}
+
 func (ec *executionContext) field_Query_cleanupRows_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1689,6 +1836,22 @@ func (ec *executionContext) field_Query_cleanupSessions_args(ctx context.Context
 		return nil, err
 	}
 	args["realmId"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_customers_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "realmId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["realmId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "search", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["search"] = arg1
 	return args, nil
 }
 
@@ -1803,6 +1966,38 @@ func (ec *executionContext) field_Query_tenants_args(ctx context.Context, rawArg
 		return nil, err
 	}
 	args["offset"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_transactions_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "realmId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["realmId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "status", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["status"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_vendors_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "realmId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["realmId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "search", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["search"] = arg1
 	return args, nil
 }
 
@@ -2264,12 +2459,12 @@ func (ec *executionContext) fieldContext_Account_sparse(_ context.Context, field
 	return fc, nil
 }
 
-func (ec *executionContext) _Account_qboCreatedTime(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+func (ec *executionContext) _Account_erpCreatedTime(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
-		ec.fieldContext_Account_qboCreatedTime,
+		ec.fieldContext_Account_erpCreatedTime,
 		func(ctx context.Context) (any, error) {
 			return obj.ErpCreatedTime, nil
 		},
@@ -2280,7 +2475,7 @@ func (ec *executionContext) _Account_qboCreatedTime(ctx context.Context, field g
 	)
 }
 
-func (ec *executionContext) fieldContext_Account_qboCreatedTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Account_erpCreatedTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Account",
 		Field:      field,
@@ -2293,12 +2488,12 @@ func (ec *executionContext) fieldContext_Account_qboCreatedTime(_ context.Contex
 	return fc, nil
 }
 
-func (ec *executionContext) _Account_qboUpdatedTime(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
+func (ec *executionContext) _Account_erpUpdatedTime(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
-		ec.fieldContext_Account_qboUpdatedTime,
+		ec.fieldContext_Account_erpUpdatedTime,
 		func(ctx context.Context) (any, error) {
 			return obj.ErpUpdatedTime, nil
 		},
@@ -2309,7 +2504,7 @@ func (ec *executionContext) _Account_qboUpdatedTime(ctx context.Context, field g
 	)
 }
 
-func (ec *executionContext) fieldContext_Account_qboUpdatedTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Account_erpUpdatedTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Account",
 		Field:      field,
@@ -3492,12 +3687,12 @@ func (ec *executionContext) fieldContext_CleanupRow_status(_ context.Context, fi
 	return fc, nil
 }
 
-func (ec *executionContext) _CleanupRow_qboTransactionId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+func (ec *executionContext) _CleanupRow_erpTransactionId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
-		ec.fieldContext_CleanupRow_qboTransactionId,
+		ec.fieldContext_CleanupRow_erpTransactionId,
 		func(ctx context.Context) (any, error) {
 			return obj.ErpTransactionID, nil
 		},
@@ -3508,7 +3703,7 @@ func (ec *executionContext) _CleanupRow_qboTransactionId(ctx context.Context, fi
 	)
 }
 
-func (ec *executionContext) fieldContext_CleanupRow_qboTransactionId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_CleanupRow_erpTransactionId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "CleanupRow",
 		Field:      field,
@@ -4592,10 +4787,10 @@ func (ec *executionContext) fieldContext_Mutation_createQboAccount(ctx context.C
 				return ec.fieldContext_Account_currentBalanceWithSubAccounts(ctx, field)
 			case "sparse":
 				return ec.fieldContext_Account_sparse(ctx, field)
-			case "qboCreatedTime":
-				return ec.fieldContext_Account_qboCreatedTime(ctx, field)
-			case "qboUpdatedTime":
-				return ec.fieldContext_Account_qboUpdatedTime(ctx, field)
+			case "erpCreatedTime":
+				return ec.fieldContext_Account_erpCreatedTime(ctx, field)
+			case "erpUpdatedTime":
+				return ec.fieldContext_Account_erpUpdatedTime(ctx, field)
 			case "currentBalance":
 				return ec.fieldContext_Account_currentBalance(ctx, field)
 			case "subAccount":
@@ -4677,10 +4872,10 @@ func (ec *executionContext) fieldContext_Mutation_updateQboAccount(ctx context.C
 				return ec.fieldContext_Account_currentBalanceWithSubAccounts(ctx, field)
 			case "sparse":
 				return ec.fieldContext_Account_sparse(ctx, field)
-			case "qboCreatedTime":
-				return ec.fieldContext_Account_qboCreatedTime(ctx, field)
-			case "qboUpdatedTime":
-				return ec.fieldContext_Account_qboUpdatedTime(ctx, field)
+			case "erpCreatedTime":
+				return ec.fieldContext_Account_erpCreatedTime(ctx, field)
+			case "erpUpdatedTime":
+				return ec.fieldContext_Account_erpUpdatedTime(ctx, field)
 			case "currentBalance":
 				return ec.fieldContext_Account_currentBalance(ctx, field)
 			case "subAccount":
@@ -4762,10 +4957,10 @@ func (ec *executionContext) fieldContext_Mutation_softDeleteQboAccount(ctx conte
 				return ec.fieldContext_Account_currentBalanceWithSubAccounts(ctx, field)
 			case "sparse":
 				return ec.fieldContext_Account_sparse(ctx, field)
-			case "qboCreatedTime":
-				return ec.fieldContext_Account_qboCreatedTime(ctx, field)
-			case "qboUpdatedTime":
-				return ec.fieldContext_Account_qboUpdatedTime(ctx, field)
+			case "erpCreatedTime":
+				return ec.fieldContext_Account_erpCreatedTime(ctx, field)
+			case "erpUpdatedTime":
+				return ec.fieldContext_Account_erpUpdatedTime(ctx, field)
 			case "currentBalance":
 				return ec.fieldContext_Account_currentBalance(ctx, field)
 			case "subAccount":
@@ -4867,8 +5062,8 @@ func (ec *executionContext) fieldContext_Mutation_approveCleanupRow(ctx context.
 				return ec.fieldContext_CleanupRow_overrideAccountName(ctx, field)
 			case "status":
 				return ec.fieldContext_CleanupRow_status(ctx, field)
-			case "qboTransactionId":
-				return ec.fieldContext_CleanupRow_qboTransactionId(ctx, field)
+			case "erpTransactionId":
+				return ec.fieldContext_CleanupRow_erpTransactionId(ctx, field)
 			case "createdAt":
 				return ec.fieldContext_CleanupRow_createdAt(ctx, field)
 			case "updatedAt":
@@ -4964,8 +5159,8 @@ func (ec *executionContext) fieldContext_Mutation_overrideCleanupRow(ctx context
 				return ec.fieldContext_CleanupRow_overrideAccountName(ctx, field)
 			case "status":
 				return ec.fieldContext_CleanupRow_status(ctx, field)
-			case "qboTransactionId":
-				return ec.fieldContext_CleanupRow_qboTransactionId(ctx, field)
+			case "erpTransactionId":
+				return ec.fieldContext_CleanupRow_erpTransactionId(ctx, field)
 			case "createdAt":
 				return ec.fieldContext_CleanupRow_createdAt(ctx, field)
 			case "updatedAt":
@@ -5787,10 +5982,10 @@ func (ec *executionContext) fieldContext_Query_qbo_account(ctx context.Context, 
 				return ec.fieldContext_Account_currentBalanceWithSubAccounts(ctx, field)
 			case "sparse":
 				return ec.fieldContext_Account_sparse(ctx, field)
-			case "qboCreatedTime":
-				return ec.fieldContext_Account_qboCreatedTime(ctx, field)
-			case "qboUpdatedTime":
-				return ec.fieldContext_Account_qboUpdatedTime(ctx, field)
+			case "erpCreatedTime":
+				return ec.fieldContext_Account_erpCreatedTime(ctx, field)
+			case "erpUpdatedTime":
+				return ec.fieldContext_Account_erpUpdatedTime(ctx, field)
 			case "currentBalance":
 				return ec.fieldContext_Account_currentBalance(ctx, field)
 			case "subAccount":
@@ -6011,8 +6206,8 @@ func (ec *executionContext) fieldContext_Query_qboVendors(ctx context.Context, f
 				return ec.fieldContext_Vendor_id(ctx, field)
 			case "realmId":
 				return ec.fieldContext_Vendor_realmId(ctx, field)
-			case "qboId":
-				return ec.fieldContext_Vendor_qboId(ctx, field)
+			case "erpId":
+				return ec.fieldContext_Vendor_erpId(ctx, field)
 			case "displayName":
 				return ec.fieldContext_Vendor_displayName(ctx, field)
 			case "syncToken":
@@ -6072,8 +6267,8 @@ func (ec *executionContext) fieldContext_Query_qboVendorsByEntity(ctx context.Co
 				return ec.fieldContext_Vendor_id(ctx, field)
 			case "realmId":
 				return ec.fieldContext_Vendor_realmId(ctx, field)
-			case "qboId":
-				return ec.fieldContext_Vendor_qboId(ctx, field)
+			case "erpId":
+				return ec.fieldContext_Vendor_erpId(ctx, field)
 			case "displayName":
 				return ec.fieldContext_Vendor_displayName(ctx, field)
 			case "syncToken":
@@ -6133,8 +6328,8 @@ func (ec *executionContext) fieldContext_Query_qboVendorsByTenant(ctx context.Co
 				return ec.fieldContext_Vendor_id(ctx, field)
 			case "realmId":
 				return ec.fieldContext_Vendor_realmId(ctx, field)
-			case "qboId":
-				return ec.fieldContext_Vendor_qboId(ctx, field)
+			case "erpId":
+				return ec.fieldContext_Vendor_erpId(ctx, field)
 			case "displayName":
 				return ec.fieldContext_Vendor_displayName(ctx, field)
 			case "syncToken":
@@ -6295,8 +6490,8 @@ func (ec *executionContext) fieldContext_Query_cleanupRows(ctx context.Context, 
 				return ec.fieldContext_CleanupRow_overrideAccountName(ctx, field)
 			case "status":
 				return ec.fieldContext_CleanupRow_status(ctx, field)
-			case "qboTransactionId":
-				return ec.fieldContext_CleanupRow_qboTransactionId(ctx, field)
+			case "erpTransactionId":
+				return ec.fieldContext_CleanupRow_erpTransactionId(ctx, field)
 			case "createdAt":
 				return ec.fieldContext_CleanupRow_createdAt(ctx, field)
 			case "updatedAt":
@@ -6313,6 +6508,272 @@ func (ec *executionContext) fieldContext_Query_cleanupRows(ctx context.Context, 
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_cleanupRows_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_transactions(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_transactions,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().Transactions(ctx, fc.Args["realmId"].(string), fc.Args["status"].(*string))
+		},
+		nil,
+		ec.marshalNTransaction2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐTransactionᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_transactions(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Transaction_id(ctx, field)
+			case "externalId":
+				return ec.fieldContext_Transaction_externalId(ctx, field)
+			case "amount":
+				return ec.fieldContext_Transaction_amount(ctx, field)
+			case "vendorName":
+				return ec.fieldContext_Transaction_vendorName(ctx, field)
+			case "vendorId":
+				return ec.fieldContext_Transaction_vendorId(ctx, field)
+			case "accountId":
+				return ec.fieldContext_Transaction_accountId(ctx, field)
+			case "date":
+				return ec.fieldContext_Transaction_date(ctx, field)
+			case "description":
+				return ec.fieldContext_Transaction_description(ctx, field)
+			case "memo":
+				return ec.fieldContext_Transaction_memo(ctx, field)
+			case "sourceType":
+				return ec.fieldContext_Transaction_sourceType(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Transaction", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_transactions_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_accounts(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_accounts,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().Accounts(ctx, fc.Args["realmId"].(string), fc.Args["type"].(*string), fc.Args["active"].(*bool))
+		},
+		nil,
+		ec.marshalNAccount2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAccountᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_accounts(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Account_id(ctx, field)
+			case "realmId":
+				return ec.fieldContext_Account_realmId(ctx, field)
+			case "name":
+				return ec.fieldContext_Account_name(ctx, field)
+			case "classification":
+				return ec.fieldContext_Account_classification(ctx, field)
+			case "accountType":
+				return ec.fieldContext_Account_accountType(ctx, field)
+			case "accountSubType":
+				return ec.fieldContext_Account_accountSubType(ctx, field)
+			case "fullyQualifiedName":
+				return ec.fieldContext_Account_fullyQualifiedName(ctx, field)
+			case "active":
+				return ec.fieldContext_Account_active(ctx, field)
+			case "syncToken":
+				return ec.fieldContext_Account_syncToken(ctx, field)
+			case "domain":
+				return ec.fieldContext_Account_domain(ctx, field)
+			case "currencyRefName":
+				return ec.fieldContext_Account_currencyRefName(ctx, field)
+			case "currencyRefValue":
+				return ec.fieldContext_Account_currencyRefValue(ctx, field)
+			case "currentBalanceWithSubAccounts":
+				return ec.fieldContext_Account_currentBalanceWithSubAccounts(ctx, field)
+			case "sparse":
+				return ec.fieldContext_Account_sparse(ctx, field)
+			case "erpCreatedTime":
+				return ec.fieldContext_Account_erpCreatedTime(ctx, field)
+			case "erpUpdatedTime":
+				return ec.fieldContext_Account_erpUpdatedTime(ctx, field)
+			case "currentBalance":
+				return ec.fieldContext_Account_currentBalance(ctx, field)
+			case "subAccount":
+				return ec.fieldContext_Account_subAccount(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Account_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Account_updatedAt(ctx, field)
+			case "deletedAt":
+				return ec.fieldContext_Account_deletedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Account", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_accounts_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_vendors(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_vendors,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().Vendors(ctx, fc.Args["realmId"].(string), fc.Args["search"].(*string))
+		},
+		nil,
+		ec.marshalNVendor2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐVendorᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_vendors(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Vendor_id(ctx, field)
+			case "realmId":
+				return ec.fieldContext_Vendor_realmId(ctx, field)
+			case "erpId":
+				return ec.fieldContext_Vendor_erpId(ctx, field)
+			case "displayName":
+				return ec.fieldContext_Vendor_displayName(ctx, field)
+			case "syncToken":
+				return ec.fieldContext_Vendor_syncToken(ctx, field)
+			case "lastKnownAccountId":
+				return ec.fieldContext_Vendor_lastKnownAccountId(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Vendor_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Vendor_updatedAt(ctx, field)
+			case "deletedAt":
+				return ec.fieldContext_Vendor_deletedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Vendor", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_vendors_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_customers(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_customers,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().Customers(ctx, fc.Args["realmId"].(string), fc.Args["search"].(*string))
+		},
+		nil,
+		ec.marshalNCustomer2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCustomerᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_customers(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Customer_id(ctx, field)
+			case "realmId":
+				return ec.fieldContext_Customer_realmId(ctx, field)
+			case "displayName":
+				return ec.fieldContext_Customer_displayName(ctx, field)
+			case "syncToken":
+				return ec.fieldContext_Customer_syncToken(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Customer_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Customer_updatedAt(ctx, field)
+			case "deletedAt":
+				return ec.fieldContext_Customer_deletedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Customer", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_customers_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -6708,6 +7169,296 @@ func (ec *executionContext) fieldContext_TenantConnection_pageInfo(_ context.Con
 	return fc, nil
 }
 
+func (ec *executionContext) _Transaction_id(ctx context.Context, field graphql.CollectedField, obj *model.Transaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Transaction_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		ec.marshalNID2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Transaction_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Transaction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Transaction_externalId(ctx context.Context, field graphql.CollectedField, obj *model.Transaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Transaction_externalId,
+		func(ctx context.Context) (any, error) {
+			return obj.ExternalID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Transaction_externalId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Transaction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Transaction_amount(ctx context.Context, field graphql.CollectedField, obj *model.Transaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Transaction_amount,
+		func(ctx context.Context) (any, error) {
+			return obj.Amount, nil
+		},
+		nil,
+		ec.marshalNFloat2float64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Transaction_amount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Transaction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Transaction_vendorName(ctx context.Context, field graphql.CollectedField, obj *model.Transaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Transaction_vendorName,
+		func(ctx context.Context) (any, error) {
+			return obj.VendorName, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Transaction_vendorName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Transaction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Transaction_vendorId(ctx context.Context, field graphql.CollectedField, obj *model.Transaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Transaction_vendorId,
+		func(ctx context.Context) (any, error) {
+			return obj.VendorID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Transaction_vendorId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Transaction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Transaction_accountId(ctx context.Context, field graphql.CollectedField, obj *model.Transaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Transaction_accountId,
+		func(ctx context.Context) (any, error) {
+			return obj.AccountID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Transaction_accountId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Transaction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Transaction_date(ctx context.Context, field graphql.CollectedField, obj *model.Transaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Transaction_date,
+		func(ctx context.Context) (any, error) {
+			return obj.Date, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Transaction_date(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Transaction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Transaction_description(ctx context.Context, field graphql.CollectedField, obj *model.Transaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Transaction_description,
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Transaction_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Transaction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Transaction_memo(ctx context.Context, field graphql.CollectedField, obj *model.Transaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Transaction_memo,
+		func(ctx context.Context) (any, error) {
+			return obj.Memo, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Transaction_memo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Transaction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Transaction_sourceType(ctx context.Context, field graphql.CollectedField, obj *model.Transaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Transaction_sourceType,
+		func(ctx context.Context) (any, error) {
+			return obj.SourceType, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Transaction_sourceType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Transaction",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _User_id(ctx context.Context, field graphql.CollectedField, obj *model.User) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6882,12 +7633,12 @@ func (ec *executionContext) fieldContext_Vendor_realmId(_ context.Context, field
 	return fc, nil
 }
 
-func (ec *executionContext) _Vendor_qboId(ctx context.Context, field graphql.CollectedField, obj *model.Vendor) (ret graphql.Marshaler) {
+func (ec *executionContext) _Vendor_erpId(ctx context.Context, field graphql.CollectedField, obj *model.Vendor) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
-		ec.fieldContext_Vendor_qboId,
+		ec.fieldContext_Vendor_erpId,
 		func(ctx context.Context) (any, error) {
 			return obj.ErpID, nil
 		},
@@ -6898,7 +7649,7 @@ func (ec *executionContext) _Vendor_qboId(ctx context.Context, field graphql.Col
 	)
 }
 
-func (ec *executionContext) fieldContext_Vendor_qboId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Vendor_erpId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Vendor",
 		Field:      field,
@@ -8961,10 +9712,10 @@ func (ec *executionContext) _Account(ctx context.Context, sel ast.SelectionSet, 
 			out.Values[i] = ec._Account_currentBalanceWithSubAccounts(ctx, field, obj)
 		case "sparse":
 			out.Values[i] = ec._Account_sparse(ctx, field, obj)
-		case "qboCreatedTime":
-			out.Values[i] = ec._Account_qboCreatedTime(ctx, field, obj)
-		case "qboUpdatedTime":
-			out.Values[i] = ec._Account_qboUpdatedTime(ctx, field, obj)
+		case "erpCreatedTime":
+			out.Values[i] = ec._Account_erpCreatedTime(ctx, field, obj)
+		case "erpUpdatedTime":
+			out.Values[i] = ec._Account_erpUpdatedTime(ctx, field, obj)
 		case "currentBalance":
 			out.Values[i] = ec._Account_currentBalance(ctx, field, obj)
 		case "subAccount":
@@ -9241,8 +9992,8 @@ func (ec *executionContext) _CleanupRow(ctx context.Context, sel ast.SelectionSe
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "qboTransactionId":
-			out.Values[i] = ec._CleanupRow_qboTransactionId(ctx, field, obj)
+		case "erpTransactionId":
+			out.Values[i] = ec._CleanupRow_erpTransactionId(ctx, field, obj)
 		case "createdAt":
 			out.Values[i] = ec._CleanupRow_createdAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -10080,6 +10831,94 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "transactions":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_transactions(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "accounts":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_accounts(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "vendors":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_vendors(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "customers":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_customers(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "__type":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___type(ctx, field)
@@ -10224,6 +11063,75 @@ func (ec *executionContext) _TenantConnection(ctx context.Context, sel ast.Selec
 	return out
 }
 
+var transactionImplementors = []string{"Transaction"}
+
+func (ec *executionContext) _Transaction(ctx context.Context, sel ast.SelectionSet, obj *model.Transaction) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, transactionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Transaction")
+		case "id":
+			out.Values[i] = ec._Transaction_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "externalId":
+			out.Values[i] = ec._Transaction_externalId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "amount":
+			out.Values[i] = ec._Transaction_amount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "vendorName":
+			out.Values[i] = ec._Transaction_vendorName(ctx, field, obj)
+		case "vendorId":
+			out.Values[i] = ec._Transaction_vendorId(ctx, field, obj)
+		case "accountId":
+			out.Values[i] = ec._Transaction_accountId(ctx, field, obj)
+		case "date":
+			out.Values[i] = ec._Transaction_date(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "description":
+			out.Values[i] = ec._Transaction_description(ctx, field, obj)
+		case "memo":
+			out.Values[i] = ec._Transaction_memo(ctx, field, obj)
+		case "sourceType":
+			out.Values[i] = ec._Transaction_sourceType(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var userImplementors = []string{"User"}
 
 func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj *model.User) graphql.Marshaler {
@@ -10299,8 +11207,8 @@ func (ec *executionContext) _Vendor(ctx context.Context, sel ast.SelectionSet, o
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "qboId":
-			out.Values[i] = ec._Vendor_qboId(ctx, field, obj)
+		case "erpId":
+			out.Values[i] = ec._Vendor_erpId(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -11224,6 +12132,60 @@ func (ec *executionContext) marshalNTime2timeᚐTime(ctx context.Context, sel as
 		}
 	}
 	return res
+}
+
+func (ec *executionContext) marshalNTransaction2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐTransactionᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Transaction) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalNTransaction2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐTransaction(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNTransaction2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐTransaction(ctx context.Context, sel ast.SelectionSet, v *model.Transaction) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._Transaction(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalNUpdateQboAccountInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐUpdateQboAccountInput(ctx context.Context, v any) (model.UpdateQboAccountInput, error) {

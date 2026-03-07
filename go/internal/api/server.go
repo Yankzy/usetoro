@@ -50,10 +50,13 @@ func NewServer(
 	// Since we are migrating toward standard erp.Providers, passing nil will gracefully fall back to the QBO factory resolver.
 	// For now, the legacy AttachableService uses QBOConnector directly or an erp.ProviderFactory if we have one.
 	attachableService := accounting.NewAttachableService(logger, connector, nil)
+	transactionService := accounting.NewTransactionService(logger, st.Queries, nil, nil, nil, nil)
+	entityService := accounting.NewEntityService(logger, st.Queries)
 
 	h := NewHandler(
 		logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig,
 		authenticator, redisClient, st.Queries, reconciler, attachableService,
+		transactionService, entityService,
 		st.Pool, st.Queries, natsClient, cleanupExporter,
 	)
 	mux := NewRouter(h)

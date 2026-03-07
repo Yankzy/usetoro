@@ -21,6 +21,8 @@ type Transaction struct {
 
 // Account represents a general ledger account from an ERP system.
 type Account struct {
+	ToroID             string
+	RealmID            string
 	ExternalID         string
 	Name               string
 	AccountType        string
@@ -29,23 +31,33 @@ type Account struct {
 	FullyQualifiedName string
 	Active             bool
 	CurrentBalance     float64
+	SyncToken          string
 	Currency           string
+	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
 
 // Vendor represents a payee or vendor from an ERP system.
 type Vendor struct {
+	ToroID      string
+	RealmID     string
 	ExternalID  string
 	DisplayName string
 	Active      bool
+	SyncToken   string
+	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 
 // Customer represents a customer or payer from an ERP system.
 type Customer struct {
+	ToroID      string
+	RealmID     string
 	ExternalID  string
 	DisplayName string
 	Active      bool
+	SyncToken   string
+	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 

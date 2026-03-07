@@ -298,14 +298,29 @@ SELECT * FROM shadow_erp.accounts
 WHERE realm_id = ANY(@realm_ids::text[]) AND deleted_at IS NULL
 ORDER BY name ASC;
 
+-- name: GetAccountsByRealm :many
+SELECT * FROM shadow_erp.accounts
+WHERE realm_id = $1 AND deleted_at IS NULL
+ORDER BY name ASC;
+
 -- name: GetAllVendorsForRealms :many
 SELECT * FROM shadow_erp.vendors
 WHERE realm_id = ANY(@realm_ids::text[]) AND deleted_at IS NULL
 ORDER BY display_name ASC;
 
+-- name: GetVendorsByRealm :many
+SELECT * FROM shadow_erp.vendors
+WHERE realm_id = $1 AND deleted_at IS NULL
+ORDER BY display_name ASC;
+
 -- name: GetAllCustomersForRealms :many
 SELECT * FROM shadow_erp.customers
 WHERE realm_id = ANY(@realm_ids::text[]) AND deleted_at IS NULL
+ORDER BY display_name ASC;
+
+-- name: GetCustomersByRealm :many
+SELECT * FROM shadow_erp.customers
+WHERE realm_id = $1 AND deleted_at IS NULL
 ORDER BY display_name ASC;
 
 -- name: GetCustomerByName :one
@@ -364,6 +379,53 @@ ORDER BY updated_at ASC;
 -- =========================================================================
 -- Transaction Proposal & Audit
 -- =========================================================================
+
+-- name: GetUnifiedTransactions :many
+-- Retrieves a unified view of all transactions (Bills and Invoices) for a given realm,
+-- including the vendor/customer names.
+SELECT 
+    'Bill' as source_type,
+    b.id,
+    b.erp_id,
+    b.realm_id,
+    b.vendor_id as entity_id,
+    v.display_name as entity_name,
+    b.doc_number,
+    b.total_amount,
+    b.balance,
+    b.due_date,
+    b.txn_date,
+    b.sync_token,
+    b.created_at,
+    b.updated_at,
+    b.deleted_at
+FROM shadow_erp.bills b
+LEFT JOIN shadow_erp.vendors v ON b.vendor_id = v.id
+WHERE b.realm_id = $1
+
+UNION ALL
+
+SELECT 
+    'Invoice' as source_type,
+    i.id,
+    i.erp_id,
+    i.realm_id,
+    i.customer_id as entity_id,
+    c.display_name as entity_name,
+    i.doc_number,
+    i.total_amount,
+    i.balance,
+    i.due_date,
+    i.txn_date,
+    i.sync_token,
+    i.created_at,
+    i.updated_at,
+    i.deleted_at
+FROM shadow_erp.invoices i
+LEFT JOIN shadow_erp.customers c ON i.customer_id = c.id
+WHERE i.realm_id = $1
+
+ORDER BY txn_date DESC, created_at DESC;
 
 -- name: GetProposedTransactionByValues :one
 SELECT * FROM shadow_erp.proposed_transactions

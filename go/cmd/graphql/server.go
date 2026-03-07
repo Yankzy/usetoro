@@ -27,6 +27,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/infrastructure/vector"
 	"github.com/Yankzy/usetoro/internal/queue"
+	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/services/cleanup"
 	"github.com/Yankzy/usetoro/internal/store"
@@ -216,6 +217,7 @@ func run(logger *slog.Logger) error {
 			CoAMapper:       coaMapper,
 			EntityResolver:  entityResolver,
 			CleanupEnricher: cleanupEnricher,
+			EntityService:   accounting.NewEntityService(logger, storeObj.Queries),
 		},
 	}))
 

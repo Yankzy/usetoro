@@ -42,6 +42,9 @@ func (m *mockTransactionRepository) GetVendorByID(ctx context.Context, id pgtype
 func (m *mockTransactionRepository) GetAccountByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpAccount, error) {
 	return database.ShadowErpAccount{}, errors.New("not found")
 }
+func (m *mockTransactionRepository) GetUnifiedTransactions(ctx context.Context, realmID string) ([]database.GetUnifiedTransactionsRow, error) {
+	return nil, nil
+}
 
 type mockProviderFactory struct {
 	provider *erp.Provider

@@ -1276,6 +1276,241 @@ func (r *queryResolver) CleanupRows(ctx context.Context, sessionID string, statu
 	return out, nil
 }
 
+// Transactions is the resolver for the transactions field.
+func (r *queryResolver) Transactions(ctx context.Context, realmID string, status *string) ([]*model.Transaction, error) {
+	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+	if entityID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, entityID.String())
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("no qbo connection")
+		}
+		r.Logger.Error("Failed to fetch QBO connection", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	if conn.RealmID != realmID {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	txns, err := r.TransactionService.FetchUnifiedTransactions(ctx, realmID, status)
+	if err != nil {
+		r.Logger.Error("Failed to fetch unified transactions", "realm_id", realmID, "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	var results []*model.Transaction
+	for _, t := range txns {
+		var vendorName *string
+		if t.VendorName != "" {
+			vn := t.VendorName
+			vendorName = &vn
+		}
+
+		var vendorId *string
+		if t.VendorID != "" {
+			vid := t.VendorID
+			vendorId = &vid
+		}
+
+		var accountId *string
+		if t.AccountID != "" {
+			aid := t.AccountID
+			accountId = &aid
+		}
+
+		var desc *string
+		if t.Description != "" {
+			d := t.Description
+			desc = &d
+		}
+
+		var memo *string
+		if t.Memo != "" {
+			m := t.Memo
+			memo = &m
+		}
+
+		results = append(results, &model.Transaction{
+			ID:          t.ToroID,
+			ExternalID:  t.ExternalID,
+			Amount:      t.Amount,
+			VendorName:  vendorName,
+			VendorID:    vendorId,
+			AccountID:   accountId,
+			Date:        t.Date,
+			Description: desc,
+			Memo:        memo,
+			SourceType:  t.SourceType,
+		})
+	}
+
+	return results, nil
+}
+
+// Accounts is the resolver for the accounts field.
+func (r *queryResolver) Accounts(ctx context.Context, realmID string, typeArg *string, active *bool) ([]*model.Account, error) {
+	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+	if entityID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, entityID.String())
+	if err != nil || conn.RealmID != realmID {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	accs, err := r.EntityService.FetchAccounts(ctx, realmID)
+	if err != nil {
+		r.Logger.Error("Failed to fetch accounts", "realm_id", realmID, "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	var results []*model.Account
+	for _, a := range accs {
+		if typeArg != nil && *typeArg != "" && a.AccountType != *typeArg {
+			continue
+		}
+		if active != nil && a.Active != *active {
+			continue
+		}
+
+		var cls *string
+		if a.Classification != "" {
+			c := a.Classification
+			cls = &c
+		}
+
+		var aType *string
+		if a.AccountType != "" {
+			t := a.AccountType
+			aType = &t
+		}
+
+		var aSubType *string
+		if a.AccountSubType != "" {
+			s := a.AccountSubType
+			aSubType = &s
+		}
+
+		var fqn *string
+		if a.FullyQualifiedName != "" {
+			f := a.FullyQualifiedName
+			fqn = &f
+		}
+
+		act := a.Active
+		bal := a.CurrentBalance
+		var curr *string
+		if a.Currency != "" {
+			c := a.Currency
+			curr = &c
+		}
+
+		cTime := a.CreatedAt
+		uTime := a.UpdatedAt
+
+		results = append(results, &model.Account{
+			ID:                 a.ToroID,
+			RealmID:            a.RealmID,
+			Name:               a.Name,
+			Classification:     cls,
+			AccountType:        aType,
+			AccountSubType:     aSubType,
+			FullyQualifiedName: fqn,
+			Active:             &act,
+			SyncToken:          a.SyncToken,
+			CurrencyRefValue:   curr,
+			CurrentBalance:     &bal,
+			CreatedAt:          cTime,
+			UpdatedAt:          uTime,
+		})
+	}
+	return results, nil
+}
+
+// Vendors is the resolver for the vendors field.
+func (r *queryResolver) Vendors(ctx context.Context, realmID string, search *string) ([]*model.Vendor, error) {
+	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+	if entityID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, entityID.String())
+	if err != nil || conn.RealmID != realmID {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	vs, err := r.EntityService.FetchVendors(ctx, realmID)
+	if err != nil {
+		r.Logger.Error("Failed to fetch vendors", "realm_id", realmID, "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	var results []*model.Vendor
+	for _, v := range vs {
+		if search != nil && *search != "" && !strings.Contains(strings.ToLower(v.DisplayName), strings.ToLower(*search)) {
+			continue
+		}
+
+		cTime := v.CreatedAt
+		uTime := v.UpdatedAt
+
+		results = append(results, &model.Vendor{
+			ID:          v.ToroID,
+			RealmID:     v.RealmID,
+			ErpID:       v.ExternalID,
+			DisplayName: v.DisplayName,
+			SyncToken:   v.SyncToken,
+			CreatedAt:   cTime,
+			UpdatedAt:   uTime,
+		})
+	}
+	return results, nil
+}
+
+// Customers is the resolver for the customers field.
+func (r *queryResolver) Customers(ctx context.Context, realmID string, search *string) ([]*model.Customer, error) {
+	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+	if entityID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	conn, err := r.Store.GetQBOConnection(ctx, entityID.String())
+	if err != nil || conn.RealmID != realmID {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	cs, err := r.EntityService.FetchCustomers(ctx, realmID)
+	if err != nil {
+		r.Logger.Error("Failed to fetch customers", "realm_id", realmID, "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	var results []*model.Customer
+	for _, c := range cs {
+		if search != nil && *search != "" && !strings.Contains(strings.ToLower(c.DisplayName), strings.ToLower(*search)) {
+			continue
+		}
+
+		cTime := c.CreatedAt
+		uTime := c.UpdatedAt
+
+		results = append(results, &model.Customer{
+			ID:          c.ToroID,
+			RealmID:     c.RealmID,
+			DisplayName: c.DisplayName,
+			SyncToken:   c.SyncToken,
+			CreatedAt:   cTime,
+			UpdatedAt:   uTime,
+		})
+	}
+	return results, nil
+}
+
 // Mutation returns MutationResolver implementation.
 func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }
 

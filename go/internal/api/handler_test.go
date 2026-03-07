@@ -142,7 +142,7 @@ func TestHandleStripeWebhook(t *testing.T) {
 			registry := NewVerifierRegistry()
 			registry.Register(NewStripeVerifier())
 
-			handler := NewHandler(logger, store, pub, registry, 1<<20, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			handler := NewHandler(logger, store, pub, registry, 1<<20, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 			// Construct request
 			req := httptest.NewRequest(http.MethodPost, "/webhook/stripe/"+tc.connID, bytes.NewBuffer([]byte(tc.payload)))

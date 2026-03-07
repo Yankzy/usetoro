@@ -20,6 +20,9 @@ func NewRouter(h *Handler) *http.ServeMux {
 	mux.HandleFunc("POST /transactions/{id}/approve", h.HandleApproveTransaction)
 	mux.HandleFunc("POST /reconcile/{realmId}", h.HandleReconcileMonth)
 
+	// Attachable & File Uploads
+	mux.HandleFunc("POST /realms/{realmId}/entities/{entityType}/{entityID}/attachable", h.HandleUploadAttachable)
+
 	// Clean-Up Mode: CSV/XLSX ingestion and exports
 	mux.HandleFunc("POST /cleanup/upload", h.HandleCleanupUpload)
 	mux.HandleFunc("GET /cleanup/{session_id}/export", h.HandleCleanupExport)

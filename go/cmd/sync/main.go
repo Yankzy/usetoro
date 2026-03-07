@@ -149,12 +149,12 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		coaMapper := ai.NewCoAMapper(pc, emb, cfg.AIThreshold)
 		entityResolver := ai.NewEntityResolver(st, pc, emb, cfg.AIThreshold)
 		txService = accounting.NewTransactionService(logger, st.Queries, entityResolver, coaMapper, providerFactory, ruleEngineService)
-		attachService = accounting.NewAttachableService(logger, providerFactory)
+		attachService = accounting.NewAttachableService(logger, nil, providerFactory)
 		logger.Info("✅ Accounting services initialized (AI-assisted)")
 	} else {
 		// No AI infra: services still usable with explicit AccountHint/VendorHint
 		txService = accounting.NewTransactionService(logger, st.Queries, nil, nil, providerFactory, ruleEngineService)
-		attachService = accounting.NewAttachableService(logger, providerFactory)
+		attachService = accounting.NewAttachableService(logger, nil, providerFactory)
 		logger.Info("✅ Accounting services initialized (manual hints only)")
 	}
 	_ = txService     // available for future GraphQL resolver / NATS handler wiring

@@ -372,6 +372,7 @@ type QueryResponseItem struct {
 	Bill         []Bill         `json:"Bill,omitempty"`
 	JournalEntry []JournalEntry `json:"JournalEntry,omitempty"`
 	Purchase     []Purchase     `json:"Purchase,omitempty"`
+	Attachable   []Attachable   `json:"Attachable,omitempty"`
 }
 
 // QueryCDC fetches entities changed since the specified timestamp.

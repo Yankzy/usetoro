@@ -33,7 +33,7 @@ func (m *attachMockProviderFactory) GetProviderForRealm(ctx context.Context, erp
 }
 
 func newAttachSvc(p *erp.Provider) *AttachableService {
-	return NewAttachableService(attachLogger(), &attachMockProviderFactory{provider: p})
+	return NewAttachableService(attachLogger(), nil, &attachMockProviderFactory{provider: p})
 }
 
 func TestUploadReceipt_MissingRealmID(t *testing.T) {

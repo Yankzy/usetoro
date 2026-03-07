@@ -67,6 +67,7 @@ type Handler struct {
 	Redis             *redis.Client
 	Approver          TransactionApprover
 	Reconciler        *accounting.ReconciliationService
+	AttachableService *accounting.AttachableService
 
 	// Cleanup Mode dependencies
 	DBPool          *pgxpool.Pool
@@ -87,6 +88,7 @@ func NewHandler(
 	redisClient *redis.Client,
 	approver TransactionApprover,
 	reconciler *accounting.ReconciliationService,
+	attachableService *accounting.AttachableService,
 	dbPool *pgxpool.Pool,
 	cleanupDB *database.Queries,
 	cleanupNATS *queue.Client,
@@ -105,6 +107,7 @@ func NewHandler(
 		Redis:             redisClient,
 		Approver:          approver,
 		Reconciler:        reconciler,
+		AttachableService: attachableService,
 		DBPool:            dbPool,
 		CleanupDB:         cleanupDB,
 		CleanupNATS:       cleanupNATS,

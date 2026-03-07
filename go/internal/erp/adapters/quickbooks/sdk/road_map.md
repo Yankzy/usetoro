@@ -37,6 +37,47 @@ This is where the actual "Accounting" happens. Your AI needs to ensure the books
 
 ---
 
+### Implementation Status of QBO Entities
+
+**1. Fully Implemented & Syncing (CDC/Shadow DB)**
+These entities exist in our SDK and are actively synced via the CDC worker:
+* `Account` (Chart of Accounts)
+* `Vendor`
+* `Customer`
+* `Invoice`
+* `Bill`
+* `CompanyInfo`
+
+**2. Implemented in SDK but NOT Syncing**
+These entities have Go structs and client methods in `adapters/quickbooks/sdk`, but are not yet part of the automated CDC sync or webhook pipeline:
+* `Attachable` (Attachments/Receipts)
+* `CreditMemo`
+* `CustomerType`
+* `Deposit`
+* `Employee`
+* `Estimate`
+* `Item`
+* `JournalEntry`
+* `Payment`
+* `Purchase`
+* `Batch` (Operation, not entity)
+* `Report` (Operation, not entity)
+
+**3. Not Implemented At All**
+These core QBO transaction entities and concepts are currently missing entirely from both the SDK and the sync pipeline:
+* `BillPayment` (Critical for recording that a `Bill` was paid)
+* `VendorCredit` (Credits from vendors)
+* `PurchaseOrder`
+* `SalesReceipt` (Immediate point-of-sale receipt)
+* `RefundReceipt`
+* `Transfer` (Moving funds between balance sheet accounts)
+* `TimeActivity`
+* `TaxAgency` / `TaxCode` / `TaxRate` / `TaxPayment`
+* `Class` / `Department` (For location/category tagging)
+* `StatementCharge`
+
+---
+
 ## 3. Advanced Automation Assets
 
 To be a *solid* accountant, your Go backend needs more than just CRUD operations.

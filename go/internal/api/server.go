@@ -47,9 +47,13 @@ func NewServer(
 	connector := connectors.NewQBOConnector(logger, cfg, st, nil)
 	reconciler := accounting.NewReconciliationService(logger, st.Queries, connector.ClientForRealm)
 
+	// Since we are migrating toward standard erp.Providers, passing nil will gracefully fall back to the QBO factory resolver.
+	// For now, the legacy AttachableService uses QBOConnector directly or an erp.ProviderFactory if we have one.
+	attachableService := accounting.NewAttachableService(logger, connector, nil)
+
 	h := NewHandler(
 		logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig,
-		authenticator, redisClient, st.Queries, reconciler,
+		authenticator, redisClient, st.Queries, reconciler, attachableService,
 		st.Pool, st.Queries, natsClient, cleanupExporter,
 	)
 	mux := NewRouter(h)

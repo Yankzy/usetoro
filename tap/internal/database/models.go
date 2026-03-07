@@ -146,6 +146,23 @@ type ShadowErpAiCorrection struct {
 	EventSource     string
 }
 
+type ShadowErpAttachable struct {
+	ID             pgtype.UUID
+	RealmID        string
+	ErpID          string
+	FileName       pgtype.Text
+	ContentType    pgtype.Text
+	Size           pgtype.Numeric
+	Note           pgtype.Text
+	AttachableRefs []byte
+	SyncToken      pgtype.Text
+	ErpCreatedTime pgtype.Timestamptz
+	ErpUpdatedTime pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type ShadowErpBill struct {
 	ID          pgtype.UUID
 	ErpID       string

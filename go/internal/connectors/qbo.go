@@ -135,6 +135,17 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 			}
 			entityData = qboEntity
 		}
+	case "Attachable":
+		qboEntity, err := client.FindAttachableById(entityID)
+		err2 = err
+		if err2 == nil {
+			localEntity, dbErr := c.store.Queries.GetAttachableByERPID(ctx, database.GetAttachableByERPIDParams{RealmID: realmID, ErpID: entityID})
+			if dbErr == nil && shouldSkipSync(localEntity.SyncToken.String, qboEntity.SyncToken) {
+				c.logger.Info("Skipping Echo Event for Attachable", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
+				return nil
+			}
+			entityData = qboEntity
+		}
 	default:
 		c.logger.Warn("Unsupported entity type for sync", "entity_type", entityType)
 		return nil // Not an error, just not supported yet
@@ -183,6 +194,12 @@ func (c *QBOConnector) softDeleteEntity(ctx context.Context, realmID, entityType
 		})
 	case "Bill":
 		err = c.store.Queries.SoftDeleteBill(ctx, database.SoftDeleteBillParams{
+			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
+			RealmID:   realmID,
+			ErpID:     entityID,
+		})
+	case "Attachable":
+		err = c.store.Queries.SoftDeleteAttachable(ctx, database.SoftDeleteAttachableParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
 			ErpID:     entityID,
@@ -288,6 +305,27 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 			SyncToken:   bill.SyncToken,
 		})
 
+	case "Attachable":
+		attachable := data.(*quickbooks.Attachable)
+
+		var refsJSON []byte
+		if len(attachable.AttachableRef) > 0 {
+			refsJSON, _ = json.Marshal(attachable.AttachableRef)
+		}
+
+		err = c.store.Queries.UpsertAttachable(ctx, database.UpsertAttachableParams{
+			RealmID:        realmID,
+			ErpID:          attachable.Id,
+			FileName:       pgtype.Text{String: attachable.FileName, Valid: attachable.FileName != ""},
+			ContentType:    pgtype.Text{String: string(attachable.ContentType), Valid: attachable.ContentType != ""},
+			Size:           jsonNumberToNumeric(attachable.Size),
+			Note:           pgtype.Text{String: attachable.Note, Valid: attachable.Note != ""},
+			AttachableRefs: refsJSON,
+			SyncToken:      pgtype.Text{String: attachable.SyncToken, Valid: attachable.SyncToken != ""},
+			ErpCreatedTime: pgtype.Timestamptz{Time: attachable.MetaData.CreateTime.Time, Valid: !attachable.MetaData.CreateTime.IsZero()},
+			ErpUpdatedTime: pgtype.Timestamptz{Time: attachable.MetaData.LastUpdatedTime.Time, Valid: !attachable.MetaData.LastUpdatedTime.IsZero()},
+		})
+
 	default:
 		return fmt.Errorf("unsupported entity type: %s", entityType)
 	}
@@ -381,11 +419,12 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 	maxLookback := time.Now().Add(-30 * 24 * time.Hour) // QBO 30-day limit
 
 	entityTimestamps := map[string]time.Time{
-		"Account":  getMaxTime(conn.LastWebhookAccount.Time, lastSync, maxLookback),
-		"Vendor":   getMaxTime(conn.LastWebhookVendor.Time, lastSync, maxLookback),
-		"Customer": getMaxTime(conn.LastWebhookCustomer.Time, lastSync, maxLookback),
-		"Invoice":  getMaxTime(conn.LastWebhookInvoice.Time, lastSync, maxLookback),
-		"Bill":     getMaxTime(conn.LastWebhookBill.Time, lastSync, maxLookback),
+		"Account":    getMaxTime(conn.LastWebhookAccount.Time, lastSync, maxLookback),
+		"Vendor":     getMaxTime(conn.LastWebhookVendor.Time, lastSync, maxLookback),
+		"Customer":   getMaxTime(conn.LastWebhookCustomer.Time, lastSync, maxLookback),
+		"Invoice":    getMaxTime(conn.LastWebhookInvoice.Time, lastSync, maxLookback),
+		"Bill":       getMaxTime(conn.LastWebhookBill.Time, lastSync, maxLookback),
+		"Attachable": getMaxTime(lastSync, lastSync, maxLookback),
 	}
 
 	// Log event-driven timestamps
@@ -440,6 +479,11 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 						entities = queryResp.Bill
 						count = len(queryResp.Bill)
 					}
+				case "Attachable":
+					if len(queryResp.Attachable) > 0 {
+						entities = queryResp.Attachable
+						count = len(queryResp.Attachable)
+					}
 				}
 			}
 		}
@@ -462,6 +506,8 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 			batchErr = c.batchUpsertInvoices(ctx, realmID, entities.([]quickbooks.Invoice))
 		case "Bill":
 			batchErr = c.batchUpsertBills(ctx, realmID, entities.([]quickbooks.Bill))
+		case "Attachable":
+			batchErr = c.batchUpsertAttachables(ctx, realmID, entities.([]quickbooks.Attachable))
 		}
 
 		if batchErr != nil {
@@ -1004,6 +1050,46 @@ func (c *QBOConnector) batchUpsertBills(ctx context.Context, realmID string, bil
 	}
 
 	c.logger.Debug("💾 Batch upserted bills", "count", len(bills))
+	return nil
+}
+
+// batchUpsertAttachables uses a PostgreSQL transaction to upsert multiple attachables efficiently
+func (c *QBOConnector) batchUpsertAttachables(ctx context.Context, realmID string, attachables []quickbooks.Attachable) error {
+	tx, err := c.store.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := c.store.Queries.WithTx(tx)
+
+	for _, attachable := range attachables {
+		var refsJSON []byte
+		if len(attachable.AttachableRef) > 0 {
+			refsJSON, _ = json.Marshal(attachable.AttachableRef)
+		}
+
+		if err := qtx.UpsertAttachable(ctx, database.UpsertAttachableParams{
+			RealmID:        realmID,
+			ErpID:          attachable.Id,
+			FileName:       pgtype.Text{String: attachable.FileName, Valid: attachable.FileName != ""},
+			ContentType:    pgtype.Text{String: string(attachable.ContentType), Valid: attachable.ContentType != ""},
+			Size:           jsonNumberToNumeric(attachable.Size),
+			Note:           pgtype.Text{String: attachable.Note, Valid: attachable.Note != ""},
+			AttachableRefs: refsJSON,
+			SyncToken:      pgtype.Text{String: attachable.SyncToken, Valid: attachable.SyncToken != ""},
+			ErpCreatedTime: pgtype.Timestamptz{Time: attachable.MetaData.CreateTime.Time, Valid: !attachable.MetaData.CreateTime.IsZero()},
+			ErpUpdatedTime: pgtype.Timestamptz{Time: attachable.MetaData.LastUpdatedTime.Time, Valid: !attachable.MetaData.LastUpdatedTime.IsZero()},
+		}); err != nil {
+			return fmt.Errorf("failed to upsert attachable %s: %w", attachable.Id, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	c.logger.Debug("💾 Batch upserted attachables", "count", len(attachables))
 	return nil
 }
 

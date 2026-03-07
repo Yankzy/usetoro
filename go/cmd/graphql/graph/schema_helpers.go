@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -12,8 +13,10 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/database"
+	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // getQBOConnectorHelper initializes the QBO connector after validating the user
@@ -84,7 +87,7 @@ func mapDatabaseVendorToModel(v *database.ShadowErpVendor) *model.Vendor {
 	return &model.Vendor{
 		ID:                 uuid.UUID(v.ID.Bytes).String(),
 		RealmID:            v.RealmID,
-		QboID:              v.QboID,
+		ErpID:              v.ErpID,
 		DisplayName:        v.DisplayName,
 		SyncToken:          v.SyncToken,
 		LastKnownAccountID: lastKnownAccountID,
@@ -154,13 +157,13 @@ func mapDatabaseAccountToModel(a *database.ShadowErpAccount) *model.Account {
 	}
 
 	var qboCreatedTime *time.Time
-	if a.QboCreatedTime.Valid {
-		qboCreatedTime = &a.QboCreatedTime.Time
+	if a.ErpCreatedTime.Valid {
+		qboCreatedTime = &a.ErpCreatedTime.Time
 	}
 
 	var qboUpdatedTime *time.Time
-	if a.QboUpdatedTime.Valid {
-		qboUpdatedTime = &a.QboUpdatedTime.Time
+	if a.ErpUpdatedTime.Valid {
+		qboUpdatedTime = &a.ErpUpdatedTime.Time
 	}
 
 	var currentBalance *float64
@@ -189,12 +192,236 @@ func mapDatabaseAccountToModel(a *database.ShadowErpAccount) *model.Account {
 		CurrencyRefValue:              currencyRefValue,
 		CurrentBalanceWithSubAccounts: currentBalanceWithSubAccounts,
 		Sparse:                        sparse,
-		QboCreatedTime:                qboCreatedTime,
-		QboUpdatedTime:                qboUpdatedTime,
+		ErpCreatedTime:                qboCreatedTime,
+		ErpUpdatedTime:                qboUpdatedTime,
 		CurrentBalance:                currentBalance,
 		SubAccount:                    subAccount,
 		CreatedAt:                     a.CreatedAt.Time,
 		UpdatedAt:                     a.UpdatedAt.Time,
 		DeletedAt:                     deletedAt,
 	}
+}
+
+// ─── Clean-Up Mode Mappers ────────────────────────────────────────────────────
+
+func mapSessionToModel(s database.ShadowErpCleanupSession) *model.CleanupSession {
+	out := &model.CleanupSession{
+		ID:        uuid.UUID(s.ID.Bytes).String(),
+		RowCount:  s.RowCount,
+		Status:    s.Status,
+		CreatedAt: s.CreatedAt.Time,
+		UpdatedAt: s.UpdatedAt.Time,
+	}
+	if s.RealmID.Valid {
+		out.RealmID = &s.RealmID.String
+	}
+	if s.FileName.Valid {
+		out.FileName = &s.FileName.String
+	}
+	return out
+}
+
+func mapStagingRowToModel(r database.ShadowErpCleanupStaging) *model.CleanupRow {
+	realmID := ""
+	if r.RealmID.Valid {
+		realmID = r.RealmID.String
+	}
+	out := &model.CleanupRow{
+		ID:          uuid.UUID(r.ID.Bytes).String(),
+		SessionID:   uuid.UUID(r.SessionID.Bytes).String(),
+		RealmID:     realmID,
+		RawAmount:   numericToFloat64(r.RawAmount),
+		IsDuplicate: r.DuplicateOf.Valid,
+		IsRecurring: r.IsRecurring,
+		Status:      r.Status,
+		CreatedAt:   r.CreatedAt.Time,
+		UpdatedAt:   r.UpdatedAt.Time,
+	}
+	if r.RawDescription.Valid {
+		out.RawDescription = &r.RawDescription.String
+	}
+	if r.RawDate.Valid {
+		out.RawDate = &r.RawDate.Time
+	}
+	if r.RawVendorName.Valid {
+		out.RawVendorName = &r.RawVendorName.String
+	}
+	if r.PredictedVendorID.Valid {
+		s := uuid.UUID(r.PredictedVendorID.Bytes).String()
+		out.PredictedVendorID = &s
+	}
+	if r.PredictedAccountID.Valid {
+		s := uuid.UUID(r.PredictedAccountID.Bytes).String()
+		out.PredictedAccountID = &s
+	}
+	if r.NormalizedVendor.Valid {
+		out.NormalizedVendor = &r.NormalizedVendor.String
+	}
+	if r.ConfidenceScore.Valid {
+		f, _ := r.ConfidenceScore.Float64Value()
+		out.ConfidenceScore = &f.Float64
+	}
+	if r.AiReasoning.Valid {
+		out.AiReasoning = &r.AiReasoning.String
+	}
+	if r.DuplicateOf.Valid {
+		s := uuid.UUID(r.DuplicateOf.Bytes).String()
+		out.DuplicateOf = &s
+	}
+	if len(r.SplitSuggestion) > 0 {
+		s := string(r.SplitSuggestion)
+		out.SplitSuggestion = &s
+	}
+	if r.OverrideVendorID.Valid {
+		s := uuid.UUID(r.OverrideVendorID.Bytes).String()
+		out.OverrideVendorID = &s
+	}
+	if r.OverrideAccountID.Valid {
+		s := uuid.UUID(r.OverrideAccountID.Bytes).String()
+		out.OverrideAccountID = &s
+	}
+	if r.ErpTransactionID.Valid {
+		out.ErpTransactionID = &r.ErpTransactionID.String
+	}
+	return out
+}
+
+func mapSessionRowToModel(r database.GetSessionRowsRow) *model.CleanupRow {
+	rowRealmID := ""
+	if r.RealmID.Valid {
+		rowRealmID = r.RealmID.String
+	}
+	out := &model.CleanupRow{
+		ID:          uuid.UUID(r.ID.Bytes).String(),
+		SessionID:   uuid.UUID(r.SessionID.Bytes).String(),
+		RealmID:     rowRealmID,
+		RawAmount:   numericToFloat64(r.RawAmount),
+		IsDuplicate: r.DuplicateOf.Valid,
+		IsRecurring: r.IsRecurring,
+		Status:      r.Status,
+		CreatedAt:   r.CreatedAt.Time,
+		UpdatedAt:   r.UpdatedAt.Time,
+	}
+	if r.RawDescription.Valid {
+		out.RawDescription = &r.RawDescription.String
+	}
+	if r.RawDate.Valid {
+		out.RawDate = &r.RawDate.Time
+	}
+	if r.RawVendorName.Valid {
+		out.RawVendorName = &r.RawVendorName.String
+	}
+	if r.PredictedVendorID.Valid {
+		s := uuid.UUID(r.PredictedVendorID.Bytes).String()
+		out.PredictedVendorID = &s
+	}
+	if r.PredictedVendorName.Valid {
+		out.PredictedVendorName = &r.PredictedVendorName.String
+	}
+	if r.PredictedAccountID.Valid {
+		s := uuid.UUID(r.PredictedAccountID.Bytes).String()
+		out.PredictedAccountID = &s
+	}
+	if r.PredictedAccountName.Valid {
+		out.PredictedAccountName = &r.PredictedAccountName.String
+	}
+	if r.PredictedAccountType.Valid {
+		out.PredictedAccountType = &r.PredictedAccountType.String
+	}
+	if r.NormalizedVendor.Valid {
+		out.NormalizedVendor = &r.NormalizedVendor.String
+	}
+	if r.ConfidenceScore.Valid {
+		f, _ := r.ConfidenceScore.Float64Value()
+		out.ConfidenceScore = &f.Float64
+	}
+	if r.AiReasoning.Valid {
+		out.AiReasoning = &r.AiReasoning.String
+	}
+	if r.DuplicateOf.Valid {
+		s := uuid.UUID(r.DuplicateOf.Bytes).String()
+		out.DuplicateOf = &s
+	}
+	if len(r.SplitSuggestion) > 0 {
+		s := string(r.SplitSuggestion)
+		out.SplitSuggestion = &s
+	}
+	if r.OverrideVendorID.Valid {
+		s := uuid.UUID(r.OverrideVendorID.Bytes).String()
+		out.OverrideVendorID = &s
+	}
+	if r.OverrideVendorName.Valid {
+		out.OverrideVendorName = &r.OverrideVendorName.String
+	}
+	if r.OverrideAccountID.Valid {
+		s := uuid.UUID(r.OverrideAccountID.Bytes).String()
+		out.OverrideAccountID = &s
+	}
+	if r.OverrideAccountName.Valid {
+		out.OverrideAccountName = &r.OverrideAccountName.String
+	}
+	if r.ErpTransactionID.Valid {
+		out.ErpTransactionID = &r.ErpTransactionID.String
+	}
+	return out
+}
+
+// buildQBOPurchase constructs a QBO Purchase object from a staging row.
+// It resolves the vendor's QBO ID from the DB if vendorPgID is valid.
+func buildQBOPurchase(
+	row database.ShadowErpCleanupStaging,
+	accountERPID string,
+	vendorPgID pgtype.UUID,
+	q *database.Queries,
+	ctx context.Context,
+	amount float64,
+) *quickbooks.Purchase {
+	amtStr := fmt.Sprintf("%.2f", amount)
+
+	purchase := &quickbooks.Purchase{
+		PaymentType: "Cash",
+		AccountRef:  quickbooks.ReferenceType{Value: accountERPID},
+		Line: []quickbooks.Line{{
+			Amount:     json.Number(amtStr),
+			DetailType: "AccountBasedExpenseLineDetail",
+			AccountBasedExpenseLineDetail: quickbooks.AccountBasedExpenseLineDetail{
+				AccountRef: quickbooks.ReferenceType{Value: accountERPID},
+			},
+		}},
+	}
+
+	if row.RawDate.Valid {
+		purchase.TxnDate = quickbooks.Date{Time: row.RawDate.Time}
+	}
+	if row.RawDescription.Valid {
+		purchase.PrivateNote = row.RawDescription.String
+	}
+
+	// Resolve vendor QBO ID.
+	if vendorPgID.Valid && q != nil {
+		vendor, err := q.GetVendorByID(ctx, vendorPgID)
+		if err == nil {
+			purchase.EntityRef = quickbooks.ReferenceType{
+				Value: vendor.ErpID,
+				Type:  "Vendor",
+			}
+		}
+	}
+
+	return purchase
+}
+
+func numericToFloat64(n pgtype.Numeric) float64 {
+	if !n.Valid {
+		return 0
+	}
+	f, _ := n.Float64Value()
+	return f.Float64
+}
+
+func uuidStrFromPG(u pgtype.UUID) string {
+	if !u.Valid {
+		return ""
+	}
+	return uuid.UUID(u.Bytes).String()
 }

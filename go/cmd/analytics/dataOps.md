@@ -148,7 +148,7 @@ We expose this data to our internal admin panel.
 *   `10:00:00` - Ingested (Gate)
 *   `10:00:01` - OCR Complete (Python)
 *   `10:00:02` - Agent Decision (Protocol) - Confidence 40%
-*   `10:05:00` - Human Correction (Tiyakin) - **User: Ahmed**
+*   `10:05:00` - Human Correction (Fignode) - **User: Ahmed**
 *   `10:05:01` - Synced to QBO (Sync)
 
 ### 5.2 The "Drift" Monitor

@@ -15,16 +15,20 @@ type Repository interface {
 	SaveContract(ctx context.Context, c *core.Contract) error
 	GetContract(ctx context.Context, id string) (*core.Contract, error)
 	UpdateContractStatus(ctx context.Context, id string, status core.ContractStatus) error
+	GetIdentity(ctx context.Context, did string) (*core.Identity, error)
+	SaveIdentity(ctx context.Context, identity *core.Identity) error
 }
 
 type MemoryStore struct {
-	contracts map[string]*core.Contract
-	mu        sync.RWMutex
+	contracts  map[string]*core.Contract
+	identities map[string]*core.Identity
+	mu         sync.RWMutex
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		contracts: make(map[string]*core.Contract),
+		contracts:  make(map[string]*core.Contract),
+		identities: make(map[string]*core.Identity),
 	}
 }
 
@@ -53,5 +57,22 @@ func (m *MemoryStore) UpdateContractStatus(_ context.Context, id string, status 
 		return ErrNotFound
 	}
 	c.Status = status
+	return nil
+}
+
+func (m *MemoryStore) GetIdentity(_ context.Context, did string) (*core.Identity, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	identity, ok := m.identities[did]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return identity, nil
+}
+
+func (m *MemoryStore) SaveIdentity(_ context.Context, identity *core.Identity) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.identities[identity.ID] = identity
 	return nil
 }

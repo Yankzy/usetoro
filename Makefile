@@ -14,7 +14,7 @@ else
 endif
 
 # App Services
-SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker
+SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker fignode
 
 .PHONY: deploy up-scanner down-scanner build-scanner
 deploy:

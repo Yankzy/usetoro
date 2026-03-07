@@ -2,15 +2,15 @@ package accounting
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/erp"
+	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
 	"github.com/Yankzy/usetoro/internal/services/ai"
-	quickbooks "github.com/Yankzy/usetoro/qbo"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -19,57 +19,20 @@ type TransactionRepository interface {
 	GetProposedTransactionByValues(ctx context.Context, arg database.GetProposedTransactionByValuesParams) (database.ShadowErpProposedTransaction, error)
 	CreateProposedTransaction(ctx context.Context, arg database.CreateProposedTransactionParams) (database.ShadowErpProposedTransaction, error)
 	UpdateProposedTransactionSyncStatus(ctx context.Context, arg database.UpdateProposedTransactionSyncStatusParams) error
-	GetVendorByQBOID(ctx context.Context, arg database.GetVendorByQBOIDParams) (database.ShadowErpVendor, error)
-	GetAccountByQBOID(ctx context.Context, arg database.GetAccountByQBOIDParams) (database.ShadowErpAccount, error)
+	GetVendorByERPID(ctx context.Context, arg database.GetVendorByERPIDParams) (database.ShadowErpVendor, error)
+	GetAccountByERPID(ctx context.Context, arg database.GetAccountByERPIDParams) (database.ShadowErpAccount, error)
 	GetVendorByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpVendor, error)
 	GetAccountByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpAccount, error)
 }
 
-// QBOClientFn is a function that returns an authenticated QBO client for a given realm.
-// This decouples the service from the connector layer and simplifies testing.
-type QBOClientFn func(ctx context.Context, realmID string) (*quickbooks.Client, error)
-
-// purchaseCreator is an internal interface satisfied by *quickbooks.Client.
-// Extracted to enable unit testing without live HTTP.
-type purchaseCreator interface {
-	CreatePurchase(*quickbooks.Purchase) (*quickbooks.Purchase, error)
-}
-
-// billCreator is an internal interface satisfied by *quickbooks.Client.
-type billCreator interface {
-	CreateBill(*quickbooks.Bill) (*quickbooks.Bill, error)
-}
-
-// ExpenseInput represents the data needed to post an expense to QBO.
-type ExpenseInput struct {
-	RealmID     string
-	Description string
-	Amount      float64
-	Paid        bool      // true → create Purchase (immediate, paid); false → create Bill (payable)
-	TxnDate     time.Time // defaults to today if zero
-	// Optional overrides — bypass AI resolution when provided.
-	AccountHint string // QBO account ID (skips CoAMapper)
-	VendorHint  string // QBO vendor ID (skips EntityResolver)
-}
-
-// PostedExpense is returned after successfully posting the expense to QBO.
-type PostedExpense struct {
-	QBOEntityID  string // ID of the created Purchase or Bill in QBO
-	EntityType   string // "Purchase" or "Bill"
-	AccountQBOID string
-	VendorQBOID  string
-	Amount       float64
-}
-
-// TransactionService orchestrates posting expenses to QuickBooks Online.
 // It uses EntityResolver and CoAMapper to resolve vendor and account
-// references before delegating to the QBO SDK.
+// references before delegating to the ERP Factory.
 type TransactionService struct {
 	logger         *slog.Logger
 	repo           TransactionRepository
 	entityResolver *ai.EntityResolver
 	coaMapper      *ai.CoAMapper
-	clientFn       QBOClientFn
+	factory        erp.ProviderFactory
 	ruleEngine     *RuleEngineService
 }
 
@@ -81,7 +44,7 @@ func NewTransactionService(
 	repo TransactionRepository,
 	resolver *ai.EntityResolver,
 	coa *ai.CoAMapper,
-	clientFn QBOClientFn,
+	factory erp.ProviderFactory,
 	ruleEngine *RuleEngineService,
 ) *TransactionService {
 	return &TransactionService{
@@ -89,25 +52,24 @@ func NewTransactionService(
 		repo:           repo,
 		entityResolver: resolver,
 		coaMapper:      coa,
-		clientFn:       clientFn,
+		factory:        factory,
 		ruleEngine:     ruleEngine,
 	}
 }
 
 // PostExpense resolves the vendor and account via AI, then creates either a
-// Purchase (paid=true) or Bill (paid=false) in QBO.
-func (s *TransactionService) PostExpense(ctx context.Context, input ExpenseInput) (*PostedExpense, error) {
-	return s.postExpense(ctx, input, nil, nil)
+// Purchase (paid=true) or Bill (paid=false) in the tenant's ERP.
+func (s *TransactionService) PostExpense(ctx context.Context, input erp.ExpenseInput) (*erp.PostedExpense, error) {
+	return s.postExpense(ctx, input, nil)
 }
 
 // postExpense is the internal implementation, accepting optional mock overrides for
-// purchaseCreator and billCreator (nil means use the real *quickbooks.Client from clientFn).
+// ERP Provider (nil means use the real Provider from the factory).
 func (s *TransactionService) postExpense(
 	ctx context.Context,
-	input ExpenseInput,
-	pcOverride purchaseCreator,
-	bcOverride billCreator,
-) (*PostedExpense, error) {
+	input erp.ExpenseInput,
+	providerOverride *erp.Provider,
+) (*erp.PostedExpense, error) {
 	if input.RealmID == "" {
 		return nil, fmt.Errorf("realmID is required")
 	}
@@ -121,27 +83,35 @@ func (s *TransactionService) postExpense(
 	}
 
 	// 0. Use Rule Engine to deterministically match
+	var ruleResult *RuleResult
 	if s.ruleEngine != nil {
 		txForRule := quickbooks.Transaction{
 			EntityID:    input.RealmID,
 			Description: input.Description,
 			Amount:      input.Amount,
 			Date:        txnDate,
+			Time:        txnDate,
+			Vendor:      input.Vendor,
+			Customer:    input.Customer,
+			Memo:        input.Memo,
+			MCC:         input.MCC,
+			InvoiceText: input.InvoiceText,
 		}
-		result, err := s.ruleEngine.EvaluateTransaction(ctx, txForRule)
+		rr, err := s.ruleEngine.EvaluateTransaction(ctx, txForRule)
 		if err != nil {
 			s.logger.Warn("Rule engine evaluation failed", "error", err)
-		} else if result != nil {
-			s.logger.Info("✅ Rule Engine matched! Bypassing AI resolution.")
+		} else if rr != nil {
+			ruleResult = rr
+			s.logger.Info("Rule engine matched, bypassing AI resolution")
 
-			if result.TargetAccountID.Valid {
-				if acct, err := s.repo.GetAccountByID(ctx, result.TargetAccountID); err == nil {
-					input.AccountHint = acct.QboID
+			if rr.TargetAccountID.Valid {
+				if acct, err := s.repo.GetAccountByID(ctx, rr.TargetAccountID); err == nil {
+					input.AccountHint = acct.ErpID
 				}
 			}
-			if result.TargetVendorID.Valid {
-				if vendor, err := s.repo.GetVendorByID(ctx, result.TargetVendorID); err == nil {
-					input.VendorHint = vendor.QboID
+			if rr.TargetVendorID.Valid {
+				if vendor, err := s.repo.GetVendorByID(ctx, rr.TargetVendorID); err == nil {
+					input.VendorHint = vendor.ErpID
 				}
 			}
 		}
@@ -190,36 +160,28 @@ func (s *TransactionService) postExpense(
 		return nil, fmt.Errorf("account is required but could not be resolved; provide AccountHint or configure CoAMapper")
 	}
 
-	// 3. Resolve the QBO client (or use override for testing)
-	var pc purchaseCreator = pcOverride
-	var bc billCreator = bcOverride
-	if pc == nil || bc == nil {
-		client, err := s.clientFn(ctx, input.RealmID)
+	// 3. Resolve the ERP Provider (or use override for testing)
+	var provider *erp.Provider = providerOverride
+	if provider == nil {
+		var err error
+		provider, err = s.factory.GetProviderForRealm(ctx, "quickbooks_online", input.RealmID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get QBO client: %w", err)
-		}
-		if pc == nil {
-			pc = client
-		}
-		if bc == nil {
-			bc = client
+			return nil, fmt.Errorf("failed to get ERP provider: %w", err)
 		}
 	}
-
-	amountStr := json.Number(fmt.Sprintf("%.2f", input.Amount))
 
 	var vendorPgUUID pgtype.UUID
 	var accountPgUUID pgtype.UUID
 
 	if s.repo != nil {
 		if vendorID != "" {
-			v, err := s.repo.GetVendorByQBOID(ctx, database.GetVendorByQBOIDParams{RealmID: input.RealmID, QboID: vendorID})
+			v, err := s.repo.GetVendorByERPID(ctx, database.GetVendorByERPIDParams{RealmID: input.RealmID, ErpID: vendorID})
 			if err == nil {
 				vendorPgUUID = v.ID
 			}
 		}
 		if accountID != "" {
-			a, err := s.repo.GetAccountByQBOID(ctx, database.GetAccountByQBOIDParams{RealmID: input.RealmID, QboID: accountID})
+			a, err := s.repo.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{RealmID: input.RealmID, ErpID: accountID})
 			if err == nil {
 				accountPgUUID = a.ID
 			}
@@ -237,21 +199,12 @@ func (s *TransactionService) postExpense(
 			RawAmount:         amountNum,
 		})
 		if err == nil && existing.SyncStatus.String == "SYNCED" {
-			s.logger.Info("⏭️ Idempotency check passed: Transaction already synced", "qbo_id", existing.QboTransactionID.String)
-			return &PostedExpense{
-				QBOEntityID:  existing.QboTransactionID.String,
-				EntityType:   existing.SourceType,
-				AccountQBOID: accountID,
-				VendorQBOID:  vendorID,
-				Amount:       input.Amount,
+			s.logger.Info("⏭️ Idempotency check passed: Transaction already synced", "erp_id", existing.ErpTransactionID.String)
+			return &erp.PostedExpense{
+				ERPEntityID: existing.ErpTransactionID.String,
+				EntityType:  existing.SourceType,
 			}, nil
 		}
-	}
-
-	result := &PostedExpense{
-		AccountQBOID: accountID,
-		VendorQBOID:  vendorID,
-		Amount:       input.Amount,
 	}
 
 	sourceType := "Bill"
@@ -280,90 +233,32 @@ func (s *TransactionService) postExpense(
 		}
 	}
 
-	// 4. Create Purchase (paid) or Bill (unpaid)
-	var qboErr error
-	var createdID string
-
-	if input.Paid {
-		purchase := &quickbooks.Purchase{
-			PaymentType: "Cash",
-			AccountRef:  quickbooks.ReferenceType{Value: accountID},
-			TxnDate:     quickbooks.Date{Time: txnDate},
-			PrivateNote: input.Description,
-			Line: []quickbooks.Line{
-				{
-					Amount:      amountStr,
-					DetailType:  "AccountBasedExpenseLineDetail",
-					Description: input.Description,
-					AccountBasedExpenseLineDetail: quickbooks.AccountBasedExpenseLineDetail{
-						AccountRef: quickbooks.ReferenceType{Value: accountID},
-					},
-				},
-			},
-		}
-		if vendorID != "" {
-			purchase.EntityRef = quickbooks.ReferenceType{Value: vendorID, Type: "Vendor"}
-		}
-
-		created, err := pc.CreatePurchase(purchase)
-		if err != nil {
-			qboErr = fmt.Errorf("failed to create Purchase in QBO: %w", err)
-		} else {
-			createdID = created.Id
-			result.QBOEntityID = createdID
-			result.EntityType = "Purchase"
-			s.logger.Info("✅ Created QBO Purchase",
-				"realm_id", input.RealmID,
-				"purchase_id", createdID,
-				"amount", input.Amount,
-				"account_id", accountID,
-			)
-		}
-	} else {
-		bill := &quickbooks.Bill{
-			VendorRef:   quickbooks.ReferenceType{Value: vendorID},
-			TxnDate:     quickbooks.Date{Time: txnDate},
-			PrivateNote: input.Description,
-			Line: []quickbooks.Line{
-				{
-					Amount:      amountStr,
-					DetailType:  "AccountBasedExpenseLineDetail",
-					Description: input.Description,
-					AccountBasedExpenseLineDetail: quickbooks.AccountBasedExpenseLineDetail{
-						AccountRef: quickbooks.ReferenceType{Value: accountID},
-					},
-				},
-			},
-		}
-
-		created, err := bc.CreateBill(bill)
-		if err != nil {
-			qboErr = fmt.Errorf("failed to create Bill in QBO: %w", err)
-		} else {
-			createdID = created.Id
-			result.QBOEntityID = createdID
-			result.EntityType = "Bill"
-			s.logger.Info("✅ Created QBO Bill",
-				"realm_id", input.RealmID,
-				"bill_id", createdID,
-				"amount", input.Amount,
-				"vendor_id", vendorID,
-				"account_id", accountID,
-			)
-		}
+	// Persist rule audit log now that proposed_transactions row exists.
+	if s.ruleEngine != nil && ruleResult != nil && proposedTxID.Valid {
+		s.ruleEngine.PersistAuditLog(ctx, input.RealmID, proposedTxID, ruleResult)
 	}
+
+	input.AccountHint = accountID
+	input.VendorHint = vendorID
+
+	// 4. Create Purchase (paid) or Bill (unpaid) via the ERP adapter
+	created, err := provider.PostExpense(ctx, input)
 
 	if s.repo != nil && proposedTxID.Valid {
 		status := "SYNCED"
 		errMsg := ""
-		if qboErr != nil {
+		if err != nil {
 			status = "ERROR"
-			errMsg = qboErr.Error()
+			errMsg = err.Error()
+		}
+		var createdID string
+		if created != nil {
+			createdID = created.ERPEntityID
 		}
 		updErr := s.repo.UpdateProposedTransactionSyncStatus(ctx, database.UpdateProposedTransactionSyncStatusParams{
 			ID:               proposedTxID,
 			SyncStatus:       pgtype.Text{String: status, Valid: true},
-			QboTransactionID: pgtype.Text{String: createdID, Valid: createdID != ""},
+			ErpTransactionID: pgtype.Text{String: createdID, Valid: createdID != ""},
 			ErrorMessage:     pgtype.Text{String: errMsg, Valid: errMsg != ""},
 		})
 		if updErr != nil {
@@ -371,13 +266,21 @@ func (s *TransactionService) postExpense(
 		}
 	}
 
-	if qboErr != nil {
-		var objNotFound quickbooks.ObjectNotFoundError
-		if errors.As(qboErr, &objNotFound) {
-			return nil, fmt.Errorf("ObjectNotFoundError: client needs CDC sync: %w", qboErr)
+	if err != nil {
+		if errors.Is(err, erp.ErrNotFound) {
+			return nil, fmt.Errorf("erp.ErrNotFound: tenant database might need CDC sync to fetch correct account/vendor IDs: %w", err)
 		}
-		return nil, qboErr
+		return nil, err
 	}
 
-	return result, nil
+	s.logger.Info("✅ Created Expense in ERP",
+		"realm_id", input.RealmID,
+		"entity_id", created.ERPEntityID,
+		"entity_type", created.EntityType,
+		"amount", input.Amount,
+		"vendor_id", vendorID,
+		"account_id", accountID,
+	)
+
+	return created, nil
 }

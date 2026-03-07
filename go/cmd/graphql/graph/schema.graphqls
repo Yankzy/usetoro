@@ -91,10 +91,76 @@ type Mutation {
   recordCorrection(input: RecordCorrectionInput!): Boolean!
   syncQboChartOfAccounts(realmId: ID!): Int!
   syncQboCustomers(realmId: ID!): Int!
-  
+
   createQboAccount(input: CreateQboAccountInput!): Account!
   updateQboAccount(input: UpdateQboAccountInput!): Account!
   softDeleteQboAccount(input: SoftDeleteQboAccountInput!): Account!
+
+  # Clean-Up Mode review mutations
+  approveCleanupRow(rowId: ID!): CleanupRow!
+  overrideCleanupRow(input: OverrideCleanupRowInput!): CleanupRow!
+  rejectCleanupRow(rowId: ID!): Boolean!
+  approveAllByVendor(sessionId: ID!, vendorId: ID!): Int!
+  postCleanupSession(sessionId: ID!): CleanupPostResult!
+}
+
+# ─── Clean-Up Mode Types ─────────────────────────────────────────────────────
+
+type CleanupSession {
+  id: ID!
+  realmId: String     # null when QBO is not connected (Excel-only mode)
+  fileName: String
+  rowCount: Int!
+  status: String!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type CleanupRow {
+  id: ID!
+  sessionId: ID!
+  realmId: String!
+  rawDescription: String
+  rawAmount: Float!
+  rawDate: Time
+  rawVendorName: String
+  # AI predictions
+  predictedVendorId: String
+  predictedVendorName: String
+  predictedAccountId: String
+  predictedAccountName: String
+  predictedAccountType: String
+  normalizedVendor: String
+  confidenceScore: Float
+  aiReasoning: String
+  # Smart discovery
+  isDuplicate: Boolean!
+  duplicateOf: String
+  isRecurring: Boolean!
+  splitSuggestion: String
+  # CPA overrides
+  overrideVendorId: String
+  overrideVendorName: String
+  overrideAccountId: String
+  overrideAccountName: String
+  # Lifecycle
+  status: String!
+  qboTransactionId: String
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+input OverrideCleanupRowInput {
+  rowId: ID!
+  vendorId: ID
+  accountId: ID
+}
+
+type CleanupPostResult {
+  sessionId: ID!
+  postedCount: Int!
+  errorCount: Int!
+  errors: [String!]!
 }
 
 type AccountMatch {
@@ -157,6 +223,10 @@ type Query {
   qboVendors(realmId: ID!): [Vendor!]!
   qboVendorsByEntity(entityId: ID!): [Vendor!]!
   qboVendorsByTenant(tenantId: ID!): [Vendor!]!
+  # Clean-Up Mode
+  # realmId is optional — omit for sessions without a QBO connection.
+  cleanupSessions(realmId: ID): [CleanupSession!]!
+  cleanupRows(sessionId: ID!, status: String): [CleanupRow!]!
 }
 
 type Customer {

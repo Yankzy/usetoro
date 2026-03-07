@@ -153,9 +153,9 @@ func main() {
 			// Ensure QBO events stream exists
 			streamCfg := &nats.StreamConfig{
 				Name:     "QBO_EVENTS",
-				Subjects: []string{"qbo.events.*"},
+				Subjects: []string{"qbo.>"},
 				Storage:  nats.FileStorage,
-				MaxAge:   24 * time.Hour,
+				MaxAge:   72 * time.Hour,
 			}
 			if err := queueClient.EnsureStream(streamCfg); err == nil {
 				logger.Info("Connected to NATS and JetStream stream ensured")

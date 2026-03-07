@@ -239,6 +239,30 @@ services:
   #   networks:
   #     - toro-net
 
+  fignode:
+    build:
+      context: ../
+      dockerfile: container/fignode/Dockerfile
+    restart: always
+    ports:
+      - "8083:8083"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+      AUTH_PRIVATE_KEY: ${AUTH_PRIVATE_KEY}
+      AUTH_PUBLIC_KEY: ${AUTH_PUBLIC_KEY}
+      PORT: 8083
+      PGOPTIONS: "-c search_path=fignode,toro_core,shadow_erp,public"
+    volumes:
+      - ../keys:/keys:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - toro-net
+
   graphql:
     build:
       context: ../
@@ -285,7 +309,7 @@ services:
 
   migrator:
     image: gomicro/goose
-    command: "goose -dir /migrations postgres \"postgres://toro:toro_password@db/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,public\" up"
+    command: "goose -dir /migrations postgres \"postgres://toro:toro_password@db/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,fignode,public\" up"
     volumes:
       - ../sql/schema:/migrations
     depends_on:

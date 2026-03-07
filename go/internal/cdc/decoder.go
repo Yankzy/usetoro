@@ -9,9 +9,9 @@ import (
 
 // Event is the standardized JSON payload sent to NATS JetStream
 type Event struct {
-	EventID   string         `json:"event_id"` // Matches the Postgres LSN (1A/2B3C)
-	Table     string         `json:"table"`
-	Action    string         `json:"action"` // INSERT, UPDATE, DELETE
+	EventID string `json:"event_id"` // Matches the Postgres LSN (1A/2B3C)
+	Table   string `json:"table"`
+	Action  string `json:"action"` // INSERT, UPDATE, DELETE
 	// Source identifies who wrote this row: "toro_internal" or "qbo_sync".
 	// Populated by the publisher from the event_source column. Consumers must
 	// call IsInternal() before reacting to break the CDC write-back loop.

@@ -75,7 +75,18 @@ func (c *Client) Status() nats.Status {
 
 // EnsureStream checks if a stream exists and creates/updates it as needed.
 func (c *Client) EnsureStream(cfg *nats.StreamConfig) error {
-	info, err := c.js.StreamInfo(cfg.Name)
+	var info *nats.StreamInfo
+	var err error
+
+	// Retry loop for JetStream cluster leader election during startup
+	for i := 0; i < 5; i++ {
+		info, err = c.js.StreamInfo(cfg.Name)
+		if err == nil || err == nats.ErrStreamNotFound {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+
 	if err == nil {
 		// Stream exists, update if needed
 		// Check if subjects need to be updated

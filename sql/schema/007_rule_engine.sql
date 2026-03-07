@@ -34,8 +34,8 @@ CREATE INDEX IF NOT EXISTS idx_rule_groups_active ON shadow_erp.rule_groups(acti
 CREATE TABLE IF NOT EXISTS shadow_erp.rule_conditions (
     id SERIAL PRIMARY KEY,
     rule_group_id INT NOT NULL REFERENCES shadow_erp.rule_groups(id) ON DELETE CASCADE,
-    field VARCHAR(50) NOT NULL,    -- 'description', 'vendor', 'category', 'amount', 'date', 'memo'
-    operator VARCHAR(50) NOT NULL, -- 'equals', 'contains', 'regex', 'gt', 'lt', 'in', etc.
+    field VARCHAR(50) NOT NULL,    -- 'description', 'vendor', 'customer', 'category', 'amount', 'date', 'time', 'memo', 'role', 'uuid', 'mcc', 'invoice_text'
+    operator VARCHAR(50) NOT NULL, -- 'equals', 'equals_cs', 'contains', 'not_contains', 'contains_cs', 'startswith', 'endswith', 'in', 'not_in', 'regex', 'is_null', 'is_not_null', 'gt', 'gte', 'lt', 'lte'
     value TEXT NOT NULL,           -- The target value to match against
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL

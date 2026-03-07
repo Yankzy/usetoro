@@ -5,7 +5,7 @@
 CREATE TABLE IF NOT EXISTS shadow_erp.company_info (
     id                   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     realm_id             TEXT NOT NULL UNIQUE,
-    qbo_id               TEXT NOT NULL,
+    erp_id               TEXT NOT NULL,
     sync_token           TEXT NOT NULL,
 
     company_name         TEXT NOT NULL,
@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS shadow_erp.company_info (
     -- Sparse preference bag (NameValue pairs from QBO)
     name_values          JSONB,
 
-    qbo_created_time     TIMESTAMPTZ,
-    qbo_updated_time     TIMESTAMPTZ,
+    erp_created_time     TIMESTAMPTZ,
+    erp_updated_time     TIMESTAMPTZ,
     created_at           TIMESTAMPTZ DEFAULT NOW(),
     updated_at           TIMESTAMPTZ DEFAULT NOW()
 );

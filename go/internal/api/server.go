@@ -10,6 +10,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/ingest"
+	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/redis/go-redis/v9"
@@ -32,22 +33,25 @@ func NewServer(
 	pub *ingest.Publisher,
 	qboConfig *QBOConfig,
 	authenticator *auth.Authenticator,
-	redisClient *redis.Client, // Added redisClient parameter
-) *Server { // <-- TYPE: returns an address
+	redisClient *redis.Client,
+	natsClient *queue.Client,
+	cleanupExporter CleanupExporter,
+) *Server {
 	// Initialize webhook verifier registry
 	registry := NewVerifierRegistry()
 
 	// Register supported webhook providers
 	registry.Register(NewStripeVerifier())
-	// QBO webhook verification using generic HMAC verifier
 	registry.Register(NewHMACVerifier("qbo", "intuit-signature", crypto.SHA256))
-	// Future HMAC-based providers can be registered similarly:
-	// registry.Register(NewHMACVerifier("plaid", "x-plaid-signature", crypto.SHA256))
 
 	connector := connectors.NewQBOConnector(logger, cfg, st, nil)
 	reconciler := accounting.NewReconciliationService(logger, st.Queries, connector.ClientForRealm)
 
-	h := NewHandler(logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig, authenticator, redisClient, st.Queries, reconciler)
+	h := NewHandler(
+		logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig,
+		authenticator, redisClient, st.Queries, reconciler,
+		st.Pool, st.Queries, natsClient, cleanupExporter,
+	)
 	mux := NewRouter(h)
 
 	srv := &http.Server{

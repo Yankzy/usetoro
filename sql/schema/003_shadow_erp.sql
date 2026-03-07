@@ -3,7 +3,7 @@
 -- SCHEMA: shadow_erp
 -- The External Mirror: volatile cache of ERP data (QBO, NetSuite, Sage, etc.)
 -- All tables are keyed by realm_id (ERP company ID) and join to
--- toro_core.entities via toro_core.qbo_connections.realm_id.
+-- toro_core.entities via toro_core.erp_connections.realm_id.
 -- =========================================================================
 CREATE SCHEMA IF NOT EXISTS shadow_erp;
 
@@ -12,7 +12,7 @@ CREATE SCHEMA IF NOT EXISTS shadow_erp;
 -- =========================================================================
 CREATE TABLE IF NOT EXISTS shadow_erp.accounts (
     id                   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    qbo_id               TEXT NOT NULL,              -- Original QBO Account ID
+    erp_id               TEXT NOT NULL,              -- Original ERP-specific Account ID
     realm_id             TEXT NOT NULL,              -- Multi-tenant isolation
     name                 TEXT NOT NULL,
     account_type         TEXT NOT NULL,              -- 'Expense', 'Revenue', 'Asset', etc.
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS shadow_erp.accounts (
     created_at           TIMESTAMPTZ DEFAULT NOW(),
     updated_at           TIMESTAMPTZ DEFAULT NOW(),
     deleted_at           TIMESTAMPTZ,               -- Soft delete
-    UNIQUE(realm_id, qbo_id)
+    UNIQUE(realm_id, erp_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_accounts_realm        ON shadow_erp.accounts(realm_id);
@@ -35,7 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_accounts_realm_active ON shadow_erp.accounts(real
 -- =========================================================================
 CREATE TABLE IF NOT EXISTS shadow_erp.vendors (
     id                   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    qbo_id               TEXT NOT NULL,
+    erp_id               TEXT NOT NULL,
     realm_id             TEXT NOT NULL,
     display_name         TEXT NOT NULL,
     sync_token           TEXT NOT NULL,
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS shadow_erp.vendors (
     created_at           TIMESTAMPTZ DEFAULT NOW(),
     updated_at           TIMESTAMPTZ DEFAULT NOW(),
     deleted_at           TIMESTAMPTZ,
-    UNIQUE(realm_id, qbo_id),
+    UNIQUE(realm_id, erp_id),
     FOREIGN KEY (last_known_account_id) REFERENCES shadow_erp.accounts(id)
 );
 
@@ -56,14 +56,14 @@ CREATE INDEX IF NOT EXISTS idx_vendors_name  ON shadow_erp.vendors(realm_id, dis
 -- =========================================================================
 CREATE TABLE IF NOT EXISTS shadow_erp.customers (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    qbo_id       TEXT NOT NULL,
+    erp_id       TEXT NOT NULL,
     realm_id     TEXT NOT NULL,
     display_name TEXT NOT NULL,
     sync_token   TEXT NOT NULL,
     created_at   TIMESTAMPTZ DEFAULT NOW(),
     updated_at   TIMESTAMPTZ DEFAULT NOW(),
     deleted_at   TIMESTAMPTZ,
-    UNIQUE(realm_id, qbo_id)
+    UNIQUE(realm_id, erp_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_customers_realm ON shadow_erp.customers(realm_id);
@@ -73,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_customers_realm ON shadow_erp.customers(realm_id)
 -- =========================================================================
 CREATE TABLE IF NOT EXISTS shadow_erp.invoices (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    qbo_id       TEXT NOT NULL,
+    erp_id       TEXT NOT NULL,
     realm_id     TEXT NOT NULL,
     customer_id  UUID,
     doc_number   TEXT,
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS shadow_erp.invoices (
     created_at   TIMESTAMPTZ DEFAULT NOW(),
     updated_at   TIMESTAMPTZ DEFAULT NOW(),
     deleted_at   TIMESTAMPTZ,
-    UNIQUE(realm_id, qbo_id),
+    UNIQUE(realm_id, erp_id),
     FOREIGN KEY (customer_id) REFERENCES shadow_erp.customers(id)
 );
 
@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_invoices_customer ON shadow_erp.invoices(customer
 -- =========================================================================
 CREATE TABLE IF NOT EXISTS shadow_erp.bills (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    qbo_id       TEXT NOT NULL,
+    erp_id       TEXT NOT NULL,
     realm_id     TEXT NOT NULL,
     vendor_id    UUID,
     doc_number   TEXT,
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS shadow_erp.bills (
     created_at   TIMESTAMPTZ DEFAULT NOW(),
     updated_at   TIMESTAMPTZ DEFAULT NOW(),
     deleted_at   TIMESTAMPTZ,
-    UNIQUE(realm_id, qbo_id),
+    UNIQUE(realm_id, erp_id),
     FOREIGN KEY (vendor_id) REFERENCES shadow_erp.vendors(id)
 );
 
@@ -133,8 +133,8 @@ CREATE TABLE IF NOT EXISTS shadow_erp.proposed_transactions (
     confidence_score     DECIMAL(3,2),              -- 0.00 to 1.00
     ai_reasoning         TEXT,                      -- e.g., "Matched 'Shell' via synonym"
 
-    -- QBO Link (Once synced)
-    qbo_transaction_id   TEXT,
+    -- ERP Link (Once synced)
+    erp_transaction_id   TEXT,
     sync_status          TEXT DEFAULT 'PENDING',    -- 'PENDING', 'SYNCED', 'ERROR', 'REJECTED'
     error_message        TEXT,
 

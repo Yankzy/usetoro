@@ -40,12 +40,11 @@ func (m *MockStore) SaveQBOTokens(ctx context.Context, entityID, realmID, access
 	return nil
 }
 
-func (m *MockStore) GetQBOConnection(ctx context.Context, entityID string) (*database.ToroCoreQboConnection, error) {
-	return nil, nil
-}
-
 func (m *MockStore) GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, string, error) {
-	return "", "", time.Time{}, "", nil
+	return "access", "refresh", time.Now().Add(time.Hour), "entity_id", nil
+}
+func (m *MockStore) GetQBOConnection(ctx context.Context, entityID string) (*database.ToroCoreErpConnection, error) {
+	return &database.ToroCoreErpConnection{RealmID: "test-realm"}, nil
 }
 
 type MockPublisher struct {
@@ -143,7 +142,7 @@ func TestHandleStripeWebhook(t *testing.T) {
 			registry := NewVerifierRegistry()
 			registry.Register(NewStripeVerifier())
 
-			handler := NewHandler(logger, store, pub, registry, 1<<20, nil, nil, nil, nil, nil) // 1 MiB max body size, nil QBOConfig, nil Authenticator, nil Redis
+			handler := NewHandler(logger, store, pub, registry, 1<<20, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 			// Construct request
 			req := httptest.NewRequest(http.MethodPost, "/webhook/stripe/"+tc.connID, bytes.NewBuffer([]byte(tc.payload)))

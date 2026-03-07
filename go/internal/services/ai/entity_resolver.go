@@ -77,7 +77,7 @@ func (r *EntityResolver) layer1DBMatch(ctx context.Context, realmID, entityType,
 		})
 		if err == nil {
 			return &EntityMatch{
-				ID:         vendor.QboID,
+				ID:         vendor.ErpID,
 				Score:      1.0,
 				Name:       vendor.DisplayName,
 				Source:     "db",
@@ -92,7 +92,7 @@ func (r *EntityResolver) layer1DBMatch(ctx context.Context, realmID, entityType,
 		})
 		if err == nil {
 			return &EntityMatch{
-				ID:         customer.QboID,
+				ID:         customer.ErpID,
 				Score:      1.0,
 				Name:       customer.DisplayName,
 				Source:     "db",
@@ -190,9 +190,9 @@ func (r *EntityResolver) Learn(ctx context.Context, realmID, rawInput, userCorre
 
 	// 1. Get the vendor being corrected to
 	// 1. Get the vendor being corrected to
-	vendor, err := r.store.Queries.GetVendorByQBOID(ctx, database.GetVendorByQBOIDParams{
+	vendor, err := r.store.Queries.GetVendorByERPID(ctx, database.GetVendorByERPIDParams{
 		RealmID: realmID,
-		QboID:   userCorrectionID,
+		ErpID:   userCorrectionID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to fetch vendor for learning: %w", err)
@@ -220,9 +220,9 @@ func (r *EntityResolver) Learn(ctx context.Context, realmID, rawInput, userCorre
 		data, _ := json.Marshal(synonyms)
 		// 4. Update vendor synonyms in DB
 		// 4. Update vendor synonyms in DB
-		return r.store.Queries.UpdateVendorSynonymsByQBOID(ctx, database.UpdateVendorSynonymsByQBOIDParams{
+		return r.store.Queries.UpdateVendorSynonymsByERPID(ctx, database.UpdateVendorSynonymsByERPIDParams{
 			RealmID:    realmID,
-			QboID:      userCorrectionID,
+			ErpID:      userCorrectionID,
 			AiSynonyms: data,
 		})
 	}

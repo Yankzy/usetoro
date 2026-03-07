@@ -142,7 +142,7 @@ func ResolveRulesForTransaction(ctx context.Context, tx Transaction, clientID uu
         }
     }
     
-    // 3. No rules matched in the entire tree. Send to LLM/Tiyakin via NATS.
+    // 3. No rules matched in the entire tree. Send to LLM/Fignode via NATS.
     PublishToLLMQueue(tx)
 }
 ```

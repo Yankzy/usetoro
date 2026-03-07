@@ -61,3 +61,35 @@ func (r *RedisStore) UpdateContractStatus(ctx context.Context, id string, status
 func contractKey(id string) string {
 	return "hive:contract:" + id
 }
+
+// SaveIdentity stores an identity in Redis as JSON with no TTL.
+func (r *RedisStore) SaveIdentity(ctx context.Context, identity *core.Identity) error {
+	data, err := json.Marshal(identity)
+	if err != nil {
+		return fmt.Errorf("failed to marshal identity: %w", err)
+	}
+	if err := r.rdb.Set(ctx, identityKey(identity.ID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to save identity to redis: %w", err)
+	}
+	return nil
+}
+
+// GetIdentity retrieves an identity from Redis by DID.
+func (r *RedisStore) GetIdentity(ctx context.Context, did string) (*core.Identity, error) {
+	data, err := r.rdb.Get(ctx, identityKey(did)).Result()
+	if err == redis.Nil {
+		return nil, ErrNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get identity from redis: %w", err)
+	}
+
+	var identity core.Identity
+	if err := json.Unmarshal([]byte(data), &identity); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal identity: %w", err)
+	}
+	return &identity, nil
+}
+
+func identityKey(did string) string {
+	return "hive:identity:" + did
+}

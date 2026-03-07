@@ -8,14 +8,17 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/resilience"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 )
@@ -31,7 +34,7 @@ type SecretGetter interface {
 	GetWebhookSecret(ctx context.Context, connID string) (string, error)
 	SaveQBOTokens(ctx context.Context, entityID, realmID, accessToken, refreshToken string, expiresAt time.Time) error
 	GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, string, error)
-	GetQBOConnection(ctx context.Context, entityID string) (*database.ToroCoreQboConnection, error)
+	GetQBOConnection(ctx context.Context, entityID string) (*database.ToroCoreErpConnection, error)
 	Ping(ctx context.Context) error
 }
 
@@ -64,6 +67,12 @@ type Handler struct {
 	Redis             *redis.Client
 	Approver          TransactionApprover
 	Reconciler        *accounting.ReconciliationService
+
+	// Cleanup Mode dependencies
+	DBPool          *pgxpool.Pool
+	CleanupDB       *database.Queries
+	CleanupNATS     *queue.Client
+	CleanupExporter CleanupExporter
 }
 
 // NewHandler creates a new Handler.
@@ -78,6 +87,10 @@ func NewHandler(
 	redisClient *redis.Client,
 	approver TransactionApprover,
 	reconciler *accounting.ReconciliationService,
+	dbPool *pgxpool.Pool,
+	cleanupDB *database.Queries,
+	cleanupNATS *queue.Client,
+	cleanupExporter CleanupExporter,
 ) *Handler {
 	return &Handler{
 		Logger:            logger,
@@ -92,6 +105,10 @@ func NewHandler(
 		Redis:             redisClient,
 		Approver:          approver,
 		Reconciler:        reconciler,
+		DBPool:            dbPool,
+		CleanupDB:         cleanupDB,
+		CleanupNATS:       cleanupNATS,
+		CleanupExporter:   cleanupExporter,
 	}
 }
 
@@ -175,11 +192,13 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. LOOKUP WEBHOOK SECRET (Hot Path Optimization)
-	secret, err := h.Store.GetWebhookSecret(ctx, connID)
+	// 4. LOOKUP WEBHOOK SECRET	// 1. Get existing QBO Connection for this entity
+	// The original diff provided for this section was incomplete and syntactically incorrect.
+	// Applying the type change for `conn` as per the instruction.
+	conn, err := h.Store.GetQBOConnection(r.Context(), connID) // Assuming connID is entityID for this context
 	if err != nil {
-		logger.Warn("Invalid connection or missing secret", "error", err)
-		JSONError(w, logger, http.StatusUnauthorized, "Unauthorized")
+		h.Logger.Error("No ERP connection found for entity", "error", err, "entity_id", connID)
+		JSONError(w, h.Logger, http.StatusNotFound, "ERP connection not found")
 		return
 	}
 
@@ -194,6 +213,13 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 6. VERIFY SIGNATURE (Security)
+	secret, err := h.Store.GetWebhookSecret(ctx, conn.ID.String()) // Use the actual connection ID from the DB
+	if err != nil {
+		logger.Warn("Invalid connection or missing secret", "error", err)
+		JSONError(w, logger, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
 	event, err := verifier.Verify(r.Header, body, secret)
 	if err != nil {
 		logger.Warn("Signature verification failed", "error", err)
@@ -303,6 +329,87 @@ func (p *OAuthPipeline) Run(ctx *OAuthContext) {
 	}
 }
 
+// getRedirectURI determines the correct redirect URI to use based on the request host.
+func (h *Handler) getRedirectURI(r *http.Request, logger *slog.Logger) string {
+	if h.QBOConfig == nil || len(h.QBOConfig.RedirectURIs) == 0 {
+		logger.Error("No RedirectURIs configured")
+		return ""
+	}
+
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+
+	for _, uri := range h.QBOConfig.RedirectURIs {
+		u, err := url.Parse(uri)
+		if err == nil && u.Host == host {
+			return uri
+		}
+	}
+
+	chosenURI := h.QBOConfig.RedirectURIs[0]
+	logger.Warn("No exact RedirectURI match for host, using default", "host", host, "chosen_uri", chosenURI)
+	return chosenURI
+}
+
+// HandleGetQBOAuthURL handles the QuickBooks Online OAuth2 redirect URL request.
+func (h *Handler) HandleGetQBOAuthURL(w http.ResponseWriter, r *http.Request) {
+	requestID := r.Header.Get("X-Request-ID")
+	if requestID == "" {
+		requestID = uuid.New().String()
+	}
+
+	logger := h.Logger.With("request_id", requestID, "handler", "HandleGetQBOAuthURL")
+
+	if h.QBOConfig == nil {
+		logger.Error("QBO configuration not available")
+		JSONError(w, logger, http.StatusInternalServerError, "QBO configuration not available")
+		return
+	}
+
+	// Extract JWT from Authorization header to use as state
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || len(authHeader) < 7 || strings.ToLower(authHeader[:7]) != "bearer " {
+		logger.Error("Missing or invalid Authorization header")
+		JSONError(w, logger, http.StatusUnauthorized, "Missing or invalid Authorization header")
+		return
+	}
+	jwtToken := authHeader[7:]
+
+	// Create UUID and store JWT in redis for 10 minutes
+	stateUUID := uuid.New().String()
+	ctx := r.Context()
+	err := h.Redis.Set(ctx, "qbo_oauth_state:"+stateUUID, jwtToken, 10*time.Minute).Err()
+	if err != nil {
+		logger.Error("Failed to store OAuth state in Redis", "error", err)
+		JSONError(w, logger, http.StatusInternalServerError, "Failed to initialize OAuth state")
+		return
+	}
+
+	state := stateUUID
+
+	chosenURI := h.getRedirectURI(r, logger)
+	if chosenURI == "" {
+		JSONError(w, logger, http.StatusInternalServerError, "No redirect URIs configured")
+		return
+	}
+
+	scope := "com.intuit.quickbooks.accounting"
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-ID", requestID)
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"client_id":    h.QBOConfig.ClientID,
+		"scope":        scope,
+		"redirect_uri": chosenURI,
+		"state":        state,
+	}); err != nil {
+		logger.Error("Failed to encode response", "error", err)
+	}
+}
+
 // HandleQBOCallback handles the QuickBooks Online OAuth2 redirect.
 func (h *Handler) HandleQBOCallback(w http.ResponseWriter, r *http.Request) {
 	requestID := r.Header.Get("X-Request-ID")
@@ -318,7 +425,7 @@ func (h *Handler) HandleQBOCallback(w http.ResponseWriter, r *http.Request) {
 			ExchangeTokenTask,
 			SaveTokensTask,
 			NotifyWSTask,
-			RedirectResultTask,
+			RenderResultTask,
 		},
 	}
 
@@ -337,46 +444,62 @@ func ExtractParamsTask(ctx *OAuthContext) error {
 	stateParam := ctx.Request.URL.Query().Get("state")
 
 	if ctx.Code == "" || ctx.RealmID == "" {
-		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=missing_params", http.StatusFound)
+		renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "INVALID_STATE"})
 		return fmt.Errorf("missing code or realmId")
 	}
 
 	if stateParam == "" {
 		ctx.Log.Error("Missing state parameter")
-		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=missing_state", http.StatusFound)
+		renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "INVALID_STATE"})
 		return fmt.Errorf("missing state parameter")
 	}
 
-	// 1. Try to parse as valid Entity UUID (Legacy / Direct)
-	if _, err := uuid.Parse(stateParam); err == nil {
-		ctx.EntityID = stateParam
-		return nil
+	// 1. Try to parse stateParam as a UUID (it must be our Redis key)
+	if _, err := uuid.Parse(stateParam); err != nil {
+		ctx.Log.Error("Invalid state parameter: not a UUID")
+		renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "INVALID_STATE"})
+		return fmt.Errorf("invalid state parameter")
 	}
 
-	// 2. Try to parse as JWT (Secure / Frontend)
+	// 2. Fetch the actual JWT token from Redis using the UUID state parameter
+	redisKey := "qbo_oauth_state:" + stateParam
+	jwtToken, err := ctx.Handler.Redis.Get(ctx.Request.Context(), redisKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			ctx.Log.Error("OAuth state expired or not found in Redis", "state", stateParam)
+			renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "INVALID_STATE"})
+			return fmt.Errorf("OAuth state expired or not found")
+		}
+		ctx.Log.Error("Redis error fetching OAuth state", "state", stateParam, "error", err)
+		renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "ERROR", ErrorMessage: "Internal error retrieving state."})
+		return fmt.Errorf("internal error retrieving state")
+	}
+
+	// Clean up state so it can't be reused
+	ctx.Handler.Redis.Del(ctx.Request.Context(), redisKey)
+
+	// 3. Verify the retrieved JWT token
 	if ctx.Handler.Authenticator != nil {
-		// Note: VerifyToken checks signature and expiration
-		claims, err := ctx.Handler.Authenticator.VerifyToken(ctx.Request.Context(), stateParam)
+		claims, err := ctx.Handler.Authenticator.VerifyToken(ctx.Request.Context(), jwtToken)
 		if err == nil {
 			ctx.EntityID = claims.EntityID.String()
-			ctx.Log.Info("Resolved EntityID from JWT state", "entity_id", ctx.EntityID)
+			ctx.Log.Info("Resolved EntityID from Redis cached JWT", "entity_id", ctx.EntityID)
 			return nil
 		}
-		// If fails, we log it but fall through to error
-		ctx.Log.Warn("State parameter looks like token but failed verification", "error", err)
+		ctx.Log.Warn("Cached token failed verification", "error", err)
 	}
 
-	// If we reach here, state is neither a valid UUID nor a valid Token
-	ctx.Log.Error("Invalid state parameter: not a UUID and validation failed")
-	http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=invalid_state", http.StatusFound)
-	return fmt.Errorf("invalid state parameter")
+	// If we reach here, validation failed
+	ctx.Log.Error("Validation of cached token failed")
+	renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "INVALID_STATE"})
+	return fmt.Errorf("invalid cached token")
 }
 
 // ExchangeTokenTask exchanges the authorization code for tokens.
 func ExchangeTokenTask(ctx *OAuthContext) error {
 	if ctx.Handler.QBOConfig == nil {
 		ctx.Log.Error("QBO configuration not available")
-		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=config_missing", http.StatusFound)
+		renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "ERROR", ErrorMessage: "QBO configuration not available."})
 		return fmt.Errorf("QBO configuration not available")
 	}
 
@@ -388,38 +511,10 @@ func ExchangeTokenTask(ctx *OAuthContext) error {
 		},
 	}
 
-	// Determine valid RedirectURI based on Request Host
-	// This supports both localhost and ngrok environments
-	host := ctx.Request.Header.Get("X-Forwarded-Host")
-	if host == "" {
-		host = ctx.Request.Host
-	}
-
-	// strip port if present for simpler matching, or keep it?
-	// url.Parse(uri).Host usually includes port if allowed.
-	// Let's try to match exactly first.
-
-	var chosenURI string
-	for _, uri := range ctx.Handler.QBOConfig.RedirectURIs {
-		u, err := url.Parse(uri)
-		if err == nil {
-			if u.Host == host {
-				chosenURI = uri
-				break
-			}
-		}
-	}
-
-	// Fallback/Default
+	chosenURI := ctx.Handler.getRedirectURI(ctx.Request, ctx.Log)
 	if chosenURI == "" {
-		if len(ctx.Handler.QBOConfig.RedirectURIs) > 0 {
-			chosenURI = ctx.Handler.QBOConfig.RedirectURIs[0]
-			ctx.Log.Warn("No exact RedirectURI match for host, using default", "host", host, "chosen_uri", chosenURI)
-		} else {
-			ctx.Log.Error("No RedirectURIs configured")
-			http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=config_missing", http.StatusFound)
-			return fmt.Errorf("no redirect URIs configured")
-		}
+		renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "ERROR", ErrorMessage: "No redirect URIs configured."})
+		return fmt.Errorf("no redirect URIs configured")
 	}
 
 	conf.RedirectURL = chosenURI
@@ -429,7 +524,7 @@ func ExchangeTokenTask(ctx *OAuthContext) error {
 	token, err := conf.Exchange(ctx.Request.Context(), ctx.Code)
 	if err != nil {
 		ctx.Log.Error("Token exchange failed", "error", err)
-		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=exchange_failed", http.StatusFound)
+		renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "ERROR", ErrorMessage: "Failed to exchange token with QuickBooks."})
 		return fmt.Errorf("token exchange failed: %w", err)
 	}
 
@@ -450,7 +545,7 @@ func SaveTokensTask(ctx *OAuthContext) error {
 	)
 
 	if err != nil {
-		http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/error?reason=storage_failed", http.StatusFound)
+		renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "ERROR", ErrorMessage: "Failed to save OAuth tokens."})
 		return fmt.Errorf("failed to save tokens: %w", err)
 	}
 
@@ -493,8 +588,8 @@ func NotifyWSTask(ctx *OAuthContext) error {
 	return nil
 }
 
-// RedirectResultTask redirects to the success page.
-func RedirectResultTask(ctx *OAuthContext) error {
-	http.Redirect(ctx.Response, ctx.Request, "https://frontend.com/dashboard?status=connected", http.StatusFound)
+// RenderResultTask renders the success page.
+func RenderResultTask(ctx *OAuthContext) error {
+	renderOAuthCallbackPage(ctx.Response, OAuthTemplateData{State: "SUCCESS"})
 	return nil
 }

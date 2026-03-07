@@ -11,6 +11,8 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/connectors"
+	"github.com/Yankzy/usetoro/internal/erp"
+	"github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks"
 	"github.com/Yankzy/usetoro/internal/infrastructure/vector"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
@@ -122,7 +124,23 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	// 6a. Initialize Accounting Services (requires AI infra + QBO connector)
 	// These are available for on-demand use by GraphQL resolvers or NATS handlers.
 	qboConn := mgr.GetConnector("qbo").(*connectors.QBOConnector)
-	qboClientFn := accounting.QBOClientFn(qboConn.ClientForRealm)
+
+	providerFactory := erp.NewProviderFactory(logger, dbPool)
+	erp.ResolveQBOAdapter = func(ctx context.Context, realmID string) (*erp.Provider, error) {
+		qboClient, err := qboConn.ClientForRealm(ctx, realmID)
+		if err != nil {
+			return nil, err
+		}
+		adapter := quickbooks.NewAdapter(qboClient)
+		return &erp.Provider{
+			SyncCDC:           adapter.SyncCDC,
+			FetchTransactions: adapter.FetchTransactions,
+			FetchAccounts:     adapter.FetchAccounts,
+			PostExpense:       adapter.PostExpense,
+			UploadReceipt:     adapter.UploadReceipt,
+		}, nil
+	}
+
 	var txService *accounting.TransactionService
 	var attachService *accounting.AttachableService
 	ruleEngineService := accounting.NewRuleEngineService(logger, st.Queries, cache)
@@ -130,13 +148,13 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	if vectorWorker != nil {
 		coaMapper := ai.NewCoAMapper(pc, emb, cfg.AIThreshold)
 		entityResolver := ai.NewEntityResolver(st, pc, emb, cfg.AIThreshold)
-		txService = accounting.NewTransactionService(logger, st.Queries, entityResolver, coaMapper, qboClientFn, ruleEngineService)
-		attachService = accounting.NewAttachableService(logger, qboClientFn)
+		txService = accounting.NewTransactionService(logger, st.Queries, entityResolver, coaMapper, providerFactory, ruleEngineService)
+		attachService = accounting.NewAttachableService(logger, providerFactory)
 		logger.Info("✅ Accounting services initialized (AI-assisted)")
 	} else {
 		// No AI infra: services still usable with explicit AccountHint/VendorHint
-		txService = accounting.NewTransactionService(logger, st.Queries, nil, nil, qboClientFn, ruleEngineService)
-		attachService = accounting.NewAttachableService(logger, qboClientFn)
+		txService = accounting.NewTransactionService(logger, st.Queries, nil, nil, providerFactory, ruleEngineService)
+		attachService = accounting.NewAttachableService(logger, providerFactory)
 		logger.Info("✅ Accounting services initialized (manual hints only)")
 	}
 	_ = txService     // available for future GraphQL resolver / NATS handler wiring

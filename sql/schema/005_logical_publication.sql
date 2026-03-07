@@ -2,7 +2,7 @@
 -- +goose StatementBegin
 -- =========================================================================
 -- CDC Logical Replication Publication
--- Watches: toro_core.users, toro_core.qbo_connections, and ALL shadow_erp tables
+-- Watches: toro_core.users, toro_core.erp_connections, and ALL shadow_erp tables
 -- =========================================================================
 
 DROP PUBLICATION IF EXISTS toro_ledger_pub;
@@ -10,7 +10,7 @@ DROP PUBLICATION IF EXISTS toro_ledger_pub;
 -- Base publication: core tables that need CDC
 CREATE PUBLICATION toro_ledger_pub FOR TABLE
     toro_core.users,
-    toro_core.qbo_connections;
+    toro_core.erp_connections;
 
 -- Dynamically add all tables in the shadow_erp schema
 DO $$

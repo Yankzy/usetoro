@@ -20,7 +20,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/database"
-	quickbooks "github.com/Yankzy/usetoro/qbo"
+	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
 	"github.com/google/uuid"
 	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -528,9 +528,9 @@ func (r *mutationResolver) CreateQboAccount(ctx context.Context, input model.Cre
 	}
 
 	// Fetch from DB to return
-	dbAccount, err := r.Store.Queries.GetAccountByQBOID(ctx, database.GetAccountByQBOIDParams{
+	dbAccount, err := r.Store.Queries.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{
 		RealmID: input.RealmID,
-		QboID:   created.Id,
+		ErpID:   created.Id,
 	})
 	if err != nil {
 		r.Logger.Error("Failed to fetch created QBO account from shadow db", "error", err)
@@ -553,7 +553,7 @@ func (r *mutationResolver) UpdateQboAccount(ctx context.Context, input model.Upd
 	}
 
 	var qboID string
-	err = r.DB.QueryRow(ctx, "SELECT qbo_id FROM shadow_erp.accounts WHERE id = $1 AND realm_id = $2 AND deleted_at IS NULL", uid, input.RealmID).Scan(&qboID)
+	err = r.DB.QueryRow(ctx, "SELECT erp_id FROM shadow_erp.accounts WHERE id = $1 AND realm_id = $2 AND deleted_at IS NULL", uid, input.RealmID).Scan(&qboID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("account not found")
@@ -592,9 +592,9 @@ func (r *mutationResolver) UpdateQboAccount(ctx context.Context, input model.Upd
 		return nil, err
 	}
 
-	dbAccount, err := r.Store.Queries.GetAccountByQBOID(ctx, database.GetAccountByQBOIDParams{
+	dbAccount, err := r.Store.Queries.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{
 		RealmID: input.RealmID,
-		QboID:   updated.Id,
+		ErpID:   updated.Id,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch updated account")
@@ -616,7 +616,7 @@ func (r *mutationResolver) SoftDeleteQboAccount(ctx context.Context, input model
 	}
 
 	var qboID string
-	err = r.DB.QueryRow(ctx, "SELECT qbo_id FROM shadow_erp.accounts WHERE id = $1 AND realm_id = $2", uid, input.RealmID).Scan(&qboID)
+	err = r.DB.QueryRow(ctx, "SELECT erp_id FROM shadow_erp.accounts WHERE id = $1 AND realm_id = $2", uid, input.RealmID).Scan(&qboID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("account not found")
@@ -631,15 +631,282 @@ func (r *mutationResolver) SoftDeleteQboAccount(ctx context.Context, input model
 		return nil, err
 	}
 
-	dbAccount, err := r.Store.Queries.GetAccountByQBOID(ctx, database.GetAccountByQBOIDParams{
+	dbAccount, err := r.Store.Queries.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{
 		RealmID: input.RealmID,
-		QboID:   deactivated.Id,
+		ErpID:   deactivated.Id,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch deactivated account")
 	}
 
 	return mapDatabaseAccountToModel(&dbAccount), nil
+}
+
+// ApproveCleanupRow is the resolver for the approveCleanupRow field.
+func (r *mutationResolver) ApproveCleanupRow(ctx context.Context, rowID string) (*model.CleanupRow, error) {
+	rowUUID, err := uuid.Parse(rowID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid row id")
+	}
+	pgID := pgtype.UUID{Bytes: rowUUID, Valid: true}
+
+	row, err := r.Store.Queries.ApproveCleanupRow(ctx, pgID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("row not found")
+		}
+		r.Logger.Error("ApproveCleanupRow: db error", "row_id", rowID, "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+	return mapStagingRowToModel(row), nil
+}
+
+// OverrideCleanupRow is the resolver for the overrideCleanupRow field.
+// Saves the CPA's correction, triggers the learning loop, and marks the row APPROVED.
+func (r *mutationResolver) OverrideCleanupRow(ctx context.Context, input model.OverrideCleanupRowInput) (*model.CleanupRow, error) {
+	rowUUID, err := uuid.Parse(input.RowID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid row id")
+	}
+	pgRowID := pgtype.UUID{Bytes: rowUUID, Valid: true}
+
+	arg := database.OverrideCleanupRowParams{ID: pgRowID}
+	if input.VendorID != nil {
+		if v, err := uuid.Parse(*input.VendorID); err == nil {
+			arg.OverrideVendorID = pgtype.UUID{Bytes: v, Valid: true}
+		}
+	}
+	if input.AccountID != nil {
+		if a, err := uuid.Parse(*input.AccountID); err == nil {
+			arg.OverrideAccountID = pgtype.UUID{Bytes: a, Valid: true}
+		}
+	}
+
+	row, err := r.Store.Queries.OverrideCleanupRow(ctx, arg)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("row not found")
+		}
+		r.Logger.Error("OverrideCleanupRow: db error", "row_id", input.RowID, "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	// Trigger learning loop: persist the correction so future rows benefit.
+	if r.EntityResolver != nil {
+		correctionType := "account"
+		correctionID := ""
+		if input.VendorID != nil {
+			correctionType = "vendor"
+			correctionID = *input.VendorID
+		} else if input.AccountID != nil {
+			correctionID = *input.AccountID
+		}
+		rawInput := row.RawVendorName.String
+		if rawInput == "" {
+			rawInput = row.RawDescription.String
+		}
+		if correctionID != "" && rawInput != "" && row.RealmID.Valid {
+			if learnErr := r.EntityResolver.Learn(ctx, row.RealmID.String, rawInput, correctionID, correctionType); learnErr != nil {
+				r.Logger.Warn("OverrideCleanupRow: learning loop failed", "error", learnErr)
+			}
+		}
+	}
+
+	return mapStagingRowToModel(row), nil
+}
+
+// RejectCleanupRow is the resolver for the rejectCleanupRow field.
+func (r *mutationResolver) RejectCleanupRow(ctx context.Context, rowID string) (bool, error) {
+	rowUUID, err := uuid.Parse(rowID)
+	if err != nil {
+		return false, fmt.Errorf("invalid row id")
+	}
+	pgID := pgtype.UUID{Bytes: rowUUID, Valid: true}
+
+	if err := r.Store.Queries.RejectCleanupRow(ctx, pgID); err != nil {
+		r.Logger.Error("RejectCleanupRow: db error", "row_id", rowID, "error", err)
+		return false, fmt.Errorf("internal server error")
+	}
+	return true, nil
+}
+
+// ApproveAllByVendor bulk-approves all ENRICHED rows for a given vendor within a session.
+func (r *mutationResolver) ApproveAllByVendor(ctx context.Context, sessionID string, vendorID string) (int32, error) {
+	sessionUUID, err := uuid.Parse(sessionID)
+	if err != nil {
+		return 0, fmt.Errorf("invalid session id")
+	}
+	vendorUUID, err := uuid.Parse(vendorID)
+	if err != nil {
+		return 0, fmt.Errorf("invalid vendor id")
+	}
+
+	ids, err := r.Store.Queries.BulkApproveByVendor(ctx, database.BulkApproveByVendorParams{
+		SessionID:         pgtype.UUID{Bytes: sessionUUID, Valid: true},
+		PredictedVendorID: pgtype.UUID{Bytes: vendorUUID, Valid: true},
+	})
+	if err != nil {
+		r.Logger.Error("ApproveAllByVendor: db error", "session_id", sessionID, "vendor_id", vendorID, "error", err)
+		return 0, fmt.Errorf("internal server error")
+	}
+	return int32(len(ids)), nil
+}
+
+// PostCleanupSession posts all APPROVED rows to QBO using the batch API (max 30 ops per call).
+func (r *mutationResolver) PostCleanupSession(ctx context.Context, sessionID string) (*model.CleanupPostResult, error) {
+	sessionUUID, err := uuid.Parse(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid session id")
+	}
+	pgSessionID := pgtype.UUID{Bytes: sessionUUID, Valid: true}
+
+	// Fetch the session to get realm_id.
+	session, err := r.Store.Queries.GetCleanupSession(ctx, pgSessionID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("session not found")
+		}
+		r.Logger.Error("PostCleanupSession: get session", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	approvedRows, err := r.Store.Queries.GetApprovedRows(ctx, pgSessionID)
+	if err != nil {
+		r.Logger.Error("PostCleanupSession: get approved rows", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+	if len(approvedRows) == 0 {
+		return &model.CleanupPostResult{
+			SessionID: sessionID, PostedCount: 0, ErrorCount: 0, Errors: []string{},
+		}, nil
+	}
+
+	if !session.RealmID.Valid || session.RealmID.String == "" {
+		return nil, fmt.Errorf("this session has no QBO connection — download the Excel export instead")
+	}
+
+	// Build QBO connector using shared helper.
+	qboConnector, _, err := r.getQBOConnectorHelper(ctx, session.RealmID.String)
+	if err != nil {
+		return nil, err
+	}
+	qboClient, err := qboConnector.ClientForRealm(ctx, session.RealmID.String)
+	if err != nil {
+		r.Logger.Error("PostCleanupSession: get QBO client", "realm_id", session.RealmID, "error", err)
+		return nil, fmt.Errorf("failed to connect to QuickBooks")
+	}
+
+	result := &model.CleanupPostResult{
+		SessionID: sessionID,
+		Errors:    []string{},
+	}
+
+	// Process in batches of BatchMaxSize (30).
+	const batchMax = 30
+	for batchStart := 0; batchStart < len(approvedRows); batchStart += batchMax {
+		end := batchStart + batchMax
+		if end > len(approvedRows) {
+			end = len(approvedRows)
+		}
+		batch := approvedRows[batchStart:end]
+
+		// Build batch requests, mapping staging rows → QBO Purchase objects.
+		builder := quickbooks.NewBatchBuilder()
+		rowIDBatch := make([]pgtype.UUID, 0, len(batch))
+
+		for _, row := range batch {
+			// Resolve effective vendor + account (override takes precedence over prediction).
+			accountPgID := row.OverrideAccountID
+			if !accountPgID.Valid {
+				accountPgID = row.PredictedAccountID
+			}
+			vendorPgID := row.OverrideVendorID
+			if !vendorPgID.Valid {
+				vendorPgID = row.PredictedVendorID
+			}
+
+			if !accountPgID.Valid {
+				result.ErrorCount++
+				result.Errors = append(result.Errors,
+					fmt.Sprintf("row %s: no account resolved", uuidStrFromPG(row.ID)))
+				continue
+			}
+
+			// Look up QBO IDs from shadow tables.
+			acct, err := r.Store.Queries.GetAccountByID(ctx, accountPgID)
+			if err != nil {
+				result.ErrorCount++
+				result.Errors = append(result.Errors,
+					fmt.Sprintf("row %s: account lookup failed: %v", uuidStrFromPG(row.ID), err))
+				continue
+			}
+
+			amount := 0.0
+			if row.RawAmount.Valid {
+				if f, err2 := row.RawAmount.Float64Value(); err2 == nil {
+					amount = f.Float64
+				}
+			}
+
+			purchase := buildQBOPurchase(row, acct.ErpID, vendorPgID, r.Store.Queries, ctx, amount)
+			builder.AddCreate("Purchase", purchase)
+			rowIDBatch = append(rowIDBatch, row.ID)
+		}
+
+		if builder.Count() == 0 {
+			continue
+		}
+
+		batchResp, batchErr := qboClient.BatchContext(ctx, builder.Build())
+		if batchErr != nil {
+			r.Logger.Error("PostCleanupSession: batch call failed", "error", batchErr)
+			for _, id := range rowIDBatch {
+				result.ErrorCount++
+				result.Errors = append(result.Errors,
+					fmt.Sprintf("row %s: batch error: %v", uuidStrFromPG(id), batchErr))
+			}
+			continue
+		}
+
+		// Map responses back to rows.
+		for i, resp := range batchResp.BatchItemResponse {
+			if i >= len(rowIDBatch) {
+				break
+			}
+			rowID := rowIDBatch[i]
+			if resp.HasError() {
+				result.ErrorCount++
+				result.Errors = append(result.Errors,
+					fmt.Sprintf("row %s: QBO error: %s", uuidStrFromPG(rowID), resp.GetError()))
+				continue
+			}
+			// Extract the created Purchase ID.
+			qboTxnID := ""
+			if resp.Purchase != nil {
+				qboTxnID = resp.Purchase.Id
+			}
+			if markErr := r.Store.Queries.MarkRowPosted(ctx, database.MarkRowPostedParams{
+				ID:               rowID,
+				ErpTransactionID: pgtype.Text{String: qboTxnID, Valid: qboTxnID != ""},
+			}); markErr != nil {
+				r.Logger.Warn("PostCleanupSession: mark row posted failed",
+					"row_id", uuidStrFromPG(rowID), "error", markErr)
+			}
+			result.PostedCount++
+		}
+	}
+
+	// Mark session as POSTED if all rows were posted.
+	if result.ErrorCount == 0 {
+		if statusErr := r.Store.Queries.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
+			ID:     pgSessionID,
+			Status: "POSTED",
+		}); statusErr != nil {
+			r.Logger.Warn("PostCleanupSession: update session status failed", "error", statusErr)
+		}
+	}
+
+	return result, nil
 }
 
 // User is the resolver for the user field.
@@ -949,6 +1216,62 @@ func (r *queryResolver) QboVendorsByTenant(ctx context.Context, tenantID string)
 	out := make([]*model.Vendor, 0, len(rows))
 	for i := range rows {
 		out = append(out, mapDatabaseVendorToModel(&rows[i]))
+	}
+	return out, nil
+}
+
+// CleanupSessions is the resolver for the cleanupSessions field.
+// When realmId is provided, lists sessions for that realm.
+// When empty (no QBO connection), lists sessions owned by the authenticated user.
+func (r *queryResolver) CleanupSessions(ctx context.Context, realmID *string) ([]*model.CleanupSession, error) {
+	arg := database.ListCleanupSessionsParams{}
+	if realmID != nil && *realmID != "" {
+		arg.RealmID = pgtype.Text{String: *realmID, Valid: true}
+	} else {
+		// Fall back to user-scoped listing.
+		userID, _ := ctx.Value(auth.UserIDKey).(uuid.UUID)
+		if userID != uuid.Nil {
+			arg.CreatedBy = pgtype.UUID{Bytes: userID, Valid: true}
+		}
+	}
+
+	rows, err := r.Store.Queries.ListCleanupSessions(ctx, arg)
+	if err != nil {
+		r.Logger.Error("CleanupSessions: db error", "realm_id", realmID, "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+	out := make([]*model.CleanupSession, 0, len(rows))
+	for _, s := range rows {
+		out = append(out, mapSessionToModel(s))
+	}
+	return out, nil
+}
+
+// CleanupRows is the resolver for the cleanupRows field.
+func (r *queryResolver) CleanupRows(ctx context.Context, sessionID string, status *string) ([]*model.CleanupRow, error) {
+	sessionUUID, err := uuid.Parse(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid session id")
+	}
+	pgSessionID := pgtype.UUID{Bytes: sessionUUID, Valid: true}
+
+	var pgStatus pgtype.Text
+	if status != nil {
+		pgStatus = pgtype.Text{String: *status, Valid: true}
+	}
+
+	rows, err := r.Store.Queries.GetSessionRows(ctx, database.GetSessionRowsParams{
+		SessionID: pgSessionID,
+		Status:    pgStatus,
+	})
+	if err != nil {
+		r.Logger.Error("CleanupRows: db error", "session_id", sessionID, "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	out := make([]*model.CleanupRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, mapSessionRowToModel(row))
 	}
 	return out, nil
 }

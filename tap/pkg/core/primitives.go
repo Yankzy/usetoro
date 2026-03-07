@@ -87,3 +87,71 @@ type Proof struct {
 
 	Signature string `json:"sig"` // Worker's signature of the Data
 }
+
+// --- 4. The Identity Primitive (The Actor) ---
+
+// Identity represents a comprehensive, verifiable digital identity for an agent,
+// inspired by the W3C DID specification.
+type Identity struct {
+	// The DID URI, the unique, persistent identifier for the agent.
+	// e.g., "did:toro:1a2b3c-v2"
+	ID string `json:"id"`
+
+	// The DID of the entity (e.g., an organization or user) that controls this agent's identity.
+	// This is crucial for establishing trust, ownership, and accountability.
+	Controller string `json:"controller"`
+
+	// A list of cryptographic public keys associated with the DID.
+	// Allows for key rotation and specifying different keys for different purposes
+	// (e.g., one for authentication, another for signing contracts).
+	VerificationMethods []VerificationMethod `json:"verificationMethod"`
+
+	// A list of cryptographically verifiable claims (e.g., skills, certifications, reputation scores)
+	// issued by trusted third parties. This is far more trustworthy than a self-declared list of domains.
+	VerifiableCredentials []VerifiableCredential `json:"verifiableCredential,omitempty"`
+
+	// A list of service endpoints for interaction. This tells other agents
+	// how to communicate with this one (e.g., where to send messages or tasks).
+	Services []ServiceEndpoint `json:"service,omitempty"`
+
+	// Metadata for lifecycle management.
+	Created time.Time `json:"created"`
+	Updated time.Time `json:"updated"`
+	Version int64     `json:"version"` // Monotonically increasing version number
+	Status  string    `json:"status"`  // e.g., "active", "revoked", "deprecated"
+}
+
+// VerificationMethod defines a public key and its purpose.
+type VerificationMethod struct {
+	ID         string `json:"id"`              // e.g., "did:toro:1a2b3c-v2#keys-1"
+	Type       string `json:"type"`            // e.g., "Ed25519VerificationKey2020"
+	Controller string `json:"controller"`      // The DID that controls this key
+	PublicKey  string `json:"publicKeyBase58"` // The public key encoded in Base58
+}
+
+// ServiceEndpoint describes how to interact with the agent.
+type ServiceEndpoint struct {
+	ID              string `json:"id"`              // e.g., "did:toro:1a2b3c-v2#c-aip"
+	Type            string `json:"type"`            // e.g., "cAIP-v1"
+	ServiceEndpoint string `json:"serviceEndpoint"` // The URL or address for the service
+}
+
+// VerifiableCredential is a tamper-evident claim made by an issuer about a subject.
+type VerifiableCredential struct {
+	Context           []string        `json:"@context"` // W3C context (e.g., "https://www.w3.org/2018/credentials/v1")
+	ID                string          `json:"id"`       // Unique ID for the credential
+	Type              []string        `json:"type"`     // e.g., ["VerifiableCredential", "ToroSkillCredential"]
+	Issuer            string          `json:"issuer"`   // DID of the issuer (e.g., "did:toro:org-quickbooks")
+	IssuanceDate      time.Time       `json:"issuanceDate"`
+	CredentialSubject json.RawMessage `json:"credentialSubject"` // The actual claim data (e.g., {"skill": "invoicing", "level": "expert"})
+	Proof             CredentialProof `json:"proof"`             // The digital signature from the issuer
+}
+
+// CredentialProof is the cryptographic signature that makes a credential verifiable.
+type CredentialProof struct {
+	Type               string    `json:"type"` // e.g., "Ed25519Signature2020"
+	Created            time.Time `json:"created"`
+	ProofPurpose       string    `json:"proofPurpose"`       // e.g., "assertionMethod"
+	VerificationMethod string    `json:"verificationMethod"` // The key used for signing
+	SignatureValue     string    `json:"signatureValue"`     // The base64-encoded signature
+}

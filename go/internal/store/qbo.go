@@ -29,7 +29,8 @@ func (s *Store) SaveQBOTokens(ctx context.Context, entityID, realmID, accessToke
 		return fmt.Errorf("invalid entity UUID: %w", err)
 	}
 
-	err = s.Queries.UpsertQBOTokens(ctx, database.UpsertQBOTokensParams{
+	err = s.Queries.UpsertERPTokens(ctx, database.UpsertERPTokensParams{
+		ErpSystem:    "quickbooks_online",
 		RealmID:      realmID,
 		AccessToken:  encryptedAccess,
 		RefreshToken: encryptedRefresh,
@@ -46,7 +47,10 @@ func (s *Store) SaveQBOTokens(ctx context.Context, entityID, realmID, accessToke
 // GetQBOTokens retrieves and decrypts the OAuth2 tokens for a QBO connection.
 // Returns accessToken, refreshToken, expiresAt, entityID, error.
 func (s *Store) GetQBOTokens(ctx context.Context, realmID string) (string, string, time.Time, string, error) {
-	row, err := s.Queries.GetQBOTokens(ctx, realmID)
+	row, err := s.Queries.GetERPTokens(ctx, database.GetERPTokensParams{
+		ErpSystem: "quickbooks_online",
+		RealmID:   realmID,
+	})
 	if err != nil {
 		return "", "", time.Time{}, "", err
 	}
@@ -66,13 +70,13 @@ func (s *Store) GetQBOTokens(ctx context.Context, realmID string) (string, strin
 }
 
 // GetQBOConnection returns the basic connection info (no secrets) for an entity.
-func (s *Store) GetQBOConnection(ctx context.Context, entityID string) (*database.ToroCoreQboConnection, error) {
+func (s *Store) GetQBOConnection(ctx context.Context, entityID string) (*database.ToroCoreErpConnection, error) {
 	entityUUID := pgtype.UUID{}
 	if err := entityUUID.Scan(entityID); err != nil {
 		return nil, fmt.Errorf("invalid entity UUID: %w", err)
 	}
 
-	row, err := s.Queries.GetQBOConnection(ctx, entityUUID)
+	row, err := s.Queries.GetERPConnection(ctx, entityUUID)
 	if err != nil {
 		return nil, err
 	}

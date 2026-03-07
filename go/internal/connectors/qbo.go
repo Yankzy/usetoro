@@ -10,9 +10,9 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
+	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
-	quickbooks "github.com/Yankzy/usetoro/qbo"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -84,7 +84,7 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 		qboEntity, err := client.FindAccountById(entityID)
 		err2 = err
 		if err2 == nil {
-			localEntity, dbErr := c.store.Queries.GetAccountByQBOID(ctx, database.GetAccountByQBOIDParams{RealmID: realmID, QboID: entityID})
+			localEntity, dbErr := c.store.Queries.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{RealmID: realmID, ErpID: entityID})
 			if dbErr == nil && shouldSkipSync(localEntity.SyncToken, qboEntity.SyncToken) {
 				c.logger.Info("Skipping Echo Event for Account", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
 				return nil
@@ -95,7 +95,7 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 		qboEntity, err := client.FindVendorById(entityID)
 		err2 = err
 		if err2 == nil {
-			localEntity, dbErr := c.store.Queries.GetVendorByQBOID(ctx, database.GetVendorByQBOIDParams{RealmID: realmID, QboID: entityID})
+			localEntity, dbErr := c.store.Queries.GetVendorByERPID(ctx, database.GetVendorByERPIDParams{RealmID: realmID, ErpID: entityID})
 			if dbErr == nil && shouldSkipSync(localEntity.SyncToken, qboEntity.SyncToken) {
 				c.logger.Info("Skipping Echo Event for Vendor", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
 				return nil
@@ -106,7 +106,7 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 		qboEntity, err := client.FindCustomerById(entityID)
 		err2 = err
 		if err2 == nil {
-			localEntity, dbErr := c.store.Queries.GetCustomerByQBOID(ctx, database.GetCustomerByQBOIDParams{RealmID: realmID, QboID: entityID})
+			localEntity, dbErr := c.store.Queries.GetCustomerByERPID(ctx, database.GetCustomerByERPIDParams{RealmID: realmID, ErpID: entityID})
 			if dbErr == nil && shouldSkipSync(localEntity.SyncToken, qboEntity.SyncToken) {
 				c.logger.Info("Skipping Echo Event for Customer", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
 				return nil
@@ -117,7 +117,7 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 		qboEntity, err := client.FindInvoiceById(entityID)
 		err2 = err
 		if err2 == nil {
-			localEntity, dbErr := c.store.Queries.GetInvoiceByQBOID(ctx, database.GetInvoiceByQBOIDParams{RealmID: realmID, QboID: entityID})
+			localEntity, dbErr := c.store.Queries.GetInvoiceByERPID(ctx, database.GetInvoiceByERPIDParams{RealmID: realmID, ErpID: entityID})
 			if dbErr == nil && shouldSkipSync(localEntity.SyncToken, qboEntity.SyncToken) {
 				c.logger.Info("Skipping Echo Event for Invoice", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
 				return nil
@@ -128,7 +128,7 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 		qboEntity, err := client.FindBillById(entityID)
 		err2 = err
 		if err2 == nil {
-			localEntity, dbErr := c.store.Queries.GetBillByQBOID(ctx, database.GetBillByQBOIDParams{RealmID: realmID, QboID: entityID})
+			localEntity, dbErr := c.store.Queries.GetBillByERPID(ctx, database.GetBillByERPIDParams{RealmID: realmID, ErpID: entityID})
 			if dbErr == nil && shouldSkipSync(localEntity.SyncToken, qboEntity.SyncToken) {
 				c.logger.Info("Skipping Echo Event for Bill", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
 				return nil
@@ -161,31 +161,31 @@ func (c *QBOConnector) softDeleteEntity(ctx context.Context, realmID, entityType
 		err = c.store.Queries.SoftDeleteAccount(ctx, database.SoftDeleteAccountParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
-			QboID:     entityID,
+			ErpID:     entityID,
 		})
 	case "Vendor":
 		err = c.store.Queries.SoftDeleteVendor(ctx, database.SoftDeleteVendorParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
-			QboID:     entityID,
+			ErpID:     entityID,
 		})
 	case "Customer":
 		err = c.store.Queries.SoftDeleteCustomer(ctx, database.SoftDeleteCustomerParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
-			QboID:     entityID,
+			ErpID:     entityID,
 		})
 	case "Invoice":
 		err = c.store.Queries.SoftDeleteInvoice(ctx, database.SoftDeleteInvoiceParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
-			QboID:     entityID,
+			ErpID:     entityID,
 		})
 	case "Bill":
 		err = c.store.Queries.SoftDeleteBill(ctx, database.SoftDeleteBillParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
-			QboID:     entityID,
+			ErpID:     entityID,
 		})
 	default:
 		return fmt.Errorf("unsupported entity type: %s", entityType)
@@ -207,7 +207,7 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 	case "Account":
 		acct := data.(*quickbooks.Account)
 		err = c.store.Queries.UpsertAccount(ctx, database.UpsertAccountParams{
-			QboID:                         acct.Id,
+			ErpID:                         acct.Id,
 			RealmID:                       realmID,
 			Name:                          acct.Name,
 			AccountType:                   acct.AccountType,
@@ -221,8 +221,8 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 			CurrencyRefValue:              pgtype.Text{String: acct.CurrencyRef.Value, Valid: acct.CurrencyRef.Value != ""},
 			CurrentBalanceWithSubAccounts: jsonNumberToNumeric(acct.CurrentBalanceWithSubAccounts),
 			Sparse:                        pgtype.Bool{Bool: acct.Sparse, Valid: true},
-			QboCreatedTime:                pgtype.Timestamptz{Time: acct.MetaData.CreateTime.Time, Valid: !acct.MetaData.CreateTime.IsZero()},
-			QboUpdatedTime:                pgtype.Timestamptz{Time: acct.MetaData.LastUpdatedTime.Time, Valid: !acct.MetaData.LastUpdatedTime.IsZero()},
+			ErpCreatedTime:                pgtype.Timestamptz{Time: acct.MetaData.CreateTime.Time, Valid: !acct.MetaData.CreateTime.IsZero()},
+			ErpUpdatedTime:                pgtype.Timestamptz{Time: acct.MetaData.LastUpdatedTime.Time, Valid: !acct.MetaData.LastUpdatedTime.IsZero()},
 			CurrentBalance:                jsonNumberToNumeric(acct.CurrentBalance),
 			SubAccount:                    pgtype.Bool{Bool: acct.SubAccount, Valid: true},
 		})
@@ -231,18 +231,18 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 		vendor := data.(*quickbooks.Vendor)
 		apAcct := vendor.APAccountRef.Value
 		err = c.store.Queries.UpsertVendor(ctx, database.UpsertVendorParams{
-			QboID:                 vendor.Id,
+			ErpID:                 vendor.Id,
 			RealmID:               realmID,
 			DisplayName:           vendor.DisplayName,
 			SyncToken:             vendor.SyncToken,
-			LastKnownAccountQboID: pgtype.Text{String: apAcct, Valid: apAcct != ""},
+			LastKnownAccountErpID: pgtype.Text{String: apAcct, Valid: apAcct != ""},
 			AiSynonyms:            nil,
 		})
 
 	case "Customer":
 		cust := data.(*quickbooks.Customer)
 		err = c.store.Queries.UpsertCustomer(ctx, database.UpsertCustomerParams{
-			QboID:       cust.Id,
+			ErpID:       cust.Id,
 			RealmID:     realmID,
 			DisplayName: cust.DisplayName,
 			SyncToken:   cust.SyncToken,
@@ -257,9 +257,9 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 		}
 
 		err = c.store.Queries.UpsertInvoice(ctx, database.UpsertInvoiceParams{
-			QboID:         invoice.Id,
+			ErpID:         invoice.Id,
 			RealmID:       realmID,
-			CustomerQboID: pgtype.Text{String: customerID, Valid: customerID != ""},
+			CustomerErpID: pgtype.Text{String: customerID, Valid: customerID != ""},
 			DocNumber:     pgtype.Text{String: invoice.DocNumber, Valid: invoice.DocNumber != ""},
 			TotalAmount:   jsonNumberToNumeric(invoice.TotalAmt),
 			Balance:       jsonNumberToNumeric(invoice.Balance),
@@ -277,9 +277,9 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 		}
 
 		err = c.store.Queries.UpsertBill(ctx, database.UpsertBillParams{
-			QboID:       bill.Id,
+			ErpID:       bill.Id,
 			RealmID:     realmID,
-			VendorQboID: pgtype.Text{String: vendorID, Valid: vendorID != ""},
+			VendorErpID: pgtype.Text{String: vendorID, Valid: vendorID != ""},
 			DocNumber:   pgtype.Text{String: bill.DocNumber, Valid: bill.DocNumber != ""},
 			TotalAmount: jsonNumberToNumeric(bill.TotalAmt),
 			Balance:     jsonNumberToNumeric(bill.Balance),
@@ -368,7 +368,10 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 	}
 
 	// Get connection with webhook timestamps
-	conn, err := c.store.Queries.GetConnectionWithWebhookTimes(ctx, realmID)
+	conn, err := c.store.Queries.GetConnectionWithWebhookTimes(ctx, database.GetConnectionWithWebhookTimesParams{
+		ErpSystem: "quickbooks_online",
+		RealmID:   realmID,
+	})
 	if err != nil {
 		c.logger.Warn("Failed to get webhook times, using fallback", "error", err)
 	}
@@ -770,7 +773,7 @@ func (c *QBOConnector) SyncCompanyInfo(ctx context.Context, tenantID, realmID st
 
 	params := database.UpsertCompanyInfoParams{
 		RealmID:     realmID,
-		QboID:       info.Id,
+		ErpID:       info.Id,
 		SyncToken:   info.SyncToken,
 		CompanyName: info.CompanyName,
 		LegalName:   pgtype.Text{String: info.LegalName, Valid: info.LegalName != ""},
@@ -794,11 +797,11 @@ func (c *QBOConnector) SyncCompanyInfo(ctx context.Context, tenantID, realmID st
 		Email:        pgtype.Text{String: email, Valid: email != ""},
 		WebAddr:      pgtype.Text{String: webAddr, Valid: webAddr != ""},
 		NameValues:   nameValuesJSON,
-		QboCreatedTime: pgtype.Timestamptz{
+		ErpCreatedTime: pgtype.Timestamptz{
 			Time:  info.Metadata.CreateTime.Time,
 			Valid: info.Metadata != nil && !info.Metadata.CreateTime.IsZero(),
 		},
-		QboUpdatedTime: pgtype.Timestamptz{
+		ErpUpdatedTime: pgtype.Timestamptz{
 			Time:  info.Metadata.LastUpdatedTime.Time,
 			Valid: info.Metadata != nil && !info.Metadata.LastUpdatedTime.IsZero(),
 		},
@@ -834,7 +837,7 @@ func (c *QBOConnector) batchUpsertAccounts(ctx context.Context, realmID string, 
 
 	for _, account := range accounts {
 		if err := qtx.UpsertAccount(ctx, database.UpsertAccountParams{
-			QboID:                         account.Id,
+			ErpID:                         account.Id,
 			RealmID:                       realmID,
 			Name:                          account.Name,
 			AccountType:                   account.AccountType,
@@ -848,8 +851,8 @@ func (c *QBOConnector) batchUpsertAccounts(ctx context.Context, realmID string, 
 			CurrencyRefValue:              pgtype.Text{String: account.CurrencyRef.Value, Valid: account.CurrencyRef.Value != ""},
 			CurrentBalanceWithSubAccounts: jsonNumberToNumeric(account.CurrentBalanceWithSubAccounts),
 			Sparse:                        pgtype.Bool{Bool: account.Sparse, Valid: true},
-			QboCreatedTime:                pgtype.Timestamptz{Time: account.MetaData.CreateTime.Time, Valid: !account.MetaData.CreateTime.IsZero()},
-			QboUpdatedTime:                pgtype.Timestamptz{Time: account.MetaData.LastUpdatedTime.Time, Valid: !account.MetaData.LastUpdatedTime.IsZero()},
+			ErpCreatedTime:                pgtype.Timestamptz{Time: account.MetaData.CreateTime.Time, Valid: !account.MetaData.CreateTime.IsZero()},
+			ErpUpdatedTime:                pgtype.Timestamptz{Time: account.MetaData.LastUpdatedTime.Time, Valid: !account.MetaData.LastUpdatedTime.IsZero()},
 			CurrentBalance:                jsonNumberToNumeric(account.CurrentBalance),
 			SubAccount:                    pgtype.Bool{Bool: account.SubAccount, Valid: true},
 		}); err != nil {
@@ -878,11 +881,11 @@ func (c *QBOConnector) batchUpsertVendors(ctx context.Context, realmID string, v
 	for _, vendor := range vendors {
 		apAcct := vendor.APAccountRef.Value
 		if err := qtx.UpsertVendor(ctx, database.UpsertVendorParams{
-			QboID:                 vendor.Id,
+			ErpID:                 vendor.Id,
 			RealmID:               realmID,
 			DisplayName:           vendor.DisplayName,
 			SyncToken:             vendor.SyncToken,
-			LastKnownAccountQboID: pgtype.Text{String: apAcct, Valid: apAcct != ""},
+			LastKnownAccountErpID: pgtype.Text{String: apAcct, Valid: apAcct != ""},
 			AiSynonyms:            nil,
 		}); err != nil {
 			return fmt.Errorf("failed to upsert vendor %s: %w", vendor.Id, err)
@@ -909,7 +912,7 @@ func (c *QBOConnector) batchUpsertCustomers(ctx context.Context, realmID string,
 
 	for _, customer := range customers {
 		if err := qtx.UpsertCustomer(ctx, database.UpsertCustomerParams{
-			QboID:       customer.Id,
+			ErpID:       customer.Id,
 			RealmID:     realmID,
 			DisplayName: customer.DisplayName,
 			SyncToken:   customer.SyncToken,
@@ -943,9 +946,9 @@ func (c *QBOConnector) batchUpsertInvoices(ctx context.Context, realmID string, 
 		}
 
 		if err := qtx.UpsertInvoice(ctx, database.UpsertInvoiceParams{
-			QboID:         invoice.Id,
+			ErpID:         invoice.Id,
 			RealmID:       realmID,
-			CustomerQboID: pgtype.Text{String: customerID, Valid: customerID != ""},
+			CustomerErpID: pgtype.Text{String: customerID, Valid: customerID != ""},
 			DocNumber:     pgtype.Text{String: invoice.DocNumber, Valid: invoice.DocNumber != ""},
 			TotalAmount:   jsonNumberToNumeric(invoice.TotalAmt),
 			Balance:       jsonNumberToNumeric(invoice.Balance),
@@ -982,9 +985,9 @@ func (c *QBOConnector) batchUpsertBills(ctx context.Context, realmID string, bil
 		}
 
 		if err := qtx.UpsertBill(ctx, database.UpsertBillParams{
-			QboID:       bill.Id,
+			ErpID:       bill.Id,
 			RealmID:     realmID,
-			VendorQboID: pgtype.Text{String: vendorID, Valid: vendorID != ""},
+			VendorErpID: pgtype.Text{String: vendorID, Valid: vendorID != ""},
 			DocNumber:   pgtype.Text{String: bill.DocNumber, Valid: bill.DocNumber != ""},
 			TotalAmount: jsonNumberToNumeric(bill.TotalAmt),
 			Balance:     jsonNumberToNumeric(bill.Balance),

@@ -6,7 +6,7 @@
 --
 -- Values:
 --   'toro_internal' (DEFAULT) — written by Toro's own logic
---   'qbo_sync'                — written by QBOConnector (webhook, CDC, full sync)
+--   'erp_sync'                — written by ERPConnector (webhook, CDC, full sync)
 -- =========================================================================
 ALTER TABLE shadow_erp.accounts
     ADD COLUMN IF NOT EXISTS event_source TEXT NOT NULL DEFAULT 'toro_internal';

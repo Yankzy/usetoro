@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/Yankzy/usetoro/internal/database"
-	quickbooks "github.com/Yankzy/usetoro/qbo"
+	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
 )
 
 // reconcileEpsilon is the half-cent tolerance used when comparing QBO report
@@ -113,7 +113,7 @@ func (s *ReconciliationService) compareProfitAndLoss(ctx context.Context, realmI
 func buildAccountMap(accounts []database.ShadowErpAccount) map[string]database.ShadowErpAccount {
 	m := make(map[string]database.ShadowErpAccount, len(accounts))
 	for _, acc := range accounts {
-		m[acc.QboID] = acc
+		m[acc.ErpID] = acc
 	}
 	return m
 }

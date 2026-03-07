@@ -63,8 +63,8 @@ type ComplexityRoot struct {
 		FullyQualifiedName            func(childComplexity int) int
 		ID                            func(childComplexity int) int
 		Name                          func(childComplexity int) int
-		QboCreatedTime                func(childComplexity int) int
-		QboUpdatedTime                func(childComplexity int) int
+		ErpCreatedTime                func(childComplexity int) int
+		ErpUpdatedTime                func(childComplexity int) int
 		RealmID                       func(childComplexity int) int
 		Sparse                        func(childComplexity int) int
 		SubAccount                    func(childComplexity int) int
@@ -83,6 +83,53 @@ type ComplexityRoot struct {
 		ExpiresAt    func(childComplexity int) int
 		RefreshToken func(childComplexity int) int
 		User         func(childComplexity int) int
+	}
+
+	CleanupPostResult struct {
+		ErrorCount  func(childComplexity int) int
+		Errors      func(childComplexity int) int
+		PostedCount func(childComplexity int) int
+		SessionID   func(childComplexity int) int
+	}
+
+	CleanupRow struct {
+		AiReasoning          func(childComplexity int) int
+		ConfidenceScore      func(childComplexity int) int
+		CreatedAt            func(childComplexity int) int
+		DuplicateOf          func(childComplexity int) int
+		ID                   func(childComplexity int) int
+		IsDuplicate          func(childComplexity int) int
+		IsRecurring          func(childComplexity int) int
+		NormalizedVendor     func(childComplexity int) int
+		OverrideAccountID    func(childComplexity int) int
+		OverrideAccountName  func(childComplexity int) int
+		OverrideVendorID     func(childComplexity int) int
+		OverrideVendorName   func(childComplexity int) int
+		PredictedAccountID   func(childComplexity int) int
+		PredictedAccountName func(childComplexity int) int
+		PredictedAccountType func(childComplexity int) int
+		PredictedVendorID    func(childComplexity int) int
+		PredictedVendorName  func(childComplexity int) int
+		ErpTransactionID     func(childComplexity int) int
+		RawAmount            func(childComplexity int) int
+		RawDate              func(childComplexity int) int
+		RawDescription       func(childComplexity int) int
+		RawVendorName        func(childComplexity int) int
+		RealmID              func(childComplexity int) int
+		SessionID            func(childComplexity int) int
+		SplitSuggestion      func(childComplexity int) int
+		Status               func(childComplexity int) int
+		UpdatedAt            func(childComplexity int) int
+	}
+
+	CleanupSession struct {
+		CreatedAt func(childComplexity int) int
+		FileName  func(childComplexity int) int
+		ID        func(childComplexity int) int
+		RealmID   func(childComplexity int) int
+		RowCount  func(childComplexity int) int
+		Status    func(childComplexity int) int
+		UpdatedAt func(childComplexity int) int
 	}
 
 	Customer struct {
@@ -104,11 +151,16 @@ type ComplexityRoot struct {
 	}
 
 	Mutation struct {
+		ApproveAllByVendor     func(childComplexity int, sessionID string, vendorID string) int
+		ApproveCleanupRow      func(childComplexity int, rowID string) int
 		CreateQboAccount       func(childComplexity int, input model.CreateQboAccountInput) int
 		DeleteToken            func(childComplexity int, refreshToken string) int
 		Login                  func(childComplexity int, input model.LoginInput) int
+		OverrideCleanupRow     func(childComplexity int, input model.OverrideCleanupRowInput) int
+		PostCleanupSession     func(childComplexity int, sessionID string) int
 		RecordCorrection       func(childComplexity int, input model.RecordCorrectionInput) int
 		RefreshToken           func(childComplexity int, refreshToken string) int
+		RejectCleanupRow       func(childComplexity int, rowID string) int
 		RequestOtp             func(childComplexity int, email string) int
 		Signup                 func(childComplexity int, input model.SignupInput) int
 		SoftDeleteQboAccount   func(childComplexity int, input model.SoftDeleteQboAccountInput) int
@@ -143,6 +195,8 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
+		CleanupRows          func(childComplexity int, sessionID string, status *string) int
+		CleanupSessions      func(childComplexity int, realmID *string) int
 		QboAccount           func(childComplexity int, realmID string) int
 		QboConnection        func(childComplexity int) int
 		QboCustomers         func(childComplexity int, realmID string) int
@@ -184,7 +238,7 @@ type ComplexityRoot struct {
 		DisplayName        func(childComplexity int) int
 		ID                 func(childComplexity int) int
 		LastKnownAccountID func(childComplexity int) int
-		QboID              func(childComplexity int) int
+		ErpID              func(childComplexity int) int
 		RealmID            func(childComplexity int) int
 		SyncToken          func(childComplexity int) int
 		UpdatedAt          func(childComplexity int) int
@@ -204,6 +258,11 @@ type MutationResolver interface {
 	CreateQboAccount(ctx context.Context, input model.CreateQboAccountInput) (*model.Account, error)
 	UpdateQboAccount(ctx context.Context, input model.UpdateQboAccountInput) (*model.Account, error)
 	SoftDeleteQboAccount(ctx context.Context, input model.SoftDeleteQboAccountInput) (*model.Account, error)
+	ApproveCleanupRow(ctx context.Context, rowID string) (*model.CleanupRow, error)
+	OverrideCleanupRow(ctx context.Context, input model.OverrideCleanupRowInput) (*model.CleanupRow, error)
+	RejectCleanupRow(ctx context.Context, rowID string) (bool, error)
+	ApproveAllByVendor(ctx context.Context, sessionID string, vendorID string) (int32, error)
+	PostCleanupSession(ctx context.Context, sessionID string) (*model.CleanupPostResult, error)
 }
 type QueryResolver interface {
 	User(ctx context.Context) (*model.User, error)
@@ -217,6 +276,8 @@ type QueryResolver interface {
 	QboVendors(ctx context.Context, realmID string) ([]*model.Vendor, error)
 	QboVendorsByEntity(ctx context.Context, entityID string) ([]*model.Vendor, error)
 	QboVendorsByTenant(ctx context.Context, tenantID string) ([]*model.Vendor, error)
+	CleanupSessions(ctx context.Context, realmID *string) ([]*model.CleanupSession, error)
+	CleanupRows(ctx context.Context, sessionID string, status *string) ([]*model.CleanupRow, error)
 }
 
 type executableSchema struct {
@@ -323,17 +384,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.Account.Name(childComplexity), true
 	case "Account.qboCreatedTime":
-		if e.complexity.Account.QboCreatedTime == nil {
+		if e.complexity.Account.ErpCreatedTime == nil {
 			break
 		}
 
-		return e.complexity.Account.QboCreatedTime(childComplexity), true
+		return e.complexity.Account.ErpCreatedTime(childComplexity), true
 	case "Account.qboUpdatedTime":
-		if e.complexity.Account.QboUpdatedTime == nil {
+		if e.complexity.Account.ErpUpdatedTime == nil {
 			break
 		}
 
-		return e.complexity.Account.QboUpdatedTime(childComplexity), true
+		return e.complexity.Account.ErpUpdatedTime(childComplexity), true
 	case "Account.realmId":
 		if e.complexity.Account.RealmID == nil {
 			break
@@ -409,6 +470,237 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.AuthPayload.User(childComplexity), true
 
+	case "CleanupPostResult.errorCount":
+		if e.complexity.CleanupPostResult.ErrorCount == nil {
+			break
+		}
+
+		return e.complexity.CleanupPostResult.ErrorCount(childComplexity), true
+	case "CleanupPostResult.errors":
+		if e.complexity.CleanupPostResult.Errors == nil {
+			break
+		}
+
+		return e.complexity.CleanupPostResult.Errors(childComplexity), true
+	case "CleanupPostResult.postedCount":
+		if e.complexity.CleanupPostResult.PostedCount == nil {
+			break
+		}
+
+		return e.complexity.CleanupPostResult.PostedCount(childComplexity), true
+	case "CleanupPostResult.sessionId":
+		if e.complexity.CleanupPostResult.SessionID == nil {
+			break
+		}
+
+		return e.complexity.CleanupPostResult.SessionID(childComplexity), true
+
+	case "CleanupRow.aiReasoning":
+		if e.complexity.CleanupRow.AiReasoning == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.AiReasoning(childComplexity), true
+	case "CleanupRow.confidenceScore":
+		if e.complexity.CleanupRow.ConfidenceScore == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.ConfidenceScore(childComplexity), true
+	case "CleanupRow.createdAt":
+		if e.complexity.CleanupRow.CreatedAt == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.CreatedAt(childComplexity), true
+	case "CleanupRow.duplicateOf":
+		if e.complexity.CleanupRow.DuplicateOf == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.DuplicateOf(childComplexity), true
+	case "CleanupRow.id":
+		if e.complexity.CleanupRow.ID == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.ID(childComplexity), true
+	case "CleanupRow.isDuplicate":
+		if e.complexity.CleanupRow.IsDuplicate == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.IsDuplicate(childComplexity), true
+	case "CleanupRow.isRecurring":
+		if e.complexity.CleanupRow.IsRecurring == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.IsRecurring(childComplexity), true
+	case "CleanupRow.normalizedVendor":
+		if e.complexity.CleanupRow.NormalizedVendor == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.NormalizedVendor(childComplexity), true
+	case "CleanupRow.overrideAccountId":
+		if e.complexity.CleanupRow.OverrideAccountID == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.OverrideAccountID(childComplexity), true
+	case "CleanupRow.overrideAccountName":
+		if e.complexity.CleanupRow.OverrideAccountName == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.OverrideAccountName(childComplexity), true
+	case "CleanupRow.overrideVendorId":
+		if e.complexity.CleanupRow.OverrideVendorID == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.OverrideVendorID(childComplexity), true
+	case "CleanupRow.overrideVendorName":
+		if e.complexity.CleanupRow.OverrideVendorName == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.OverrideVendorName(childComplexity), true
+	case "CleanupRow.predictedAccountId":
+		if e.complexity.CleanupRow.PredictedAccountID == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.PredictedAccountID(childComplexity), true
+	case "CleanupRow.predictedAccountName":
+		if e.complexity.CleanupRow.PredictedAccountName == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.PredictedAccountName(childComplexity), true
+	case "CleanupRow.predictedAccountType":
+		if e.complexity.CleanupRow.PredictedAccountType == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.PredictedAccountType(childComplexity), true
+	case "CleanupRow.predictedVendorId":
+		if e.complexity.CleanupRow.PredictedVendorID == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.PredictedVendorID(childComplexity), true
+	case "CleanupRow.predictedVendorName":
+		if e.complexity.CleanupRow.PredictedVendorName == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.PredictedVendorName(childComplexity), true
+	case "CleanupRow.qboTransactionId":
+		if e.complexity.CleanupRow.ErpTransactionID == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.ErpTransactionID(childComplexity), true
+	case "CleanupRow.rawAmount":
+		if e.complexity.CleanupRow.RawAmount == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.RawAmount(childComplexity), true
+	case "CleanupRow.rawDate":
+		if e.complexity.CleanupRow.RawDate == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.RawDate(childComplexity), true
+	case "CleanupRow.rawDescription":
+		if e.complexity.CleanupRow.RawDescription == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.RawDescription(childComplexity), true
+	case "CleanupRow.rawVendorName":
+		if e.complexity.CleanupRow.RawVendorName == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.RawVendorName(childComplexity), true
+	case "CleanupRow.realmId":
+		if e.complexity.CleanupRow.RealmID == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.RealmID(childComplexity), true
+	case "CleanupRow.sessionId":
+		if e.complexity.CleanupRow.SessionID == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.SessionID(childComplexity), true
+	case "CleanupRow.splitSuggestion":
+		if e.complexity.CleanupRow.SplitSuggestion == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.SplitSuggestion(childComplexity), true
+	case "CleanupRow.status":
+		if e.complexity.CleanupRow.Status == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.Status(childComplexity), true
+	case "CleanupRow.updatedAt":
+		if e.complexity.CleanupRow.UpdatedAt == nil {
+			break
+		}
+
+		return e.complexity.CleanupRow.UpdatedAt(childComplexity), true
+
+	case "CleanupSession.createdAt":
+		if e.complexity.CleanupSession.CreatedAt == nil {
+			break
+		}
+
+		return e.complexity.CleanupSession.CreatedAt(childComplexity), true
+	case "CleanupSession.fileName":
+		if e.complexity.CleanupSession.FileName == nil {
+			break
+		}
+
+		return e.complexity.CleanupSession.FileName(childComplexity), true
+	case "CleanupSession.id":
+		if e.complexity.CleanupSession.ID == nil {
+			break
+		}
+
+		return e.complexity.CleanupSession.ID(childComplexity), true
+	case "CleanupSession.realmId":
+		if e.complexity.CleanupSession.RealmID == nil {
+			break
+		}
+
+		return e.complexity.CleanupSession.RealmID(childComplexity), true
+	case "CleanupSession.rowCount":
+		if e.complexity.CleanupSession.RowCount == nil {
+			break
+		}
+
+		return e.complexity.CleanupSession.RowCount(childComplexity), true
+	case "CleanupSession.status":
+		if e.complexity.CleanupSession.Status == nil {
+			break
+		}
+
+		return e.complexity.CleanupSession.Status(childComplexity), true
+	case "CleanupSession.updatedAt":
+		if e.complexity.CleanupSession.UpdatedAt == nil {
+			break
+		}
+
+		return e.complexity.CleanupSession.UpdatedAt(childComplexity), true
+
 	case "Customer.createdAt":
 		if e.complexity.Customer.CreatedAt == nil {
 			break
@@ -483,6 +775,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.EntityMatch.Source(childComplexity), true
 
+	case "Mutation.approveAllByVendor":
+		if e.complexity.Mutation.ApproveAllByVendor == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_approveAllByVendor_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.ApproveAllByVendor(childComplexity, args["sessionId"].(string), args["vendorId"].(string)), true
+	case "Mutation.approveCleanupRow":
+		if e.complexity.Mutation.ApproveCleanupRow == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_approveCleanupRow_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.ApproveCleanupRow(childComplexity, args["rowId"].(string)), true
 	case "Mutation.createQboAccount":
 		if e.complexity.Mutation.CreateQboAccount == nil {
 			break
@@ -516,6 +830,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.Login(childComplexity, args["input"].(model.LoginInput)), true
+	case "Mutation.overrideCleanupRow":
+		if e.complexity.Mutation.OverrideCleanupRow == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_overrideCleanupRow_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.OverrideCleanupRow(childComplexity, args["input"].(model.OverrideCleanupRowInput)), true
+	case "Mutation.postCleanupSession":
+		if e.complexity.Mutation.PostCleanupSession == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_postCleanupSession_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.PostCleanupSession(childComplexity, args["sessionId"].(string)), true
 	case "Mutation.recordCorrection":
 		if e.complexity.Mutation.RecordCorrection == nil {
 			break
@@ -538,6 +874,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.RefreshToken(childComplexity, args["refreshToken"].(string)), true
+	case "Mutation.rejectCleanupRow":
+		if e.complexity.Mutation.RejectCleanupRow == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_rejectCleanupRow_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.RejectCleanupRow(childComplexity, args["rowId"].(string)), true
 	case "Mutation.requestOTP":
 		if e.complexity.Mutation.RequestOtp == nil {
 			break
@@ -709,6 +1056,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.QBOCompany.RealmID(childComplexity), true
 
+	case "Query.cleanupRows":
+		if e.complexity.Query.CleanupRows == nil {
+			break
+		}
+
+		args, err := ec.field_Query_cleanupRows_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.CleanupRows(childComplexity, args["sessionId"].(string), args["status"].(*string)), true
+	case "Query.cleanupSessions":
+		if e.complexity.Query.CleanupSessions == nil {
+			break
+		}
+
+		args, err := ec.field_Query_cleanupSessions_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.CleanupSessions(childComplexity, args["realmId"].(*string)), true
 	case "Query.qbo_account":
 		if e.complexity.Query.QboAccount == nil {
 			break
@@ -933,11 +1302,11 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.Vendor.LastKnownAccountID(childComplexity), true
 	case "Vendor.qboId":
-		if e.complexity.Vendor.QboID == nil {
+		if e.complexity.Vendor.ErpID == nil {
 			break
 		}
 
-		return e.complexity.Vendor.QboID(childComplexity), true
+		return e.complexity.Vendor.ErpID(childComplexity), true
 	case "Vendor.realmId":
 		if e.complexity.Vendor.RealmID == nil {
 			break
@@ -967,6 +1336,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
 		ec.unmarshalInputCreateQboAccountInput,
 		ec.unmarshalInputLoginInput,
+		ec.unmarshalInputOverrideCleanupRowInput,
 		ec.unmarshalInputRecordCorrectionInput,
 		ec.unmarshalInputSignupInput,
 		ec.unmarshalInputSoftDeleteQboAccountInput,
@@ -1087,6 +1457,33 @@ var parsedSchema = gqlparser.MustLoadSchema(sources...)
 
 // region    ***************************** args.gotpl *****************************
 
+func (ec *executionContext) field_Mutation_approveAllByVendor_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "sessionId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["sessionId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "vendorId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["vendorId"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_approveCleanupRow_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "rowId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["rowId"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_createQboAccount_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1120,6 +1517,28 @@ func (ec *executionContext) field_Mutation_login_args(ctx context.Context, rawAr
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_overrideCleanupRow_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNOverrideCleanupRowInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐOverrideCleanupRowInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_postCleanupSession_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "sessionId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["sessionId"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_recordCorrection_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1139,6 +1558,17 @@ func (ec *executionContext) field_Mutation_refreshToken_args(ctx context.Context
 		return nil, err
 	}
 	args["refreshToken"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_rejectCleanupRow_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "rowId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["rowId"] = arg0
 	return args, nil
 }
 
@@ -1232,6 +1662,33 @@ func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_cleanupRows_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "sessionId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["sessionId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "status", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["status"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_cleanupSessions_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "realmId", ec.unmarshalOID2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["realmId"] = arg0
 	return args, nil
 }
 
@@ -1814,7 +2271,7 @@ func (ec *executionContext) _Account_qboCreatedTime(ctx context.Context, field g
 		field,
 		ec.fieldContext_Account_qboCreatedTime,
 		func(ctx context.Context) (any, error) {
-			return obj.QboCreatedTime, nil
+			return obj.ErpCreatedTime, nil
 		},
 		nil,
 		ec.marshalOTime2ᚖtimeᚐTime,
@@ -1843,7 +2300,7 @@ func (ec *executionContext) _Account_qboUpdatedTime(ctx context.Context, field g
 		field,
 		ec.fieldContext_Account_qboUpdatedTime,
 		func(ctx context.Context) (any, error) {
-			return obj.QboUpdatedTime, nil
+			return obj.ErpUpdatedTime, nil
 		},
 		nil,
 		ec.marshalOTime2ᚖtimeᚐTime,
@@ -2218,6 +2675,1108 @@ func (ec *executionContext) fieldContext_AuthPayload_user(_ context.Context, fie
 				return ec.fieldContext_User_tenantId(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type User", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupPostResult_sessionId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupPostResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupPostResult_sessionId,
+		func(ctx context.Context) (any, error) {
+			return obj.SessionID, nil
+		},
+		nil,
+		ec.marshalNID2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupPostResult_sessionId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupPostResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupPostResult_postedCount(ctx context.Context, field graphql.CollectedField, obj *model.CleanupPostResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupPostResult_postedCount,
+		func(ctx context.Context) (any, error) {
+			return obj.PostedCount, nil
+		},
+		nil,
+		ec.marshalNInt2int32,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupPostResult_postedCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupPostResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupPostResult_errorCount(ctx context.Context, field graphql.CollectedField, obj *model.CleanupPostResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupPostResult_errorCount,
+		func(ctx context.Context) (any, error) {
+			return obj.ErrorCount, nil
+		},
+		nil,
+		ec.marshalNInt2int32,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupPostResult_errorCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupPostResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupPostResult_errors(ctx context.Context, field graphql.CollectedField, obj *model.CleanupPostResult) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupPostResult_errors,
+		func(ctx context.Context) (any, error) {
+			return obj.Errors, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupPostResult_errors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupPostResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_id(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		ec.marshalNID2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_sessionId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_sessionId,
+		func(ctx context.Context) (any, error) {
+			return obj.SessionID, nil
+		},
+		nil,
+		ec.marshalNID2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_sessionId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_realmId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_realmId,
+		func(ctx context.Context) (any, error) {
+			return obj.RealmID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_realmId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_rawDescription(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_rawDescription,
+		func(ctx context.Context) (any, error) {
+			return obj.RawDescription, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_rawDescription(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_rawAmount(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_rawAmount,
+		func(ctx context.Context) (any, error) {
+			return obj.RawAmount, nil
+		},
+		nil,
+		ec.marshalNFloat2float64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_rawAmount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_rawDate(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_rawDate,
+		func(ctx context.Context) (any, error) {
+			return obj.RawDate, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_rawDate(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_rawVendorName(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_rawVendorName,
+		func(ctx context.Context) (any, error) {
+			return obj.RawVendorName, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_rawVendorName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_predictedVendorId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_predictedVendorId,
+		func(ctx context.Context) (any, error) {
+			return obj.PredictedVendorID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_predictedVendorId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_predictedVendorName(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_predictedVendorName,
+		func(ctx context.Context) (any, error) {
+			return obj.PredictedVendorName, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_predictedVendorName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_predictedAccountId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_predictedAccountId,
+		func(ctx context.Context) (any, error) {
+			return obj.PredictedAccountID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_predictedAccountId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_predictedAccountName(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_predictedAccountName,
+		func(ctx context.Context) (any, error) {
+			return obj.PredictedAccountName, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_predictedAccountName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_predictedAccountType(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_predictedAccountType,
+		func(ctx context.Context) (any, error) {
+			return obj.PredictedAccountType, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_predictedAccountType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_normalizedVendor(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_normalizedVendor,
+		func(ctx context.Context) (any, error) {
+			return obj.NormalizedVendor, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_normalizedVendor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_confidenceScore(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_confidenceScore,
+		func(ctx context.Context) (any, error) {
+			return obj.ConfidenceScore, nil
+		},
+		nil,
+		ec.marshalOFloat2ᚖfloat64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_confidenceScore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_aiReasoning(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_aiReasoning,
+		func(ctx context.Context) (any, error) {
+			return obj.AiReasoning, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_aiReasoning(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_isDuplicate(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_isDuplicate,
+		func(ctx context.Context) (any, error) {
+			return obj.IsDuplicate, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_isDuplicate(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_duplicateOf(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_duplicateOf,
+		func(ctx context.Context) (any, error) {
+			return obj.DuplicateOf, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_duplicateOf(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_isRecurring(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_isRecurring,
+		func(ctx context.Context) (any, error) {
+			return obj.IsRecurring, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_isRecurring(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_splitSuggestion(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_splitSuggestion,
+		func(ctx context.Context) (any, error) {
+			return obj.SplitSuggestion, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_splitSuggestion(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_overrideVendorId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_overrideVendorId,
+		func(ctx context.Context) (any, error) {
+			return obj.OverrideVendorID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_overrideVendorId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_overrideVendorName(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_overrideVendorName,
+		func(ctx context.Context) (any, error) {
+			return obj.OverrideVendorName, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_overrideVendorName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_overrideAccountId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_overrideAccountId,
+		func(ctx context.Context) (any, error) {
+			return obj.OverrideAccountID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_overrideAccountId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_overrideAccountName(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_overrideAccountName,
+		func(ctx context.Context) (any, error) {
+			return obj.OverrideAccountName, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_overrideAccountName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_status(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_status,
+		func(ctx context.Context) (any, error) {
+			return obj.Status, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_status(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_qboTransactionId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_qboTransactionId,
+		func(ctx context.Context) (any, error) {
+			return obj.ErpTransactionID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_qboTransactionId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_createdAt(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_createdAt,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupRow_updatedAt(ctx context.Context, field graphql.CollectedField, obj *model.CleanupRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupRow_updatedAt,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupRow_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupSession_id(ctx context.Context, field graphql.CollectedField, obj *model.CleanupSession) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupSession_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		ec.marshalNID2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupSession_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupSession",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ID does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupSession_realmId(ctx context.Context, field graphql.CollectedField, obj *model.CleanupSession) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupSession_realmId,
+		func(ctx context.Context) (any, error) {
+			return obj.RealmID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupSession_realmId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupSession",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupSession_fileName(ctx context.Context, field graphql.CollectedField, obj *model.CleanupSession) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupSession_fileName,
+		func(ctx context.Context) (any, error) {
+			return obj.FileName, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupSession_fileName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupSession",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupSession_rowCount(ctx context.Context, field graphql.CollectedField, obj *model.CleanupSession) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupSession_rowCount,
+		func(ctx context.Context) (any, error) {
+			return obj.RowCount, nil
+		},
+		nil,
+		ec.marshalNInt2int32,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupSession_rowCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupSession",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupSession_status(ctx context.Context, field graphql.CollectedField, obj *model.CleanupSession) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupSession_status,
+		func(ctx context.Context) (any, error) {
+			return obj.Status, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupSession_status(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupSession",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupSession_createdAt(ctx context.Context, field graphql.CollectedField, obj *model.CleanupSession) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupSession_createdAt,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupSession_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupSession",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _CleanupSession_updatedAt(ctx context.Context, field graphql.CollectedField, obj *model.CleanupSession) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_CleanupSession_updatedAt,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_CleanupSession_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "CleanupSession",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
 		},
 	}
 	return fc, nil
@@ -3229,6 +4788,333 @@ func (ec *executionContext) fieldContext_Mutation_softDeleteQboAccount(ctx conte
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_softDeleteQboAccount_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_approveCleanupRow(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_approveCleanupRow,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().ApproveCleanupRow(ctx, fc.Args["rowId"].(string))
+		},
+		nil,
+		ec.marshalNCleanupRow2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupRow,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_approveCleanupRow(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_CleanupRow_id(ctx, field)
+			case "sessionId":
+				return ec.fieldContext_CleanupRow_sessionId(ctx, field)
+			case "realmId":
+				return ec.fieldContext_CleanupRow_realmId(ctx, field)
+			case "rawDescription":
+				return ec.fieldContext_CleanupRow_rawDescription(ctx, field)
+			case "rawAmount":
+				return ec.fieldContext_CleanupRow_rawAmount(ctx, field)
+			case "rawDate":
+				return ec.fieldContext_CleanupRow_rawDate(ctx, field)
+			case "rawVendorName":
+				return ec.fieldContext_CleanupRow_rawVendorName(ctx, field)
+			case "predictedVendorId":
+				return ec.fieldContext_CleanupRow_predictedVendorId(ctx, field)
+			case "predictedVendorName":
+				return ec.fieldContext_CleanupRow_predictedVendorName(ctx, field)
+			case "predictedAccountId":
+				return ec.fieldContext_CleanupRow_predictedAccountId(ctx, field)
+			case "predictedAccountName":
+				return ec.fieldContext_CleanupRow_predictedAccountName(ctx, field)
+			case "predictedAccountType":
+				return ec.fieldContext_CleanupRow_predictedAccountType(ctx, field)
+			case "normalizedVendor":
+				return ec.fieldContext_CleanupRow_normalizedVendor(ctx, field)
+			case "confidenceScore":
+				return ec.fieldContext_CleanupRow_confidenceScore(ctx, field)
+			case "aiReasoning":
+				return ec.fieldContext_CleanupRow_aiReasoning(ctx, field)
+			case "isDuplicate":
+				return ec.fieldContext_CleanupRow_isDuplicate(ctx, field)
+			case "duplicateOf":
+				return ec.fieldContext_CleanupRow_duplicateOf(ctx, field)
+			case "isRecurring":
+				return ec.fieldContext_CleanupRow_isRecurring(ctx, field)
+			case "splitSuggestion":
+				return ec.fieldContext_CleanupRow_splitSuggestion(ctx, field)
+			case "overrideVendorId":
+				return ec.fieldContext_CleanupRow_overrideVendorId(ctx, field)
+			case "overrideVendorName":
+				return ec.fieldContext_CleanupRow_overrideVendorName(ctx, field)
+			case "overrideAccountId":
+				return ec.fieldContext_CleanupRow_overrideAccountId(ctx, field)
+			case "overrideAccountName":
+				return ec.fieldContext_CleanupRow_overrideAccountName(ctx, field)
+			case "status":
+				return ec.fieldContext_CleanupRow_status(ctx, field)
+			case "qboTransactionId":
+				return ec.fieldContext_CleanupRow_qboTransactionId(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_CleanupRow_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_CleanupRow_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type CleanupRow", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_approveCleanupRow_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_overrideCleanupRow(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_overrideCleanupRow,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().OverrideCleanupRow(ctx, fc.Args["input"].(model.OverrideCleanupRowInput))
+		},
+		nil,
+		ec.marshalNCleanupRow2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupRow,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_overrideCleanupRow(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_CleanupRow_id(ctx, field)
+			case "sessionId":
+				return ec.fieldContext_CleanupRow_sessionId(ctx, field)
+			case "realmId":
+				return ec.fieldContext_CleanupRow_realmId(ctx, field)
+			case "rawDescription":
+				return ec.fieldContext_CleanupRow_rawDescription(ctx, field)
+			case "rawAmount":
+				return ec.fieldContext_CleanupRow_rawAmount(ctx, field)
+			case "rawDate":
+				return ec.fieldContext_CleanupRow_rawDate(ctx, field)
+			case "rawVendorName":
+				return ec.fieldContext_CleanupRow_rawVendorName(ctx, field)
+			case "predictedVendorId":
+				return ec.fieldContext_CleanupRow_predictedVendorId(ctx, field)
+			case "predictedVendorName":
+				return ec.fieldContext_CleanupRow_predictedVendorName(ctx, field)
+			case "predictedAccountId":
+				return ec.fieldContext_CleanupRow_predictedAccountId(ctx, field)
+			case "predictedAccountName":
+				return ec.fieldContext_CleanupRow_predictedAccountName(ctx, field)
+			case "predictedAccountType":
+				return ec.fieldContext_CleanupRow_predictedAccountType(ctx, field)
+			case "normalizedVendor":
+				return ec.fieldContext_CleanupRow_normalizedVendor(ctx, field)
+			case "confidenceScore":
+				return ec.fieldContext_CleanupRow_confidenceScore(ctx, field)
+			case "aiReasoning":
+				return ec.fieldContext_CleanupRow_aiReasoning(ctx, field)
+			case "isDuplicate":
+				return ec.fieldContext_CleanupRow_isDuplicate(ctx, field)
+			case "duplicateOf":
+				return ec.fieldContext_CleanupRow_duplicateOf(ctx, field)
+			case "isRecurring":
+				return ec.fieldContext_CleanupRow_isRecurring(ctx, field)
+			case "splitSuggestion":
+				return ec.fieldContext_CleanupRow_splitSuggestion(ctx, field)
+			case "overrideVendorId":
+				return ec.fieldContext_CleanupRow_overrideVendorId(ctx, field)
+			case "overrideVendorName":
+				return ec.fieldContext_CleanupRow_overrideVendorName(ctx, field)
+			case "overrideAccountId":
+				return ec.fieldContext_CleanupRow_overrideAccountId(ctx, field)
+			case "overrideAccountName":
+				return ec.fieldContext_CleanupRow_overrideAccountName(ctx, field)
+			case "status":
+				return ec.fieldContext_CleanupRow_status(ctx, field)
+			case "qboTransactionId":
+				return ec.fieldContext_CleanupRow_qboTransactionId(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_CleanupRow_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_CleanupRow_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type CleanupRow", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_overrideCleanupRow_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_rejectCleanupRow(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_rejectCleanupRow,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().RejectCleanupRow(ctx, fc.Args["rowId"].(string))
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_rejectCleanupRow(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_rejectCleanupRow_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_approveAllByVendor(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_approveAllByVendor,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().ApproveAllByVendor(ctx, fc.Args["sessionId"].(string), fc.Args["vendorId"].(string))
+		},
+		nil,
+		ec.marshalNInt2int32,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_approveAllByVendor(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_approveAllByVendor_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_postCleanupSession(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_postCleanupSession,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().PostCleanupSession(ctx, fc.Args["sessionId"].(string))
+		},
+		nil,
+		ec.marshalNCleanupPostResult2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupPostResult,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_postCleanupSession(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "sessionId":
+				return ec.fieldContext_CleanupPostResult_sessionId(ctx, field)
+			case "postedCount":
+				return ec.fieldContext_CleanupPostResult_postedCount(ctx, field)
+			case "errorCount":
+				return ec.fieldContext_CleanupPostResult_errorCount(ctx, field)
+			case "errors":
+				return ec.fieldContext_CleanupPostResult_errors(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type CleanupPostResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_postCleanupSession_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -4279,6 +6165,160 @@ func (ec *executionContext) fieldContext_Query_qboVendorsByTenant(ctx context.Co
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_cleanupSessions(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_cleanupSessions,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().CleanupSessions(ctx, fc.Args["realmId"].(*string))
+		},
+		nil,
+		ec.marshalNCleanupSession2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupSessionᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_cleanupSessions(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_CleanupSession_id(ctx, field)
+			case "realmId":
+				return ec.fieldContext_CleanupSession_realmId(ctx, field)
+			case "fileName":
+				return ec.fieldContext_CleanupSession_fileName(ctx, field)
+			case "rowCount":
+				return ec.fieldContext_CleanupSession_rowCount(ctx, field)
+			case "status":
+				return ec.fieldContext_CleanupSession_status(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_CleanupSession_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_CleanupSession_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type CleanupSession", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_cleanupSessions_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_cleanupRows(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_cleanupRows,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().CleanupRows(ctx, fc.Args["sessionId"].(string), fc.Args["status"].(*string))
+		},
+		nil,
+		ec.marshalNCleanupRow2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupRowᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_cleanupRows(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_CleanupRow_id(ctx, field)
+			case "sessionId":
+				return ec.fieldContext_CleanupRow_sessionId(ctx, field)
+			case "realmId":
+				return ec.fieldContext_CleanupRow_realmId(ctx, field)
+			case "rawDescription":
+				return ec.fieldContext_CleanupRow_rawDescription(ctx, field)
+			case "rawAmount":
+				return ec.fieldContext_CleanupRow_rawAmount(ctx, field)
+			case "rawDate":
+				return ec.fieldContext_CleanupRow_rawDate(ctx, field)
+			case "rawVendorName":
+				return ec.fieldContext_CleanupRow_rawVendorName(ctx, field)
+			case "predictedVendorId":
+				return ec.fieldContext_CleanupRow_predictedVendorId(ctx, field)
+			case "predictedVendorName":
+				return ec.fieldContext_CleanupRow_predictedVendorName(ctx, field)
+			case "predictedAccountId":
+				return ec.fieldContext_CleanupRow_predictedAccountId(ctx, field)
+			case "predictedAccountName":
+				return ec.fieldContext_CleanupRow_predictedAccountName(ctx, field)
+			case "predictedAccountType":
+				return ec.fieldContext_CleanupRow_predictedAccountType(ctx, field)
+			case "normalizedVendor":
+				return ec.fieldContext_CleanupRow_normalizedVendor(ctx, field)
+			case "confidenceScore":
+				return ec.fieldContext_CleanupRow_confidenceScore(ctx, field)
+			case "aiReasoning":
+				return ec.fieldContext_CleanupRow_aiReasoning(ctx, field)
+			case "isDuplicate":
+				return ec.fieldContext_CleanupRow_isDuplicate(ctx, field)
+			case "duplicateOf":
+				return ec.fieldContext_CleanupRow_duplicateOf(ctx, field)
+			case "isRecurring":
+				return ec.fieldContext_CleanupRow_isRecurring(ctx, field)
+			case "splitSuggestion":
+				return ec.fieldContext_CleanupRow_splitSuggestion(ctx, field)
+			case "overrideVendorId":
+				return ec.fieldContext_CleanupRow_overrideVendorId(ctx, field)
+			case "overrideVendorName":
+				return ec.fieldContext_CleanupRow_overrideVendorName(ctx, field)
+			case "overrideAccountId":
+				return ec.fieldContext_CleanupRow_overrideAccountId(ctx, field)
+			case "overrideAccountName":
+				return ec.fieldContext_CleanupRow_overrideAccountName(ctx, field)
+			case "status":
+				return ec.fieldContext_CleanupRow_status(ctx, field)
+			case "qboTransactionId":
+				return ec.fieldContext_CleanupRow_qboTransactionId(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_CleanupRow_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_CleanupRow_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type CleanupRow", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_cleanupRows_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -4849,7 +6889,7 @@ func (ec *executionContext) _Vendor_qboId(ctx context.Context, field graphql.Col
 		field,
 		ec.fieldContext_Vendor_qboId,
 		func(ctx context.Context) (any, error) {
-			return obj.QboID, nil
+			return obj.ErpID, nil
 		},
 		nil,
 		ec.marshalNString2string,
@@ -6615,6 +8655,47 @@ func (ec *executionContext) unmarshalInputLoginInput(ctx context.Context, obj an
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputOverrideCleanupRowInput(ctx context.Context, obj any) (model.OverrideCleanupRowInput, error) {
+	var it model.OverrideCleanupRowInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"rowId", "vendorId", "accountId"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "rowId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("rowId"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RowID = data
+		case "vendorId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("vendorId"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.VendorID = data
+		case "accountId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("accountId"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AccountID = data
+		}
+	}
+
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputRecordCorrectionInput(ctx context.Context, obj any) (model.RecordCorrectionInput, error) {
 	var it model.RecordCorrectionInput
 	asMap := map[string]any{}
@@ -7026,6 +9107,238 @@ func (ec *executionContext) _AuthPayload(ctx context.Context, sel ast.SelectionS
 	return out
 }
 
+var cleanupPostResultImplementors = []string{"CleanupPostResult"}
+
+func (ec *executionContext) _CleanupPostResult(ctx context.Context, sel ast.SelectionSet, obj *model.CleanupPostResult) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, cleanupPostResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("CleanupPostResult")
+		case "sessionId":
+			out.Values[i] = ec._CleanupPostResult_sessionId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "postedCount":
+			out.Values[i] = ec._CleanupPostResult_postedCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "errorCount":
+			out.Values[i] = ec._CleanupPostResult_errorCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "errors":
+			out.Values[i] = ec._CleanupPostResult_errors(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var cleanupRowImplementors = []string{"CleanupRow"}
+
+func (ec *executionContext) _CleanupRow(ctx context.Context, sel ast.SelectionSet, obj *model.CleanupRow) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, cleanupRowImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("CleanupRow")
+		case "id":
+			out.Values[i] = ec._CleanupRow_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "sessionId":
+			out.Values[i] = ec._CleanupRow_sessionId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "realmId":
+			out.Values[i] = ec._CleanupRow_realmId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "rawDescription":
+			out.Values[i] = ec._CleanupRow_rawDescription(ctx, field, obj)
+		case "rawAmount":
+			out.Values[i] = ec._CleanupRow_rawAmount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "rawDate":
+			out.Values[i] = ec._CleanupRow_rawDate(ctx, field, obj)
+		case "rawVendorName":
+			out.Values[i] = ec._CleanupRow_rawVendorName(ctx, field, obj)
+		case "predictedVendorId":
+			out.Values[i] = ec._CleanupRow_predictedVendorId(ctx, field, obj)
+		case "predictedVendorName":
+			out.Values[i] = ec._CleanupRow_predictedVendorName(ctx, field, obj)
+		case "predictedAccountId":
+			out.Values[i] = ec._CleanupRow_predictedAccountId(ctx, field, obj)
+		case "predictedAccountName":
+			out.Values[i] = ec._CleanupRow_predictedAccountName(ctx, field, obj)
+		case "predictedAccountType":
+			out.Values[i] = ec._CleanupRow_predictedAccountType(ctx, field, obj)
+		case "normalizedVendor":
+			out.Values[i] = ec._CleanupRow_normalizedVendor(ctx, field, obj)
+		case "confidenceScore":
+			out.Values[i] = ec._CleanupRow_confidenceScore(ctx, field, obj)
+		case "aiReasoning":
+			out.Values[i] = ec._CleanupRow_aiReasoning(ctx, field, obj)
+		case "isDuplicate":
+			out.Values[i] = ec._CleanupRow_isDuplicate(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "duplicateOf":
+			out.Values[i] = ec._CleanupRow_duplicateOf(ctx, field, obj)
+		case "isRecurring":
+			out.Values[i] = ec._CleanupRow_isRecurring(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "splitSuggestion":
+			out.Values[i] = ec._CleanupRow_splitSuggestion(ctx, field, obj)
+		case "overrideVendorId":
+			out.Values[i] = ec._CleanupRow_overrideVendorId(ctx, field, obj)
+		case "overrideVendorName":
+			out.Values[i] = ec._CleanupRow_overrideVendorName(ctx, field, obj)
+		case "overrideAccountId":
+			out.Values[i] = ec._CleanupRow_overrideAccountId(ctx, field, obj)
+		case "overrideAccountName":
+			out.Values[i] = ec._CleanupRow_overrideAccountName(ctx, field, obj)
+		case "status":
+			out.Values[i] = ec._CleanupRow_status(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "qboTransactionId":
+			out.Values[i] = ec._CleanupRow_qboTransactionId(ctx, field, obj)
+		case "createdAt":
+			out.Values[i] = ec._CleanupRow_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updatedAt":
+			out.Values[i] = ec._CleanupRow_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var cleanupSessionImplementors = []string{"CleanupSession"}
+
+func (ec *executionContext) _CleanupSession(ctx context.Context, sel ast.SelectionSet, obj *model.CleanupSession) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, cleanupSessionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("CleanupSession")
+		case "id":
+			out.Values[i] = ec._CleanupSession_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "realmId":
+			out.Values[i] = ec._CleanupSession_realmId(ctx, field, obj)
+		case "fileName":
+			out.Values[i] = ec._CleanupSession_fileName(ctx, field, obj)
+		case "rowCount":
+			out.Values[i] = ec._CleanupSession_rowCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "status":
+			out.Values[i] = ec._CleanupSession_status(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createdAt":
+			out.Values[i] = ec._CleanupSession_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updatedAt":
+			out.Values[i] = ec._CleanupSession_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var customerImplementors = []string{"Customer"}
 
 func (ec *executionContext) _Customer(ctx context.Context, sel ast.SelectionSet, obj *model.Customer) graphql.Marshaler {
@@ -7250,6 +9563,41 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "softDeleteQboAccount":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_softDeleteQboAccount(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "approveCleanupRow":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_approveCleanupRow(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "overrideCleanupRow":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_overrideCleanupRow(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "rejectCleanupRow":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_rejectCleanupRow(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "approveAllByVendor":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_approveAllByVendor(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "postCleanupSession":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_postCleanupSession(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -7676,6 +10024,50 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_qboVendorsByTenant(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "cleanupSessions":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_cleanupSessions(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "cleanupRows":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_cleanupRows(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -8436,6 +10828,132 @@ func (ec *executionContext) marshalNBoolean2bool(ctx context.Context, sel ast.Se
 	return res
 }
 
+func (ec *executionContext) marshalNCleanupPostResult2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupPostResult(ctx context.Context, sel ast.SelectionSet, v model.CleanupPostResult) graphql.Marshaler {
+	return ec._CleanupPostResult(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNCleanupPostResult2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupPostResult(ctx context.Context, sel ast.SelectionSet, v *model.CleanupPostResult) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._CleanupPostResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNCleanupRow2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupRow(ctx context.Context, sel ast.SelectionSet, v model.CleanupRow) graphql.Marshaler {
+	return ec._CleanupRow(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNCleanupRow2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupRowᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.CleanupRow) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalNCleanupRow2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupRow(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNCleanupRow2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupRow(ctx context.Context, sel ast.SelectionSet, v *model.CleanupRow) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._CleanupRow(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNCleanupSession2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupSessionᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.CleanupSession) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalNCleanupSession2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupSession(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNCleanupSession2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCleanupSession(ctx context.Context, sel ast.SelectionSet, v *model.CleanupSession) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._CleanupSession(ctx, sel, v)
+}
+
 func (ec *executionContext) unmarshalNCreateQboAccountInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐCreateQboAccountInput(ctx context.Context, v any) (model.CreateQboAccountInput, error) {
 	res, err := ec.unmarshalInputCreateQboAccountInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -8548,6 +11066,11 @@ func (ec *executionContext) unmarshalNLoginInput2githubᚗcomᚋYankzyᚋusetoro
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNOverrideCleanupRowInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐOverrideCleanupRowInput(ctx context.Context, v any) (model.OverrideCleanupRowInput, error) {
+	res, err := ec.unmarshalInputOverrideCleanupRowInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) marshalNPageInfo2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐPageInfo(ctx context.Context, sel ast.SelectionSet, v *model.PageInfo) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
@@ -8587,6 +11110,36 @@ func (ec *executionContext) marshalNString2string(ctx context.Context, sel ast.S
 		}
 	}
 	return res
+}
+
+func (ec *executionContext) unmarshalNString2ᚕstringᚄ(ctx context.Context, v any) ([]string, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]string, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNString2string(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalNString2ᚕstringᚄ(ctx context.Context, sel ast.SelectionSet, v []string) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNString2string(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
 }
 
 func (ec *executionContext) marshalNTenant2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐTenantᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Tenant) graphql.Marshaler {
@@ -9047,6 +11600,24 @@ func (ec *executionContext) marshalOFloat2ᚖfloat64(ctx context.Context, sel as
 	_ = sel
 	res := graphql.MarshalFloatContext(*v)
 	return graphql.WrapContextMarshaler(ctx, res)
+}
+
+func (ec *executionContext) unmarshalOID2ᚖstring(ctx context.Context, v any) (*string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalID(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOID2ᚖstring(ctx context.Context, sel ast.SelectionSet, v *string) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	_ = sel
+	_ = ctx
+	res := graphql.MarshalID(*v)
+	return res
 }
 
 func (ec *executionContext) marshalOQBOCompany2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐQBOCompany(ctx context.Context, sel ast.SelectionSet, v *model.QBOCompany) graphql.Marshaler {

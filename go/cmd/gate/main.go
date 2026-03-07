@@ -22,6 +22,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/ingest"
 	"github.com/Yankzy/usetoro/internal/queue"
+	"github.com/Yankzy/usetoro/internal/services/cleanup"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/dgraph-io/ristretto"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -215,8 +216,9 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		logger.Info("✅ Connected to Redis")
 	}
 
-	// DI: Create Server
-	srv := api.NewServer(cfg, logger, st, pub, qboConfig, authenticator, redisClient)
+	// DI: Create Server with cleanup exporter for Excel/PDF endpoints.
+	cleanupExporter := cleanup.NewExporter(database.New(dbPool))
+	srv := api.NewServer(cfg, logger, st, pub, qboConfig, authenticator, redisClient, q, cleanupExporter)
 
 	// =========================================================================
 	// STARTUP & GRACEFUL SHUTDOWN

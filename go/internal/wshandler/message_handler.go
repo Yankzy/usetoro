@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net/url"
 
-	quickbooks "github.com/Yankzy/usetoro/qbo"
+	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
 	"github.com/gorilla/websocket"
 )
 

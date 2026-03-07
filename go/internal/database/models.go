@@ -8,17 +8,105 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type AgentPerformanceHourly struct {
-	Bucket        interface{}
-	AgentID       interface{}
-	TotalTasks    int64
-	AvgConfidence float64
-	TotalCost     int64
+type FignodeBadge struct {
+	ID         pgtype.UUID
+	UserID     pgtype.UUID
+	BadgeKey   string
+	BadgeLabel string
+	EarnedAt   pgtype.Timestamptz
+}
+
+type FignodeBatch struct {
+	ID             pgtype.UUID
+	UserID         pgtype.UUID
+	TransactionIds []string
+	ServedAt       pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+}
+
+type FignodeCategory struct {
+	ID        string
+	Label     string
+	SortOrder int16
+}
+
+type FignodeClassification struct {
+	ID            pgtype.UUID
+	TransactionID string
+	UserID        pgtype.UUID
+	Category      string
+	Action        string
+	ApprovedBy    pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type FignodeEmployeeProfile struct {
+	UserID           pgtype.UUID
+	FirstName        pgtype.Text
+	LastName         pgtype.Text
+	IsManager        bool
+	AiAccuracyScore  pgtype.Numeric
+	Streak           int32
+	StreakLastDate   pgtype.Date
+	TotalCleared     int32
+	TodayCleared     int32
+	TodayClearedDate pgtype.Date
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type FignodeFignodeIndustry struct {
+	Name      string
+	IconEmoji string
+	UpdatedAt pgtype.Timestamptz
+}
+
+type FignodeLeaderboardSnapshot struct {
+	ID         pgtype.UUID
+	Period     string
+	ComputedAt pgtype.Timestamptz
+	Entries    []byte
+}
+
+type FignodeSkip struct {
+	ID            pgtype.UUID
+	TransactionID string
+	UserID        pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type FignodeTransaction struct {
+	ID                 string
+	RawDescription     string
+	Vendor             string
+	Industry           string
+	IndustryIcon       string
+	VendorDescription  string
+	VendorUrl          pgtype.Text
+	Location           string
+	IsRecurring        bool
+	ClientIndustry     string
+	ClientIndustryIcon string
+	BusinessModel      string
+	MindsetHint        string
+	AccentColor        string
+	AccentBg           string
+	Amount             pgtype.Numeric
+	TxDate             pgtype.Date
+	AccountType        string
+	TxTimestamp        pgtype.Timestamptz
+	AiSuggestion       string
+	AiConfidence       pgtype.Numeric
+	TruthCategory      pgtype.Text
+	Status             string
+	ClearedAt          pgtype.Timestamptz
+	OwnerUserID        pgtype.UUID
+	CreatedAt          pgtype.Timestamptz
 }
 
 type ShadowErpAccount struct {
 	ID                            pgtype.UUID
-	QboID                         string
+	ErpID                         string
 	RealmID                       string
 	Name                          string
 	AccountType                   string
@@ -35,8 +123,8 @@ type ShadowErpAccount struct {
 	CurrencyRefValue              pgtype.Text
 	CurrentBalanceWithSubAccounts pgtype.Numeric
 	Sparse                        pgtype.Bool
-	QboCreatedTime                pgtype.Timestamptz
-	QboUpdatedTime                pgtype.Timestamptz
+	ErpCreatedTime                pgtype.Timestamptz
+	ErpUpdatedTime                pgtype.Timestamptz
 	CurrentBalance                pgtype.Numeric
 	SubAccount                    pgtype.Bool
 	EventSource                   string
@@ -60,7 +148,7 @@ type ShadowErpAiCorrection struct {
 
 type ShadowErpBill struct {
 	ID          pgtype.UUID
-	QboID       string
+	ErpID       string
 	RealmID     string
 	VendorID    pgtype.UUID
 	DocNumber   pgtype.Text
@@ -75,11 +163,46 @@ type ShadowErpBill struct {
 	EventSource string
 }
 
+type ShadowErpCleanupSession struct {
+	ID        pgtype.UUID
+	RealmID   pgtype.Text
+	CreatedBy pgtype.UUID
+	FileName  pgtype.Text
+	RowCount  int32
+	Status    string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type ShadowErpCleanupStaging struct {
+	ID                 pgtype.UUID
+	SessionID          pgtype.UUID
+	RealmID            pgtype.Text
+	RawDescription     pgtype.Text
+	RawAmount          pgtype.Numeric
+	RawDate            pgtype.Date
+	RawVendorName      pgtype.Text
+	PredictedVendorID  pgtype.UUID
+	PredictedAccountID pgtype.UUID
+	NormalizedVendor   pgtype.Text
+	ConfidenceScore    pgtype.Numeric
+	AiReasoning        pgtype.Text
+	DuplicateOf        pgtype.UUID
+	IsRecurring        bool
+	SplitSuggestion    []byte
+	OverrideVendorID   pgtype.UUID
+	OverrideAccountID  pgtype.UUID
+	Status             string
+	ErpTransactionID   pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 // Mirror of QBO CompanyInfo; keyed by realm_id. One row per connected QBO company.
 type ShadowErpCompanyInfo struct {
 	ID                   pgtype.UUID
 	RealmID              string
-	QboID                string
+	ErpID                string
 	SyncToken            string
 	CompanyName          string
 	LegalName            pgtype.Text
@@ -94,8 +217,8 @@ type ShadowErpCompanyInfo struct {
 	Email                pgtype.Text
 	WebAddr              pgtype.Text
 	NameValues           []byte
-	QboCreatedTime       pgtype.Timestamptz
-	QboUpdatedTime       pgtype.Timestamptz
+	ErpCreatedTime       pgtype.Timestamptz
+	ErpUpdatedTime       pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
 	EventSource          string
@@ -103,7 +226,7 @@ type ShadowErpCompanyInfo struct {
 
 type ShadowErpCustomer struct {
 	ID          pgtype.UUID
-	QboID       string
+	ErpID       string
 	RealmID     string
 	DisplayName string
 	SyncToken   string
@@ -115,7 +238,7 @@ type ShadowErpCustomer struct {
 
 type ShadowErpInvoice struct {
 	ID          pgtype.UUID
-	QboID       string
+	ErpID       string
 	RealmID     string
 	CustomerID  pgtype.UUID
 	DocNumber   pgtype.Text
@@ -141,7 +264,7 @@ type ShadowErpProposedTransaction struct {
 	PredictedAccountID pgtype.UUID
 	ConfidenceScore    pgtype.Numeric
 	AiReasoning        pgtype.Text
-	QboTransactionID   pgtype.Text
+	ErpTransactionID   pgtype.Text
 	SyncStatus         pgtype.Text
 	ErrorMessage       pgtype.Text
 	CreatedAt          pgtype.Timestamptz
@@ -204,7 +327,7 @@ type ShadowErpVectorSyncState struct {
 
 type ShadowErpVendor struct {
 	ID                 pgtype.UUID
-	QboID              string
+	ErpID              string
 	RealmID            string
 	DisplayName        string
 	SyncToken          string
@@ -216,16 +339,6 @@ type ShadowErpVendor struct {
 	EventSource        string
 }
 
-type TelemetryEvent struct {
-	Time       pgtype.Timestamptz
-	TraceID    pgtype.UUID
-	EntityID   pgtype.UUID
-	Service    string
-	EventType  string
-	DurationMs pgtype.Int4
-	Meta       []byte
-}
-
 type ToroCoreAgentMemoryRule struct {
 	ID          pgtype.UUID
 	RealmID     string
@@ -234,6 +347,14 @@ type ToroCoreAgentMemoryRule struct {
 	Instruction string
 	Source      pgtype.Text
 	CreatedAt   pgtype.Timestamptz
+}
+
+type ToroCoreAgentPerformanceHourly struct {
+	Bucket        interface{}
+	AgentID       interface{}
+	TotalTasks    int64
+	AvgConfidence float64
+	TotalCost     int64
 }
 
 type ToroCoreEntity struct {
@@ -249,9 +370,10 @@ type ToroCoreEntity struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
-type ToroCoreQboConnection struct {
+type ToroCoreErpConnection struct {
 	ID           pgtype.UUID
 	EntityID     pgtype.UUID
+	ErpSystem    string
 	RealmID      string
 	AccessToken  string
 	RefreshToken string
@@ -281,6 +403,26 @@ type ToroCoreRefreshToken struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type ToroCoreTeamInvite struct {
+	ID        pgtype.UUID
+	Token     string
+	Email     string
+	TenantID  string
+	FirmName  string
+	IsUsed    bool
+	CreatedAt pgtype.Timestamptz
+}
+
+type ToroCoreTelemetryEvent struct {
+	Time       pgtype.Timestamptz
+	TraceID    pgtype.UUID
+	EntityID   pgtype.UUID
+	Service    string
+	EventType  string
+	DurationMs pgtype.Int4
+	Meta       []byte
+}
+
 type ToroCoreTransaction struct {
 	ID           pgtype.UUID
 	EntityID     pgtype.UUID
@@ -300,6 +442,7 @@ type ToroCoreUser struct {
 	IsActive     pgtype.Bool
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	UserType     string
 }
 
 type ToroCoreWebhooksProviderconnection struct {

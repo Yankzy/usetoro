@@ -3,68 +3,46 @@ package accounting
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 
-	quickbooks "github.com/Yankzy/usetoro/qbo"
+	"github.com/Yankzy/usetoro/internal/erp"
 )
 
-// attachableUploader is an internal interface satisfied by *quickbooks.Client.
-// Extracted to enable unit testing without live HTTP.
-type attachableUploader interface {
-	UploadAttachable(*quickbooks.Attachable, io.Reader) (*quickbooks.Attachable, error)
-	QueryAttachables(string) ([]quickbooks.Attachable, error)
-}
-
-// UploadReceiptInput contains everything needed to upload a receipt and link it
-// to an existing QBO transaction.
-type UploadReceiptInput struct {
-	RealmID     string
-	FileName    string
-	ContentType quickbooks.ContentType
-	Data        io.Reader
-	EntityID    string // QBO transaction ID to link the receipt to
-	EntityType  string // "Purchase" or "Bill"
-	Note        string // optional description shown on the attachment in QBO
-}
+// UploadReceiptInput contains everything needed to upload a receipt.
+// Deprecated: use erp.UploadReceiptInput instead
+type UploadReceiptInput = erp.UploadReceiptInput
 
 // UploadedReceipt is returned after a successful receipt upload.
-type UploadedReceipt struct {
-	AttachableID   string
-	FileAccessURI  string // direct QBO storage URL
-	LinkedEntityID string
-}
+// Deprecated: use erp.UploadedReceipt instead
+type UploadedReceipt = erp.UploadedReceipt
 
-// AttachableService handles the upload and linking of receipt files to QBO transactions.
+// AttachableService handles the upload and linking of receipt files to ERP transactions.
 type AttachableService struct {
-	logger   *slog.Logger
-	clientFn QBOClientFn // reuses the same function type as TransactionService
+	logger  *slog.Logger
+	factory erp.ProviderFactory
 }
 
 // NewAttachableService creates a new AttachableService.
-func NewAttachableService(logger *slog.Logger, clientFn QBOClientFn) *AttachableService {
+func NewAttachableService(logger *slog.Logger, factory erp.ProviderFactory) *AttachableService {
 	return &AttachableService{
-		logger:   logger,
-		clientFn: clientFn,
+		logger:  logger,
+		factory: factory,
 	}
 }
 
-// UploadReceipt uploads the given file to QBO as an Attachable and links it to
-// the specified transaction entity. It returns the created Attachable metadata.
-//
-// Duplicate detection: if a file with the same FileName is already linked to
-// the same EntityID, the existing AttachableID is returned without re-uploading.
-func (s *AttachableService) UploadReceipt(ctx context.Context, input UploadReceiptInput) (*UploadedReceipt, error) {
+// UploadReceipt uploads the given file to the ERP as an attachment and links it to
+// the specified transaction entity. It returns the created attachment metadata.
+func (s *AttachableService) UploadReceipt(ctx context.Context, input erp.UploadReceiptInput) (*erp.UploadedReceipt, error) {
 	return s.uploadReceipt(ctx, input, nil)
 }
 
-// uploadReceipt is the internal implementation, accepting an optional uploader override
-// for testing (nil means use the real *quickbooks.Client from clientFn).
+// uploadReceipt is the internal implementation, accepting an optional override
+// for testing (nil means use the real Provider from factory).
 func (s *AttachableService) uploadReceipt(
 	ctx context.Context,
-	input UploadReceiptInput,
-	uploaderOverride attachableUploader,
-) (*UploadedReceipt, error) {
+	input erp.UploadReceiptInput,
+	providerOverride *erp.Provider,
+) (*erp.UploadedReceipt, error) {
 	if input.RealmID == "" {
 		return nil, fmt.Errorf("realmID is required")
 	}
@@ -78,85 +56,31 @@ func (s *AttachableService) uploadReceipt(
 		return nil, fmt.Errorf("Data reader is required")
 	}
 
-	var uploader attachableUploader = uploaderOverride
-	if uploader == nil {
-		client, err := s.clientFn(ctx, input.RealmID)
+	var provider *erp.Provider = providerOverride
+	if provider == nil {
+		var err error
+		// For AttachableService, input.RealmID actually refers to the entity/tenant in Toro's context,
+		// but historically it's been the physical realm ID. We'll use the factory's realm resolver for now
+		// (assuming quickbooks_online since that's what we are replacing).
+		provider, err = s.factory.GetProviderForRealm(ctx, "quickbooks_online", input.RealmID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get QBO client: %w", err)
+			return nil, fmt.Errorf("failed to get ERP provider: %w", err)
 		}
-		uploader = client
 	}
 
-	// 1. Duplicate detection — query QBO for an existing attachable linked to this entity
-	existing, err := s.findExistingAttachable(uploader, input.EntityID, input.FileName)
+	// 1. Upload file + metadata
+	created, err := provider.UploadReceipt(ctx, input)
 	if err != nil {
-		// Non-fatal: log and continue with upload
-		s.logger.Warn("Duplicate check failed, proceeding with upload", "error", err)
-	} else if existing != nil {
-		s.logger.Info("Receipt already exists for entity, skipping upload",
-			"attachable_id", existing.Id,
-			"entity_id", input.EntityID,
-		)
-		return &UploadedReceipt{
-			AttachableID:   existing.Id,
-			FileAccessURI:  existing.FileAccessUri,
-			LinkedEntityID: input.EntityID,
-		}, nil
+		return nil, fmt.Errorf("failed to upload attachable to ERP: %w", err)
 	}
 
-	// 2. Build the Attachable metadata with EntityRef to link it upon upload
-	attachable := &quickbooks.Attachable{
-		FileName:    input.FileName,
-		ContentType: input.ContentType,
-		Note:        input.Note,
-		AttachableRef: []quickbooks.AttachableRef{
-			{
-				EntityRef: quickbooks.ReferenceType{
-					Value: input.EntityID,
-					Type:  input.EntityType,
-				},
-			},
-		},
-	}
-
-	// 3. Upload file + metadata in a single multipart request
-	created, err := uploader.UploadAttachable(attachable, input.Data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to upload attachable to QBO: %w", err)
-	}
-
-	s.logger.Info("✅ Uploaded receipt to QBO",
+	s.logger.Info("✅ Uploaded receipt to ERP",
 		"realm_id", input.RealmID,
-		"attachable_id", created.Id,
+		"attachable_id", created.AttachmentID,
 		"entity_id", input.EntityID,
 		"entity_type", input.EntityType,
 		"file_name", input.FileName,
 	)
 
-	return &UploadedReceipt{
-		AttachableID:   created.Id,
-		FileAccessURI:  created.FileAccessUri,
-		LinkedEntityID: input.EntityID,
-	}, nil
-}
-
-// findExistingAttachable queries QBO for an Attachable already linked to entityID
-// with the given fileName. Returns nil (not an error) when none is found.
-func (s *AttachableService) findExistingAttachable(
-	uploader attachableUploader,
-	entityID, fileName string,
-) (*quickbooks.Attachable, error) {
-	query := fmt.Sprintf(
-		`SELECT * FROM Attachable WHERE AttachableRef.EntityRef.value = '%s' AND FileName = '%s' MAXRESULTS 1`,
-		entityID, fileName,
-	)
-	results, err := uploader.QueryAttachables(query)
-	if err != nil {
-		// QueryAttachables returns an error when the query yields no results — treat as "not found"
-		return nil, nil //nolint:nilerr
-	}
-	if len(results) == 0 {
-		return nil, nil
-	}
-	return &results[0], nil
+	return created, nil
 }

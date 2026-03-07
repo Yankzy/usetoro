@@ -136,7 +136,7 @@ func (q *Queries) CreateRuleGroup(ctx context.Context, arg CreateRuleGroupParams
 }
 
 const getAccountByID = `-- name: GetAccountByID :one
-SELECT id, qbo_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, qbo_created_time, qbo_updated_time, current_balance, sub_account, event_source FROM shadow_erp.accounts WHERE id = $1
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source FROM shadow_erp.accounts WHERE id = $1
 `
 
 func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (ShadowErpAccount, error) {
@@ -144,7 +144,7 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (ShadowErp
 	var i ShadowErpAccount
 	err := row.Scan(
 		&i.ID,
-		&i.QboID,
+		&i.ErpID,
 		&i.RealmID,
 		&i.Name,
 		&i.AccountType,
@@ -161,8 +161,8 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (ShadowErp
 		&i.CurrencyRefValue,
 		&i.CurrentBalanceWithSubAccounts,
 		&i.Sparse,
-		&i.QboCreatedTime,
-		&i.QboUpdatedTime,
+		&i.ErpCreatedTime,
+		&i.ErpUpdatedTime,
 		&i.CurrentBalance,
 		&i.SubAccount,
 		&i.EventSource,
@@ -279,7 +279,7 @@ func (q *Queries) GetRuleAuditLogsByTransaction(ctx context.Context, transaction
 }
 
 const getVendorByID = `-- name: GetVendorByID :one
-SELECT id, qbo_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at, event_source FROM shadow_erp.vendors WHERE id = $1
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at, event_source FROM shadow_erp.vendors WHERE id = $1
 `
 
 func (q *Queries) GetVendorByID(ctx context.Context, id pgtype.UUID) (ShadowErpVendor, error) {
@@ -287,7 +287,7 @@ func (q *Queries) GetVendorByID(ctx context.Context, id pgtype.UUID) (ShadowErpV
 	var i ShadowErpVendor
 	err := row.Scan(
 		&i.ID,
-		&i.QboID,
+		&i.ErpID,
 		&i.RealmID,
 		&i.DisplayName,
 		&i.SyncToken,

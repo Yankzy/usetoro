@@ -58,7 +58,7 @@ func (m *mockProviderFactory) GetProviderForRealm(ctx context.Context, erpSystem
 }
 
 func newSvc(factory erp.ProviderFactory) *TransactionService {
-	return NewTransactionService(logger(), &mockTransactionRepository{}, nil, nil, factory, nil)
+	return NewTransactionService(logger(), &mockTransactionRepository{}, nil, nil, factory, nil, nil, "")
 }
 
 func TestPostExpense_MissingRealmID(t *testing.T) {
@@ -86,6 +86,11 @@ func TestPostExpense_Success(t *testing.T) {
 		RealmID: "r1", Description: "Lunch", Amount: 20, Paid: true, AccountHint: "acc-1", VendorHint: "vnd-1",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "123", res.ERPEntityID)
-	assert.Equal(t, "acc-1", gotInput.AccountHint)
+
+	// Since PostExpense is now async, it returns the generated ID from the local database
+	// Mock returns the zero value for UUID
+	assert.Equal(t, "00000000-0000-0000-0000-000000000000", res.ERPEntityID)
+
+	// Ensure that we didn't actually call the ERP provider during sync PostExpense
+	assert.Empty(t, gotInput.AccountHint)
 }

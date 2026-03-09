@@ -11,7 +11,6 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
-	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -23,18 +22,16 @@ type Connector interface {
 
 // QBOConnector integrates with QuickBooks Online.
 type QBOConnector struct {
-	logger       *slog.Logger
-	cfg          *config.Config
-	store        *store.Store
-	vectorWorker *ai.VectorSyncWorker
+	logger *slog.Logger
+	cfg    *config.Config
+	store  *store.Store
 }
 
-func NewQBOConnector(logger *slog.Logger, cfg *config.Config, store *store.Store, vw *ai.VectorSyncWorker) *QBOConnector {
+func NewQBOConnector(logger *slog.Logger, cfg *config.Config, store *store.Store) *QBOConnector {
 	return &QBOConnector{
-		logger:       logger,
-		cfg:          cfg,
-		store:        store,
-		vectorWorker: vw,
+		logger: logger,
+		cfg:    cfg,
+		store:  store,
 	}
 }
 
@@ -540,20 +537,6 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 		)
 	}
 
-	// 7. Trigger Vector Sync (AI Hook)
-	if c.vectorWorker != nil {
-		c.logger.Info("🤖 Triggering vector sync", "realm_id", realmID)
-		go func() {
-			// Use a fresh context for background sync
-			ctx := context.Background()
-			if err := c.vectorWorker.SyncRealm(ctx, realmID); err != nil {
-				c.logger.Error("Failed to sync vectors after CDC", "error", err, "realm_id", realmID)
-			} else {
-				c.logger.Info("🤖 Vector sync completed", "realm_id", realmID)
-			}
-		}()
-	}
-
 	return nil
 }
 
@@ -654,16 +637,6 @@ func (c *QBOConnector) SyncFullChartOfAccounts(ctx context.Context, tenantID, re
 		return 0, fmt.Errorf("failed to update last sync timestamp: %w", err)
 	}
 
-	if c.vectorWorker != nil {
-		c.logger.Info("🤖 Triggering vector sync after full CoA sync", "realm_id", realmID)
-		go func() {
-			bgCtx := context.Background()
-			if err := c.vectorWorker.SyncRealm(bgCtx, realmID); err != nil {
-				c.logger.Error("Failed to sync vectors after full CoA sync", "error", err, "realm_id", realmID)
-			}
-		}()
-	}
-
 	c.logger.Info("✅ Full CoA sync completed", "realm_id", realmID, "count", len(accounts))
 	return len(accounts), nil
 }
@@ -697,16 +670,6 @@ func (c *QBOConnector) SyncFullCustomers(ctx context.Context, tenantID, realmID 
 
 	if err := c.batchUpsertCustomers(ctx, realmID, customers); err != nil {
 		return 0, fmt.Errorf("failed to upsert customers: %w", err)
-	}
-
-	if c.vectorWorker != nil {
-		c.logger.Info("🤖 Triggering vector sync after full Customers sync", "realm_id", realmID)
-		go func() {
-			bgCtx := context.Background()
-			if err := c.vectorWorker.SyncRealm(bgCtx, realmID); err != nil {
-				c.logger.Error("Failed to sync vectors after full Customers sync", "error", err, "realm_id", realmID)
-			}
-		}()
 	}
 
 	c.logger.Info("✅ Full Customers sync completed", "realm_id", realmID, "count", len(customers))
@@ -749,16 +712,6 @@ func (c *QBOConnector) SyncFullVendors(ctx context.Context, tenantID, realmID st
 		LastSyncTimestamp: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}); err != nil {
 		return 0, fmt.Errorf("failed to update last sync timestamp: %w", err)
-	}
-
-	if c.vectorWorker != nil {
-		c.logger.Info("🤖 Triggering vector sync after full vendor sync", "realm_id", realmID)
-		go func() {
-			bgCtx := context.Background()
-			if err := c.vectorWorker.SyncRealm(bgCtx, realmID); err != nil {
-				c.logger.Error("Failed to sync vectors after full vendor sync", "error", err, "realm_id", realmID)
-			}
-		}()
 	}
 
 	c.logger.Info("✅ Full vendor sync completed", "realm_id", realmID, "count", len(vendors))

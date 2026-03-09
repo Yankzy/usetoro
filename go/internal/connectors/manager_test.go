@@ -33,7 +33,7 @@ func TestManager_FetchData_Routing(t *testing.T) {
 	}
 
 	// Pass nil for store; we'll mock the connector so it's not used
-	mgr := NewManager(logger, &cfg, nil, nil)
+	mgr := NewManager(logger, &cfg, nil)
 	mgr.connectors["qbo"] = &MockConnector{}
 
 	t.Run("Routes to QBO", func(t *testing.T) {

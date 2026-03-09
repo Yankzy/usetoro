@@ -50,7 +50,8 @@ type Config struct {
 	EncryptionKey       []byte `mapstructure:"-"`
 
 	// NATS Config
-	NATS NATSConfig `mapstructure:"nats"`
+	NATS                NATSConfig `mapstructure:"nats"`
+	NatsERPEventSubject string     `mapstructure:"nats_erp_event_subject"`
 
 	// Agents Config
 	Agents []agent.AgentConfig `mapstructure:"agents"`
@@ -121,6 +122,7 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("embedding_dimensions", "EMBEDDING_DIMENSIONS")
 	_ = v.BindEnv("ai_threshold", "AI_THRESHOLD")
 	_ = v.BindEnv("encryption_key", "ENCRYPTION_KEY")
+	_ = v.BindEnv("nats_erp_event_subject", "NATS_ERP_EVENT_SUBJECT")
 
 	// Set defaults corresponding to the old getEnv fallbacks
 	v.SetDefault("port", "8080")
@@ -138,6 +140,7 @@ func Load() (*Config, error) {
 	v.SetDefault("embedding_model", "text-embedding-3-small")
 	v.SetDefault("embedding_dimensions", 1536)
 	v.SetDefault("ai_threshold", 0.75)
+	v.SetDefault("nats_erp_event_subject", "toro.erp.events.*")
 
 	// 3. Actually read the file from disk
 	if err := v.ReadInConfig(); err != nil {

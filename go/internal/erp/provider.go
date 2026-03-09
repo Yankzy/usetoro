@@ -65,6 +65,9 @@ type Provider struct {
 	// PostExpense creates a paid expense or bill in the ERP.
 	PostExpense func(ctx context.Context, input ExpenseInput) (*PostedExpense, error)
 
+	// UpdateExpenseCategory modifies the mapped account/vendor for an existing expense.
+	UpdateExpenseCategory func(ctx context.Context, erpID string, entityType string, newAccountID string, newVendorID string) error
+
 	// UploadReceipt uploads a file and attaches it to an existing ERP entity.
 	UploadReceipt func(ctx context.Context, input UploadReceiptInput) (*UploadedReceipt, error)
 }

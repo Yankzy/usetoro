@@ -12,7 +12,6 @@ import (
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/services/ai"
-	"github.com/Yankzy/usetoro/internal/services/cleanup"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -27,7 +26,6 @@ type Resolver struct {
 	EmailSender        auth.EmailSender
 	CoAMapper          *ai.CoAMapper
 	EntityResolver     *ai.EntityResolver
-	CleanupEnricher    *cleanup.CleanupEnricher
 	TransactionService *accounting.TransactionService
 	EntityService      *accounting.EntityService
 }

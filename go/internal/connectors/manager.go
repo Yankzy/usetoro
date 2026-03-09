@@ -6,28 +6,25 @@ import (
 	"log/slog"
 
 	"github.com/Yankzy/usetoro/internal/config"
-	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
 )
 
 // Manager handles the lifecycle of connectors (Plaid, QBO).
 type Manager struct {
-	logger       *slog.Logger
-	cfg          *config.Config
-	connectors   map[string]Connector
-	vectorWorker *ai.VectorSyncWorker
+	logger     *slog.Logger
+	cfg        *config.Config
+	connectors map[string]Connector
 }
 
-func NewManager(logger *slog.Logger, cfg *config.Config, store *store.Store, vw *ai.VectorSyncWorker) *Manager {
+func NewManager(logger *slog.Logger, cfg *config.Config, store *store.Store) *Manager {
 	m := &Manager{
-		logger:       logger,
-		cfg:          cfg,
-		connectors:   make(map[string]Connector),
-		vectorWorker: vw,
+		logger:     logger,
+		cfg:        cfg,
+		connectors: make(map[string]Connector),
 	}
 
 	// Register connectors (Factory Pattern)
-	m.connectors["qbo"] = NewQBOConnector(logger, cfg, store, vw)
+	m.connectors["qbo"] = NewQBOConnector(logger, cfg, store)
 	// m.connectors["plaid"] = NewPlaidConnector(logger, cfg)
 
 	return m

@@ -38,6 +38,11 @@ func (c *Client) JetStream() nats.JetStreamContext {
 	return c.js
 }
 
+// Conn returns the underlying NATS connection
+func (c *Client) Conn() *nats.Conn {
+	return c.nc
+}
+
 func (c *Client) Request(subject string, payload []byte, timeout time.Duration) ([]byte, error) {
 	msg, err := c.nc.Request(subject, payload, timeout)
 	if err != nil {

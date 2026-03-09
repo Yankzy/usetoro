@@ -9,6 +9,37 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// ERPEventType defines the actions routed through NATS
+type ERPEventType string
+
+const (
+	EventCDCSync                 ERPEventType = "CDC_SYNC"
+	EventRecategorizeTransaction ERPEventType = "RECATEGORIZE_TXN"
+)
+
+// CDCSyncPayload is used when Type == EventCDCSync
+type CDCSyncPayload struct {
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id"`
+	Operation  string `json:"operation"`
+}
+
+// RecategorizePayload is used when Type == EventRecategorizeTransaction
+type RecategorizePayload struct {
+	ERPEntityID  string `json:"erp_entity_id"`
+	EntityType   string `json:"entity_type"`
+	NewAccountID string `json:"new_account_id"`
+	NewVendorID  string `json:"new_vendor_id"`
+}
+
+// ERPEvent represents the unified schema published to the JetStream subject
+type ERPEvent struct {
+	Type     ERPEventType    `json:"type"`
+	TenantID string          `json:"tenant_id"`
+	RealmID  string          `json:"realm_id"` // Sometimes available instead of TenantID
+	Payload  json.RawMessage `json:"payload"`
+}
+
 // QBOCloudEvent represents QuickBooks Online webhooks in CloudEvents format.
 // Reference: https://blogs.intuit.com/2025/11/12/upcoming-change-to-webhooks-payload-structure/
 // Migration deadline: May 15, 2026
@@ -58,14 +89,49 @@ func (w *Worker) processQBOWebhook(msg *nats.Msg) {
 			"time", event.Time,
 		)
 
-		err := w.syncEntity(context.Background(), event.IntuitAccountID, entityType, event.IntuitEntityID, operation)
+		// 1. Construct the payload
+		payload := CDCSyncPayload{
+			EntityType: entityType,
+			EntityID:   event.IntuitEntityID,
+			Operation:  operation,
+		}
+
+		payloadBytes, jsonErr := json.Marshal(payload)
+		if jsonErr != nil {
+			w.logger.Error("Failed to marshal CDCSyncPayload", "error", jsonErr)
+			continue
+		}
+
+		// 2. Construct the ERP Event
+		erpEvent := ERPEvent{
+			Type:    EventCDCSync,
+			RealmID: event.IntuitAccountID,
+			Payload: payloadBytes,
+		}
+
+		erpEventBytes, err := json.Marshal(erpEvent)
 		if err != nil {
-			w.logger.Error("Failed to sync entity",
+			w.logger.Error("Failed to marshal ERPEvent", "error", err)
+			continue
+		}
+
+		// 3. Publish to NATS JetStream
+		//    The NatsERPEventSubject comes from config, defaulting to toro.erp.events.*
+		//    We'll publish specifically to .cdc
+		subject := strings.Replace(w.manager.cfg.NatsERPEventSubject, "*", "cdc", 1)
+		if !strings.Contains(subject, "cdc") { // Fallback if subject isn't a wildcard
+			subject = subject + ".cdc"
+		}
+
+		// We use `w.q.JS` (JetStream context) instead of `nc.Publish` directly.
+		if _, err := w.q.JetStream().Publish(subject, erpEventBytes); err != nil {
+			w.logger.Error("Failed to publish CDC event to NATS",
 				"realm_id", event.IntuitAccountID,
 				"entity_type", entityType,
-				"entity_id", event.IntuitEntityID,
 				"error", err,
 			)
+		} else {
+			w.logger.Debug("Published CDC event to NATS", "subject", subject)
 		}
 	}
 
@@ -110,6 +176,7 @@ func parseCloudEventType(eventType string) (string, string) {
 
 // syncEntity triggers a sync for a specific QBO entity.
 // Calls the QBOConnector to fetch from API and upsert to shadow DB.
+// NOTE: Now used by the ERPEventWorker rather than directly from webhook.
 func (w *Worker) syncEntity(ctx context.Context, realmID, entityType, entityID, operation string) error {
 	// Get the QBO connector from the manager
 	connector, ok := w.manager.connectors["qbo"]
@@ -123,10 +190,5 @@ func (w *Worker) syncEntity(ctx context.Context, realmID, entityType, entityID, 
 		return fmt.Errorf("connector is not a QBOConnector")
 	}
 
-	// Call FetchEntity to:
-	// 1. Get QBO tokens from database
-	// 2. Initialize QBO client with auto-refresh
-	// 3. Fetch entity data from QBO API
-	// 4. Upsert to shadow DB (or soft delete)
 	return qboConn.FetchEntity(ctx, realmID, entityType, entityID, operation)
 }

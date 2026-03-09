@@ -13,6 +13,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/store"
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -44,13 +45,19 @@ func NewServer(
 	registry.Register(NewStripeVerifier())
 	registry.Register(NewHMACVerifier("qbo", "intuit-signature", crypto.SHA256))
 
-	connector := connectors.NewQBOConnector(logger, cfg, st, nil)
+	connector := connectors.NewQBOConnector(logger, cfg, st)
 	reconciler := accounting.NewReconciliationService(logger, st.Queries, connector.ClientForRealm)
 
 	// Since we are migrating toward standard erp.Providers, passing nil will gracefully fall back to the QBO factory resolver.
 	// For now, the legacy AttachableService uses QBOConnector directly or an erp.ProviderFactory if we have one.
-	attachableService := accounting.NewAttachableService(logger, connector, nil)
-	transactionService := accounting.NewTransactionService(logger, st.Queries, nil, nil, nil, nil)
+	attachableService := accounting.NewAttachableService(logger, nil)
+
+	var natsConn *nats.Conn
+	if natsClient != nil {
+		natsConn = natsClient.Conn()
+	}
+
+	transactionService := accounting.NewTransactionService(logger, st.Queries, nil, nil, nil, nil, natsConn, "toro.erp.events.*")
 	entityService := accounting.NewEntityService(logger, st.Queries)
 
 	h := NewHandler(

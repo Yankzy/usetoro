@@ -2,16 +2,18 @@ package accounting
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp"
-	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/nats-io/nats.go"
 )
 
 // TransactionRepository defines the data access methods needed for idempotency and audit logging
@@ -35,6 +37,8 @@ type TransactionService struct {
 	coaMapper      *ai.CoAMapper
 	factory        erp.ProviderFactory
 	ruleEngine     *RuleEngineService
+	nc             *nats.Conn // Used to publish async events
+	eventSubject   string     // e.g. toro.erp.events.*
 }
 
 // NewTransactionService creates a new TransactionService.
@@ -47,6 +51,8 @@ func NewTransactionService(
 	coa *ai.CoAMapper,
 	factory erp.ProviderFactory,
 	ruleEngine *RuleEngineService,
+	nc *nats.Conn,
+	eventSubject string,
 ) *TransactionService {
 	return &TransactionService{
 		logger:         logger,
@@ -55,6 +61,8 @@ func NewTransactionService(
 		coaMapper:      coa,
 		factory:        factory,
 		ruleEngine:     ruleEngine,
+		nc:             nc,
+		eventSubject:   eventSubject,
 	}
 }
 
@@ -74,216 +82,108 @@ func (s *TransactionService) postExpense(
 	if input.RealmID == "" {
 		return nil, fmt.Errorf("realmID is required")
 	}
-	if input.Description == "" && input.AccountHint == "" {
-		return nil, fmt.Errorf("description or AccountHint is required to resolve an account")
-	}
 
 	txnDate := input.TxnDate
 	if txnDate.IsZero() {
 		txnDate = time.Now()
 	}
 
-	// 0. Use Rule Engine to deterministically match
-	var ruleResult *RuleResult
-	if s.ruleEngine != nil {
-		txForRule := quickbooks.Transaction{
-			EntityID:    input.RealmID,
-			Description: input.Description,
-			Amount:      input.Amount,
-			Date:        txnDate,
-			Time:        txnDate,
-			Vendor:      input.Vendor,
-			Customer:    input.Customer,
-			Memo:        input.Memo,
-			MCC:         input.MCC,
-			InvoiceText: input.InvoiceText,
-		}
-		rr, err := s.ruleEngine.EvaluateTransaction(ctx, txForRule)
-		if err != nil {
-			s.logger.Warn("Rule engine evaluation failed", "error", err)
-		} else if rr != nil {
-			ruleResult = rr
-			s.logger.Info("Rule engine matched, bypassing AI resolution")
-
-			if rr.TargetAccountID.Valid {
-				if acct, err := s.repo.GetAccountByID(ctx, rr.TargetAccountID); err == nil {
-					input.AccountHint = acct.ErpID
-				}
-			}
-			if rr.TargetVendorID.Valid {
-				if vendor, err := s.repo.GetVendorByID(ctx, rr.TargetVendorID); err == nil {
-					input.VendorHint = vendor.ErpID
-				}
-			}
-		}
-	}
-
-	// 1. Resolve Vendor (skip if hint provided)
-	vendorID := input.VendorHint
-	if vendorID == "" && s.entityResolver != nil && input.Description != "" {
-		match, err := s.entityResolver.ResolveEntity(ctx, input.RealmID, "vendor", input.Description)
-		if err != nil {
-			s.logger.Warn("Vendor resolution failed, proceeding without vendor", "error", err)
-		} else if match != nil {
-			vendorID = match.ID
-			s.logger.Debug("Resolved vendor",
-				"vendor_id", vendorID,
-				"vendor_name", match.Name,
-				"source", match.Source,
-				"score", match.Score,
-			)
-		}
-	}
-
-	// Bills require a vendor
-	if !input.Paid && vendorID == "" {
-		return nil, fmt.Errorf("vendor required for Bill (unpaid expense) but could not be resolved from %q", input.Description)
-	}
-
-	// 2. Resolve Account (skip if hint provided)
-	accountID := input.AccountHint
-	if accountID == "" && s.coaMapper != nil {
-		matches, err := s.coaMapper.MapDescriptionToAccount(ctx, input.RealmID, input.Description, 1)
-		if err != nil {
-			return nil, fmt.Errorf("account resolution failed: %w", err)
-		}
-		if len(matches) == 0 {
-			return nil, fmt.Errorf("no matching account found for description %q", input.Description)
-		}
-		accountID = matches[0].AccountID
-		s.logger.Debug("Resolved account",
-			"account_id", accountID,
-			"account_name", matches[0].Name,
-			"score", matches[0].Score,
-		)
-	}
-	if accountID == "" {
-		return nil, fmt.Errorf("account is required but could not be resolved; provide AccountHint or configure CoAMapper")
-	}
-
-	// 3. Resolve the ERP Provider (or use override for testing)
-	var provider *erp.Provider = providerOverride
-	if provider == nil {
-		var err error
-		provider, err = s.factory.GetProviderForRealm(ctx, "quickbooks_online", input.RealmID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get ERP provider: %w", err)
-		}
-	}
-
-	var vendorPgUUID pgtype.UUID
-	var accountPgUUID pgtype.UUID
-
-	if s.repo != nil {
-		if vendorID != "" {
-			v, err := s.repo.GetVendorByERPID(ctx, database.GetVendorByERPIDParams{RealmID: input.RealmID, ErpID: vendorID})
-			if err == nil {
-				vendorPgUUID = v.ID
-			}
-		}
-		if accountID != "" {
-			a, err := s.repo.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{RealmID: input.RealmID, ErpID: accountID})
-			if err == nil {
-				accountPgUUID = a.ID
-			}
-		}
-	}
-
 	amountNum := pgtype.Numeric{}
 	amountNum.Scan(fmt.Sprintf("%.2f", input.Amount))
-
-	if s.repo != nil {
-		existing, err := s.repo.GetProposedTransactionByValues(ctx, database.GetProposedTransactionByValuesParams{
-			RealmID:           input.RealmID,
-			PredictedVendorID: vendorPgUUID,
-			RawDate:           pgtype.Date{Time: txnDate, Valid: true},
-			RawAmount:         amountNum,
-		})
-		if err == nil && existing.SyncStatus.String == "SYNCED" {
-			s.logger.Info("⏭️ Idempotency check passed: Transaction already synced", "erp_id", existing.ErpTransactionID.String)
-			return &erp.PostedExpense{
-				ERPEntityID: existing.ErpTransactionID.String,
-				EntityType:  existing.SourceType,
-			}, nil
-		}
-	}
 
 	sourceType := "Bill"
 	if input.Paid {
 		sourceType = "Purchase"
 	}
 
-	var proposedTxID pgtype.UUID
 	if s.repo != nil {
-		proposed, err := s.repo.CreateProposedTransaction(ctx, database.CreateProposedTransactionParams{
-			RealmID:            input.RealmID,
-			SourceType:         sourceType,
-			RawAmount:          amountNum,
-			RawDate:            pgtype.Date{Time: txnDate, Valid: true},
-			RawDescription:     pgtype.Text{String: input.Description, Valid: input.Description != ""},
-			PredictedVendorID:  vendorPgUUID,
-			PredictedAccountID: accountPgUUID,
-			ConfidenceScore:    pgtype.Numeric{Valid: false},
-			AiReasoning:        pgtype.Text{String: "AI Match", Valid: true},
-			SyncStatus:         pgtype.Text{String: "PENDING", Valid: true},
+		// Basic Idempotency check with local DB
+		existing, err := s.repo.GetProposedTransactionByValues(ctx, database.GetProposedTransactionByValuesParams{
+			RealmID:   input.RealmID,
+			RawDate:   pgtype.Date{Time: txnDate, Valid: true},
+			RawAmount: amountNum,
 		})
+
+		if err == nil && (existing.SyncStatus.String == "SYNCED" || existing.SyncStatus.String == "PENDING_CLASSIFICATION") {
+			s.logger.Info("⏭️ Idempotency check passed: Transaction already syncing/synced")
+			return &erp.PostedExpense{
+				ERPEntityID: existing.ErpTransactionID.String,
+				EntityType:  existing.SourceType,
+			}, nil
+		}
+
+		proposed, err := s.repo.CreateProposedTransaction(ctx, database.CreateProposedTransactionParams{
+			RealmID:         input.RealmID,
+			SourceType:      sourceType,
+			RawAmount:       amountNum,
+			RawDate:         pgtype.Date{Time: txnDate, Valid: true},
+			RawDescription:  pgtype.Text{String: input.Description, Valid: input.Description != ""},
+			ConfidenceScore: pgtype.Numeric{Valid: false},
+			AiReasoning:     pgtype.Text{Valid: false},
+			SyncStatus:      pgtype.Text{String: "PENDING_CLASSIFICATION", Valid: true},
+		})
+
 		if err != nil {
 			s.logger.Warn("Failed to create pending proposed transaction", "error", err)
-		} else {
-			proposedTxID = proposed.ID
+			return nil, err
 		}
+
+		// Save any provided hints to the rule result/audit log if necessary, or pass through metadata.
+		// For now, we return the local UUID as the ERPEntityID while it is pending sync.
+		var idBytes [16]byte = proposed.ID.Bytes
+		idStr := fmt.Sprintf("%x-%x-%x-%x-%x", idBytes[0:4], idBytes[4:6], idBytes[6:8], idBytes[8:10], idBytes[10:16])
+
+		return &erp.PostedExpense{
+			ERPEntityID: idStr, // Return local UUID since ERP didn't create it yet
+			EntityType:  sourceType,
+		}, nil
 	}
 
-	// Persist rule audit log now that proposed_transactions row exists.
-	if s.ruleEngine != nil && ruleResult != nil && proposedTxID.Valid {
-		s.ruleEngine.PersistAuditLog(ctx, input.RealmID, proposedTxID, ruleResult)
+	return nil, fmt.Errorf("database transaction repository is required for async expense posting")
+}
+
+// QueueRecategorization accepts user input to change a transaction's account or vendor
+// and publishes an async NATS event to the ERPEventWorker rather than blocking the UI.
+func (s *TransactionService) QueueRecategorization(ctx context.Context, realmID, erpEntityID, entityType, newAccountID, newVendorID string) error {
+	if s.nc == nil {
+		return fmt.Errorf("NATS connection not configured for TransactionService")
 	}
 
-	input.AccountHint = accountID
-	input.VendorHint = vendorID
-
-	// 4. Create Purchase (paid) or Bill (unpaid) via the ERP adapter
-	created, err := provider.PostExpense(ctx, input)
-
-	if s.repo != nil && proposedTxID.Valid {
-		status := "SYNCED"
-		errMsg := ""
-		if err != nil {
-			status = "ERROR"
-			errMsg = err.Error()
-		}
-		var createdID string
-		if created != nil {
-			createdID = created.ERPEntityID
-		}
-		updErr := s.repo.UpdateProposedTransactionSyncStatus(ctx, database.UpdateProposedTransactionSyncStatusParams{
-			ID:               proposedTxID,
-			SyncStatus:       pgtype.Text{String: status, Valid: true},
-			ErpTransactionID: pgtype.Text{String: createdID, Valid: createdID != ""},
-			ErrorMessage:     pgtype.Text{String: errMsg, Valid: errMsg != ""},
-		})
-		if updErr != nil {
-			s.logger.Warn("Failed to update proposed transaction status", "error", updErr)
-		}
+	payload := connectors.RecategorizePayload{
+		ERPEntityID:  erpEntityID,
+		EntityType:   entityType,
+		NewAccountID: newAccountID,
+		NewVendorID:  newVendorID,
 	}
 
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		if errors.Is(err, erp.ErrNotFound) {
-			return nil, fmt.Errorf("erp.ErrNotFound: tenant database might need CDC sync to fetch correct account/vendor IDs: %w", err)
-		}
-		return nil, err
+		return fmt.Errorf("failed to marshal RecategorizePayload: %w", err)
 	}
 
-	s.logger.Info("✅ Created Expense in ERP",
-		"realm_id", input.RealmID,
-		"entity_id", created.ERPEntityID,
-		"entity_type", created.EntityType,
-		"amount", input.Amount,
-		"vendor_id", vendorID,
-		"account_id", accountID,
-	)
+	event := connectors.ERPEvent{
+		Type:    connectors.EventRecategorizeTransaction,
+		RealmID: realmID,
+		Payload: payloadBytes,
+	}
 
-	return created, nil
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal ERPEvent: %w", err)
+	}
+
+	// Publish to the specific .recategorize subject
+	subject := strings.Replace(s.eventSubject, "*", "recategorize", 1)
+	if !strings.Contains(subject, "recategorize") {
+		subject = subject + ".recategorize"
+	}
+
+	if err := s.nc.Publish(subject, eventBytes); err != nil {
+		return fmt.Errorf("failed to publish recategorization event: %w", err)
+	}
+
+	s.logger.Info("Queued transaction recategorization via NATS", "erp_entity_id", erpEntityID, "subject", subject)
+	return nil
 }
 
 // FetchUnifiedTransactions retrieves all unified transactions (Bills and Invoices) for a single realm from the shadow_erp mirroring database.

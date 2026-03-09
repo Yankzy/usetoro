@@ -26,13 +26,10 @@ import (
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/infrastructure/vector"
-	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/services/ai"
-	"github.com/Yankzy/usetoro/internal/services/cleanup"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
-	natsgo "github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 	"github.com/vektah/gqlparser/v2/ast"
 )
@@ -180,44 +177,18 @@ func run(logger *slog.Logger) error {
 		logger.Warn("AI services skipped: PINECONE_API_KEY or OPENAI_API_KEY missing")
 	}
 
-	// 4.7 Connect to NATS (for cleanup enricher) — optional; enricher degrades gracefully.
-	var natsClient *queue.Client
-	natsURL := cmp.Or(os.Getenv("NATS_URL"), natsgo.DefaultURL)
-	natsClient, err = queue.NewClient(natsURL,
-		natsgo.Name("toro-graphql-cleanup"),
-		natsgo.MaxReconnects(10),
-		natsgo.ReconnectWait(2*time.Second),
-	)
-	if err != nil {
-		logger.Warn("NATS unavailable — cleanup enricher disabled", "error", err)
-		natsClient = nil
-	} else {
-		defer natsClient.Close()
-		logger.Info("Connected to NATS (cleanup enricher)")
-	}
-
-	// Initialise cleanup enricher and start it as a background goroutine.
-	cleanupEnricher := cleanup.NewCleanupEnricher(
-		database.New(dbPool),
-		entityResolver,
-		coaMapper,
-		natsClient,
-		logger,
-	)
-
 	// 5. Setup GraphQL Server
 	srv := handler.New(graph.NewExecutableSchema(graph.Config{
 		Resolvers: &graph.Resolver{
-			DB:              dbPool,
-			Redis:           rdb,
-			PrivateKey:      edInternalKey,
-			Logger:          logger,
-			Store:           storeObj,
-			EmailSender:     emailSender,
-			CoAMapper:       coaMapper,
-			EntityResolver:  entityResolver,
-			CleanupEnricher: cleanupEnricher,
-			EntityService:   accounting.NewEntityService(logger, storeObj.Queries),
+			DB:             dbPool,
+			Redis:          rdb,
+			PrivateKey:     edInternalKey,
+			Logger:         logger,
+			Store:          storeObj,
+			EmailSender:    emailSender,
+			CoAMapper:      coaMapper,
+			EntityResolver: entityResolver,
+			EntityService:  accounting.NewEntityService(logger, storeObj.Queries),
 		},
 	}))
 
@@ -262,15 +233,6 @@ func run(logger *slog.Logger) error {
 	}
 
 	// 6. Start Server + background workers
-	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
-	defer shutdownCancel()
-
-	// Start cleanup enricher in background.
-	go func() {
-		if enrichErr := cleanupEnricher.Start(shutdownCtx); enrichErr != nil {
-			logger.Error("cleanup enricher exited", "error", enrichErr)
-		}
-	}()
 
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -284,11 +246,9 @@ func run(logger *slog.Logger) error {
 
 	select {
 	case err := <-serverErrors:
-		shutdownCancel()
 		return fmt.Errorf("server error: %w", err)
 	case sig := <-shutdown:
 		logger.Info("Shutdown signal received", "signal", sig)
-		shutdownCancel() // stop enricher
 		httpCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(httpCtx); err != nil {

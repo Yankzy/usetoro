@@ -41,6 +41,13 @@ nats:
         subjects:
           - qbo.events.connected
 
+    erp:
+      stream_name: TORO_ERP_EVENTS
+      jetstream:
+        <<: *jetstream-default
+        subjects:
+          - toro.erp.events.*
+
     settlement:
       stream_name: SETTLEMENT
       jetstream:

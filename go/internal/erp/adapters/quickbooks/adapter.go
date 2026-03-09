@@ -199,6 +199,58 @@ func (a *Adapter) PostExpense(ctx context.Context, input erp.ExpenseInput) (*erp
 	}
 }
 
+// UpdateExpenseCategory modifies the mapped account/vendor for an existing expense in QBO.
+func (a *Adapter) UpdateExpenseCategory(ctx context.Context, erpID string, entityType string, newAccountID string, newVendorID string) error {
+	// QBO requires the current SyncToken to perform an update.
+	// We must fetch the entity first.
+
+	switch entityType {
+	case "Purchase":
+		// 1. Fetch
+		purchase, err := a.client.FindPurchaseById(erpID)
+		if err != nil {
+			return WrapError(fmt.Errorf("failed to fetch Purchase %s for update: %w", erpID, err))
+		}
+
+		// 2. Modify
+		if newAccountID != "" && len(purchase.Line) > 0 {
+			purchase.Line[0].AccountBasedExpenseLineDetail.AccountRef = sdk.ReferenceType{Value: newAccountID}
+		}
+		if newVendorID != "" {
+			purchase.EntityRef = sdk.ReferenceType{Value: newVendorID, Type: "Vendor"}
+		}
+
+		// 3. Update (sparse update is preferred, but the SDK sends the whole struct)
+		_, err = a.client.UpdatePurchase(purchase)
+		return WrapError(err)
+
+	case "Bill":
+		// 1. Fetch
+		bill, err := a.client.FindBillById(erpID)
+		if err != nil {
+			return WrapError(fmt.Errorf("failed to fetch Bill %s for update: %w", erpID, err))
+		}
+
+		// 2. Modify
+		if newAccountID != "" && len(bill.Line) > 0 {
+			bill.Line[0].AccountBasedExpenseLineDetail.AccountRef = sdk.ReferenceType{Value: newAccountID}
+		}
+		if newVendorID != "" {
+			bill.VendorRef = sdk.ReferenceType{Value: newVendorID}
+		}
+
+		// 3. Update
+		_, err = a.client.UpdateBill(bill)
+		return WrapError(err)
+
+	case "JournalEntry":
+		return WrapError(fmt.Errorf("updating JournalEntry category is not yet supported in this adapter"))
+
+	default:
+		return WrapError(fmt.Errorf("unsupported entity type %s for category update", entityType))
+	}
+}
+
 // UploadReceipt uploads a file and attaches it to an existing QBO entity.
 func (a *Adapter) UploadReceipt(ctx context.Context, input erp.UploadReceiptInput) (*erp.UploadedReceipt, error) {
 	// Build the Attachable metadata

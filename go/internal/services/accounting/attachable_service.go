@@ -3,18 +3,10 @@ package accounting
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"mime/multipart"
-	"net/http"
-	"net/textproto"
-	"net/url"
 
-	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/erp"
-	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
 )
 
 // UploadReceiptInput contains everything needed to upload a receipt.
@@ -27,17 +19,15 @@ type UploadedReceipt = erp.UploadedReceipt
 
 // AttachableService handles the upload and linking of attachable files to ERP transactions.
 type AttachableService struct {
-	logger       *slog.Logger
-	qboConnector *connectors.QBOConnector
-	factory      erp.ProviderFactory
+	logger  *slog.Logger
+	factory erp.ProviderFactory
 }
 
 // NewAttachableService creates a new AttachableService.
-func NewAttachableService(logger *slog.Logger, qboConnector *connectors.QBOConnector, factory erp.ProviderFactory) *AttachableService {
+func NewAttachableService(logger *slog.Logger, factory erp.ProviderFactory) *AttachableService {
 	return &AttachableService{
-		logger:       logger,
-		qboConnector: qboConnector,
-		factory:      factory,
+		logger:  logger,
+		factory: factory,
 	}
 }
 
@@ -96,98 +86,24 @@ func (s *AttachableService) uploadReceipt(
 	return created, nil
 }
 
-// UploadAttachable handles the "Multipart Request Upload & Link" flow natively via the QBOConnector.
+// UploadAttachable handles the "Multipart Request Upload & Link" flow.
 // It constructs the specific two-part QBO API request needed for Attachables.
 func (s *AttachableService) UploadAttachable(ctx context.Context, realmID string, entityType string, entityID string, fileBytes []byte, filename string, contentType string) error {
-	s.logger.Info("uploading multipart attachable directly via QBOConnector", "realm_id", realmID, "entity_type", entityType, "entity_id", entityID, "filename", filename)
+	s.logger.Info("uploading multipart attachable", "realm_id", realmID, "entity_type", entityType, "entity_id", entityID, "filename", filename)
 
-	client, err := s.qboConnector.ClientForRealm(ctx, realmID)
+	provider, err := s.factory.GetProviderForRealm(ctx, "quickbooks_online", realmID)
 	if err != nil {
-		return fmt.Errorf("failed to get qbo client for realm: %w", err)
+		return fmt.Errorf("failed to get provider for realm: %w", err)
 	}
 
-	endpointUrl, err := url.Parse(client.GetEndpoint() + "upload")
-	if err != nil {
-		return fmt.Errorf("failed to parse upload url: %w", err)
-	}
-
-	urlValues := url.Values{}
-	urlValues.Add("minorversion", "75") // Hardcoded to 75 as standard for QBO minor versions
-	endpointUrl.RawQuery = urlValues.Encode()
-
-	// Build the Attachable Request
-	attachable := quickbooks.Attachable{
+	_, err = provider.UploadReceipt(ctx, erp.UploadReceiptInput{
+		RealmID:     realmID,
+		EntityType:  entityType,
+		EntityID:    entityID,
 		FileName:    filename,
-		ContentType: quickbooks.ContentType(contentType),
-		AttachableRef: []quickbooks.AttachableRef{
-			{
-				EntityRef: quickbooks.ReferenceType{
-					Value: entityID,
-					Type:  entityType,
-				},
-			},
-		},
-	}
+		ContentType: contentType,
+		Data:        bytes.NewReader(fileBytes),
+	})
 
-	var buffer bytes.Buffer
-	mWriter := multipart.NewWriter(&buffer)
-
-	// Add file metadata part
-	metadataHeader := make(textproto.MIMEHeader)
-	metadataHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, "file_metadata_01", "attachment.json"))
-	metadataHeader.Set("Content-Type", "application/json")
-
-	metadataContent, err := mWriter.CreatePart(metadataHeader)
-	if err != nil {
-		return fmt.Errorf("failed to create metadata part: %w", err)
-	}
-
-	j, err := json.Marshal(attachable)
-	if err != nil {
-		return fmt.Errorf("failed to marshal attachable metadata: %w", err)
-	}
-
-	if _, err = metadataContent.Write(j); err != nil {
-		return fmt.Errorf("failed to write metadata part: %w", err)
-	}
-
-	// Add file content part
-	fileHeader := make(textproto.MIMEHeader)
-	fileHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, "file_content_01", filename))
-	fileHeader.Set("Content-Type", contentType)
-
-	fileContent, err := mWriter.CreatePart(fileHeader)
-	if err != nil {
-		return fmt.Errorf("failed to create file content part: %w", err)
-	}
-
-	if _, err = io.Copy(fileContent, bytes.NewReader(fileBytes)); err != nil {
-		return fmt.Errorf("failed to copy file bytes: %w", err)
-	}
-
-	if err := mWriter.Close(); err != nil {
-		return fmt.Errorf("failed to close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", endpointUrl.String(), &buffer)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Add("Content-Type", mWriter.FormDataContentType())
-	req.Header.Add("Accept", "application/json")
-
-	resp, err := client.Client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	s.logger.Info("successfully uploaded and linked attachable", "realm_id", realmID, "entity_type", entityType, "entity_id", entityID)
-	return nil
+	return err
 }

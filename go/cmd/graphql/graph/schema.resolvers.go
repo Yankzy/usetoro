@@ -433,7 +433,7 @@ func (r *mutationResolver) SyncQboChartOfAccounts(ctx context.Context, realmID s
 		QBOIsProduction: isProd,
 	}
 
-	qboConn := connectors.NewQBOConnector(r.Logger, cfg, r.Store, nil)
+	qboConn := connectors.NewQBOConnector(r.Logger, cfg, r.Store)
 	count, err := qboConn.SyncFullChartOfAccounts(ctx, entityID.String(), realmID)
 	if err != nil {
 		r.Logger.Error("Full CoA sync failed", "error", err, "realm_id", realmID)
@@ -476,7 +476,7 @@ func (r *mutationResolver) SyncQboCustomers(ctx context.Context, realmID string)
 		QBOIsProduction: isProd,
 	}
 
-	qboConn := connectors.NewQBOConnector(r.Logger, cfg, r.Store, nil)
+	qboConn := connectors.NewQBOConnector(r.Logger, cfg, r.Store)
 	count, err := qboConn.SyncFullCustomers(ctx, entityID.String(), realmID)
 	if err != nil {
 		r.Logger.Error("Full Customers sync failed", "error", err, "realm_id", realmID)

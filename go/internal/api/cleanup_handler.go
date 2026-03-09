@@ -170,20 +170,8 @@ func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Publish enrichment trigger to NATS (best-effort, non-fatal).
-	// Only publish when realm_id is set — Excel-only sessions don't need AI enrichment.
+	// 5. CDC event (ledger.shadow_erp_cleanup_sessions.insert) will trigger the CleanupWorker automatically.
 	sessionIDStr := uuid.UUID(session.ID.Bytes).String()
-	if h.CleanupNATS != nil && realmID.Valid {
-		payload, _ := json.Marshal(map[string]string{
-			"session_id": sessionIDStr,
-			"realm_id":   realmID.String,
-		})
-		subject := fmt.Sprintf(cleanupEnrichSubj, realmID.String)
-		if pubErr := h.CleanupNATS.Publish(subject, payload); pubErr != nil {
-			h.Logger.Warn("cleanup upload: nats publish failed",
-				"session_id", sessionIDStr, "error", pubErr)
-		}
-	}
 
 	h.Logger.Info("cleanup upload accepted",
 		"session_id", sessionIDStr,

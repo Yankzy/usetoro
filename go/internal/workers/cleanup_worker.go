@@ -1,5 +1,4 @@
-// Package cleanup implements the Clean-Up Mode enrichment pipeline.
-package cleanup
+package workers
 
 import (
 	"context"
@@ -7,131 +6,113 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Yankzy/usetoro/internal/cdc"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/internal/services/cleanup"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
 	"golang.org/x/sync/errgroup"
 )
 
 const (
-	// enrichSubjectFilter matches "cleanup.enrich.>" for all realms.
-	enrichSubjectFilter = "cleanup.enrich.>"
-	enrichConsumer      = "toro-cleanup-enricher"
-	enrichStream        = "CLEANUP"
-	enrichBatchSize     = 50 // rows per concurrent batch
-	enrichConcurrency   = 5  // parallel workers per session
+	enrichConsumer    = "toro-cleanup-enricher"
+	enrichConcurrency = 5 // parallel workers per session
 )
 
-// enrichMsg is the payload published to the cleanup.enrich.{realmID} subject.
-type enrichMsg struct {
-	SessionID string `json:"session_id"`
-	RealmID   string `json:"realm_id"`
-}
-
-// CleanupEnricher subscribes to NATS cleanup.enrich.> and enriches staging rows
+// CleanupWorker subscribes to NATS CDC events and enriches staging rows
 // using the existing EntityResolver + CoAMapper AI services.
-type CleanupEnricher struct {
+type CleanupWorker struct {
 	db             *database.Queries
 	entityResolver *ai.EntityResolver
 	coaMapper      *ai.CoAMapper
-	natsClient     *queue.Client
-	dedup          *Deduplicator
+	nc             *nats.Conn
+	js             nats.JetStreamContext
+	dedup          *cleanup.Deduplicator
 	logger         *slog.Logger
-	sub            *nats.Subscription
 }
 
-// NewCleanupEnricher creates a new enricher. AI services may be nil (enrichment
-// will skip those layers and store a zero confidence score).
-func NewCleanupEnricher(
+// NewCleanupWorker creates a new worker for cleanup ingestion and enrichment.
+func NewCleanupWorker(
 	db *database.Queries,
 	entityResolver *ai.EntityResolver,
 	coaMapper *ai.CoAMapper,
-	natsClient *queue.Client,
+	nc *nats.Conn,
 	logger *slog.Logger,
-) *CleanupEnricher {
-	return &CleanupEnricher{
+) (*CleanupWorker, error) {
+	js, err := nc.JetStream()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
+	}
+
+	return &CleanupWorker{
 		db:             db,
 		entityResolver: entityResolver,
 		coaMapper:      coaMapper,
-		natsClient:     natsClient,
-		dedup:          NewDeduplicator(),
+		nc:             nc,
+		js:             js,
+		dedup:          cleanup.NewDeduplicator(),
 		logger:         logger,
-	}
+	}, nil
 }
 
-// Start sets up the NATS JetStream stream + consumer and begins processing.
-// It blocks until ctx is cancelled. Call in a goroutine.
-func (e *CleanupEnricher) Start(ctx context.Context) error {
-	if e.natsClient == nil {
-		e.logger.Warn("cleanup enricher: NATS client is nil, enricher disabled")
-		<-ctx.Done()
-		return nil
-	}
+// Start sets up the NATS JetStream consumer and begins processing.
+func (e *CleanupWorker) Start(ctx context.Context) error {
+	subject := "ledger.shadow_erp_cleanup_sessions.insert"
+	e.logger.Info("🛫 CleanupWorker started listening to CDC", "subject", subject)
 
-	// Ensure the stream exists for cleanup events.
-	if err := e.natsClient.EnsureStream(&nats.StreamConfig{
-		Name:     enrichStream,
-		Subjects: []string{"cleanup.>"},
-		MaxAge:   0, // retain indefinitely (managed by session lifecycle)
-	}); err != nil {
-		return fmt.Errorf("cleanup enricher: ensure stream: %w", err)
-	}
+	sub, err := e.js.QueueSubscribe(subject, enrichConsumer, func(msg *nats.Msg) {
+		e.handleMsg(ctx, msg)
+	}, nats.ManualAck())
 
-	js := e.natsClient.JetStream()
-
-	// Durable push consumer.
-	sub, err := js.Subscribe(
-		enrichSubjectFilter,
-		func(msg *nats.Msg) { e.handleMsg(ctx, msg) },
-		nats.Durable(enrichConsumer),
-		nats.ManualAck(),
-		nats.AckExplicit(),
-		nats.DeliverNew(),
-	)
 	if err != nil {
-		return fmt.Errorf("cleanup enricher: subscribe: %w", err)
+		return fmt.Errorf("cleanup enricher CDC subscribe: %w", err)
 	}
-	e.sub = sub
-	e.logger.Info("cleanup enricher: listening", "subject", enrichSubjectFilter)
 
 	<-ctx.Done()
 	_ = sub.Unsubscribe()
-	e.logger.Info("cleanup enricher: stopped")
+	e.logger.Info("🛑 CleanupWorker stopped")
 	return nil
 }
 
-// handleMsg processes a single NATS message: deserialises, enriches, acks.
-func (e *CleanupEnricher) handleMsg(ctx context.Context, msg *nats.Msg) {
-	var payload enrichMsg
-	if err := json.Unmarshal(msg.Data, &payload); err != nil {
-		e.logger.Error("cleanup enricher: bad message payload", "error", err)
+// handleMsg processes a single NATS CDC message: deserialises, enriches, acks.
+func (e *CleanupWorker) handleMsg(ctx context.Context, msg *nats.Msg) {
+	var event cdc.Event
+	if err := json.Unmarshal(msg.Data, &event); err != nil {
+		e.logger.Error("cleanup worker: bad CDC payload", "error", err)
 		msg.Ack()
 		return
 	}
 
-	if payload.SessionID == "" || payload.RealmID == "" {
-		e.logger.Warn("cleanup enricher: message missing session_id or realm_id")
+	// We only care about inserts
+	if event.Action != "INSERT" {
 		msg.Ack()
 		return
 	}
 
-	log := e.logger.With("session_id", payload.SessionID, "realm_id", payload.RealmID)
-	log.Info("cleanup enricher: processing session")
+	sessionID, ok := event.Data["id"].(string)
+	if !ok {
+		msg.Ack()
+		return
+	}
 
-	if err := e.enrichSession(ctx, payload.SessionID, payload.RealmID); err != nil {
-		log.Error("cleanup enricher: enrichSession failed", "error", err)
+	realmID, _ := event.Data["realm_id"].(string)
+
+	log := e.logger.With("session_id", sessionID, "realm_id", realmID)
+	log.Info("cleanup worker: processing new session")
+
+	if err := e.enrichSession(ctx, sessionID, realmID); err != nil {
+		log.Error("cleanup worker: enrichSession failed", "error", err)
 		msg.Nak() // redeliver later
 		return
 	}
 
 	msg.Ack()
-	log.Info("cleanup enricher: session enrichment complete")
+	log.Info("cleanup worker: session enrichment complete")
 }
 
 // enrichSession fetches pending rows, enriches them concurrently, then runs dedup.
-func (e *CleanupEnricher) enrichSession(ctx context.Context, sessionID, realmID string) error {
+func (e *CleanupWorker) enrichSession(ctx context.Context, sessionID, realmID string) error {
 	var pgSessionID pgtype.UUID
 	if err := pgSessionID.Scan(sessionID); err != nil {
 		return fmt.Errorf("invalid session_id %q: %w", sessionID, err)
@@ -157,7 +138,7 @@ func (e *CleanupEnricher) enrichSession(ctx context.Context, sessionID, realmID 
 		})
 	}
 
-	enriched := make([]EnrichedRow, len(rawRows))
+	enriched := make([]cleanup.EnrichedRow, len(rawRows))
 
 	// Process in batches of enrichBatchSize with up to enrichConcurrency goroutines.
 	g, gCtx := errgroup.WithContext(ctx)
@@ -209,14 +190,14 @@ func (e *CleanupEnricher) enrichSession(ctx context.Context, sessionID, realmID 
 // 1. Check ai_corrections (learning memory) → skip AI if already known.
 // 2. EntityResolver  → vendor match (3-layer: DB → Vector → Fuzzy).
 // 3. CoAMapper       → account match (Pinecone semantic).
-func (e *CleanupEnricher) enrichRow(ctx context.Context, realmID string, row database.ShadowErpCleanupStaging) (EnrichedRow, error) {
+func (e *CleanupWorker) enrichRow(ctx context.Context, realmID string, row database.ShadowErpCleanupStaging) (cleanup.EnrichedRow, error) {
 	// Use the row's own realm_id (may be empty when QBO is not connected).
 	rowRealm := realmID
 	if rowRealm == "" && row.RealmID.Valid {
 		rowRealm = row.RealmID.String
 	}
 
-	er := EnrichedRow{
+	er := cleanup.EnrichedRow{
 		ID:             uuidStr(row.ID),
 		SessionID:      uuidStr(row.SessionID),
 		RealmID:        rowRealm,
@@ -299,7 +280,7 @@ func (e *CleanupEnricher) enrichRow(ctx context.Context, realmID string, row dat
 
 // lookupCorrection checks if there's a known user override for this raw input.
 // Returns the corrected entity ID, or "" if not found.
-func (e *CleanupEnricher) lookupCorrection(ctx context.Context, realmID, rawInput, correctionType string) string {
+func (e *CleanupWorker) lookupCorrection(ctx context.Context, realmID, rawInput, correctionType string) string {
 	if rawInput == "" {
 		return ""
 	}
@@ -315,7 +296,7 @@ func (e *CleanupEnricher) lookupCorrection(ctx context.Context, realmID, rawInpu
 }
 
 // persistEnrichedRow writes a single enriched result back to cleanup_staging.
-func (e *CleanupEnricher) persistEnrichedRow(ctx context.Context, er EnrichedRow) error {
+func (e *CleanupWorker) persistEnrichedRow(ctx context.Context, er cleanup.EnrichedRow) error {
 	var rowID, vendorID, accountID, dupOf pgtype.UUID
 	_ = rowID.Scan(er.ID)
 	_ = vendorID.Scan(er.PredictedVendorID)
@@ -345,8 +326,8 @@ func (e *CleanupEnricher) persistEnrichedRow(ctx context.Context, er EnrichedRow
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-func zeroEnriched(row database.ShadowErpCleanupStaging) EnrichedRow {
-	er := EnrichedRow{
+func zeroEnriched(row database.ShadowErpCleanupStaging) cleanup.EnrichedRow {
+	er := cleanup.EnrichedRow{
 		ID:             uuidStr(row.ID),
 		SessionID:      uuidStr(row.SessionID),
 		RawDescription: row.RawDescription.String,
@@ -387,4 +368,14 @@ func numericToFloat(n pgtype.Numeric) float64 {
 	}
 	f, _ := n.Float64Value()
 	return f.Float64
+}
+
+// coalesce returns the first non-empty string.
+func coalesce(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

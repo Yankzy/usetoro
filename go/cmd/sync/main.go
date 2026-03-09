@@ -18,6 +18,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
+	"github.com/Yankzy/usetoro/internal/workers"
 	"github.com/dgraph-io/ristretto"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
@@ -89,7 +90,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	}
 
 	// 5. Initialize AI Infrastructure (Optional)
-	var vectorWorker *ai.VectorSyncWorker
+	var vectorWorker *workers.VectorSyncWorker
 	var pc *vector.PineconeClient
 	var emb *vector.Embedder
 	if os.Getenv("PINECONE_API_KEY") != "" && os.Getenv("OPENAI_API_KEY") != "" {
@@ -111,14 +112,18 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 			if embErr != nil {
 				logger.Warn("Failed to initialize OpenAI embedder", "error", embErr)
 			} else {
-				vectorWorker = ai.NewVectorSyncWorker(logger, st, pc, emb, 1*time.Hour)
+				vectorWorker, err = workers.NewVectorSyncWorker(logger, st, pc, emb, q.Conn())
+				if err != nil {
+					logger.Warn("Failed to init VectorSyncWorker", "error", err)
+					vectorWorker = nil
+				}
 				logger.Info("✅ AI infrastructure initialized")
 			}
 		}
 	}
 
 	// 6. Initialize Logic
-	mgr := connectors.NewManager(logger, cfg, st, vectorWorker)
+	mgr := connectors.NewManager(logger, cfg, st)
 	worker := connectors.NewWorker(logger, q, mgr)
 
 	// 6a. Initialize Accounting Services (requires AI infra + QBO connector)
@@ -143,18 +148,20 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 
 	var txService *accounting.TransactionService
 	var attachService *accounting.AttachableService
+	var coaMapper *ai.CoAMapper
+	var entityResolver *ai.EntityResolver
 	ruleEngineService := accounting.NewRuleEngineService(logger, st.Queries, cache)
 
 	if vectorWorker != nil {
-		coaMapper := ai.NewCoAMapper(pc, emb, cfg.AIThreshold)
-		entityResolver := ai.NewEntityResolver(st, pc, emb, cfg.AIThreshold)
-		txService = accounting.NewTransactionService(logger, st.Queries, entityResolver, coaMapper, providerFactory, ruleEngineService)
-		attachService = accounting.NewAttachableService(logger, nil, providerFactory)
+		coaMapper = ai.NewCoAMapper(pc, emb, cfg.AIThreshold)
+		entityResolver = ai.NewEntityResolver(st, pc, emb, cfg.AIThreshold)
+		txService = accounting.NewTransactionService(logger, st.Queries, entityResolver, coaMapper, providerFactory, ruleEngineService, q.Conn(), "toro.erp.events.*")
+		attachService = accounting.NewAttachableService(logger, providerFactory)
 		logger.Info("✅ Accounting services initialized (AI-assisted)")
 	} else {
 		// No AI infra: services still usable with explicit AccountHint/VendorHint
-		txService = accounting.NewTransactionService(logger, st.Queries, nil, nil, providerFactory, ruleEngineService)
-		attachService = accounting.NewAttachableService(logger, nil, providerFactory)
+		txService = accounting.NewTransactionService(logger, st.Queries, nil, nil, providerFactory, ruleEngineService, q.Conn(), "toro.erp.events.*")
+		attachService = accounting.NewAttachableService(logger, providerFactory)
 		logger.Info("✅ Accounting services initialized (manual hints only)")
 	}
 	_ = txService     // available for future GraphQL resolver / NATS handler wiring
@@ -171,11 +178,49 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	}
 
 	// 7. Start Workers
-	workerErrors := make(chan error, 3) // Increased buffer for Vector worker
+	workerManager := workers.NewManager(logger)
+
+	erpEventWorker, err := workers.NewERPEventWorker(
+		logger,
+		cfg,
+		q.Conn(),
+		providerFactory,
+		func(workerCtx context.Context, tenantID, realmID, entityType, entityID, operation string) error {
+			return qboConn.FetchEntity(workerCtx, realmID, entityType, entityID, operation)
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to init erp event worker: %w", err)
+	}
+	workerManager.Register(erpEventWorker)
+
+	if vectorWorker != nil {
+		workerManager.Register(vectorWorker)
+	}
+
+	attachWorker, err := workers.NewAttachableWorker(logger, q.Conn(), attachService)
+	if err != nil {
+		return fmt.Errorf("failed to init attachable worker: %w", err)
+	}
+	workerManager.Register(attachWorker)
+
+	txWorker, err := workers.NewTransactionWorker(logger, q.Conn(), dbPool, st.Queries, entityResolver, coaMapper, ruleEngineService, providerFactory)
+	if err != nil {
+		return fmt.Errorf("failed to init transaction worker: %w", err)
+	}
+	workerManager.Register(txWorker)
+
+	cleanupWorker, err := workers.NewCleanupWorker(st.Queries, entityResolver, coaMapper, q.Conn(), logger)
+	if err != nil {
+		return fmt.Errorf("failed to init cleanup worker: %w", err)
+	}
+	workerManager.Register(cleanupWorker)
+
+	workerErrors := make(chan error, 6) // Increased buffer
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Start webhook worker
+	// Start webhook worker (legacy/current nats subscriber)
 	go func() {
 		workerErrors <- worker.Start(ctx)
 	}()
@@ -187,12 +232,10 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		}()
 	}
 
-	// Start Vector sync worker if enabled
-	if vectorWorker != nil {
-		go func() {
-			vectorWorker.Start(ctx)
-		}()
-	}
+	// Start Managed Workers
+	go func() {
+		workerErrors <- workerManager.StartAll(ctx)
+	}()
 
 	// 8. Graceful Shutdown
 	shutdown := make(chan os.Signal, 1)

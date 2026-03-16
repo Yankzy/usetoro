@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"strings"
+	"time"
+
 	"github.com/pinecone-io/go-pinecone/v4/pinecone"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -13,6 +16,7 @@ type PineconeClient struct {
 	client    *pinecone.Client
 	indexName string
 	dimension int
+	host      string
 }
 
 // Vector represents a vector to be upserted to Pinecone
@@ -38,7 +42,7 @@ type IndexStats struct {
 // NewPineconeClient initializes a new Pinecone client
 // apiKey: Pinecone API key
 // indexName: name of the index to use
-// dimension: vector dimension (e.g., 1536 for OpenAI text-embedding-3-small)
+// dimension: vector dimension (e.g., 3072 for OpenAI text-embedding-3-large)
 func NewPineconeClient(apiKey, indexName string, dimension int) (*PineconeClient, error) {
 	ctx := context.Background()
 
@@ -56,10 +60,20 @@ func NewPineconeClient(apiKey, indexName string, dimension int) (*PineconeClient
 		dimension: dimension,
 	}
 
-	// Ensure index exists
-	if err := client.EnsureIndex(ctx); err != nil {
+	// Ensure index exists with a timeout
+	ctxTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := client.EnsureIndex(ctxTimeout); err != nil {
 		return nil, fmt.Errorf("failed to ensure index exists: %w", err)
 	}
+
+	// Host string is required for index operations.
+	// Cache it here to avoid calling control plane DescribeIndex on every data plane operation.
+	idx, err := client.client.DescribeIndex(ctx, indexName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe pinecone index to get host: %w", err)
+	}
+	client.host = idx.Host
 
 	return client, nil
 }
@@ -96,6 +110,16 @@ func (p *PineconeClient) EnsureIndex(ctx context.Context) error {
 	})
 
 	if err != nil {
+		// Log the error but don't fail, as free tier returns 403 if max indexes reached,
+		// and the index might already exist in another region or we might just be
+		// trying to recreate what we can't see locally.
+		if strings.Contains(err.Error(), "FORBIDDEN") || strings.Contains(err.Error(), "max serverless indexes") {
+			return nil
+		}
+		// Also ignore ALREADY_EXISTS 409 errors
+		if strings.Contains(err.Error(), "ALREADY_EXISTS") {
+			return nil
+		}
 		return fmt.Errorf("failed to create index: %w", err)
 	}
 
@@ -110,7 +134,8 @@ func (p *PineconeClient) UpsertVectors(ctx context.Context, namespace string, ve
 
 	// Get index connection
 	idxConn, err := p.client.Index(pinecone.NewIndexConnParams{
-		Host: p.getIndexHost(),
+		Host:      p.getIndexHost(),
+		Namespace: namespace,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to connect to index: %w", err)
@@ -271,18 +296,8 @@ func (p *PineconeClient) DescribeIndexStats(ctx context.Context) (*IndexStats, e
 }
 
 // getIndexHost retrieves the host URL for the index
-// This is a helper method that queries index details
 func (p *PineconeClient) getIndexHost() string {
-	ctx := context.Background()
-
-	// Describe index to get host
-	idx, err := p.client.DescribeIndex(ctx, p.indexName)
-	if err != nil {
-		// Fallback: this should not happen if EnsureIndex succeeded
-		return ""
-	}
-
-	return idx.Host
+	return p.host
 }
 
 // Close closes the Pinecone client connection

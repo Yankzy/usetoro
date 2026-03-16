@@ -62,27 +62,18 @@ func NewTransactionWorker(
 func (w *TransactionWorker) Start(ctx context.Context) error {
 	w.logger.Info("🚀 TransactionWorker CDC consumer started")
 
-	subjectInsert := "ledger.shadow_erp_proposed_transactions.insert"
-	subjectUpdate := "ledger.shadow_erp_proposed_transactions.update"
+	subjectAll := "ledger.shadow_erp_proposed_transactions.*"
 
-	subIns, err := w.js.QueueSubscribe(subjectInsert, "toro-tx-workers", func(msg *nats.Msg) {
+	sub, err := w.js.QueueSubscribe(subjectAll, "toro-tx-workers", func(msg *nats.Msg) {
 		w.handleEvent(ctx, msg)
-	}, nats.ManualAck())
+	}, nats.ManualAck(), nats.BindStream("LEDGER"))
 	if err != nil {
-		return fmt.Errorf("failed to subscribe to %s: %w", subjectInsert, err)
-	}
-
-	subUpd, err := w.js.QueueSubscribe(subjectUpdate, "toro-tx-workers", func(msg *nats.Msg) {
-		w.handleEvent(ctx, msg)
-	}, nats.ManualAck())
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to %s: %w", subjectUpdate, err)
+		return fmt.Errorf("failed to subscribe to %s: %w", subjectAll, err)
 	}
 
 	<-ctx.Done()
 	w.logger.Info("🛑 TransactionWorker shutting down")
-	subIns.Unsubscribe()
-	subUpd.Unsubscribe()
+	sub.Unsubscribe()
 	return nil
 }
 
@@ -133,7 +124,7 @@ func (w *TransactionWorker) handleEvent(ctx context.Context, msg *nats.Msg) {
 	}
 }
 
-func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx database.ShadowErpProposedTransaction) {
+func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx database.FignodeStagingTransaction) {
 	w.logger.Info("Categorizing transaction", "id", tx.ID)
 
 	var vendorID, accountID string
@@ -141,7 +132,7 @@ func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx databa
 
 	// 1. Entity Resolver
 	if w.entityResolver != nil && description != "" {
-		match, err := w.entityResolver.ResolveEntity(ctx, tx.RealmID, "vendor", description)
+		match, err := w.entityResolver.ResolveEntity(ctx, tx.RealmID.String, "vendor", description)
 		if err == nil && match != nil {
 			vendorID = match.ID
 		}
@@ -149,7 +140,7 @@ func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx databa
 
 	// 2. CoA Mapper
 	if w.coaMapper != nil && description != "" {
-		matches, err := w.coaMapper.MapDescriptionToAccount(ctx, tx.RealmID, description, 1)
+		matches, err := w.coaMapper.MapDescriptionToAccount(ctx, tx.RealmID.String, description, 1)
 		if err == nil && len(matches) > 0 {
 			accountID = matches[0].AccountID
 		}
@@ -157,14 +148,14 @@ func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx databa
 
 	var vendorPgUUID pgtype.UUID
 	if vendorID != "" {
-		if v, err := w.queries.GetVendorByERPID(ctx, database.GetVendorByERPIDParams{RealmID: tx.RealmID, ErpID: vendorID}); err == nil {
+		if v, err := w.queries.GetVendorByERPID(ctx, database.GetVendorByERPIDParams{RealmID: tx.RealmID.String, ErpID: vendorID}); err == nil {
 			vendorPgUUID = v.ID
 		}
 	}
 
 	var accountPgUUID pgtype.UUID
 	if accountID != "" {
-		if a, err := w.queries.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{RealmID: tx.RealmID, ErpID: accountID}); err == nil {
+		if a, err := w.queries.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{RealmID: tx.RealmID.String, ErpID: accountID}); err == nil {
 			accountPgUUID = a.ID
 		}
 	}
@@ -192,10 +183,10 @@ func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx databa
 	}
 }
 
-func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.ShadowErpProposedTransaction) {
+func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.FignodeStagingTransaction) {
 	w.logger.Info("Syncing transaction to ERP", "id", tx.ID)
 
-	provider, err := w.factory.GetProviderForRealm(ctx, "quickbooks_online", tx.RealmID)
+	provider, err := w.factory.GetProviderForRealm(ctx, "quickbooks_online", tx.RealmID.String)
 	if err != nil {
 		w.markError(ctx, tx.ID, err.Error())
 		return
@@ -204,7 +195,7 @@ func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.ShadowErp
 	// Resolve ERP IDs for the vendor and account
 	var vendorErpID, accountErpID string
 	if tx.PredictedVendorID.Valid {
-		if v, err := w.queries.GetVendor(ctx, database.GetVendorParams{RealmID: tx.RealmID, ID: tx.PredictedVendorID}); err == nil {
+		if v, err := w.queries.GetVendor(ctx, database.GetVendorParams{RealmID: tx.RealmID.String, ID: tx.PredictedVendorID}); err == nil {
 			vendorErpID = v.ErpID
 		}
 	}
@@ -216,7 +207,7 @@ func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.ShadowErp
 
 	amt, _ := tx.RawAmount.Float64Value()
 	input := erp.ExpenseInput{
-		RealmID:     tx.RealmID,
+		RealmID:     tx.RealmID.String,
 		Amount:      amt.Float64,
 		TxnDate:     tx.RawDate.Time,
 		Description: tx.RawDescription.String,
@@ -234,7 +225,7 @@ func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.ShadowErp
 	if created != nil {
 		w.queries.UpdateProposedTransactionSyncStatus(ctx, database.UpdateProposedTransactionSyncStatusParams{
 			ID:               tx.ID,
-			SyncStatus:       pgtype.Text{String: "SYNCED", Valid: true},
+			Status:           "SYNCED",
 			ErpTransactionID: pgtype.Text{String: created.ERPEntityID, Valid: true},
 		})
 		w.logger.Info("✅ Synced transaction to ERP", "id", tx.ID, "erp_id", created.ERPEntityID)
@@ -244,7 +235,7 @@ func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.ShadowErp
 func (w *TransactionWorker) markError(ctx context.Context, txID pgtype.UUID, errMsg string) {
 	w.queries.UpdateProposedTransactionSyncStatus(ctx, database.UpdateProposedTransactionSyncStatusParams{
 		ID:           txID,
-		SyncStatus:   pgtype.Text{String: "ERROR", Valid: true},
+		Status:       "ERROR",
 		ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
 	})
 }

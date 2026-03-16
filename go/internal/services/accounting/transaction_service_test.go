@@ -21,11 +21,11 @@ func logger() *slog.Logger {
 
 type mockTransactionRepository struct{}
 
-func (m *mockTransactionRepository) GetProposedTransactionByValues(ctx context.Context, arg database.GetProposedTransactionByValuesParams) (database.ShadowErpProposedTransaction, error) {
-	return database.ShadowErpProposedTransaction{}, errors.New("not found")
+func (m *mockTransactionRepository) GetProposedTransactionByValues(ctx context.Context, arg database.GetProposedTransactionByValuesParams) (database.FignodeStagingTransaction, error) {
+	return database.FignodeStagingTransaction{}, errors.New("not found")
 }
-func (m *mockTransactionRepository) CreateProposedTransaction(ctx context.Context, arg database.CreateProposedTransactionParams) (database.ShadowErpProposedTransaction, error) {
-	return database.ShadowErpProposedTransaction{}, nil
+func (m *mockTransactionRepository) CreateProposedTransaction(ctx context.Context, arg database.CreateProposedTransactionParams) (database.FignodeStagingTransaction, error) {
+	return database.FignodeStagingTransaction{}, nil
 }
 func (m *mockTransactionRepository) UpdateProposedTransactionSyncStatus(ctx context.Context, arg database.UpdateProposedTransactionSyncStatusParams) error {
 	return nil

@@ -42,7 +42,7 @@ func (w *AttachableWorker) Start(ctx context.Context) error {
 
 	sub, err := w.js.QueueSubscribe(subject, "toro-attachable-workers", func(msg *nats.Msg) {
 		w.handleEvent(ctx, msg)
-	}, nats.ManualAck())
+	}, nats.ManualAck(), nats.BindStream("LEDGER"))
 
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to %s: %w", subject, err)

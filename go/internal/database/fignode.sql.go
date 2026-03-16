@@ -31,36 +31,17 @@ func (q *Queries) AdjustAccuracyScore(ctx context.Context, arg AdjustAccuracySco
 	return err
 }
 
-const checkUserAlreadyClassified = `-- name: CheckUserAlreadyClassified :one
-SELECT EXISTS (
-    SELECT 1 FROM fignode.classifications
-    WHERE transaction_id = $1 AND user_id = $2
-) AS already_classified
-`
-
-type CheckUserAlreadyClassifiedParams struct {
-	TransactionID string
-	UserID        pgtype.UUID
-}
-
-func (q *Queries) CheckUserAlreadyClassified(ctx context.Context, arg CheckUserAlreadyClassifiedParams) (bool, error) {
-	row := q.db.QueryRow(ctx, checkUserAlreadyClassified, arg.TransactionID, arg.UserID)
-	var already_classified bool
-	err := row.Scan(&already_classified)
-	return already_classified, err
-}
-
 const clearTransaction = `-- name: ClearTransaction :exec
 
-UPDATE fignode.transactions
-SET status = 'cleared', cleared_at = now()
+UPDATE fignode.staging_transactions
+SET status = 'APPROVED', updated_at = now()
 WHERE id = $1
 `
 
 // =========================================================================
-// Status Updates
+// Status Updates (Legacy endpoints mapped to new schema)
 // =========================================================================
-func (q *Queries) ClearTransaction(ctx context.Context, id string) error {
+func (q *Queries) ClearTransaction(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, clearTransaction, id)
 	return err
 }
@@ -120,15 +101,17 @@ const computePeriodLeaderboard = `-- name: ComputePeriodLeaderboard :many
 SELECT
     p.user_id,
     u.email,
-    COUNT(c.id)::INT AS cleared,
+    COUNT(t.id)::INT AS cleared,
     p.streak
 FROM fignode.employee_profiles p
 JOIN toro_core.users u ON u.id = p.user_id
-LEFT JOIN fignode.classifications c
-    ON c.user_id = p.user_id AND c.created_at >= $1::TIMESTAMPTZ
+LEFT JOIN fignode.staging_transactions t
+    ON t.swiped_by = p.user_id 
+    AND t.status IN ('APPROVED', 'POSTED')
+    AND t.updated_at >= $1::TIMESTAMPTZ
 WHERE u.is_active = TRUE
 GROUP BY p.user_id, u.email, p.streak
-ORDER BY COUNT(c.id) DESC,
+ORDER BY COUNT(t.id) DESC,
          p.streak DESC,
          u.email ASC
 LIMIT 100
@@ -208,143 +191,6 @@ func (q *Queries) CreateEmployeeUser(ctx context.Context, arg CreateEmployeeUser
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
-}
-
-const getBadgesByUserIDs = `-- name: GetBadgesByUserIDs :many
-SELECT user_id, badge_key, badge_label
-FROM fignode.badges
-WHERE user_id = ANY($1::uuid[])
-`
-
-type GetBadgesByUserIDsRow struct {
-	UserID     pgtype.UUID
-	BadgeKey   string
-	BadgeLabel string
-}
-
-func (q *Queries) GetBadgesByUserIDs(ctx context.Context, userIds []pgtype.UUID) ([]GetBadgesByUserIDsRow, error) {
-	rows, err := q.db.Query(ctx, getBadgesByUserIDs, userIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetBadgesByUserIDsRow
-	for rows.Next() {
-		var i GetBadgesByUserIDsRow
-		if err := rows.Scan(&i.UserID, &i.BadgeKey, &i.BadgeLabel); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getBatchTransactions = `-- name: GetBatchTransactions :many
-
-SELECT t.id, t.raw_description, t.vendor, t.industry, t.industry_icon, t.vendor_description, t.vendor_url, t.location, t.is_recurring, t.client_industry, t.client_industry_icon, t.business_model, t.mindset_hint, t.accent_color, t.accent_bg, t.amount, t.tx_date, t.account_type, t.tx_timestamp, t.ai_suggestion, t.ai_confidence, t.truth_category, t.status, t.cleared_at, t.owner_user_id, t.created_at
-FROM fignode.transactions t
-WHERE t.status = 'open'
-  AND NOT EXISTS (
-      SELECT 1 FROM fignode.classifications c
-      WHERE c.transaction_id = t.id AND c.user_id = $1
-  )
-  AND NOT EXISTS (
-      SELECT 1 FROM fignode.skips s
-      WHERE s.transaction_id = t.id AND s.user_id = $1
-  )
-ORDER BY t.created_at ASC
-LIMIT $2
-`
-
-type GetBatchTransactionsParams struct {
-	UserID     pgtype.UUID
-	BatchLimit int32
-}
-
-// =========================================================================
-// Batch: Serving transactions to employees
-// =========================================================================
-func (q *Queries) GetBatchTransactions(ctx context.Context, arg GetBatchTransactionsParams) ([]FignodeTransaction, error) {
-	rows, err := q.db.Query(ctx, getBatchTransactions, arg.UserID, arg.BatchLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []FignodeTransaction
-	for rows.Next() {
-		var i FignodeTransaction
-		if err := rows.Scan(
-			&i.ID,
-			&i.RawDescription,
-			&i.Vendor,
-			&i.Industry,
-			&i.IndustryIcon,
-			&i.VendorDescription,
-			&i.VendorUrl,
-			&i.Location,
-			&i.IsRecurring,
-			&i.ClientIndustry,
-			&i.ClientIndustryIcon,
-			&i.BusinessModel,
-			&i.MindsetHint,
-			&i.AccentColor,
-			&i.AccentBg,
-			&i.Amount,
-			&i.TxDate,
-			&i.AccountType,
-			&i.TxTimestamp,
-			&i.AiSuggestion,
-			&i.AiConfidence,
-			&i.TruthCategory,
-			&i.Status,
-			&i.ClearedAt,
-			&i.OwnerUserID,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getEmployeeBadges = `-- name: GetEmployeeBadges :many
-SELECT badge_key, badge_label, earned_at
-FROM fignode.badges
-WHERE user_id = $1
-ORDER BY earned_at ASC
-`
-
-type GetEmployeeBadgesRow struct {
-	BadgeKey   string
-	BadgeLabel string
-	EarnedAt   pgtype.Timestamptz
-}
-
-func (q *Queries) GetEmployeeBadges(ctx context.Context, userID pgtype.UUID) ([]GetEmployeeBadgesRow, error) {
-	rows, err := q.db.Query(ctx, getEmployeeBadges, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetEmployeeBadgesRow
-	for rows.Next() {
-		var i GetEmployeeBadgesRow
-		if err := rows.Scan(&i.BadgeKey, &i.BadgeLabel, &i.EarnedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const getEmployeeByEmail = `-- name: GetEmployeeByEmail :one
@@ -589,49 +435,6 @@ func (q *Queries) GetLatestLeaderboardSnapshot(ctx context.Context, period strin
 	return i, err
 }
 
-const getTransactionForClassify = `-- name: GetTransactionForClassify :one
-
-SELECT id, raw_description, vendor, industry, industry_icon, vendor_description, vendor_url, location, is_recurring, client_industry, client_industry_icon, business_model, mindset_hint, accent_color, accent_bg, amount, tx_date, account_type, tx_timestamp, ai_suggestion, ai_confidence, truth_category, status, cleared_at, owner_user_id, created_at FROM fignode.transactions
-WHERE id = $1 FOR UPDATE
-`
-
-// =========================================================================
-// Classification: Categorizing transactions
-// =========================================================================
-func (q *Queries) GetTransactionForClassify(ctx context.Context, id string) (FignodeTransaction, error) {
-	row := q.db.QueryRow(ctx, getTransactionForClassify, id)
-	var i FignodeTransaction
-	err := row.Scan(
-		&i.ID,
-		&i.RawDescription,
-		&i.Vendor,
-		&i.Industry,
-		&i.IndustryIcon,
-		&i.VendorDescription,
-		&i.VendorUrl,
-		&i.Location,
-		&i.IsRecurring,
-		&i.ClientIndustry,
-		&i.ClientIndustryIcon,
-		&i.BusinessModel,
-		&i.MindsetHint,
-		&i.AccentColor,
-		&i.AccentBg,
-		&i.Amount,
-		&i.TxDate,
-		&i.AccountType,
-		&i.TxTimestamp,
-		&i.AiSuggestion,
-		&i.AiConfidence,
-		&i.TruthCategory,
-		&i.Status,
-		&i.ClearedAt,
-		&i.OwnerUserID,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const incrementEmployeeCleared = `-- name: IncrementEmployeeCleared :exec
 UPDATE fignode.employee_profiles
 SET total_cleared = total_cleared + 1,
@@ -647,51 +450,6 @@ WHERE user_id = $1
 func (q *Queries) IncrementEmployeeCleared(ctx context.Context, userID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, incrementEmployeeCleared, userID)
 	return err
-}
-
-const insertBatch = `-- name: InsertBatch :one
-INSERT INTO fignode.batches (user_id, transaction_ids)
-VALUES ($1, $2) RETURNING id
-`
-
-type InsertBatchParams struct {
-	UserID         pgtype.UUID
-	TransactionIds []string
-}
-
-func (q *Queries) InsertBatch(ctx context.Context, arg InsertBatchParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, insertBatch, arg.UserID, arg.TransactionIds)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
-const insertClassification = `-- name: InsertClassification :one
-INSERT INTO fignode.classifications (
-    transaction_id, user_id, category, action, approved_by
-) VALUES ($1, $2, $3, $4, $5)
-RETURNING id
-`
-
-type InsertClassificationParams struct {
-	TransactionID string
-	UserID        pgtype.UUID
-	Category      string
-	Action        string
-	ApprovedBy    pgtype.UUID
-}
-
-func (q *Queries) InsertClassification(ctx context.Context, arg InsertClassificationParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, insertClassification,
-		arg.TransactionID,
-		arg.UserID,
-		arg.Category,
-		arg.Action,
-		arg.ApprovedBy,
-	)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
 }
 
 const insertLeaderboardSnapshot = `-- name: InsertLeaderboardSnapshot :exec
@@ -711,21 +469,20 @@ func (q *Queries) InsertLeaderboardSnapshot(ctx context.Context, arg InsertLeade
 
 const insertSkip = `-- name: InsertSkip :exec
 
-INSERT INTO fignode.skips (transaction_id, user_id)
-VALUES ($1, $2)
-ON CONFLICT (transaction_id, user_id) DO NOTHING
+
+UPDATE fignode.staging_transactions
+SET status = 'SKIPPED', updated_at = now()
+WHERE id = $1
 `
 
-type InsertSkipParams struct {
-	TransactionID string
-	UserID        pgtype.UUID
-}
-
+// =========================================================================
+// Badges: Award & query (schema removed)
+// =========================================================================
 // =========================================================================
 // Skip: Record a skip
 // =========================================================================
-func (q *Queries) InsertSkip(ctx context.Context, arg InsertSkipParams) error {
-	_, err := q.db.Exec(ctx, insertSkip, arg.TransactionID, arg.UserID)
+func (q *Queries) InsertSkip(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, insertSkip, id)
 	return err
 }
 
@@ -753,12 +510,12 @@ func (q *Queries) ResetTodayCleared(ctx context.Context) error {
 }
 
 const setTransactionInReview = `-- name: SetTransactionInReview :exec
-UPDATE fignode.transactions
-SET status = 'in_review'
+UPDATE fignode.staging_transactions
+SET status = 'PENDING', updated_at = now()
 WHERE id = $1
 `
 
-func (q *Queries) SetTransactionInReview(ctx context.Context, id string) error {
+func (q *Queries) SetTransactionInReview(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, setTransactionInReview, id)
 	return err
 }
@@ -784,38 +541,4 @@ WHERE user_id = $1 AND (streak_last_date IS NULL OR streak_last_date < CURRENT_D
 func (q *Queries) UpdateStreak(ctx context.Context, userID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, updateStreak, userID)
 	return err
-}
-
-const upsertBadge = `-- name: UpsertBadge :exec
-
-INSERT INTO fignode.badges (user_id, badge_key, badge_label)
-VALUES ($1, $2, $3)
-ON CONFLICT (user_id, badge_key) DO NOTHING
-`
-
-type UpsertBadgeParams struct {
-	UserID     pgtype.UUID
-	BadgeKey   string
-	BadgeLabel string
-}
-
-// =========================================================================
-// Badges: Award & query
-// =========================================================================
-func (q *Queries) UpsertBadge(ctx context.Context, arg UpsertBadgeParams) error {
-	_, err := q.db.Exec(ctx, upsertBadge, arg.UserID, arg.BadgeKey, arg.BadgeLabel)
-	return err
-}
-
-const validateCategory = `-- name: ValidateCategory :one
-SELECT EXISTS (
-    SELECT 1 FROM fignode.categories WHERE label = $1
-) AS is_valid
-`
-
-func (q *Queries) ValidateCategory(ctx context.Context, label string) (bool, error) {
-	row := q.db.QueryRow(ctx, validateCategory, label)
-	var is_valid bool
-	err := row.Scan(&is_valid)
-	return is_valid, err
 }

@@ -5,13 +5,12 @@ WORKDIR /app
 # Copy go mod files
 COPY go/go.mod go/go.sum ./
 COPY tap /tap
-RUN go mod download
 
-# Copy source
+# Copy source code and vendor
 COPY go/ .
 
-# Build Sync
-RUN go build -o /sync ./cmd/sync/main.go
+# Build the API server
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /sync ./cmd/sync/main.go
 
 # Final stage
 FROM alpine:latest

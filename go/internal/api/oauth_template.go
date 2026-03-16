@@ -110,7 +110,7 @@ const oauthTemplateStr = `<!DOCTYPE html>
         <p>{{ .ErrorMessage }}</p>
         {{ else }}
         <h1>Invalid Request</h1>
-        <p>Please start the connection process from the desktop app.</p>
+        <p>Please restart the connection process from the desktop app.</p>
         {{ end }}
     </div>
 

@@ -14,18 +14,7 @@ type AuthPayload {
   user: User!
 }
 
-type ProposedTransaction {
-  id: ID!
-  realmId: String!
-  sourceType: String!
-  rawAmount: Float!
-  rawDate: Time
-  rawDescription: String
-  predictedVendorId: String
-  predictedAccountId: String
-  confidenceScore: Float!
-  aiReasoning: String
-}
+
 
 input RecordCorrectionInput {
   realmId: String!
@@ -96,17 +85,15 @@ type Mutation {
   updateQboAccount(input: UpdateQboAccountInput!): Account!
   softDeleteQboAccount(input: SoftDeleteQboAccountInput!): Account!
 
-  # Clean-Up Mode review mutations
-  approveCleanupRow(rowId: ID!): CleanupRow!
-  overrideCleanupRow(input: OverrideCleanupRowInput!): CleanupRow!
-  rejectCleanupRow(rowId: ID!): Boolean!
+  # Fignode & Clean-Up Mode mutations
+  fignodeCategorize(rowId: ID!, accountId: ID, vendorId: ID, action: String!): FignodeStagingRow!
   approveAllByVendor(sessionId: ID!, vendorId: ID!): Int!
-  postCleanupSession(sessionId: ID!): CleanupPostResult!
+  postFignodeSession(sessionId: ID!): FignodePostResult!
 }
 
-# ─── Clean-Up Mode Types ─────────────────────────────────────────────────────
+# ─── Fignode & Clean-Up Mode Types ───────────────────────────────────────────
 
-type CleanupSession {
+type FignodeSession {
   id: ID!
   realmId: String     # null when QBO is not connected (Excel-only mode)
   fileName: String
@@ -116,10 +103,11 @@ type CleanupSession {
   updatedAt: Time!
 }
 
-type CleanupRow {
+type FignodeStagingRow {
   id: ID!
-  sessionId: ID!
-  realmId: String!
+  sessionId: String
+  realmId: String
+  sourceType: String!
   rawDescription: String
   rawAmount: Float!
   rawDate: Time
@@ -150,13 +138,7 @@ type CleanupRow {
   updatedAt: Time!
 }
 
-input OverrideCleanupRowInput {
-  rowId: ID!
-  vendorId: ID
-  accountId: ID
-}
-
-type CleanupPostResult {
+type FignodePostResult {
   sessionId: ID!
   postedCount: Int!
   errorCount: Int!
@@ -223,10 +205,12 @@ type Query {
   qboVendors(realmId: ID!): [Vendor!]!
   qboVendorsByEntity(entityId: ID!): [Vendor!]!
   qboVendorsByTenant(tenantId: ID!): [Vendor!]!
-  # Clean-Up Mode
+  # Fignode Staging & Clean-Up Mode
   # realmId is optional — omit for sessions without a QBO connection.
-  cleanupSessions(realmId: ID): [CleanupSession!]!
-  cleanupRows(sessionId: ID!, status: String): [CleanupRow!]!
+  fignodeSessions(realmId: ID): [FignodeSession!]!
+  fignodeSession(sessionId: ID!): FignodeSession!
+  fignodeBatch(sessionId: ID, limit: Int!): [FignodeStagingRow!]!
+  stagingRows(sessionId: ID!, status: String): [FignodeStagingRow!]!
   
   # Transaction Data Pull
   transactions(realmId: ID!, status: String): [Transaction!]!

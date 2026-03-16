@@ -12,6 +12,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type appError struct {
+	Code    string
+	Message string
+	Status  int
+}
+
+func (e *appError) Error() string { return e.Message }
+
+func AsAppError(err error) (*appError, bool) {
+	if err == nil {
+		return nil, false
+	}
+	if ae, ok := err.(*appError); ok {
+		return ae, true
+	}
+	return nil, false
+}
+
 type LeaderboardService struct {
 	db     *database.Queries
 	logger *slog.Logger
@@ -41,20 +59,12 @@ func (s *LeaderboardService) refreshPeriod(ctx context.Context, period string) e
 			return err
 		}
 
-		userIDs := make([]pgtype.UUID, len(rows))
 		for i, r := range rows {
-			userIDs[i] = r.UserID
-		}
-		badgeMap := s.buildBadgeMap(ctx, userIDs)
-
-		for i, r := range rows {
-			uid := uuid.UUID(r.UserID.Bytes).String()
 			items = append(items, LeaderboardItem{
 				Rank:    i + 1,
 				Email:   r.Email,
 				Cleared: int(r.Cleared),
 				Streak:  int(r.Streak),
-				Badges:  badgeMap[uid],
 			})
 		}
 
@@ -72,20 +82,12 @@ func (s *LeaderboardService) refreshPeriod(ctx context.Context, period string) e
 			return err
 		}
 
-		userIDs := make([]pgtype.UUID, len(rows))
 		for i, r := range rows {
-			userIDs[i] = r.UserID
-		}
-		badgeMap := s.buildBadgeMap(ctx, userIDs)
-
-		for i, r := range rows {
-			uid := uuid.UUID(r.UserID.Bytes).String()
 			items = append(items, LeaderboardItem{
 				Rank:    i + 1,
 				Email:   r.Email,
 				Cleared: int(r.Cleared),
 				Streak:  int(r.Streak),
-				Badges:  badgeMap[uid],
 			})
 		}
 	default:
@@ -103,24 +105,7 @@ func (s *LeaderboardService) refreshPeriod(ctx context.Context, period string) e
 	})
 }
 
-func (s *LeaderboardService) buildBadgeMap(ctx context.Context, userIDs []pgtype.UUID) map[string][]string {
-	result := make(map[string][]string)
-	if len(userIDs) == 0 {
-		return result
-	}
 
-	badges, err := s.db.GetBadgesByUserIDs(ctx, userIDs)
-	if err != nil {
-		s.logger.Error("failed to fetch badges for leaderboard", "error", err)
-		return result
-	}
-
-	for _, b := range badges {
-		uid := uuid.UUID(b.UserID.Bytes).String()
-		result[uid] = append(result[uid], b.BadgeLabel)
-	}
-	return result
-}
 
 func (s *LeaderboardService) GetLeaderboard(ctx context.Context, period string, currentUserID uuid.UUID) ([]LeaderboardItem, error) {
 	if period != "daily" && period != "weekly" && period != "all-time" {

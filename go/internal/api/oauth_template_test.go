@@ -47,7 +47,7 @@ func TestRenderOAuthCallbackPage(t *testing.T) {
 			data: OAuthTemplateData{State: "INVALID_STATE"},
 			expectedText: []string{
 				"Invalid Request",
-				"Please start the connection process from the desktop app.",
+				"Please restart the connection process from the desktop app.",
 				"color: #FFC814;", // Warning icon styles
 			},
 			absentText: []string{

@@ -204,10 +204,10 @@ func mapDatabaseAccountToModel(a *database.ShadowErpAccount) *model.Account {
 
 // ─── Clean-Up Mode Mappers ────────────────────────────────────────────────────
 
-func mapSessionToModel(s database.ShadowErpCleanupSession) *model.CleanupSession {
-	out := &model.CleanupSession{
+func mapSessionToModel(s database.FignodeStagingSession) *model.FignodeSession {
+	out := &model.FignodeSession{
 		ID:        uuid.UUID(s.ID.Bytes).String(),
-		RowCount:  s.RowCount,
+		RowCount:  int32(s.RowCount),
 		Status:    s.Status,
 		CreatedAt: s.CreatedAt.Time,
 		UpdatedAt: s.UpdatedAt.Time,
@@ -221,15 +221,21 @@ func mapSessionToModel(s database.ShadowErpCleanupSession) *model.CleanupSession
 	return out
 }
 
-func mapStagingRowToModel(r database.ShadowErpCleanupStaging) *model.CleanupRow {
+func mapStagingRowToModel(r database.FignodeStagingTransaction) *model.FignodeStagingRow {
 	realmID := ""
 	if r.RealmID.Valid {
 		realmID = r.RealmID.String
 	}
-	out := &model.CleanupRow{
+	var sessionID *string
+	if r.SessionID.Valid {
+		sid := uuid.UUID(r.SessionID.Bytes).String()
+		sessionID = &sid
+	}
+	out := &model.FignodeStagingRow{
 		ID:          uuid.UUID(r.ID.Bytes).String(),
-		SessionID:   uuid.UUID(r.SessionID.Bytes).String(),
-		RealmID:     realmID,
+		SessionID:   sessionID,
+		RealmID:     &realmID,
+		SourceType:  r.SourceType,
 		RawAmount:   numericToFloat64(r.RawAmount),
 		IsDuplicate: r.DuplicateOf.Valid,
 		IsRecurring: r.IsRecurring,
@@ -243,9 +249,9 @@ func mapStagingRowToModel(r database.ShadowErpCleanupStaging) *model.CleanupRow 
 	if r.RawDate.Valid {
 		out.RawDate = &r.RawDate.Time
 	}
-	if r.RawVendorName.Valid {
-		out.RawVendorName = &r.RawVendorName.String
-	}
+	// Note: RawVendorName not explicitly available in FignodeStagingTransaction;
+	// it merges vendor/desc based on Fignode schema simplicity, so we omit mapping it directly from base model.
+
 	if r.PredictedVendorID.Valid {
 		s := uuid.UUID(r.PredictedVendorID.Bytes).String()
 		out.PredictedVendorID = &s
@@ -254,9 +260,7 @@ func mapStagingRowToModel(r database.ShadowErpCleanupStaging) *model.CleanupRow 
 		s := uuid.UUID(r.PredictedAccountID.Bytes).String()
 		out.PredictedAccountID = &s
 	}
-	if r.NormalizedVendor.Valid {
-		out.NormalizedVendor = &r.NormalizedVendor.String
-	}
+
 	if r.ConfidenceScore.Valid {
 		f, _ := r.ConfidenceScore.Float64Value()
 		out.ConfidenceScore = &f.Float64
@@ -286,15 +290,21 @@ func mapStagingRowToModel(r database.ShadowErpCleanupStaging) *model.CleanupRow 
 	return out
 }
 
-func mapSessionRowToModel(r database.GetSessionRowsRow) *model.CleanupRow {
+func mapSessionRowToModel(r database.GetSessionRowsRow) *model.FignodeStagingRow {
 	rowRealmID := ""
 	if r.RealmID.Valid {
 		rowRealmID = r.RealmID.String
 	}
-	out := &model.CleanupRow{
+	var sessionID *string
+	if r.SessionID.Valid {
+		sid := uuid.UUID(r.SessionID.Bytes).String()
+		sessionID = &sid
+	}
+	out := &model.FignodeStagingRow{
 		ID:          uuid.UUID(r.ID.Bytes).String(),
-		SessionID:   uuid.UUID(r.SessionID.Bytes).String(),
-		RealmID:     rowRealmID,
+		SessionID:   sessionID,
+		RealmID:     &rowRealmID,
+		SourceType:  r.SourceType,
 		RawAmount:   numericToFloat64(r.RawAmount),
 		IsDuplicate: r.DuplicateOf.Valid,
 		IsRecurring: r.IsRecurring,
@@ -308,9 +318,7 @@ func mapSessionRowToModel(r database.GetSessionRowsRow) *model.CleanupRow {
 	if r.RawDate.Valid {
 		out.RawDate = &r.RawDate.Time
 	}
-	if r.RawVendorName.Valid {
-		out.RawVendorName = &r.RawVendorName.String
-	}
+
 	if r.PredictedVendorID.Valid {
 		s := uuid.UUID(r.PredictedVendorID.Bytes).String()
 		out.PredictedVendorID = &s
@@ -328,9 +336,7 @@ func mapSessionRowToModel(r database.GetSessionRowsRow) *model.CleanupRow {
 	if r.PredictedAccountType.Valid {
 		out.PredictedAccountType = &r.PredictedAccountType.String
 	}
-	if r.NormalizedVendor.Valid {
-		out.NormalizedVendor = &r.NormalizedVendor.String
-	}
+
 	if r.ConfidenceScore.Valid {
 		f, _ := r.ConfidenceScore.Float64Value()
 		out.ConfidenceScore = &f.Float64
@@ -366,10 +372,224 @@ func mapSessionRowToModel(r database.GetSessionRowsRow) *model.CleanupRow {
 	return out
 }
 
+func mapGetPendingSessionRowsRowToModel(r database.GetPendingSessionRowsRow) *model.FignodeStagingRow {
+	realmID := ""
+	if r.RealmID.Valid {
+		realmID = r.RealmID.String
+	}
+	var sessionID *string
+	if r.SessionID.Valid {
+		sid := uuid.UUID(r.SessionID.Bytes).String()
+		sessionID = &sid
+	}
+	out := &model.FignodeStagingRow{
+		ID:          uuid.UUID(r.ID.Bytes).String(),
+		SessionID:   sessionID,
+		RealmID:     &realmID,
+		SourceType:  r.SourceType,
+		RawAmount:   numericToFloat64(r.RawAmount),
+		IsDuplicate: r.DuplicateOf.Valid,
+		IsRecurring: r.IsRecurring,
+		Status:      r.Status,
+		CreatedAt:   r.CreatedAt.Time,
+		UpdatedAt:   r.UpdatedAt.Time,
+	}
+	if r.RawDescription.Valid {
+		out.RawDescription = &r.RawDescription.String
+	}
+	if r.RawDate.Valid {
+		out.RawDate = &r.RawDate.Time
+	}
+
+	if r.PredictedVendorID.Valid {
+		s := uuid.UUID(r.PredictedVendorID.Bytes).String()
+		out.PredictedVendorID = &s
+	}
+	if r.PredictedVendorName.Valid {
+		out.PredictedVendorName = &r.PredictedVendorName.String
+	}
+	if r.PredictedAccountID.Valid {
+		s := uuid.UUID(r.PredictedAccountID.Bytes).String()
+		out.PredictedAccountID = &s
+	}
+	if r.PredictedAccountName.Valid {
+		out.PredictedAccountName = &r.PredictedAccountName.String
+	}
+	if r.PredictedAccountType.Valid {
+		out.PredictedAccountType = &r.PredictedAccountType.String
+	}
+
+	if r.ConfidenceScore.Valid {
+		f, _ := r.ConfidenceScore.Float64Value()
+		out.ConfidenceScore = &f.Float64
+	}
+	if r.AiReasoning.Valid {
+		out.AiReasoning = &r.AiReasoning.String
+	}
+	if r.DuplicateOf.Valid {
+		s := uuid.UUID(r.DuplicateOf.Bytes).String()
+		out.DuplicateOf = &s
+	}
+	if len(r.SplitSuggestion) > 0 {
+		s := string(r.SplitSuggestion)
+		out.SplitSuggestion = &s
+	}
+	if r.OverrideVendorID.Valid {
+		s := uuid.UUID(r.OverrideVendorID.Bytes).String()
+		out.OverrideVendorID = &s
+	}
+	if r.OverrideVendorName.Valid {
+		out.OverrideVendorName = &r.OverrideVendorName.String
+	}
+	if r.OverrideAccountID.Valid {
+		s := uuid.UUID(r.OverrideAccountID.Bytes).String()
+		out.OverrideAccountID = &s
+	}
+	if r.OverrideAccountName.Valid {
+		out.OverrideAccountName = &r.OverrideAccountName.String
+	}
+	if r.ErpTransactionID.Valid {
+		out.ErpTransactionID = &r.ErpTransactionID.String
+	}
+	return out
+}
+
+func mapGetCleanupRowRowToModel(r database.GetCleanupRowRow) *model.FignodeStagingRow {
+	realmID := ""
+	if r.RealmID.Valid {
+		realmID = r.RealmID.String
+	}
+	var sessionID *string
+	if r.SessionID.Valid {
+		sid := uuid.UUID(r.SessionID.Bytes).String()
+		sessionID = &sid
+	}
+	out := &model.FignodeStagingRow{
+		ID:          uuid.UUID(r.ID.Bytes).String(),
+		SessionID:   sessionID,
+		RealmID:     &realmID,
+		SourceType:  r.SourceType,
+		RawAmount:   numericToFloat64(r.RawAmount),
+		IsDuplicate: r.DuplicateOf.Valid,
+		IsRecurring: r.IsRecurring,
+		Status:      r.Status,
+		CreatedAt:   r.CreatedAt.Time,
+		UpdatedAt:   r.UpdatedAt.Time,
+	}
+	if r.RawDescription.Valid {
+		out.RawDescription = &r.RawDescription.String
+	}
+	if r.RawDate.Valid {
+		out.RawDate = &r.RawDate.Time
+	}
+	if r.PredictedVendorID.Valid {
+		s := uuid.UUID(r.PredictedVendorID.Bytes).String()
+		out.PredictedVendorID = &s
+	}
+	if r.PredictedAccountID.Valid {
+		s := uuid.UUID(r.PredictedAccountID.Bytes).String()
+		out.PredictedAccountID = &s
+	}
+
+	if r.ConfidenceScore.Valid {
+		f, _ := r.ConfidenceScore.Float64Value()
+		out.ConfidenceScore = &f.Float64
+	}
+	if r.AiReasoning.Valid {
+		out.AiReasoning = &r.AiReasoning.String
+	}
+	if r.DuplicateOf.Valid {
+		s := uuid.UUID(r.DuplicateOf.Bytes).String()
+		out.DuplicateOf = &s
+	}
+	if len(r.SplitSuggestion) > 0 {
+		s := string(r.SplitSuggestion)
+		out.SplitSuggestion = &s
+	}
+	if r.OverrideVendorID.Valid {
+		s := uuid.UUID(r.OverrideVendorID.Bytes).String()
+		out.OverrideVendorID = &s
+	}
+	if r.OverrideAccountID.Valid {
+		s := uuid.UUID(r.OverrideAccountID.Bytes).String()
+		out.OverrideAccountID = &s
+	}
+	if r.ErpTransactionID.Valid {
+		out.ErpTransactionID = &r.ErpTransactionID.String
+	}
+	return out
+}
+
+func mapOverrideCleanupRowRowToModel(r database.OverrideCleanupRowRow) *model.FignodeStagingRow {
+	realmID := ""
+	if r.RealmID.Valid {
+		realmID = r.RealmID.String
+	}
+	var sessionID *string
+	if r.SessionID.Valid {
+		sid := uuid.UUID(r.SessionID.Bytes).String()
+		sessionID = &sid
+	}
+	out := &model.FignodeStagingRow{
+		ID:          uuid.UUID(r.ID.Bytes).String(),
+		SessionID:   sessionID,
+		RealmID:     &realmID,
+		SourceType:  r.SourceType,
+		RawAmount:   numericToFloat64(r.RawAmount),
+		IsDuplicate: r.DuplicateOf.Valid,
+		IsRecurring: r.IsRecurring,
+		Status:      r.Status,
+		CreatedAt:   r.CreatedAt.Time,
+		UpdatedAt:   r.UpdatedAt.Time,
+	}
+	if r.RawDescription.Valid {
+		out.RawDescription = &r.RawDescription.String
+	}
+	if r.RawDate.Valid {
+		out.RawDate = &r.RawDate.Time
+	}
+	if r.PredictedVendorID.Valid {
+		s := uuid.UUID(r.PredictedVendorID.Bytes).String()
+		out.PredictedVendorID = &s
+	}
+	if r.PredictedAccountID.Valid {
+		s := uuid.UUID(r.PredictedAccountID.Bytes).String()
+		out.PredictedAccountID = &s
+	}
+
+	if r.ConfidenceScore.Valid {
+		f, _ := r.ConfidenceScore.Float64Value()
+		out.ConfidenceScore = &f.Float64
+	}
+	if r.AiReasoning.Valid {
+		out.AiReasoning = &r.AiReasoning.String
+	}
+	if r.DuplicateOf.Valid {
+		s := uuid.UUID(r.DuplicateOf.Bytes).String()
+		out.DuplicateOf = &s
+	}
+	if len(r.SplitSuggestion) > 0 {
+		s := string(r.SplitSuggestion)
+		out.SplitSuggestion = &s
+	}
+	if r.OverrideVendorID.Valid {
+		s := uuid.UUID(r.OverrideVendorID.Bytes).String()
+		out.OverrideVendorID = &s
+	}
+	if r.OverrideAccountID.Valid {
+		s := uuid.UUID(r.OverrideAccountID.Bytes).String()
+		out.OverrideAccountID = &s
+	}
+	if r.ErpTransactionID.Valid {
+		out.ErpTransactionID = &r.ErpTransactionID.String
+	}
+	return out
+}
+
 // buildQBOPurchase constructs a QBO Purchase object from a staging row.
 // It resolves the vendor's QBO ID from the DB if vendorPgID is valid.
 func buildQBOPurchase(
-	row database.ShadowErpCleanupStaging,
+	row database.FignodeStagingTransaction,
 	accountERPID string,
 	vendorPgID pgtype.UUID,
 	q *database.Queries,
@@ -424,4 +644,134 @@ func uuidStrFromPG(u pgtype.UUID) string {
 		return ""
 	}
 	return uuid.UUID(u.Bytes).String()
+}
+
+func mapGetPendingRealmRowsRowToModel(r database.GetPendingRealmRowsRow) *model.FignodeStagingRow {
+	realmID := ""
+	if r.RealmID.Valid {
+		realmID = r.RealmID.String
+	}
+	var sessionID *string
+	if r.SessionID.Valid {
+		sid := uuid.UUID(r.SessionID.Bytes).String()
+		sessionID = &sid
+	}
+	out := &model.FignodeStagingRow{
+		ID:          uuid.UUID(r.ID.Bytes).String(),
+		SessionID:   sessionID,
+		RealmID:     &realmID,
+		SourceType:  r.SourceType,
+		RawAmount:   numericToFloat64(r.RawAmount),
+		IsDuplicate: r.DuplicateOf.Valid,
+		IsRecurring: r.IsRecurring,
+		Status:      r.Status,
+		CreatedAt:   r.CreatedAt.Time,
+		UpdatedAt:   r.UpdatedAt.Time,
+	}
+	if r.RawDescription.Valid {
+		out.RawDescription = &r.RawDescription.String
+	}
+	if r.RawDate.Valid {
+		out.RawDate = &r.RawDate.Time
+	}
+
+	if r.PredictedVendorID.Valid {
+		s := uuid.UUID(r.PredictedVendorID.Bytes).String()
+		out.PredictedVendorID = &s
+	}
+	if r.PredictedVendorName.Valid {
+		out.PredictedVendorName = &r.PredictedVendorName.String
+	}
+	if r.PredictedAccountID.Valid {
+		s := uuid.UUID(r.PredictedAccountID.Bytes).String()
+		out.PredictedAccountID = &s
+	}
+	if r.PredictedAccountName.Valid {
+		out.PredictedAccountName = &r.PredictedAccountName.String
+	}
+	if r.PredictedAccountType.Valid {
+		out.PredictedAccountType = &r.PredictedAccountType.String
+	}
+
+	if r.ConfidenceScore.Valid {
+		f, _ := r.ConfidenceScore.Float64Value()
+		out.ConfidenceScore = &f.Float64
+	}
+	if r.AiReasoning.Valid {
+		out.AiReasoning = &r.AiReasoning.String
+	}
+	if r.DuplicateOf.Valid {
+		s := uuid.UUID(r.DuplicateOf.Bytes).String()
+		out.DuplicateOf = &s
+	}
+	if len(r.SplitSuggestion) > 0 {
+		s := string(r.SplitSuggestion)
+		out.SplitSuggestion = &s
+	}
+	if r.OverrideVendorID.Valid {
+		s := uuid.UUID(r.OverrideVendorID.Bytes).String()
+		out.OverrideVendorID = &s
+	}
+	if r.OverrideVendorName.Valid {
+		out.OverrideVendorName = &r.OverrideVendorName.String
+	}
+	if r.OverrideAccountID.Valid {
+		s := uuid.UUID(r.OverrideAccountID.Bytes).String()
+		out.OverrideAccountID = &s
+	}
+	if r.OverrideAccountName.Valid {
+		out.OverrideAccountName = &r.OverrideAccountName.String
+	}
+	if r.ErpTransactionID.Valid {
+		out.ErpTransactionID = &r.ErpTransactionID.String
+	}
+	return out
+}
+
+func (r *queryResolver) FignodeBatch(ctx context.Context, sessionID *string, limit int32) ([]*model.FignodeStagingRow, error) {
+	var out []*model.FignodeStagingRow
+
+	if sessionID != nil && *sessionID != "" {
+		sessionUUID, errParse := uuid.Parse(*sessionID)
+		if errParse != nil {
+			return nil, fmt.Errorf("invalid session id")
+		}
+		rows, err := r.Store.Queries.GetPendingSessionRows(ctx, pgtype.UUID{Bytes: sessionUUID, Valid: true})
+		if err != nil {
+			r.Logger.Error("FignodeBatch error", "error", err)
+			return nil, fmt.Errorf("failed to fetch batch")
+		}
+		max := int(limit)
+		if len(rows) < max {
+			max = len(rows)
+		}
+		for _, row := range rows[:max] {
+			out = append(out, mapGetPendingSessionRowsRowToModel(row))
+		}
+	} else {
+		// Fetch pending rows for currently authenticated user's active Realm
+		entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+		if entityID == uuid.Nil {
+			return nil, fmt.Errorf("unauthorized")
+		}
+		conn, connErr := r.Store.GetQBOConnection(ctx, entityID.String())
+		if connErr != nil {
+			return nil, fmt.Errorf("no qbo connection")
+		}
+
+		arg := database.GetPendingRealmRowsParams{
+			RealmID: pgtype.Text{String: conn.RealmID, Valid: true},
+			Limit:   limit,
+		}
+		realmRows, err := r.Store.Queries.GetPendingRealmRows(ctx, arg)
+		if err != nil {
+			r.Logger.Error("FignodeBatch error", "error", err)
+			return nil, fmt.Errorf("failed fetching realm transactions")
+		}
+		for _, row := range realmRows {
+			out = append(out, mapGetPendingRealmRowsRowToModel(row))
+		}
+	}
+
+	return out, nil
 }

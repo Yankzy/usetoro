@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/Yankzy/usetoro/internal/infrastructure/vector"
+	"github.com/Yankzy/usetoro/internal/infra/vector"
 )
 
 // AccountMatch represents a potential CoA match

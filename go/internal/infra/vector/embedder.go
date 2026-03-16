@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	openai "github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 )
 
 // Embedder provides text embedding capabilities using OpenAI
@@ -16,17 +17,17 @@ type Embedder struct {
 
 // NewEmbedder creates a new embedder client
 // apiKey: OpenAI API key
-// model: embedding model to use (e.g., "text-embedding-3-small")
-// dimensions: output vector dimension (e.g., 1536)
+// model: embedding model to use (e.g., "text-embedding-3-large")
+// dimensions: output vector dimension (e.g., 3072)
 func NewEmbedder(apiKey, model string, dimensions int) (*Embedder, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("OpenAI API key is required")
 	}
 
-	client := openai.NewClient(apiKey)
+	client := openai.NewClient(option.WithAPIKey(apiKey))
 
 	return &Embedder{
-		client:     client,
+		client:     &client,
 		model:      model,
 		dimensions: dimensions,
 	}, nil
@@ -39,12 +40,15 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float32, error) {
 	}
 
 	// Create embedding request
-	req := openai.EmbeddingRequest{
-		Input: []string{text},
-		Model: openai.EmbeddingModel(e.model),
+	req := openai.EmbeddingNewParams{
+		Input: openai.EmbeddingNewParamsInputUnion{
+			OfArrayOfStrings: []string{text},
+		},
+		Model:      openai.EmbeddingModel(e.model),
+		Dimensions: openai.Int(int64(e.dimensions)),
 	}
 
-	resp, err := e.client.CreateEmbeddings(ctx, req)
+	resp, err := e.client.Embeddings.New(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create embedding: %w", err)
 	}
@@ -71,12 +75,15 @@ func (e *Embedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32,
 	}
 
 	// OpenAI supports batch embedding
-	req := openai.EmbeddingRequest{
-		Input: texts,
-		Model: openai.EmbeddingModel(e.model),
+	req := openai.EmbeddingNewParams{
+		Input: openai.EmbeddingNewParamsInputUnion{
+			OfArrayOfStrings: texts,
+		},
+		Model:      openai.EmbeddingModel(e.model),
+		Dimensions: openai.Int(int64(e.dimensions)),
 	}
 
-	resp, err := e.client.CreateEmbeddings(ctx, req)
+	resp, err := e.client.Embeddings.New(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create batch embeddings: %w", err)
 	}

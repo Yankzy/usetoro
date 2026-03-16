@@ -55,7 +55,7 @@ func (w *ERPEventWorker) Start(ctx context.Context) error {
 	// and don't double-process the same event.
 	sub, err := w.js.QueueSubscribe(subject, "toro-erp-event-workers", func(msg *nats.Msg) {
 		w.processMessage(ctx, msg)
-	}, nats.ManualAck())
+	}, nats.ManualAck(), nats.BindStream("TORO_ERP_EVENTS"))
 
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to %s: %w", subject, err)

@@ -25,7 +25,7 @@ import (
 	"github.com/Yankzy/usetoro/cmd/graphql/graph"
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/infrastructure/vector"
+	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
@@ -150,8 +150,8 @@ func run(logger *slog.Logger) error {
 	pineconeAPIKey := os.Getenv("PINECONE_API_KEY")
 	pineconeIndex := cmp.Or(os.Getenv("PINECONE_INDEX"), "toro-ai")
 	openaiAPIKey := os.Getenv("OPENAI_API_KEY")
-	embeddingModel := cmp.Or(os.Getenv("EMBEDDING_MODEL"), "text-embedding-3-small")
-	embeddingDimsStr := cmp.Or(os.Getenv("EMBEDDING_DIMENSIONS"), "1536")
+	embeddingModel := cmp.Or(os.Getenv("EMBEDDING_MODEL"), "text-embedding-3-large")
+	embeddingDimsStr := cmp.Or(os.Getenv("EMBEDDING_DIMENSIONS"), "3072")
 
 	var embeddingDims int
 	fmt.Sscanf(embeddingDimsStr, "%d", &embeddingDims)

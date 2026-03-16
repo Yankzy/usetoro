@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/xuri/excelize/v2"
@@ -77,14 +79,14 @@ func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
 	var rows []rawRow
 	switch {
 	case strings.HasSuffix(name, ".csv"):
-		rows, err = parseCSV(limitedFile)
+		rows, err = parseCSV(ctx, h.LLMClient, h.Logger, limitedFile)
 	case strings.HasSuffix(name, ".xlsx"):
 		data, readErr := io.ReadAll(limitedFile)
 		if readErr != nil {
 			JSONError(w, h.Logger, http.StatusBadRequest, "failed to read file")
 			return
 		}
-		rows, err = parseXLSX(data)
+		rows, err = parseXLSX(ctx, h.LLMClient, h.Logger, data)
 	default:
 		JSONError(w, h.Logger, http.StatusBadRequest, "unsupported file type — use .csv or .xlsx")
 		return
@@ -149,13 +151,19 @@ func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// Determine source type from file extension
+		sourceTypeStr := "csv"
+		if strings.HasSuffix(name, ".xlsx") {
+			sourceTypeStr = "excel" // mapping xlsx to 'excel' as it's more standard
+		}
+
 		if _, insertErr := qtx.InsertCleanupRow(ctx, database.InsertCleanupRowParams{
 			SessionID:      session.ID,
 			RealmID:        realmID,
+			SourceType:     sourceTypeStr,
 			RawDescription: pgtype.Text{String: row.Description, Valid: row.Description != ""},
 			RawAmount:      amountNumeric,
 			RawDate:        rawDate,
-			RawVendorName:  pgtype.Text{String: row.Vendor, Valid: row.Vendor != ""},
 		}); insertErr != nil {
 			h.Logger.Error("cleanup upload: insert row", "error", insertErr)
 			JSONError(w, h.Logger, http.StatusInternalServerError, "internal server error")
@@ -255,7 +263,7 @@ func (h *Handler) HandleCleanupAudit(w http.ResponseWriter, r *http.Request) {
 
 // ─── parsing helpers ──────────────────────────────────────────────────────────
 
-func parseCSV(r io.Reader) ([]rawRow, error) {
+func parseCSV(ctx context.Context, llmClient *ai.LLMClient, logger *slog.Logger, r io.Reader) ([]rawRow, error) {
 	cr := csv.NewReader(r)
 	cr.LazyQuotes = true
 	cr.TrimLeadingSpace = true
@@ -264,9 +272,8 @@ func parseCSV(r io.Reader) ([]rawRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read CSV headers: %w", err)
 	}
-	idx := buildHeaderIndex(headers)
 
-	var rows []rawRow
+	var allRows [][]string
 	for {
 		rec, err := cr.Read()
 		if err == io.EOF {
@@ -275,17 +282,37 @@ func parseCSV(r io.Reader) ([]rawRow, error) {
 		if err != nil {
 			return nil, fmt.Errorf("CSV read error: %w", err)
 		}
-		rows = append(rows, rawRow{
-			Date:        fieldAt(rec, idx["date"]),
-			Description: fieldAt(rec, idx["description"]),
-			Amount:      fieldAt(rec, idx["amount"]),
-			Vendor:      fieldAt(rec, idx["vendor"]),
-		})
+		allRows = append(allRows, rec)
+	}
+	if len(allRows) == 0 {
+		return nil, nil
+	}
+
+	sampleLimit := len(allRows)
+	if sampleLimit > 5 {
+		sampleLimit = 5
+	}
+	
+	systemPrompt := "You are a highly precise data-mapping assistant for an accounting application. Your sole purpose is to output valid JSON matching the exact schema requested, without markdown formatting."
+	userPrompt := buildMappingPrompt(headers, allRows[:sampleLimit])
+
+	var mapping ColumnMapping
+	if err := llmClient.GenerateJSON(ctx, systemPrompt, userPrompt, &mapping); err != nil {
+		return nil, fmt.Errorf("LLM mapping failed: %w", err)
+	}
+
+	logger.Info("🤖 LLM Column Mapping Complete (CSV)",
+		"mapping", mapping,
+	)
+
+	var rows []rawRow
+	for _, rec := range allRows {
+		rows = append(rows, mapRowUsingLLM(rec, mapping))
 	}
 	return rows, nil
 }
 
-func parseXLSX(data []byte) ([]rawRow, error) {
+func parseXLSX(ctx context.Context, llmClient *ai.LLMClient, logger *slog.Logger, data []byte) ([]rawRow, error) {
 	f, err := excelize.OpenReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open xlsx: %w", err)
@@ -304,36 +331,78 @@ func parseXLSX(data []byte) ([]rawRow, error) {
 		return nil, nil
 	}
 
-	idx := buildHeaderIndex(allRows[0])
-	rows := make([]rawRow, 0, len(allRows)-1)
-	for _, rec := range allRows[1:] {
-		rows = append(rows, rawRow{
-			Date:        fieldAt(rec, idx["date"]),
-			Description: fieldAt(rec, idx["description"]),
-			Amount:      fieldAt(rec, idx["amount"]),
-			Vendor:      fieldAt(rec, idx["vendor"]),
-		})
+	headers := allRows[0]
+	dataRows := allRows[1:]
+
+	sampleLimit := len(dataRows)
+	if sampleLimit > 5 {
+		sampleLimit = 5
+	}
+
+	systemPrompt := "You are a highly precise data-mapping assistant for an accounting application. Your sole purpose is to output valid JSON matching the exact schema requested, without markdown formatting."
+	userPrompt := buildMappingPrompt(headers, dataRows[:sampleLimit])
+
+	var mapping ColumnMapping
+	if err := llmClient.GenerateJSON(ctx, systemPrompt, userPrompt, &mapping); err != nil {
+		return nil, fmt.Errorf("LLM mapping failed: %w", err)
+	}
+
+	logger.Info("🤖 LLM Column Mapping Complete (XLSX)",
+		"mapping", mapping,
+	)
+
+	var rows []rawRow
+	for _, rec := range dataRows {
+		rows = append(rows, mapRowUsingLLM(rec, mapping))
 	}
 	return rows, nil
 }
 
-// buildHeaderIndex maps canonical keys ("date","description","amount","vendor") to column indices.
-func buildHeaderIndex(headers []string) map[string]int {
-	idx := map[string]int{"date": -1, "description": -1, "amount": -1, "vendor": -1}
-	for i, h := range headers {
-		lower := strings.ToLower(strings.TrimSpace(h))
-		switch {
-		case lower == "date" || strings.Contains(lower, "txn date") || strings.Contains(lower, "transaction date") || strings.Contains(lower, "post date"):
-			idx["date"] = i
-		case lower == "description" || lower == "memo" || lower == "details" || lower == "narration" || lower == "transaction":
-			idx["description"] = i
-		case lower == "amount" || lower == "debit" || lower == "credit" || lower == "value" || lower == "total":
-			idx["amount"] = i
-		case lower == "vendor" || lower == "payee" || lower == "merchant" || lower == "name":
-			idx["vendor"] = i
-		}
+func mapRowUsingLLM(rec []string, m ColumnMapping) rawRow {
+	row := rawRow{}
+	if m.DateColIdx != nil {
+		row.Date = fieldAt(rec, *m.DateColIdx)
 	}
-	return idx
+	if m.DescriptionColIdx != nil {
+		row.Description = fieldAt(rec, *m.DescriptionColIdx)
+	}
+	if m.VendorColIdx != nil {
+		row.Vendor = fieldAt(rec, *m.VendorColIdx)
+	}
+
+	if m.IsSplitAmount {
+		debitAmt := 0.0
+		creditAmt := 0.0
+		if m.DebitColIdx != nil {
+			str := strings.ReplaceAll(fieldAt(rec, *m.DebitColIdx), ",", "")
+			debitAmt, _ = strconv.ParseFloat(str, 64)
+		}
+		if m.CreditColIdx != nil {
+			str := strings.ReplaceAll(fieldAt(rec, *m.CreditColIdx), ",", "")
+			creditAmt, _ = strconv.ParseFloat(str, 64)
+		}
+
+		finalAmt := creditAmt
+		if m.IsExpensePositive {
+			// standard logic: if expense is positive, subtract it
+			finalAmt -= debitAmt
+		} else {
+			// if it's false, then amounts are likely already properly signed, or add them
+			finalAmt += debitAmt
+		}
+		row.Amount = fmt.Sprintf("%.2f", finalAmt)
+
+	} else if m.AmountColIdx != nil {
+		amtStr := strings.ReplaceAll(fieldAt(rec, *m.AmountColIdx), ",", "")
+		amt, _ := strconv.ParseFloat(amtStr, 64)
+
+		if m.IsExpensePositive {
+			amt = -amt
+		}
+		row.Amount = fmt.Sprintf("%.2f", amt)
+	}
+
+	return row
 }
 
 func fieldAt(rec []string, idx int) string {

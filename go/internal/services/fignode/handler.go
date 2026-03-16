@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/auth"
@@ -19,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/argon2"
-	ratelimit "golang.org/x/time/rate"
 )
 
 type Handler struct {
@@ -31,12 +29,7 @@ type Handler struct {
 	privKey       ed25519.PrivateKey
 	authenticator *auth.Authenticator
 	emailSender   auth.EmailSender
-	batch         *BatchService
-	classify      *ClassifyService
 	leaderboard   *LeaderboardService
-
-	// Per-user rate limiters for classify endpoint
-	classifyLimiters sync.Map
 }
 
 func NewHandler(
@@ -48,8 +41,6 @@ func NewHandler(
 	privKey ed25519.PrivateKey,
 	authenticator *auth.Authenticator,
 	emailSender auth.EmailSender,
-	batch *BatchService,
-	classify *ClassifyService,
 	leaderboard *LeaderboardService,
 ) *Handler {
 	return &Handler{
@@ -61,8 +52,6 @@ func NewHandler(
 		privKey:       privKey,
 		authenticator: authenticator,
 		emailSender:   emailSender,
-		batch:         batch,
-		classify:      classify,
 		leaderboard:   leaderboard,
 	}
 }
@@ -70,15 +59,7 @@ func NewHandler(
 // NewRouter builds the http.ServeMux for all Fignode API routes.
 func NewRouter(h *Handler) http.Handler {
 	mux := http.NewServeMux()
-
-	// Public (no auth)
-	mux.HandleFunc("POST /api/v1/auth/register", h.HandleRegister)
-	mux.HandleFunc("POST /api/v1/auth/login", h.HandleLogin)
-
 	// Protected (require auth)
-	mux.Handle("GET /api/v1/transactions/batch", h.requireAuth(http.HandlerFunc(h.HandleGetBatch)))
-	mux.Handle("POST /api/v1/transactions/{id}/classify", h.requireAuth(http.HandlerFunc(h.HandleClassify)))
-	mux.Handle("POST /api/v1/transactions/{id}/skip", h.requireAuth(http.HandlerFunc(h.HandleSkip)))
 	mux.Handle("GET /api/v1/user/stats", h.requireAuth(http.HandlerFunc(h.HandleGetStats)))
 	mux.Handle("GET /api/v1/leaderboard", h.requireAuth(http.HandlerFunc(h.HandleGetLeaderboard)))
 
@@ -122,26 +103,6 @@ func (h *Handler) requireAuth(next http.Handler) http.Handler {
 func getUserID(r *http.Request) (uuid.UUID, bool) {
 	val, ok := r.Context().Value(auth.UserIDKey).(uuid.UUID)
 	return val, ok
-}
-
-// --- Rate limiting ---
-
-func (h *Handler) rateLimitBatch(userID uuid.UUID) bool {
-	if h.redis == nil {
-		return true
-	}
-	key := "fignode:ratelimit:batch:" + userID.String()
-	ok, err := h.redis.SetNX(context.Background(), key, 1, 5*time.Second).Result()
-	if err != nil {
-		return true // fail open
-	}
-	return ok
-}
-
-func (h *Handler) rateLimitClassify(userID uuid.UUID) bool {
-	key := userID.String()
-	val, _ := h.classifyLimiters.LoadOrStore(key, ratelimit.NewLimiter(10, 10))
-	return val.(*ratelimit.Limiter).Allow()
 }
 
 // --- Handlers ---
@@ -251,90 +212,6 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Token: token,
 		User:  employeePublicToResponse(pub),
 	})
-}
-
-func (h *Handler) HandleGetBatch(w http.ResponseWriter, r *http.Request) {
-	userID, ok := getUserID(r)
-	if !ok {
-		writeError(w, 401, "UNAUTHORIZED", "Missing user context")
-		return
-	}
-
-	if !h.rateLimitBatch(userID) {
-		writeError(w, 429, "RATE_LIMITED", "Too many requests. Try again in a few seconds.")
-		return
-	}
-
-	txns, err := h.batch.ServeBatch(r.Context(), userID)
-	if err != nil {
-		writeError(w, 500, "INTERNAL", "Failed to fetch batch")
-		return
-	}
-
-	writeJSON(w, 200, txns)
-}
-
-func (h *Handler) HandleClassify(w http.ResponseWriter, r *http.Request) {
-	userID, ok := getUserID(r)
-	if !ok {
-		writeError(w, 401, "UNAUTHORIZED", "Missing user context")
-		return
-	}
-
-	if !h.rateLimitClassify(userID) {
-		writeError(w, 429, "RATE_LIMITED", "Too many requests.")
-		return
-	}
-
-	txnID := r.PathValue("id")
-	if txnID == "" {
-		writeError(w, 400, "MISSING_ID", "Transaction ID is required")
-		return
-	}
-
-	var req ClassifyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "INVALID_BODY", "Invalid request body")
-		return
-	}
-
-	resp, err := h.classify.Classify(r.Context(), userID, txnID, req.Category, req.Action)
-	if err != nil {
-		if ae, ok := AsAppError(err); ok {
-			writeError(w, ae.Status, ae.Code, ae.Message)
-			return
-		}
-		h.logger.Error("classify failed", "error", err)
-		writeError(w, 500, "INTERNAL", "Classification failed")
-		return
-	}
-
-	writeJSON(w, 200, resp)
-}
-
-func (h *Handler) HandleSkip(w http.ResponseWriter, r *http.Request) {
-	userID, ok := getUserID(r)
-	if !ok {
-		writeError(w, 401, "UNAUTHORIZED", "Missing user context")
-		return
-	}
-
-	txnID := r.PathValue("id")
-	if txnID == "" {
-		writeError(w, 400, "MISSING_ID", "Transaction ID is required")
-		return
-	}
-
-	pgUID := pgtype.UUID{Bytes: userID, Valid: true}
-	if err := h.db.InsertSkip(r.Context(), database.InsertSkipParams{
-		TransactionID: txnID,
-		UserID:        pgUID,
-	}); err != nil {
-		writeError(w, 500, "INTERNAL", "Failed to record skip")
-		return
-	}
-
-	writeJSON(w, 200, SkipResponse{TransactionID: txnID, Skipped: true})
 }
 
 func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {

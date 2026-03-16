@@ -3,9 +3,7 @@ package fignode
 import (
 	"fmt"
 	"math"
-	"time"
 
-	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -154,38 +152,4 @@ func float64ToNumeric(f float64) pgtype.Numeric {
 	var n pgtype.Numeric
 	n.Scan(fmt.Sprintf("%f", f))
 	return n
-}
-
-func txToResponse(t database.FignodeTransaction, icons *IconService) TransactionResponse {
-	var vendorUrl *string
-	if t.VendorUrl.Valid {
-		vendorUrl = &t.VendorUrl.String
-	}
-
-	return TransactionResponse{
-		ID:                t.ID,
-		RawDescription:    t.RawDescription,
-		Vendor:            t.Vendor,
-		Industry:          t.Industry,
-		IndustryIcon:      icons.GetIcon(t.Industry, t.IndustryIcon),
-		VendorDescription: t.VendorDescription,
-		VendorUrl:         vendorUrl,
-		Location:          t.Location,
-		IsRecurring:       t.IsRecurring,
-		ClientContext: ClientContext{
-			Industry:      t.ClientIndustry,
-			IndustryIcon:  icons.GetIcon(t.ClientIndustry, t.ClientIndustryIcon),
-			BusinessModel: t.BusinessModel,
-			MindsetHint:   t.MindsetHint,
-			AccentColor:   t.AccentColor,
-			AccentBg:      t.AccentBg,
-		},
-		Amount:       numericToFloat64(t.Amount),
-		Date:         t.TxDate.Time.Format(time.DateOnly),
-		AccountType:  t.AccountType,
-		Timestamp:    t.TxTimestamp.Time.Format(time.RFC3339),
-		AiSuggestion: t.AiSuggestion,
-		AiConfidence: numericToFloat64(t.AiConfidence),
-		Status:       t.Status,
-	}
 }

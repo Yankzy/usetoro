@@ -8,38 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type FignodeBadge struct {
-	ID         pgtype.UUID
-	UserID     pgtype.UUID
-	BadgeKey   string
-	BadgeLabel string
-	EarnedAt   pgtype.Timestamptz
-}
-
-type FignodeBatch struct {
-	ID             pgtype.UUID
-	UserID         pgtype.UUID
-	TransactionIds []string
-	ServedAt       pgtype.Timestamptz
-	CompletedAt    pgtype.Timestamptz
-}
-
-type FignodeCategory struct {
-	ID        string
-	Label     string
-	SortOrder int16
-}
-
-type FignodeClassification struct {
-	ID            pgtype.UUID
-	TransactionID string
-	UserID        pgtype.UUID
-	Category      string
-	Action        string
-	ApprovedBy    pgtype.UUID
-	CreatedAt     pgtype.Timestamptz
-}
-
 type FignodeEmployeeProfile struct {
 	UserID           pgtype.UUID
 	FirstName        pgtype.Text
@@ -68,40 +36,53 @@ type FignodeLeaderboardSnapshot struct {
 	Entries    []byte
 }
 
-type FignodeSkip struct {
-	ID            pgtype.UUID
-	TransactionID string
-	UserID        pgtype.UUID
-	CreatedAt     pgtype.Timestamptz
+type FignodeStagingSession struct {
+	ID        pgtype.UUID
+	RealmID   pgtype.Text
+	CreatedBy pgtype.UUID
+	FileName  pgtype.Text
+	RowCount  int32
+	Status    string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }
 
-type FignodeTransaction struct {
-	ID                 string
-	RawDescription     string
-	Vendor             string
-	Industry           string
-	IndustryIcon       string
-	VendorDescription  string
-	VendorUrl          pgtype.Text
-	Location           string
-	IsRecurring        bool
-	ClientIndustry     string
-	ClientIndustryIcon string
-	BusinessModel      string
-	MindsetHint        string
-	AccentColor        string
-	AccentBg           string
-	Amount             pgtype.Numeric
-	TxDate             pgtype.Date
-	AccountType        string
-	TxTimestamp        pgtype.Timestamptz
-	AiSuggestion       string
-	AiConfidence       pgtype.Numeric
-	TruthCategory      pgtype.Text
-	Status             string
-	ClearedAt          pgtype.Timestamptz
-	OwnerUserID        pgtype.UUID
-	CreatedAt          pgtype.Timestamptz
+type FignodeStagingTransaction struct {
+	ID                    pgtype.UUID
+	SessionID             pgtype.UUID
+	RealmID               pgtype.Text
+	SourceType            string
+	RawDescription        pgtype.Text
+	RawAmount             pgtype.Numeric
+	RawDate               pgtype.Date
+	PlaidTransactionID    pgtype.Text
+	PlaidAccountID        pgtype.Text
+	MerchantName          pgtype.Text
+	LogoUrl               pgtype.Text
+	PlaidCategory         pgtype.Text
+	IsPending             pgtype.Bool
+	PredictedVendorID     pgtype.UUID
+	PredictedVendorName   pgtype.Text
+	PredictedCustomerID   pgtype.UUID
+	PredictedCustomerName pgtype.Text
+	PredictedAccountID    pgtype.UUID
+	PredictedAccountName  pgtype.Text
+	ConfidenceScore       pgtype.Numeric
+	AiReasoning           pgtype.Text
+	HumanAction           pgtype.Text
+	SwipedBy              pgtype.UUID
+	SwipedAt              pgtype.Timestamptz
+	OverrideVendorID      pgtype.UUID
+	OverrideCustomerID    pgtype.UUID
+	OverrideAccountID     pgtype.UUID
+	DuplicateOf           pgtype.UUID
+	IsRecurring           bool
+	SplitSuggestion       []byte
+	Status                string
+	ErpTransactionID      pgtype.Text
+	ErrorMessage          pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 type ShadowErpAccount struct {
@@ -115,9 +96,6 @@ type ShadowErpAccount struct {
 	FullyQualifiedName            pgtype.Text
 	Active                        pgtype.Bool
 	SyncToken                     string
-	CreatedAt                     pgtype.Timestamptz
-	UpdatedAt                     pgtype.Timestamptz
-	DeletedAt                     pgtype.Timestamptz
 	Domain                        pgtype.Text
 	CurrencyRefName               pgtype.Text
 	CurrencyRefValue              pgtype.Text
@@ -128,6 +106,9 @@ type ShadowErpAccount struct {
 	CurrentBalance                pgtype.Numeric
 	SubAccount                    pgtype.Bool
 	EventSource                   string
+	CreatedAt                     pgtype.Timestamptz
+	UpdatedAt                     pgtype.Timestamptz
+	DeletedAt                     pgtype.Timestamptz
 }
 
 // Records when users correct AI predictions for learning and synonym updates
@@ -142,8 +123,8 @@ type ShadowErpAiCorrection struct {
 	UserCorrection  string
 	CorrectionType  string
 	ConfidenceScore pgtype.Numeric
-	CreatedAt       pgtype.Timestamptz
 	EventSource     string
+	CreatedAt       pgtype.Timestamptz
 }
 
 type ShadowErpAttachable struct {
@@ -174,45 +155,10 @@ type ShadowErpBill struct {
 	DueDate     pgtype.Date
 	TxnDate     pgtype.Date
 	SyncToken   string
+	EventSource string
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
-	EventSource string
-}
-
-type ShadowErpCleanupSession struct {
-	ID        pgtype.UUID
-	RealmID   pgtype.Text
-	CreatedBy pgtype.UUID
-	FileName  pgtype.Text
-	RowCount  int32
-	Status    string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-}
-
-type ShadowErpCleanupStaging struct {
-	ID                 pgtype.UUID
-	SessionID          pgtype.UUID
-	RealmID            pgtype.Text
-	RawDescription     pgtype.Text
-	RawAmount          pgtype.Numeric
-	RawDate            pgtype.Date
-	RawVendorName      pgtype.Text
-	PredictedVendorID  pgtype.UUID
-	PredictedAccountID pgtype.UUID
-	NormalizedVendor   pgtype.Text
-	ConfidenceScore    pgtype.Numeric
-	AiReasoning        pgtype.Text
-	DuplicateOf        pgtype.UUID
-	IsRecurring        bool
-	SplitSuggestion    []byte
-	OverrideVendorID   pgtype.UUID
-	OverrideAccountID  pgtype.UUID
-	Status             string
-	ErpTransactionID   pgtype.Text
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
 }
 
 // Mirror of QBO CompanyInfo; keyed by realm_id. One row per connected QBO company.
@@ -234,11 +180,11 @@ type ShadowErpCompanyInfo struct {
 	Email                pgtype.Text
 	WebAddr              pgtype.Text
 	NameValues           []byte
+	EventSource          string
 	ErpCreatedTime       pgtype.Timestamptz
 	ErpUpdatedTime       pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
-	EventSource          string
 }
 
 type ShadowErpCustomer struct {
@@ -247,10 +193,10 @@ type ShadowErpCustomer struct {
 	RealmID     string
 	DisplayName string
 	SyncToken   string
+	EventSource string
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
-	EventSource string
 }
 
 type ShadowErpInvoice struct {
@@ -264,29 +210,10 @@ type ShadowErpInvoice struct {
 	DueDate     pgtype.Date
 	TxnDate     pgtype.Date
 	SyncToken   string
+	EventSource string
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
-	EventSource string
-}
-
-type ShadowErpProposedTransaction struct {
-	ID                 pgtype.UUID
-	RealmID            string
-	SourceType         string
-	RawAmount          pgtype.Numeric
-	RawDate            pgtype.Date
-	RawDescription     pgtype.Text
-	PredictedVendorID  pgtype.UUID
-	PredictedAccountID pgtype.UUID
-	ConfidenceScore    pgtype.Numeric
-	AiReasoning        pgtype.Text
-	ErpTransactionID   pgtype.Text
-	SyncStatus         pgtype.Text
-	ErrorMessage       pgtype.Text
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	EventSource        string
 }
 
 type ShadowErpRuleAuditLog struct {
@@ -337,9 +264,9 @@ type ShadowErpVectorSyncState struct {
 	CoaVectorCount      pgtype.Int4
 	VendorVectorCount   pgtype.Int4
 	CustomerVectorCount pgtype.Int4
+	EventSource         string
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
-	EventSource         string
 }
 
 type ShadowErpVendor struct {
@@ -350,10 +277,10 @@ type ShadowErpVendor struct {
 	SyncToken          string
 	LastKnownAccountID pgtype.UUID
 	AiSynonyms         []byte
+	EventSource        string
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	DeletedAt          pgtype.Timestamptz
-	EventSource        string
 }
 
 type ToroCoreAgentMemoryRule struct {
@@ -407,8 +334,10 @@ type ToroCoreErpConnection struct {
 	LastWebhookInvoice pgtype.Timestamptz
 	// Timestamp of last successful Bill webhook. Used by CDC to fetch only missed events.
 	LastWebhookBill pgtype.Timestamptz
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	// Timestamp of last successful Purchase/Transaction webhook. Used by CDC to fetch only missed events.
+	LastWebhookTransaction pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
 }
 
 type ToroCoreRefreshToken struct {
@@ -456,10 +385,10 @@ type ToroCoreUser struct {
 	PasswordHash string
 	FullName     pgtype.Text
 	Role         pgtype.Text
+	UserType     string
 	IsActive     pgtype.Bool
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
-	UserType     string
 }
 
 type ToroCoreWebhooksProviderconnection struct {

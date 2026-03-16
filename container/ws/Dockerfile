@@ -9,13 +9,12 @@ WORKDIR /app
 # Copy go mod files
 COPY go/go.mod go/go.sum ./
 COPY tap /tap
-RUN go mod download
 
-# Copy source code
+# Copy source code and vendor directory
 COPY go/ .
 
-# Build the WebSocket server
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /ws ./cmd/ws
+# Build the WebSocket server using the vendor folder
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /ws ./cmd/ws
 
 # Final stage
 FROM alpine:latest

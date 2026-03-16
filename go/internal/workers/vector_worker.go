@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/cdc"
-	"github.com/Yankzy/usetoro/internal/infrastructure/vector"
+	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/nats-io/nats.go"
+	"strings"
 )
 
 const (
@@ -67,16 +68,19 @@ func (w *VectorSyncWorker) Start(ctx context.Context) error {
 	go w.processBatches(ctx, &wg)
 
 	subjects := []string{
-		"ledger.shadow_erp_accounts.*",
-		"ledger.shadow_erp_vendors.*",
-		"ledger.shadow_erp_customers.*",
+		"ledger.accounts.*",
+		"ledger.vendors.*",
+		"ledger.customers.*",
 	}
 
 	var subs []*nats.Subscription
 	for _, subject := range subjects {
-		sub, err := w.js.QueueSubscribe(subject, "toro-vector-sync-workers", func(msg *nats.Msg) {
+		// Use a unique queue group / durable name per subject to prevent NATS consumer mismatch
+		// We use nats.DeliverNew() to skip the massive backlog and prevent OpenAI API exhaustion
+		queueGroup := "toro-pinecone-v2-" + strings.ReplaceAll(strings.ReplaceAll(subject, ".*", ""), ".", "-")
+		sub, err := w.js.QueueSubscribe(subject, queueGroup, func(msg *nats.Msg) {
 			w.handleEvent(ctx, msg)
-		}, nats.ManualAck())
+		}, nats.ManualAck(), nats.AckWait(5*time.Minute), nats.MaxDeliver(5), nats.BindStream("LEDGER"), nats.DeliverNew())
 
 		if err != nil {
 			return fmt.Errorf("failed to subscribe to %s: %w", subject, err)
@@ -130,7 +134,7 @@ func (w *VectorSyncWorker) handleEvent(ctx context.Context, msg *nats.Msg) {
 	var metadata map[string]interface{}
 
 	switch event.Table {
-	case "shadow_erp_accounts":
+	case "accounts":
 		name, _ := event.Data["name"].(string)
 		fqn, ok := event.Data["fully_qualified_name"].(string)
 		if ok && fqn != "" {
@@ -143,13 +147,13 @@ func (w *VectorSyncWorker) handleEvent(ctx context.Context, msg *nats.Msg) {
 			"entity_type": "account",
 			"type":        event.Data["account_type"],
 		}
-	case "shadow_erp_vendors":
+	case "vendors":
 		text, _ = event.Data["display_name"].(string)
 		metadata = map[string]interface{}{
 			"name":        text,
 			"entity_type": "vendor",
 		}
-	case "shadow_erp_customers":
+	case "customers":
 		text, _ = event.Data["display_name"].(string)
 		metadata = map[string]interface{}{
 			"name":        text,
@@ -173,6 +177,8 @@ func (w *VectorSyncWorker) handleEvent(ctx context.Context, msg *nats.Msg) {
 		metadata: metadata,
 		msg:      msg,
 	}
+
+	w.logger.Info("VectorWorker queued item for batch", "table", event.Table, "id", erpID)
 
 	select {
 	case w.itemChan <- item:
@@ -215,12 +221,18 @@ func (w *VectorSyncWorker) processBatches(ctx context.Context, wg *sync.WaitGrou
 }
 
 func (w *VectorSyncWorker) flushBatch(ctx context.Context, batch []vectorBatchItem) {
+	if len(batch) == 0 {
+		return
+	}
+	w.logger.Info("VectorWorker flushing batch", "size", len(batch))
+
 	// 1. Embed all texts at once
 	texts := make([]string, len(batch))
 	for i, item := range batch {
 		texts[i] = item.text
 	}
 
+	w.logger.Info("VectorWorker embedding batch...")
 	embeddings, err := w.embedder.EmbedBatch(ctx, texts)
 	if err != nil {
 		w.logger.Error("Batch embedding failed", "error", err)
@@ -229,6 +241,7 @@ func (w *VectorSyncWorker) flushBatch(ctx context.Context, batch []vectorBatchIt
 		}
 		return
 	}
+	w.logger.Info("VectorWorker batch embedded successfully")
 
 	// 2. Group by realmID
 	type realmBatch struct {

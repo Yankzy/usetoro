@@ -8,13 +8,19 @@ ENVIRONMENT := $(if $(PRODUCTION_SERVER),prod,dev)
 PROJECT_NAME := be_voxprofit
 
 ifeq ($(ENVIRONMENT),prod)
-	DOCKER_COMPOSE := docker-compose -f container/docker-compose.prod.yml
+	DOCKER_COMPOSE := docker compose -f container/docker-compose.prod.yml
 else
-	DOCKER_COMPOSE := docker-compose -f container/docker-compose.yml
+	DOCKER_COMPOSE := docker compose -f container/docker-compose.yml
 endif
 
 # App Services
 SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker fignode
+
+# Allow passing service names as arguments, e.g., "make rebuild nginx" or "make restart nginx"
+ifneq ($(filter rebuild restart,$(firstword $(MAKECMDGOALS))),)
+  RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  $(eval $(RUN_ARGS):;@:)
+endif
 
 .PHONY: deploy up-scanner down-scanner build-scanner
 deploy:
@@ -80,9 +86,13 @@ envs_used:
 
 
 rebuild: fix-permissions
-	@echo "Enter the service name: "; \
-	read SER_NAME; \
-	$(DOCKER_COMPOSE) up --build -d --force-recreate $$SER_NAME
+	@if [ -n "$(RUN_ARGS)" ]; then \
+		$(DOCKER_COMPOSE) up --build -d --force-recreate $(RUN_ARGS); \
+	else \
+		echo "Enter the service name: "; \
+		read SER_NAME; \
+		$(DOCKER_COMPOSE) up --build -d --force-recreate $$SER_NAME; \
+	fi
 
 build: create_networks
 	$(DOCKER_COMPOSE) build $(SERVICES)
@@ -116,9 +126,13 @@ down:
 	$(DOCKER_COMPOSE) down --remove-orphans
 
 restart:
-	@echo "Enter the service name: "; \
-	read SER_NAME; \
-	$(DOCKER_COMPOSE) restart $$SER_NAME
+	@if [ -n "$(RUN_ARGS)" ]; then \
+		$(DOCKER_COMPOSE) restart $(RUN_ARGS); \
+	else \
+		echo "Enter the service name: "; \
+		read SER_NAME; \
+		$(DOCKER_COMPOSE) restart $$SER_NAME; \
+	fi
 
 psql:
 	@echo "Enter DB_USER: "; \
@@ -172,6 +186,7 @@ test:
 
 clean_db:
 	$(DOCKER_COMPOSE) down
-	sudo rm -rf container/postgres/db_data
+	rm -rf container/postgres/db_data
 	$(MAKE) upd
+	cd go && go build -o ../bin/store-webhook-secret ./cmd/store-webhook-secret/main.go && .. && ./bin/store-webhook-secret
 

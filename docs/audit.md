@@ -16,7 +16,7 @@ The ecosystem utilizes a "Thick Go, Thin Python" microservices pattern around NA
 - **Toro Agent Protocol (TAP)**: A custom NATS-based framework for decentralized, autonomous AI agents to negotiate tasks, execute contracts, and submit cryptographic proofs.
 
 ### Desktop Client (Fignode Pro)
-- **Framework**: Tauri (Rust) and Go bound to React 18 (TypeScript), enabling native desktop performance with shared web components (Tailwind CSS v4, Radix UI).
+- **Framework**: Wails (Go) and React 18 (TypeScript), enabling native desktop performance with shared web components (Tailwind CSS v4, Radix UI).
 - **Core Strategy**: Acts as the command center for the "AI Staff" to oversee intelligence.
 - **Local Resilience**: Built-in SQLite database (`pkg/storage`) to persist encrypted sessions, OAuth tokens, and act as a fast cache layer. Let's the UI sync directly with local APIs exposed by Go (Wails).
 
@@ -31,6 +31,8 @@ The ecosystem utilizes a "Thick Go, Thin Python" microservices pattern around NA
 
 ### Core Platform Infrastructure
 - **Ingestion & Messaging**: Fault-tolerant webhook ingestion buffers to NATS, guaranteeing atomic, isolated execution.
+- **Event-Driven Workers**: Extensively refactored background workers for robust, asynchronous processing, heavily leaning into an event-driven architecture.
+- **Robust Bi-directional Synchronization**: Fully functional Change Data Capture (CDC) pipeline syncing Intuit payloads to Toro and reverse-syncing reviewed categorizations back to QBO SaaS in real-time.
 - **API Capabilities**: A broad GraphQL schema (`schema.graphqls`) is mapped for tenants, users, cleanup-sessions, transactions, ERP accounts, and vendors.
 - **Gamified "Fignode" Service**: A standalone Go service (`cmd/fignode`) handles accounting classification, gamified interactions (badges, streaks, localized leaderboards), and email SMTP abstractions. 
 
@@ -64,19 +66,16 @@ The ecosystem utilizes a "Thick Go, Thin Python" microservices pattern around NA
 
 Pre-seed funding will immediately unblock replacing robust local logic with high-throughput production data pipes. The following milestones represent the roadmap:
 
-### 1. Robust Bi-directional Synchronization
-- **CDC Pipeline Completion**: Fully activating the Change Data Capture (CDC) pipeline to constantly ingest Intuit payloads into the Toro database while enabling *reverse-sync* functions pushing reviewed categorizations back to the QBO SaaS environment in real-time.
-
-### 2. Live State Broadcasting (WebSockets)
+### 1. Live State Broadcasting (WebSockets)
 - **Mobile Notifications**: Current WebSockets notify the Desktop app, but mobile push architecture must be spun up to alert Native applications of refreshed internal queues or new QBO transaction batches instantly.
 - **The "Hound Agent"**: Implementing the Twilio/webhook integration (`dispatchHoundAgent` stub) to natively message/chase a third-party client regarding flagged transactions.
 
-### 3. Desktop Application Advancements
+### 2. Desktop Application Advancements
 - **End-to-End Invoice Creation**: Moving beyond purely reviewing pending transactions to *authoring* manual bills/invoices directly into the Desktop UI for downstream ERP staging.
 - **Multi-Tenant / Multi-Org State**: Switching gracefully between CPA clients on the Desktop app requires a hardened cache-clearing matrix in SQLite.
 - **Advanced Error UIs**: Refining Wails bindings to render elegant offline, network timeout, or ledger discrepancy failures to the user.
 
-### 4. QA & Infrastructure
+### 3. QA & Infrastructure
 - **Comprehensive E2E Test Suite**: There are currently minor unit tests in the Go backend, but rigorous CI end-to-end integration mapping (React Mobile Action -> Go Gate -> NATS Bus -> Python Agent -> DB) is absent.
 - **Automated Deployment CI/CD**: Establishing Apple TestFlight, Google Play, and DMG/AppImage distribution paths across GitHub Actions.
 

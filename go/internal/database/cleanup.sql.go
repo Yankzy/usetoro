@@ -12,30 +12,52 @@ import (
 )
 
 const approveCleanupRow = `-- name: ApproveCleanupRow :one
-UPDATE shadow_erp.cleanup_staging
+UPDATE fignode.staging_transactions
 SET status = 'APPROVED', updated_at = NOW()
 WHERE id = $1
-RETURNING id, session_id, realm_id, raw_description, raw_amount, raw_date, raw_vendor_name,
-          predicted_vendor_id, predicted_account_id, normalized_vendor,
+RETURNING id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date,
+          predicted_vendor_id, predicted_account_id,
           confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
           override_vendor_id, override_account_id, status, erp_transaction_id,
           created_at, updated_at
 `
 
-func (q *Queries) ApproveCleanupRow(ctx context.Context, id pgtype.UUID) (ShadowErpCleanupStaging, error) {
+type ApproveCleanupRowRow struct {
+	ID                 pgtype.UUID
+	SessionID          pgtype.UUID
+	RealmID            pgtype.Text
+	SourceType         string
+	RawDescription     pgtype.Text
+	RawAmount          pgtype.Numeric
+	RawDate            pgtype.Date
+	PredictedVendorID  pgtype.UUID
+	PredictedAccountID pgtype.UUID
+	ConfidenceScore    pgtype.Numeric
+	AiReasoning        pgtype.Text
+	DuplicateOf        pgtype.UUID
+	IsRecurring        bool
+	SplitSuggestion    []byte
+	OverrideVendorID   pgtype.UUID
+	OverrideAccountID  pgtype.UUID
+	Status             string
+	ErpTransactionID   pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) ApproveCleanupRow(ctx context.Context, id pgtype.UUID) (ApproveCleanupRowRow, error) {
 	row := q.db.QueryRow(ctx, approveCleanupRow, id)
-	var i ShadowErpCleanupStaging
+	var i ApproveCleanupRowRow
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
 		&i.RealmID,
+		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.RawVendorName,
 		&i.PredictedVendorID,
 		&i.PredictedAccountID,
-		&i.NormalizedVendor,
 		&i.ConfidenceScore,
 		&i.AiReasoning,
 		&i.DuplicateOf,
@@ -52,7 +74,7 @@ func (q *Queries) ApproveCleanupRow(ctx context.Context, id pgtype.UUID) (Shadow
 }
 
 const bulkApproveByVendor = `-- name: BulkApproveByVendor :many
-UPDATE shadow_erp.cleanup_staging
+UPDATE fignode.staging_transactions
 SET status = 'APPROVED', updated_at = NOW()
 WHERE session_id = $1
   AND predicted_vendor_id = $2
@@ -87,7 +109,7 @@ func (q *Queries) BulkApproveByVendor(ctx context.Context, arg BulkApproveByVend
 
 const createCleanupSession = `-- name: CreateCleanupSession :one
 
-INSERT INTO shadow_erp.cleanup_sessions (realm_id, created_by, file_name, row_count, status)
+INSERT INTO fignode.staging_sessions (realm_id, created_by, file_name, row_count, status)
 VALUES ($4, $1, $2, $3, 'PENDING')
 RETURNING id, realm_id, created_by, file_name, row_count, status, created_at, updated_at
 `
@@ -100,16 +122,16 @@ type CreateCleanupSessionParams struct {
 }
 
 // =========================================================================
-// Cleanup Mode Queries
+// Cleanup Mode Queries (now stored in fignode schema)
 // =========================================================================
-func (q *Queries) CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (ShadowErpCleanupSession, error) {
+func (q *Queries) CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (FignodeStagingSession, error) {
 	row := q.db.QueryRow(ctx, createCleanupSession,
 		arg.CreatedBy,
 		arg.FileName,
 		arg.RowCount,
 		arg.RealmID,
 	)
-	var i ShadowErpCleanupSession
+	var i FignodeStagingSession
 	err := row.Scan(
 		&i.ID,
 		&i.RealmID,
@@ -152,36 +174,58 @@ func (q *Queries) GetAiCorrectionByRawInput(ctx context.Context, arg GetAiCorrec
 }
 
 const getApprovedRows = `-- name: GetApprovedRows :many
-SELECT id, session_id, realm_id, raw_description, raw_amount, raw_date, raw_vendor_name,
-       predicted_vendor_id, predicted_account_id, normalized_vendor,
+SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date,
+       predicted_vendor_id, predicted_account_id,
        confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
        override_vendor_id, override_account_id, status, erp_transaction_id,
        created_at, updated_at
-FROM shadow_erp.cleanup_staging
+FROM fignode.staging_transactions
 WHERE session_id = $1 AND status = 'APPROVED'
 ORDER BY raw_date ASC NULLS LAST, id ASC
 `
 
-func (q *Queries) GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([]ShadowErpCleanupStaging, error) {
+type GetApprovedRowsRow struct {
+	ID                 pgtype.UUID
+	SessionID          pgtype.UUID
+	RealmID            pgtype.Text
+	SourceType         string
+	RawDescription     pgtype.Text
+	RawAmount          pgtype.Numeric
+	RawDate            pgtype.Date
+	PredictedVendorID  pgtype.UUID
+	PredictedAccountID pgtype.UUID
+	ConfidenceScore    pgtype.Numeric
+	AiReasoning        pgtype.Text
+	DuplicateOf        pgtype.UUID
+	IsRecurring        bool
+	SplitSuggestion    []byte
+	OverrideVendorID   pgtype.UUID
+	OverrideAccountID  pgtype.UUID
+	Status             string
+	ErpTransactionID   pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([]GetApprovedRowsRow, error) {
 	rows, err := q.db.Query(ctx, getApprovedRows, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ShadowErpCleanupStaging
+	var items []GetApprovedRowsRow
 	for rows.Next() {
-		var i ShadowErpCleanupStaging
+		var i GetApprovedRowsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.SessionID,
 			&i.RealmID,
+			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
-			&i.RawVendorName,
 			&i.PredictedVendorID,
 			&i.PredictedAccountID,
-			&i.NormalizedVendor,
 			&i.ConfidenceScore,
 			&i.AiReasoning,
 			&i.DuplicateOf,
@@ -205,29 +249,51 @@ func (q *Queries) GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([
 }
 
 const getCleanupRow = `-- name: GetCleanupRow :one
-SELECT id, session_id, realm_id, raw_description, raw_amount, raw_date, raw_vendor_name,
-       predicted_vendor_id, predicted_account_id, normalized_vendor,
+SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date,
+       predicted_vendor_id, predicted_account_id,
        confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
        override_vendor_id, override_account_id, status, erp_transaction_id,
        created_at, updated_at
-FROM shadow_erp.cleanup_staging
+FROM fignode.staging_transactions
 WHERE id = $1
 `
 
-func (q *Queries) GetCleanupRow(ctx context.Context, id pgtype.UUID) (ShadowErpCleanupStaging, error) {
+type GetCleanupRowRow struct {
+	ID                 pgtype.UUID
+	SessionID          pgtype.UUID
+	RealmID            pgtype.Text
+	SourceType         string
+	RawDescription     pgtype.Text
+	RawAmount          pgtype.Numeric
+	RawDate            pgtype.Date
+	PredictedVendorID  pgtype.UUID
+	PredictedAccountID pgtype.UUID
+	ConfidenceScore    pgtype.Numeric
+	AiReasoning        pgtype.Text
+	DuplicateOf        pgtype.UUID
+	IsRecurring        bool
+	SplitSuggestion    []byte
+	OverrideVendorID   pgtype.UUID
+	OverrideAccountID  pgtype.UUID
+	Status             string
+	ErpTransactionID   pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanupRowRow, error) {
 	row := q.db.QueryRow(ctx, getCleanupRow, id)
-	var i ShadowErpCleanupStaging
+	var i GetCleanupRowRow
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
 		&i.RealmID,
+		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.RawVendorName,
 		&i.PredictedVendorID,
 		&i.PredictedAccountID,
-		&i.NormalizedVendor,
 		&i.ConfidenceScore,
 		&i.AiReasoning,
 		&i.DuplicateOf,
@@ -245,13 +311,13 @@ func (q *Queries) GetCleanupRow(ctx context.Context, id pgtype.UUID) (ShadowErpC
 
 const getCleanupSession = `-- name: GetCleanupSession :one
 SELECT id, realm_id, created_by, file_name, row_count, status, created_at, updated_at
-FROM shadow_erp.cleanup_sessions
+FROM fignode.staging_sessions
 WHERE id = $1
 `
 
-func (q *Queries) GetCleanupSession(ctx context.Context, id pgtype.UUID) (ShadowErpCleanupSession, error) {
+func (q *Queries) GetCleanupSession(ctx context.Context, id pgtype.UUID) (FignodeStagingSession, error) {
 	row := q.db.QueryRow(ctx, getCleanupSession, id)
-	var i ShadowErpCleanupSession
+	var i FignodeStagingSession
 	err := row.Scan(
 		&i.ID,
 		&i.RealmID,
@@ -265,37 +331,80 @@ func (q *Queries) GetCleanupSession(ctx context.Context, id pgtype.UUID) (Shadow
 	return i, err
 }
 
-const getPendingSessionRows = `-- name: GetPendingSessionRows :many
-SELECT id, session_id, realm_id, raw_description, raw_amount, raw_date, raw_vendor_name,
-       predicted_vendor_id, predicted_account_id, normalized_vendor,
-       confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
-       override_vendor_id, override_account_id, status, erp_transaction_id,
-       created_at, updated_at
-FROM shadow_erp.cleanup_staging
-WHERE session_id = $1 AND status = 'PENDING'
-ORDER BY raw_date ASC NULLS LAST, id ASC
+const getPendingRealmRows = `-- name: GetPendingRealmRows :many
+SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+       cs.predicted_vendor_id, cs.predicted_account_id,
+       cs.confidence_score, cs.ai_reasoning,
+       cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
+       cs.override_vendor_id, cs.override_account_id,
+       cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
+       v.display_name AS predicted_vendor_name,
+       a.name         AS predicted_account_name,
+       a.account_type AS predicted_account_type,
+       ov.display_name AS override_vendor_name,
+       oa.name         AS override_account_name
+FROM fignode.staging_transactions cs
+LEFT JOIN shadow_erp.vendors  v  ON v.id  = cs.predicted_vendor_id
+LEFT JOIN shadow_erp.accounts a  ON a.id  = cs.predicted_account_id
+LEFT JOIN shadow_erp.vendors  ov ON ov.id = cs.override_vendor_id
+LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
+WHERE cs.realm_id = $1 AND cs.status = 'PENDING'
+ORDER BY cs.raw_date ASC NULLS LAST
+LIMIT $2
 `
 
-func (q *Queries) GetPendingSessionRows(ctx context.Context, sessionID pgtype.UUID) ([]ShadowErpCleanupStaging, error) {
-	rows, err := q.db.Query(ctx, getPendingSessionRows, sessionID)
+type GetPendingRealmRowsParams struct {
+	RealmID pgtype.Text
+	Limit   int32
+}
+
+type GetPendingRealmRowsRow struct {
+	ID                   pgtype.UUID
+	SessionID            pgtype.UUID
+	RealmID              pgtype.Text
+	SourceType           string
+	RawDescription       pgtype.Text
+	RawAmount            pgtype.Numeric
+	RawDate              pgtype.Date
+	PredictedVendorID    pgtype.UUID
+	PredictedAccountID   pgtype.UUID
+	ConfidenceScore      pgtype.Numeric
+	AiReasoning          pgtype.Text
+	DuplicateOf          pgtype.UUID
+	IsRecurring          bool
+	SplitSuggestion      []byte
+	OverrideVendorID     pgtype.UUID
+	OverrideAccountID    pgtype.UUID
+	Status               string
+	ErpTransactionID     pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	PredictedVendorName  pgtype.Text
+	PredictedAccountName pgtype.Text
+	PredictedAccountType pgtype.Text
+	OverrideVendorName   pgtype.Text
+	OverrideAccountName  pgtype.Text
+}
+
+func (q *Queries) GetPendingRealmRows(ctx context.Context, arg GetPendingRealmRowsParams) ([]GetPendingRealmRowsRow, error) {
+	rows, err := q.db.Query(ctx, getPendingRealmRows, arg.RealmID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ShadowErpCleanupStaging
+	var items []GetPendingRealmRowsRow
 	for rows.Next() {
-		var i ShadowErpCleanupStaging
+		var i GetPendingRealmRowsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.SessionID,
 			&i.RealmID,
+			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
-			&i.RawVendorName,
 			&i.PredictedVendorID,
 			&i.PredictedAccountID,
-			&i.NormalizedVendor,
 			&i.ConfidenceScore,
 			&i.AiReasoning,
 			&i.DuplicateOf,
@@ -307,6 +416,106 @@ func (q *Queries) GetPendingSessionRows(ctx context.Context, sessionID pgtype.UU
 			&i.ErpTransactionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PredictedVendorName,
+			&i.PredictedAccountName,
+			&i.PredictedAccountType,
+			&i.OverrideVendorName,
+			&i.OverrideAccountName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPendingSessionRows = `-- name: GetPendingSessionRows :many
+SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+       cs.predicted_vendor_id, cs.predicted_account_id,
+       cs.confidence_score, cs.ai_reasoning,
+       cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
+       cs.override_vendor_id, cs.override_account_id,
+       cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
+       v.display_name AS predicted_vendor_name,
+       a.name         AS predicted_account_name,
+       a.account_type AS predicted_account_type,
+       ov.display_name AS override_vendor_name,
+       oa.name         AS override_account_name
+FROM fignode.staging_transactions cs
+LEFT JOIN shadow_erp.vendors  v  ON v.id  = cs.predicted_vendor_id
+LEFT JOIN shadow_erp.accounts a  ON a.id  = cs.predicted_account_id
+LEFT JOIN shadow_erp.vendors  ov ON ov.id = cs.override_vendor_id
+LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
+WHERE cs.session_id = $1 AND cs.status = 'PENDING'
+ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC
+`
+
+type GetPendingSessionRowsRow struct {
+	ID                   pgtype.UUID
+	SessionID            pgtype.UUID
+	RealmID              pgtype.Text
+	SourceType           string
+	RawDescription       pgtype.Text
+	RawAmount            pgtype.Numeric
+	RawDate              pgtype.Date
+	PredictedVendorID    pgtype.UUID
+	PredictedAccountID   pgtype.UUID
+	ConfidenceScore      pgtype.Numeric
+	AiReasoning          pgtype.Text
+	DuplicateOf          pgtype.UUID
+	IsRecurring          bool
+	SplitSuggestion      []byte
+	OverrideVendorID     pgtype.UUID
+	OverrideAccountID    pgtype.UUID
+	Status               string
+	ErpTransactionID     pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	PredictedVendorName  pgtype.Text
+	PredictedAccountName pgtype.Text
+	PredictedAccountType pgtype.Text
+	OverrideVendorName   pgtype.Text
+	OverrideAccountName  pgtype.Text
+}
+
+func (q *Queries) GetPendingSessionRows(ctx context.Context, sessionID pgtype.UUID) ([]GetPendingSessionRowsRow, error) {
+	rows, err := q.db.Query(ctx, getPendingSessionRows, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetPendingSessionRowsRow
+	for rows.Next() {
+		var i GetPendingSessionRowsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RealmID,
+			&i.SourceType,
+			&i.RawDescription,
+			&i.RawAmount,
+			&i.RawDate,
+			&i.PredictedVendorID,
+			&i.PredictedAccountID,
+			&i.ConfidenceScore,
+			&i.AiReasoning,
+			&i.DuplicateOf,
+			&i.IsRecurring,
+			&i.SplitSuggestion,
+			&i.OverrideVendorID,
+			&i.OverrideAccountID,
+			&i.Status,
+			&i.ErpTransactionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PredictedVendorName,
+			&i.PredictedAccountName,
+			&i.PredictedAccountType,
+			&i.OverrideVendorName,
+			&i.OverrideAccountName,
 		); err != nil {
 			return nil, err
 		}
@@ -319,9 +528,9 @@ func (q *Queries) GetPendingSessionRows(ctx context.Context, sessionID pgtype.UU
 }
 
 const getSessionRows = `-- name: GetSessionRows :many
-SELECT cs.id, cs.session_id, cs.realm_id, cs.raw_description, cs.raw_amount, cs.raw_date,
-       cs.raw_vendor_name, cs.predicted_vendor_id, cs.predicted_account_id,
-       cs.normalized_vendor, cs.confidence_score, cs.ai_reasoning,
+SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+       cs.predicted_vendor_id, cs.predicted_account_id,
+       cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_account_id,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
@@ -330,7 +539,7 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.raw_description, cs.raw_amount, cs.
        a.account_type AS predicted_account_type,
        ov.display_name AS override_vendor_name,
        oa.name         AS override_account_name
-FROM shadow_erp.cleanup_staging cs
+FROM fignode.staging_transactions cs
 LEFT JOIN shadow_erp.vendors  v  ON v.id  = cs.predicted_vendor_id
 LEFT JOIN shadow_erp.accounts a  ON a.id  = cs.predicted_account_id
 LEFT JOIN shadow_erp.vendors  ov ON ov.id = cs.override_vendor_id
@@ -349,13 +558,12 @@ type GetSessionRowsRow struct {
 	ID                   pgtype.UUID
 	SessionID            pgtype.UUID
 	RealmID              pgtype.Text
+	SourceType           string
 	RawDescription       pgtype.Text
 	RawAmount            pgtype.Numeric
 	RawDate              pgtype.Date
-	RawVendorName        pgtype.Text
 	PredictedVendorID    pgtype.UUID
 	PredictedAccountID   pgtype.UUID
-	NormalizedVendor     pgtype.Text
 	ConfidenceScore      pgtype.Numeric
 	AiReasoning          pgtype.Text
 	DuplicateOf          pgtype.UUID
@@ -387,13 +595,12 @@ func (q *Queries) GetSessionRows(ctx context.Context, arg GetSessionRowsParams) 
 			&i.ID,
 			&i.SessionID,
 			&i.RealmID,
+			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
-			&i.RawVendorName,
 			&i.PredictedVendorID,
 			&i.PredictedAccountID,
-			&i.NormalizedVendor,
 			&i.ConfidenceScore,
 			&i.AiReasoning,
 			&i.DuplicateOf,
@@ -432,7 +639,7 @@ SELECT
     COUNT(*) FILTER (WHERE override_vendor_id IS NOT NULL
                         OR override_account_id IS NOT NULL)               AS overridden_rows,
     COALESCE(AVG(confidence_score) FILTER (WHERE confidence_score IS NOT NULL), 0) AS avg_confidence
-FROM shadow_erp.cleanup_staging
+FROM fignode.staging_transactions
 WHERE session_id = $1
 `
 
@@ -464,30 +671,94 @@ func (q *Queries) GetSessionSummary(ctx context.Context, sessionID pgtype.UUID) 
 }
 
 const insertCleanupRow = `-- name: InsertCleanupRow :one
-INSERT INTO shadow_erp.cleanup_staging (
-    session_id, realm_id, raw_description, raw_amount, raw_date, raw_vendor_name, status
+INSERT INTO fignode.staging_transactions (
+    session_id, realm_id, source_type, raw_description, raw_amount, raw_date, status,
+    predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name,
+    confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
+    human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id,
+    erp_transaction_id, error_message, plaid_transaction_id, plaid_account_id,
+    merchant_name, logo_url, plaid_category, is_pending
 )
-VALUES ($1, $6, $2, $3, $4, $5, 'PENDING')
+VALUES (
+    $1, $6, $2, $3, $4, $5, COALESCE($7, 'PENDING'),
+    $8, $9, $10, $11, $12, $13,
+    $14, $15, $16, COALESCE($17, FALSE), $18,
+    $19, $20, $21, $22, $23, $24,
+    $25, $26, $27, $28,
+    $29, $30, $31, COALESCE($32, FALSE)
+)
 RETURNING id
 `
 
 type InsertCleanupRowParams struct {
-	SessionID      pgtype.UUID
-	RawDescription pgtype.Text
-	RawAmount      pgtype.Numeric
-	RawDate        pgtype.Date
-	RawVendorName  pgtype.Text
-	RealmID        pgtype.Text
+	SessionID             pgtype.UUID
+	SourceType            string
+	RawDescription        pgtype.Text
+	RawAmount             pgtype.Numeric
+	RawDate               pgtype.Date
+	RealmID               pgtype.Text
+	Status                interface{}
+	PredictedVendorID     pgtype.UUID
+	PredictedVendorName   pgtype.Text
+	PredictedCustomerID   pgtype.UUID
+	PredictedCustomerName pgtype.Text
+	PredictedAccountID    pgtype.UUID
+	PredictedAccountName  pgtype.Text
+	ConfidenceScore       pgtype.Numeric
+	AiReasoning           pgtype.Text
+	DuplicateOf           pgtype.UUID
+	IsRecurring           interface{}
+	SplitSuggestion       []byte
+	HumanAction           pgtype.Text
+	SwipedBy              pgtype.UUID
+	SwipedAt              pgtype.Timestamptz
+	OverrideVendorID      pgtype.UUID
+	OverrideCustomerID    pgtype.UUID
+	OverrideAccountID     pgtype.UUID
+	ErpTransactionID      pgtype.Text
+	ErrorMessage          pgtype.Text
+	PlaidTransactionID    pgtype.Text
+	PlaidAccountID        pgtype.Text
+	MerchantName          pgtype.Text
+	LogoUrl               pgtype.Text
+	PlaidCategory         pgtype.Text
+	IsPending             interface{}
 }
 
 func (q *Queries) InsertCleanupRow(ctx context.Context, arg InsertCleanupRowParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, insertCleanupRow,
 		arg.SessionID,
+		arg.SourceType,
 		arg.RawDescription,
 		arg.RawAmount,
 		arg.RawDate,
-		arg.RawVendorName,
 		arg.RealmID,
+		arg.Status,
+		arg.PredictedVendorID,
+		arg.PredictedVendorName,
+		arg.PredictedCustomerID,
+		arg.PredictedCustomerName,
+		arg.PredictedAccountID,
+		arg.PredictedAccountName,
+		arg.ConfidenceScore,
+		arg.AiReasoning,
+		arg.DuplicateOf,
+		arg.IsRecurring,
+		arg.SplitSuggestion,
+		arg.HumanAction,
+		arg.SwipedBy,
+		arg.SwipedAt,
+		arg.OverrideVendorID,
+		arg.OverrideCustomerID,
+		arg.OverrideAccountID,
+		arg.ErpTransactionID,
+		arg.ErrorMessage,
+		arg.PlaidTransactionID,
+		arg.PlaidAccountID,
+		arg.MerchantName,
+		arg.LogoUrl,
+		arg.PlaidCategory,
+		arg.IsPending,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
@@ -496,7 +767,7 @@ func (q *Queries) InsertCleanupRow(ctx context.Context, arg InsertCleanupRowPara
 
 const listCleanupSessions = `-- name: ListCleanupSessions :many
 SELECT id, realm_id, created_by, file_name, row_count, status, created_at, updated_at
-FROM shadow_erp.cleanup_sessions
+FROM fignode.staging_sessions
 WHERE ($1::TEXT IS NULL OR realm_id = $1::TEXT)
   AND ($2::UUID IS NULL OR created_by = $2::UUID)
 ORDER BY created_at DESC
@@ -509,15 +780,15 @@ type ListCleanupSessionsParams struct {
 
 // Returns sessions for a realm (when realm_id is provided) OR sessions created by a user
 // (when realm_id is NULL). Exactly one of the two filters will be non-null per call.
-func (q *Queries) ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]ShadowErpCleanupSession, error) {
+func (q *Queries) ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]FignodeStagingSession, error) {
 	rows, err := q.db.Query(ctx, listCleanupSessions, arg.RealmID, arg.CreatedBy)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ShadowErpCleanupSession
+	var items []FignodeStagingSession
 	for rows.Next() {
-		var i ShadowErpCleanupSession
+		var i FignodeStagingSession
 		if err := rows.Scan(
 			&i.ID,
 			&i.RealmID,
@@ -539,7 +810,7 @@ func (q *Queries) ListCleanupSessions(ctx context.Context, arg ListCleanupSessio
 }
 
 const markRowPosted = `-- name: MarkRowPosted :exec
-UPDATE shadow_erp.cleanup_staging
+UPDATE fignode.staging_transactions
 SET status = 'POSTED', erp_transaction_id = $2, updated_at = NOW()
 WHERE id = $1
 `
@@ -555,15 +826,15 @@ func (q *Queries) MarkRowPosted(ctx context.Context, arg MarkRowPostedParams) er
 }
 
 const overrideCleanupRow = `-- name: OverrideCleanupRow :one
-UPDATE shadow_erp.cleanup_staging
+UPDATE fignode.staging_transactions
 SET
     override_vendor_id  = $2,
     override_account_id = $3,
     status              = 'APPROVED',
     updated_at          = NOW()
 WHERE id = $1
-RETURNING id, session_id, realm_id, raw_description, raw_amount, raw_date, raw_vendor_name,
-          predicted_vendor_id, predicted_account_id, normalized_vendor,
+RETURNING id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date,
+          predicted_vendor_id, predicted_account_id,
           confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
           override_vendor_id, override_account_id, status, erp_transaction_id,
           created_at, updated_at
@@ -575,20 +846,42 @@ type OverrideCleanupRowParams struct {
 	OverrideAccountID pgtype.UUID
 }
 
-func (q *Queries) OverrideCleanupRow(ctx context.Context, arg OverrideCleanupRowParams) (ShadowErpCleanupStaging, error) {
+type OverrideCleanupRowRow struct {
+	ID                 pgtype.UUID
+	SessionID          pgtype.UUID
+	RealmID            pgtype.Text
+	SourceType         string
+	RawDescription     pgtype.Text
+	RawAmount          pgtype.Numeric
+	RawDate            pgtype.Date
+	PredictedVendorID  pgtype.UUID
+	PredictedAccountID pgtype.UUID
+	ConfidenceScore    pgtype.Numeric
+	AiReasoning        pgtype.Text
+	DuplicateOf        pgtype.UUID
+	IsRecurring        bool
+	SplitSuggestion    []byte
+	OverrideVendorID   pgtype.UUID
+	OverrideAccountID  pgtype.UUID
+	Status             string
+	ErpTransactionID   pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) OverrideCleanupRow(ctx context.Context, arg OverrideCleanupRowParams) (OverrideCleanupRowRow, error) {
 	row := q.db.QueryRow(ctx, overrideCleanupRow, arg.ID, arg.OverrideVendorID, arg.OverrideAccountID)
-	var i ShadowErpCleanupStaging
+	var i OverrideCleanupRowRow
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
 		&i.RealmID,
+		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.RawVendorName,
 		&i.PredictedVendorID,
 		&i.PredictedAccountID,
-		&i.NormalizedVendor,
 		&i.ConfidenceScore,
 		&i.AiReasoning,
 		&i.DuplicateOf,
@@ -605,7 +898,7 @@ func (q *Queries) OverrideCleanupRow(ctx context.Context, arg OverrideCleanupRow
 }
 
 const rejectCleanupRow = `-- name: RejectCleanupRow :exec
-UPDATE shadow_erp.cleanup_staging
+UPDATE fignode.staging_transactions
 SET status = 'REJECTED', updated_at = NOW()
 WHERE id = $1
 `
@@ -616,7 +909,7 @@ func (q *Queries) RejectCleanupRow(ctx context.Context, id pgtype.UUID) error {
 }
 
 const updateCleanupSessionRowCount = `-- name: UpdateCleanupSessionRowCount :exec
-UPDATE shadow_erp.cleanup_sessions
+UPDATE fignode.staging_sessions
 SET row_count = $2, updated_at = NOW()
 WHERE id = $1
 `
@@ -632,7 +925,7 @@ func (q *Queries) UpdateCleanupSessionRowCount(ctx context.Context, arg UpdateCl
 }
 
 const updateCleanupSessionStatus = `-- name: UpdateCleanupSessionStatus :exec
-UPDATE shadow_erp.cleanup_sessions
+UPDATE fignode.staging_sessions
 SET status = $2, updated_at = NOW()
 WHERE id = $1
 `
@@ -648,16 +941,15 @@ func (q *Queries) UpdateCleanupSessionStatus(ctx context.Context, arg UpdateClea
 }
 
 const updateRowEnrichment = `-- name: UpdateRowEnrichment :exec
-UPDATE shadow_erp.cleanup_staging
+UPDATE fignode.staging_transactions
 SET
     predicted_vendor_id  = $2,
     predicted_account_id = $3,
-    normalized_vendor    = $4,
-    confidence_score     = $5,
-    ai_reasoning         = $6,
-    duplicate_of         = $7,
-    is_recurring         = $8,
-    split_suggestion     = $9,
+    confidence_score     = $4,
+    ai_reasoning         = $5,
+    duplicate_of         = $6,
+    is_recurring         = $7,
+    split_suggestion     = $8,
     status               = 'ENRICHED',
     updated_at           = NOW()
 WHERE id = $1
@@ -667,7 +959,6 @@ type UpdateRowEnrichmentParams struct {
 	ID                 pgtype.UUID
 	PredictedVendorID  pgtype.UUID
 	PredictedAccountID pgtype.UUID
-	NormalizedVendor   pgtype.Text
 	ConfidenceScore    pgtype.Numeric
 	AiReasoning        pgtype.Text
 	DuplicateOf        pgtype.UUID
@@ -680,7 +971,6 @@ func (q *Queries) UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichme
 		arg.ID,
 		arg.PredictedVendorID,
 		arg.PredictedAccountID,
-		arg.NormalizedVendor,
 		arg.ConfidenceScore,
 		arg.AiReasoning,
 		arg.DuplicateOf,

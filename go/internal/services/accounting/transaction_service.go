@@ -18,8 +18,8 @@ import (
 
 // TransactionRepository defines the data access methods needed for idempotency and audit logging
 type TransactionRepository interface {
-	GetProposedTransactionByValues(ctx context.Context, arg database.GetProposedTransactionByValuesParams) (database.ShadowErpProposedTransaction, error)
-	CreateProposedTransaction(ctx context.Context, arg database.CreateProposedTransactionParams) (database.ShadowErpProposedTransaction, error)
+	GetProposedTransactionByValues(ctx context.Context, arg database.GetProposedTransactionByValuesParams) (database.FignodeStagingTransaction, error)
+	CreateProposedTransaction(ctx context.Context, arg database.CreateProposedTransactionParams) (database.FignodeStagingTransaction, error)
 	UpdateProposedTransactionSyncStatus(ctx context.Context, arg database.UpdateProposedTransactionSyncStatusParams) error
 	GetVendorByERPID(ctx context.Context, arg database.GetVendorByERPIDParams) (database.ShadowErpVendor, error)
 	GetAccountByERPID(ctx context.Context, arg database.GetAccountByERPIDParams) (database.ShadowErpAccount, error)
@@ -97,14 +97,17 @@ func (s *TransactionService) postExpense(
 	}
 
 	if s.repo != nil {
+		var realmID pgtype.Text
+		realmID.Scan(input.RealmID)
+
 		// Basic Idempotency check with local DB
 		existing, err := s.repo.GetProposedTransactionByValues(ctx, database.GetProposedTransactionByValuesParams{
-			RealmID:   input.RealmID,
+			RealmID:   realmID,
 			RawDate:   pgtype.Date{Time: txnDate, Valid: true},
 			RawAmount: amountNum,
 		})
 
-		if err == nil && (existing.SyncStatus.String == "SYNCED" || existing.SyncStatus.String == "PENDING_CLASSIFICATION") {
+		if err == nil && (existing.Status == "SYNCED" || existing.Status == "PENDING_CLASSIFICATION") {
 			s.logger.Info("⏭️ Idempotency check passed: Transaction already syncing/synced")
 			return &erp.PostedExpense{
 				ERPEntityID: existing.ErpTransactionID.String,
@@ -113,14 +116,14 @@ func (s *TransactionService) postExpense(
 		}
 
 		proposed, err := s.repo.CreateProposedTransaction(ctx, database.CreateProposedTransactionParams{
-			RealmID:         input.RealmID,
+			RealmID:         realmID,
 			SourceType:      sourceType,
 			RawAmount:       amountNum,
 			RawDate:         pgtype.Date{Time: txnDate, Valid: true},
 			RawDescription:  pgtype.Text{String: input.Description, Valid: input.Description != ""},
 			ConfidenceScore: pgtype.Numeric{Valid: false},
 			AiReasoning:     pgtype.Text{Valid: false},
-			SyncStatus:      pgtype.Text{String: "PENDING_CLASSIFICATION", Valid: true},
+			Status:          "PENDING_CLASSIFICATION",
 		})
 
 		if err != nil {

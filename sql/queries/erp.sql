@@ -73,6 +73,11 @@ UPDATE toro_core.erp_connections
 SET last_webhook_bill = $3, updated_at = NOW()
 WHERE erp_system = $1 AND realm_id = $2;
 
+-- name: UpdateLastWebhookTransaction :exec
+UPDATE toro_core.erp_connections
+SET last_webhook_transaction = $3, updated_at = NOW()
+WHERE erp_system = $1 AND realm_id = $2;
+
 -- name: GetConnectionWithWebhookTimes :one
 SELECT
     erp_system,
@@ -83,7 +88,8 @@ SELECT
     last_webhook_vendor,
     last_webhook_customer,
     last_webhook_invoice,
-    last_webhook_bill
+    last_webhook_bill,
+    last_webhook_transaction
 FROM toro_core.erp_connections
 WHERE erp_system = $1 AND realm_id = $2;
 
@@ -331,10 +337,10 @@ WHERE realm_id = $1
 LIMIT 1;
 
 -- name: GetAmbiguousProposals :many
-SELECT * FROM shadow_erp.proposed_transactions
+SELECT * FROM fignode.staging_transactions
 WHERE realm_id = $1
   AND confidence_score < $2
-  AND sync_status = 'PENDING'
+  AND status = 'PENDING'
 ORDER BY created_at DESC;
 
 -- name: GetVendor :one
@@ -428,7 +434,7 @@ WHERE i.realm_id = $1
 ORDER BY txn_date DESC, created_at DESC;
 
 -- name: GetProposedTransactionByValues :one
-SELECT * FROM shadow_erp.proposed_transactions
+SELECT * FROM fignode.staging_transactions
 WHERE realm_id = $1
   AND predicted_vendor_id = $2
   AND raw_date = $3
@@ -436,34 +442,61 @@ WHERE realm_id = $1
 LIMIT 1;
 
 -- name: CreateProposedTransaction :one
-INSERT INTO shadow_erp.proposed_transactions (
+INSERT INTO fignode.staging_transactions (
     realm_id, source_type, raw_amount, raw_date, raw_description,
     predicted_vendor_id, predicted_account_id, confidence_score,
-    ai_reasoning, sync_status, event_source, created_at, updated_at
+    ai_reasoning, status, created_at, updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'toro_internal', NOW(), NOW()
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
 )
 RETURNING *;
 
 -- name: UpdateProposedTransactionSyncStatus :exec
-UPDATE shadow_erp.proposed_transactions
-SET sync_status = $2, erp_transaction_id = $3, error_message = $4,
-    event_source = 'toro_internal', updated_at = NOW()
+UPDATE fignode.staging_transactions
+SET status = $2, erp_transaction_id = $3, error_message = $4,
+    updated_at = NOW()
 WHERE id = $1;
 
 -- name: GetProposedTransactionByID :one
-SELECT * FROM shadow_erp.proposed_transactions WHERE id = $1;
+SELECT * FROM fignode.staging_transactions WHERE id = $1;
 
 -- name: ApproveProposedTransaction :one
-UPDATE shadow_erp.proposed_transactions
+UPDATE fignode.staging_transactions
 SET predicted_account_id = $2,
     predicted_vendor_id  = $3,
-    sync_status          = 'APPROVED',
-    event_source         = 'toro_internal',
+    status               = 'APPROVED',
     updated_at           = NOW()
 WHERE id = $1
 RETURNING *;
+
+-- name: UpsertStagingTransaction :exec
+INSERT INTO fignode.staging_transactions (
+    realm_id,
+    erp_transaction_id,
+    source_type,
+    raw_amount,
+    raw_date,
+    raw_description,
+    predicted_vendor_id,
+    predicted_account_id,
+    status
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6,
+    (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.erp_id = $7 AND shadow_erp.vendors.realm_id = $1),
+    (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.erp_id = $8 AND shadow_erp.accounts.realm_id = $1),
+    $9
+)
+ON CONFLICT (realm_id, erp_transaction_id) DO UPDATE SET
+    source_type = EXCLUDED.source_type,
+    raw_amount = EXCLUDED.raw_amount,
+    raw_date = EXCLUDED.raw_date,
+    raw_description = EXCLUDED.raw_description,
+    predicted_vendor_id = EXCLUDED.predicted_vendor_id,
+    predicted_account_id = EXCLUDED.predicted_account_id,
+    status = EXCLUDED.status,
+    updated_at = NOW();
 
 -- =========================================================================
 -- Company Info

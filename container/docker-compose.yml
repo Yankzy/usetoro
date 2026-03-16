@@ -12,6 +12,7 @@ services:
       POSTGRES_DB: toro
       POSTGRES_USER: toro
       POSTGRES_PASSWORD: toro_password
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - ./postgres/db_data:/var/lib/postgresql/data
       - ./postgres/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh
@@ -41,6 +42,7 @@ services:
       QBO_REDIRECT_URI: ${QBO_REDIRECT_URI}
       QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION}
       AUTH_PUBLIC_KEY: ${AUTH_PUBLIC_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
 
     volumes:
@@ -96,6 +98,11 @@ services:
       QBO_CLIENT_ID: ${QBO_CLIENT_ID}
       QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
       QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION}
+      PINECONE_API_KEY: ${PINECONE_API_KEY}
+      PINECONE_INDEX: ${PINECONE_INDEX}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
     depends_on:
       db:
@@ -249,9 +256,11 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
       AUTH_PRIVATE_KEY: ${AUTH_PRIVATE_KEY}
       AUTH_PUBLIC_KEY: ${AUTH_PUBLIC_KEY}
       PORT: 8083
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       PGOPTIONS: "-c search_path=fignode,toro_core,shadow_erp,public"
     volumes:
       - ../keys:/keys:ro
@@ -260,6 +269,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      nats-1:
+        condition: service_healthy
     networks:
       - toro-net
 
@@ -309,6 +320,7 @@ services:
 
   migrator:
     image: gomicro/goose
+    restart: on-failure
     command: "goose -dir /migrations postgres \"postgres://toro:toro_password@db/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,fignode,public\" up"
     volumes:
       - ../sql/schema:/migrations

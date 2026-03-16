@@ -63,7 +63,7 @@ func (e *CleanupWorker) Start(ctx context.Context) error {
 
 	sub, err := e.js.QueueSubscribe(subject, enrichConsumer, func(msg *nats.Msg) {
 		e.handleMsg(ctx, msg)
-	}, nats.ManualAck())
+	}, nats.ManualAck(), nats.BindStream("LEDGER"))
 
 	if err != nil {
 		return fmt.Errorf("cleanup enricher CDC subscribe: %w", err)
@@ -190,7 +190,7 @@ func (e *CleanupWorker) enrichSession(ctx context.Context, sessionID, realmID st
 // 1. Check ai_corrections (learning memory) → skip AI if already known.
 // 2. EntityResolver  → vendor match (3-layer: DB → Vector → Fuzzy).
 // 3. CoAMapper       → account match (Pinecone semantic).
-func (e *CleanupWorker) enrichRow(ctx context.Context, realmID string, row database.ShadowErpCleanupStaging) (cleanup.EnrichedRow, error) {
+func (e *CleanupWorker) enrichRow(ctx context.Context, realmID string, row database.GetPendingSessionRowsRow) (cleanup.EnrichedRow, error) {
 	// Use the row's own realm_id (may be empty when QBO is not connected).
 	rowRealm := realmID
 	if rowRealm == "" && row.RealmID.Valid {
@@ -203,19 +203,19 @@ func (e *CleanupWorker) enrichRow(ctx context.Context, realmID string, row datab
 		RealmID:        rowRealm,
 		RawDescription: row.RawDescription.String,
 		RawAmount:      numericToFloat(row.RawAmount),
-		RawVendorName:  row.RawVendorName.String,
+		RawVendorName:  "",
 	}
 	if row.RawDate.Valid {
 		er.RawDate = row.RawDate.Time
 	}
 
 	// Determine the description to send to AI.
-	aiInput := coalesce(row.RawDescription.String, row.RawVendorName.String)
+	aiInput := row.RawDescription.String
 	if aiInput == "" {
 		return er, nil
 	}
 
-	vendorInput := coalesce(row.RawVendorName.String, row.RawDescription.String)
+	vendorInput := row.RawDescription.String
 
 	// ── Layer 0: historical correction lookup ──────────────────────────────
 	// Realm-scoped: skip if no realm (Excel-only session).
@@ -315,7 +315,6 @@ func (e *CleanupWorker) persistEnrichedRow(ctx context.Context, er cleanup.Enric
 		ID:                 rowID,
 		PredictedVendorID:  vendorID,
 		PredictedAccountID: accountID,
-		NormalizedVendor:   pgtype.Text{String: er.NormalizedVendor, Valid: er.NormalizedVendor != ""},
 		ConfidenceScore:    confScore,
 		AiReasoning:        pgtype.Text{String: er.AIReasoning, Valid: er.AIReasoning != ""},
 		DuplicateOf:        dupOf,
@@ -326,13 +325,12 @@ func (e *CleanupWorker) persistEnrichedRow(ctx context.Context, er cleanup.Enric
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-func zeroEnriched(row database.ShadowErpCleanupStaging) cleanup.EnrichedRow {
+func zeroEnriched(row database.GetPendingSessionRowsRow) cleanup.EnrichedRow {
 	er := cleanup.EnrichedRow{
 		ID:             uuidStr(row.ID),
-		SessionID:      uuidStr(row.SessionID),
 		RawDescription: row.RawDescription.String,
 		RawAmount:      numericToFloat(row.RawAmount),
-		RawVendorName:  row.RawVendorName.String,
+		RawVendorName:  "",
 	}
 	if row.RawDate.Valid {
 		er.RawDate = row.RawDate.Time

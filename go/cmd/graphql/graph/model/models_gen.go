@@ -43,53 +43,6 @@ type AuthPayload struct {
 	User         *User     `json:"user"`
 }
 
-type CleanupPostResult struct {
-	SessionID   string   `json:"sessionId"`
-	PostedCount int32    `json:"postedCount"`
-	ErrorCount  int32    `json:"errorCount"`
-	Errors      []string `json:"errors"`
-}
-
-type CleanupRow struct {
-	ID                   string     `json:"id"`
-	SessionID            string     `json:"sessionId"`
-	RealmID              string     `json:"realmId"`
-	RawDescription       *string    `json:"rawDescription,omitempty"`
-	RawAmount            float64    `json:"rawAmount"`
-	RawDate              *time.Time `json:"rawDate,omitempty"`
-	RawVendorName        *string    `json:"rawVendorName,omitempty"`
-	PredictedVendorID    *string    `json:"predictedVendorId,omitempty"`
-	PredictedVendorName  *string    `json:"predictedVendorName,omitempty"`
-	PredictedAccountID   *string    `json:"predictedAccountId,omitempty"`
-	PredictedAccountName *string    `json:"predictedAccountName,omitempty"`
-	PredictedAccountType *string    `json:"predictedAccountType,omitempty"`
-	NormalizedVendor     *string    `json:"normalizedVendor,omitempty"`
-	ConfidenceScore      *float64   `json:"confidenceScore,omitempty"`
-	AiReasoning          *string    `json:"aiReasoning,omitempty"`
-	IsDuplicate          bool       `json:"isDuplicate"`
-	DuplicateOf          *string    `json:"duplicateOf,omitempty"`
-	IsRecurring          bool       `json:"isRecurring"`
-	SplitSuggestion      *string    `json:"splitSuggestion,omitempty"`
-	OverrideVendorID     *string    `json:"overrideVendorId,omitempty"`
-	OverrideVendorName   *string    `json:"overrideVendorName,omitempty"`
-	OverrideAccountID    *string    `json:"overrideAccountId,omitempty"`
-	OverrideAccountName  *string    `json:"overrideAccountName,omitempty"`
-	Status               string     `json:"status"`
-	ErpTransactionID     *string    `json:"erpTransactionId,omitempty"`
-	CreatedAt            time.Time  `json:"createdAt"`
-	UpdatedAt            time.Time  `json:"updatedAt"`
-}
-
-type CleanupSession struct {
-	ID        string    `json:"id"`
-	RealmID   *string   `json:"realmId,omitempty"`
-	FileName  *string   `json:"fileName,omitempty"`
-	RowCount  int32     `json:"rowCount"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-}
-
 type CreateQboAccountInput struct {
 	RealmID          string  `json:"realmId"`
 	Name             string  `json:"name"`
@@ -121,6 +74,54 @@ type EntityMatch struct {
 	EntityType string  `json:"entityType"`
 }
 
+type FignodePostResult struct {
+	SessionID   string   `json:"sessionId"`
+	PostedCount int32    `json:"postedCount"`
+	ErrorCount  int32    `json:"errorCount"`
+	Errors      []string `json:"errors"`
+}
+
+type FignodeSession struct {
+	ID        string    `json:"id"`
+	RealmID   *string   `json:"realmId,omitempty"`
+	FileName  *string   `json:"fileName,omitempty"`
+	RowCount  int32     `json:"rowCount"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type FignodeStagingRow struct {
+	ID                   string     `json:"id"`
+	SessionID            *string    `json:"sessionId,omitempty"`
+	RealmID              *string    `json:"realmId,omitempty"`
+	SourceType           string     `json:"sourceType"`
+	RawDescription       *string    `json:"rawDescription,omitempty"`
+	RawAmount            float64    `json:"rawAmount"`
+	RawDate              *time.Time `json:"rawDate,omitempty"`
+	RawVendorName        *string    `json:"rawVendorName,omitempty"`
+	PredictedVendorID    *string    `json:"predictedVendorId,omitempty"`
+	PredictedVendorName  *string    `json:"predictedVendorName,omitempty"`
+	PredictedAccountID   *string    `json:"predictedAccountId,omitempty"`
+	PredictedAccountName *string    `json:"predictedAccountName,omitempty"`
+	PredictedAccountType *string    `json:"predictedAccountType,omitempty"`
+	NormalizedVendor     *string    `json:"normalizedVendor,omitempty"`
+	ConfidenceScore      *float64   `json:"confidenceScore,omitempty"`
+	AiReasoning          *string    `json:"aiReasoning,omitempty"`
+	IsDuplicate          bool       `json:"isDuplicate"`
+	DuplicateOf          *string    `json:"duplicateOf,omitempty"`
+	IsRecurring          bool       `json:"isRecurring"`
+	SplitSuggestion      *string    `json:"splitSuggestion,omitempty"`
+	OverrideVendorID     *string    `json:"overrideVendorId,omitempty"`
+	OverrideVendorName   *string    `json:"overrideVendorName,omitempty"`
+	OverrideAccountID    *string    `json:"overrideAccountId,omitempty"`
+	OverrideAccountName  *string    `json:"overrideAccountName,omitempty"`
+	Status               string     `json:"status"`
+	ErpTransactionID     *string    `json:"erpTransactionId,omitempty"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
+}
+
 type LoginInput struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
@@ -129,28 +130,9 @@ type LoginInput struct {
 type Mutation struct {
 }
 
-type OverrideCleanupRowInput struct {
-	RowID     string  `json:"rowId"`
-	VendorID  *string `json:"vendorId,omitempty"`
-	AccountID *string `json:"accountId,omitempty"`
-}
-
 type PageInfo struct {
 	HasNextPage     bool `json:"hasNextPage"`
 	HasPreviousPage bool `json:"hasPreviousPage"`
-}
-
-type ProposedTransaction struct {
-	ID                 string     `json:"id"`
-	RealmID            string     `json:"realmId"`
-	SourceType         string     `json:"sourceType"`
-	RawAmount          float64    `json:"rawAmount"`
-	RawDate            *time.Time `json:"rawDate,omitempty"`
-	RawDescription     *string    `json:"rawDescription,omitempty"`
-	PredictedVendorID  *string    `json:"predictedVendorId,omitempty"`
-	PredictedAccountID *string    `json:"predictedAccountId,omitempty"`
-	ConfidenceScore    float64    `json:"confidenceScore"`
-	AiReasoning        *string    `json:"aiReasoning,omitempty"`
 }
 
 type QBOCompany struct {

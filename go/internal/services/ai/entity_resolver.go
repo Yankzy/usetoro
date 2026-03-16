@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/infrastructure/vector"
+	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/lithammer/fuzzysearch/fuzzy"
 )

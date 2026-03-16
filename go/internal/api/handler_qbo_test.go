@@ -107,7 +107,26 @@ func TestExtractParamsTask(t *testing.T) {
 				}
 			}
 
-			handler := NewHandler(logger, nil, nil, nil, 0, nil, authenticator, redisClient, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			handler := NewHandler(
+				logger,
+				nil, // store (not fully tested here)
+				nil, // publisher
+				nil, // verifierRegistry
+				1<<20,
+				nil,           // qboConfig (mocked internally where needed or tested separately)
+				authenticator, // using our real authenticator configured with test keys
+				redisClient,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+			)
 			ctx := &OAuthContext{
 				Request:  req,
 				Response: w,
@@ -197,7 +216,7 @@ func TestHandleGetQBOAuthURL(t *testing.T) {
 				mock.Regexp().ExpectSet("qbo_oauth_state:.*", "valid-jwt-token-123", 10*time.Minute).SetVal("OK")
 			}
 
-			handler := NewHandler(logger, nil, nil, nil, 0, tc.qboConfig, nil, redisClient, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			handler := NewHandler(logger, nil, nil, nil, 0, tc.qboConfig, nil, redisClient, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 			handler.HandleGetQBOAuthURL(w, req)
 
 			if w.Code != tc.expectedCode {

@@ -6,6 +6,10 @@ x-jetstream-default: &jetstream-default
   allow_rollup: false
   allow_direct: true
 
+# CDC (Change Data Capture) Configuration
+cdc_enabled: true
+cdc_sync_interval: 1h
+
 nats:
   streams:
     sync:
@@ -64,6 +68,13 @@ nats:
         subjects:
           - almanac.register
           - almanac.query
+
+    ledger:
+      stream_name: LEDGER
+      jetstream:
+        <<: *jetstream-default
+        subjects:
+          - ledger.>
 agents:
   - did: "did:toro:agent:stripe_processor"
     name: "Stripe Receipt Processor"

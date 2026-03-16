@@ -5,13 +5,12 @@ WORKDIR /app
 # Copy go mod files
 COPY go/go.mod go/go.sum ./
 COPY tap /tap
-RUN go mod download
 
-# Copy source
+# Copy source code and vendor
 COPY go/ .
 
-# Build Fignode with static linking
-RUN CGO_ENABLED=0 GOOS=linux go build -o /fignode ./cmd/fignode/main.go
+# Build the API server
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /fignode ./cmd/fignode/main.go
 
 # Final stage
 FROM alpine:3.19

@@ -12,6 +12,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/ingest"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
+	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
@@ -37,6 +38,7 @@ func NewServer(
 	redisClient *redis.Client,
 	natsClient *queue.Client,
 	cleanupExporter CleanupExporter,
+	llmClient *ai.LLMClient,
 ) *Server {
 	// Initialize webhook verifier registry
 	registry := NewVerifierRegistry()
@@ -63,7 +65,7 @@ func NewServer(
 	h := NewHandler(
 		logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig,
 		authenticator, redisClient, st.Queries, reconciler, attachableService,
-		transactionService, entityService,
+		transactionService, entityService, llmClient,
 		st.Pool, st.Queries, natsClient, cleanupExporter,
 	)
 	mux := NewRouter(h)

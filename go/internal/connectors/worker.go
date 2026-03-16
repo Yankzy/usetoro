@@ -197,21 +197,38 @@ func (w *Worker) processQBOConnected(msg *nats.Msg) {
 
 	bgCtx := context.Background()
 
+	handleSyncError := func(step string, err error) {
+		w.logger.Error(fmt.Sprintf("%s sync failed after QBO connect", step), "error", err, "realm_id", payload.RealmID)
+		if strings.Contains(err.Error(), "no rows in result set") {
+			w.logger.Warn("Tokens not found, dropping connected event", "realm_id", payload.RealmID)
+			msg.Term()
+		} else {
+			msg.Nak()
+		}
+	}
+
 	if err := qboConn.SyncCompanyInfo(bgCtx, payload.EntityID, payload.RealmID); err != nil {
-		w.logger.Error("Company info sync failed after QBO connect", "error", err, "realm_id", payload.RealmID)
-		msg.Nak()
+		handleSyncError("Company info", err)
 		return
 	}
 
 	if _, err := qboConn.SyncFullChartOfAccounts(bgCtx, payload.EntityID, payload.RealmID); err != nil {
-		w.logger.Error("Full CoA sync failed after QBO connect", "error", err, "realm_id", payload.RealmID)
-		msg.Nak()
+		handleSyncError("Full CoA", err)
 		return
 	}
 
 	if _, err := qboConn.SyncFullCustomers(bgCtx, payload.EntityID, payload.RealmID); err != nil {
-		w.logger.Error("Full Customers sync failed after QBO connect", "error", err, "realm_id", payload.RealmID)
-		msg.Nak()
+		handleSyncError("Full Customers", err)
+		return
+	}
+
+	if _, err := qboConn.SyncFullVendors(bgCtx, payload.EntityID, payload.RealmID); err != nil {
+		handleSyncError("Full Vendors", err)
+		return
+	}
+
+	if _, err := qboConn.SyncFullPurchases(bgCtx, payload.EntityID, payload.RealmID); err != nil {
+		handleSyncError("Full Purchases", err)
 		return
 	}
 

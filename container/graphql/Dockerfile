@@ -5,13 +5,12 @@ WORKDIR /app
 # Copy go mod files
 COPY go/go.mod go/go.sum ./
 COPY tap /tap
-RUN go mod download
 
-# Copy source
+# Copy source code and vendor
 COPY go/ .
 
-# Build GraphQL Service
-RUN CGO_ENABLED=0 GOOS=linux go build -o /graphql ./cmd/graphql/server.go
+# Build the GraphQL server
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /graphql ./cmd/graphql/server.go
 
 # Final stage
 FROM alpine:3.19

@@ -16,8 +16,10 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/services/fignode"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -86,6 +88,17 @@ func run(logger *slog.Logger) error {
 	cache := fignode.NewCache(redisClient)
 
 	// =========================================================================
+	// NATS
+	// =========================================================================
+	natsURL := envOr("NATS_URL", "nats://localhost:4222")
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		return fmt.Errorf("nats connection error: %w", err)
+	}
+	defer nc.Close()
+	logger.Info("connected to NATS")
+
+	// =========================================================================
 	// Ed25519 Keys (for JWT signing & verification)
 	// =========================================================================
 	privKey, pubKey, err := loadEdKeys()
@@ -103,11 +116,7 @@ func run(logger *slog.Logger) error {
 	// =========================================================================
 	// Services
 	// =========================================================================
-	iconSvc := fignode.NewIconService(db, logger)
-	batchSvc := fignode.NewBatchService(db, logger, iconSvc)
-	classifySvc := fignode.NewClassifyService(pool, db, logger)
 	leaderboardSvc := fignode.NewLeaderboardService(db, logger)
-	streakSvc := fignode.NewStreakService(db, logger)
 
 	// =========================================================================
 	// Email Sender
@@ -124,8 +133,15 @@ func run(logger *slog.Logger) error {
 	// HTTP Handler
 	// =========================================================================
 	handler := fignode.NewHandler(
-		logger, db, pool, redisClient, cache, privKey,
-		authenticator, emailSender, batchSvc, classifySvc, leaderboardSvc,
+		logger,
+		db,
+		pool,
+		redisClient,
+		cache,
+		privKey, // Passed to both Authenticator & API for token verification vs minting
+		authenticator,
+		emailSender,
+		leaderboardSvc,
 	)
 	router := fignode.NewRouter(handler)
 
@@ -137,11 +153,30 @@ func run(logger *slog.Logger) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// =========================================================================
-	// Background Workers
-	// =========================================================================
-	workers := fignode.NewWorkers(db, leaderboardSvc, streakSvc, logger)
-	workers.Start(ctx)
+	streakSvc := fignode.NewStreakService(db, logger)
+	fignodeWorkers := fignode.NewWorkers(db, leaderboardSvc, streakSvc, logger)
+	fignodeWorkers.Start(ctx)
+
+	// AI CoAMapper initially used for FignodeWorker
+	pineconeKey := os.Getenv("PINECONE_API_KEY")
+	pineconeIndex := os.Getenv("PINECONE_INDEX")
+	openaiKey := os.Getenv("OPENAI_API_KEY")
+
+	if pineconeKey != "" && openaiKey != "" {
+		embeddingModel := envOr("EMBEDDING_MODEL", "text-embedding-3-large")
+		// Using 3072 as default based on text-embedding-3-large
+		_, err := vector.NewPineconeClient(pineconeKey, pineconeIndex, 3072)
+		if err != nil {
+			logger.Warn("Failed to init Pinecone client", "error", err)
+		} else {
+			_, err := vector.NewEmbedder(openaiKey, embeddingModel, 3072)
+			if err != nil {
+				logger.Warn("Failed to init Embedder", "error", err)
+			}
+		}
+	} else {
+		logger.Warn("AI keys missing")
+	}
 
 	// =========================================================================
 	// Startup & Graceful Shutdown

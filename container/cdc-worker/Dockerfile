@@ -5,13 +5,12 @@ WORKDIR /app
 # Copy go mod files
 COPY go/go.mod go/go.sum ./
 COPY tap /tap
-RUN go mod download
 
-# Copy source
+# Copy source code and vendor
 COPY go/ .
 
-# Build CDC Worker with static linking
-RUN CGO_ENABLED=0 GOOS=linux go build -o /cdc-worker ./cmd/cdc-worker/main.go
+# Build the CDC worker
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /cdc-worker ./cmd/cdc-worker/main.go
 
 # Final stage
 FROM alpine:3.19

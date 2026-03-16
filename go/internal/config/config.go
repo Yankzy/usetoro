@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bufio"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -84,9 +86,40 @@ type JetStreamConfig struct {
 	AllowDirect bool          `mapstructure:"allow_direct"`
 }
 
+// loadEnvFile reads a simple .env file and sets environment variables if they are not already set.
+func loadEnvFile(filepath string) {
+	if f, err := os.Open(filepath); err == nil {
+		defer f.Close()
+
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				key := strings.TrimSpace(parts[0])
+				val := strings.TrimSpace(parts[1])
+				val = strings.Trim(val, `"'`)
+
+				if os.Getenv(key) == "" {
+					os.Setenv(key, val)
+				}
+			}
+		}
+	}
+}
+
 // Load reads defaults.yaml and overrides with ENV variables
 func Load() (*Config, error) {
 	v := viper.New()
+
+	// Try loading common .env file locations
+	loadEnvFile(".env")
+	loadEnvFile("../.env")
+	loadEnvFile("./container/.env")
+	loadEnvFile("../container/.env")
 
 	// 1. Tell Viper where to look
 	v.SetConfigName("defaults")
@@ -137,8 +170,8 @@ func Load() (*Config, error) {
 	v.SetDefault("cdc_enabled", true)
 	v.SetDefault("cdc_sync_interval", 1*time.Hour)
 	v.SetDefault("pinecone_index", "toro-ai")
-	v.SetDefault("embedding_model", "text-embedding-3-small")
-	v.SetDefault("embedding_dimensions", 1536)
+	v.SetDefault("embedding_model", "text-embedding-3-large")
+	v.SetDefault("embedding_dimensions", 3072)
 	v.SetDefault("ai_threshold", 0.75)
 	v.SetDefault("nats_erp_event_subject", "toro.erp.events.*")
 
@@ -162,6 +195,19 @@ func Load() (*Config, error) {
 
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+
+	// Determine if we are running inside Docker
+	inDocker := false
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		inDocker = true
+	}
+
+	// Automatically map internal Docker DSNs to localhost equivalents if running on host Mac
+	if !inDocker {
+		c.DatabaseURL = strings.Replace(c.DatabaseURL, "@db:5432", "@localhost:5435", 1)
+		// Usually NATS cluster URL comes as a list, replacing just the first node or entire string if it contains it
+		c.NATS.URL = strings.Replace(c.NATS.URL, "nats://nats-1:4222", "nats://localhost:4222", 1)
 	}
 
 	if c.NATS.URL == "" {

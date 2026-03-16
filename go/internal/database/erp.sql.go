@@ -12,14 +12,13 @@ import (
 )
 
 const approveProposedTransaction = `-- name: ApproveProposedTransaction :one
-UPDATE shadow_erp.proposed_transactions
+UPDATE fignode.staging_transactions
 SET predicted_account_id = $2,
     predicted_vendor_id  = $3,
-    sync_status          = 'APPROVED',
-    event_source         = 'toro_internal',
+    status               = 'APPROVED',
     updated_at           = NOW()
 WHERE id = $1
-RETURNING id, realm_id, source_type, raw_amount, raw_date, raw_description, predicted_vendor_id, predicted_account_id, confidence_score, ai_reasoning, erp_transaction_id, sync_status, error_message, created_at, updated_at, event_source
+RETURNING id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at
 `
 
 type ApproveProposedTransactionParams struct {
@@ -28,44 +27,63 @@ type ApproveProposedTransactionParams struct {
 	PredictedVendorID  pgtype.UUID
 }
 
-func (q *Queries) ApproveProposedTransaction(ctx context.Context, arg ApproveProposedTransactionParams) (ShadowErpProposedTransaction, error) {
+func (q *Queries) ApproveProposedTransaction(ctx context.Context, arg ApproveProposedTransactionParams) (FignodeStagingTransaction, error) {
 	row := q.db.QueryRow(ctx, approveProposedTransaction, arg.ID, arg.PredictedAccountID, arg.PredictedVendorID)
-	var i ShadowErpProposedTransaction
+	var i FignodeStagingTransaction
 	err := row.Scan(
 		&i.ID,
+		&i.SessionID,
 		&i.RealmID,
 		&i.SourceType,
+		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.RawDescription,
+		&i.PlaidTransactionID,
+		&i.PlaidAccountID,
+		&i.MerchantName,
+		&i.LogoUrl,
+		&i.PlaidCategory,
+		&i.IsPending,
 		&i.PredictedVendorID,
+		&i.PredictedVendorName,
+		&i.PredictedCustomerID,
+		&i.PredictedCustomerName,
 		&i.PredictedAccountID,
+		&i.PredictedAccountName,
 		&i.ConfidenceScore,
 		&i.AiReasoning,
+		&i.HumanAction,
+		&i.SwipedBy,
+		&i.SwipedAt,
+		&i.OverrideVendorID,
+		&i.OverrideCustomerID,
+		&i.OverrideAccountID,
+		&i.DuplicateOf,
+		&i.IsRecurring,
+		&i.SplitSuggestion,
+		&i.Status,
 		&i.ErpTransactionID,
-		&i.SyncStatus,
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const createProposedTransaction = `-- name: CreateProposedTransaction :one
-INSERT INTO shadow_erp.proposed_transactions (
+INSERT INTO fignode.staging_transactions (
     realm_id, source_type, raw_amount, raw_date, raw_description,
     predicted_vendor_id, predicted_account_id, confidence_score,
-    ai_reasoning, sync_status, event_source, created_at, updated_at
+    ai_reasoning, status, created_at, updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'toro_internal', NOW(), NOW()
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
 )
-RETURNING id, realm_id, source_type, raw_amount, raw_date, raw_description, predicted_vendor_id, predicted_account_id, confidence_score, ai_reasoning, erp_transaction_id, sync_status, error_message, created_at, updated_at, event_source
+RETURNING id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at
 `
 
 type CreateProposedTransactionParams struct {
-	RealmID            string
+	RealmID            pgtype.Text
 	SourceType         string
 	RawAmount          pgtype.Numeric
 	RawDate            pgtype.Date
@@ -74,10 +92,10 @@ type CreateProposedTransactionParams struct {
 	PredictedAccountID pgtype.UUID
 	ConfidenceScore    pgtype.Numeric
 	AiReasoning        pgtype.Text
-	SyncStatus         pgtype.Text
+	Status             string
 }
 
-func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreateProposedTransactionParams) (ShadowErpProposedTransaction, error) {
+func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreateProposedTransactionParams) (FignodeStagingTransaction, error) {
 	row := q.db.QueryRow(ctx, createProposedTransaction,
 		arg.RealmID,
 		arg.SourceType,
@@ -88,32 +106,51 @@ func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreatePropo
 		arg.PredictedAccountID,
 		arg.ConfidenceScore,
 		arg.AiReasoning,
-		arg.SyncStatus,
+		arg.Status,
 	)
-	var i ShadowErpProposedTransaction
+	var i FignodeStagingTransaction
 	err := row.Scan(
 		&i.ID,
+		&i.SessionID,
 		&i.RealmID,
 		&i.SourceType,
+		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.RawDescription,
+		&i.PlaidTransactionID,
+		&i.PlaidAccountID,
+		&i.MerchantName,
+		&i.LogoUrl,
+		&i.PlaidCategory,
+		&i.IsPending,
 		&i.PredictedVendorID,
+		&i.PredictedVendorName,
+		&i.PredictedCustomerID,
+		&i.PredictedCustomerName,
 		&i.PredictedAccountID,
+		&i.PredictedAccountName,
 		&i.ConfidenceScore,
 		&i.AiReasoning,
+		&i.HumanAction,
+		&i.SwipedBy,
+		&i.SwipedAt,
+		&i.OverrideVendorID,
+		&i.OverrideCustomerID,
+		&i.OverrideAccountID,
+		&i.DuplicateOf,
+		&i.IsRecurring,
+		&i.SplitSuggestion,
+		&i.Status,
 		&i.ErpTransactionID,
-		&i.SyncStatus,
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const getAccountByERPID = `-- name: GetAccountByERPID :one
-SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source FROM shadow_erp.accounts
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -136,9 +173,6 @@ func (q *Queries) GetAccountByERPID(ctx context.Context, arg GetAccountByERPIDPa
 		&i.FullyQualifiedName,
 		&i.Active,
 		&i.SyncToken,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
 		&i.Domain,
 		&i.CurrencyRefName,
 		&i.CurrencyRefValue,
@@ -149,12 +183,15 @@ func (q *Queries) GetAccountByERPID(ctx context.Context, arg GetAccountByERPIDPa
 		&i.CurrentBalance,
 		&i.SubAccount,
 		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getAccountsByRealm = `-- name: GetAccountsByRealm :many
-SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source FROM shadow_erp.accounts
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
 WHERE realm_id = $1 AND deleted_at IS NULL
 ORDER BY name ASC
 `
@@ -179,9 +216,6 @@ func (q *Queries) GetAccountsByRealm(ctx context.Context, realmID string) ([]Sha
 			&i.FullyQualifiedName,
 			&i.Active,
 			&i.SyncToken,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
 			&i.Domain,
 			&i.CurrencyRefName,
 			&i.CurrencyRefValue,
@@ -192,6 +226,9 @@ func (q *Queries) GetAccountsByRealm(ctx context.Context, realmID string) ([]Sha
 			&i.CurrentBalance,
 			&i.SubAccount,
 			&i.EventSource,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -204,7 +241,7 @@ func (q *Queries) GetAccountsByRealm(ctx context.Context, realmID string) ([]Sha
 }
 
 const getAccountsUpdatedSince = `-- name: GetAccountsUpdatedSince :many
-SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source FROM shadow_erp.accounts
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
 ORDER BY updated_at ASC
 `
@@ -234,9 +271,6 @@ func (q *Queries) GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUp
 			&i.FullyQualifiedName,
 			&i.Active,
 			&i.SyncToken,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
 			&i.Domain,
 			&i.CurrencyRefName,
 			&i.CurrencyRefValue,
@@ -247,6 +281,9 @@ func (q *Queries) GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUp
 			&i.CurrentBalance,
 			&i.SubAccount,
 			&i.EventSource,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -259,7 +296,7 @@ func (q *Queries) GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUp
 }
 
 const getAllAccountsForRealms = `-- name: GetAllAccountsForRealms :many
-SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, created_at, updated_at, deleted_at, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source FROM shadow_erp.accounts
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
 WHERE realm_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY name ASC
 `
@@ -284,9 +321,6 @@ func (q *Queries) GetAllAccountsForRealms(ctx context.Context, realmIds []string
 			&i.FullyQualifiedName,
 			&i.Active,
 			&i.SyncToken,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
 			&i.Domain,
 			&i.CurrencyRefName,
 			&i.CurrencyRefValue,
@@ -297,6 +331,9 @@ func (q *Queries) GetAllAccountsForRealms(ctx context.Context, realmIds []string
 			&i.CurrentBalance,
 			&i.SubAccount,
 			&i.EventSource,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -347,7 +384,7 @@ func (q *Queries) GetAllActiveConnections(ctx context.Context) ([]GetAllActiveCo
 }
 
 const getAllCustomersForRealms = `-- name: GetAllCustomersForRealms :many
-SELECT id, erp_id, realm_id, display_name, sync_token, created_at, updated_at, deleted_at, event_source FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
 WHERE realm_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -367,10 +404,10 @@ func (q *Queries) GetAllCustomersForRealms(ctx context.Context, realmIds []strin
 			&i.RealmID,
 			&i.DisplayName,
 			&i.SyncToken,
+			&i.EventSource,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
-			&i.EventSource,
 		); err != nil {
 			return nil, err
 		}
@@ -383,7 +420,7 @@ func (q *Queries) GetAllCustomersForRealms(ctx context.Context, realmIds []strin
 }
 
 const getAllVendorsForRealms = `-- name: GetAllVendorsForRealms :many
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at, event_source FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
 WHERE realm_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -405,10 +442,10 @@ func (q *Queries) GetAllVendorsForRealms(ctx context.Context, realmIds []string)
 			&i.SyncToken,
 			&i.LastKnownAccountID,
 			&i.AiSynonyms,
+			&i.EventSource,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
-			&i.EventSource,
 		); err != nil {
 			return nil, err
 		}
@@ -421,44 +458,63 @@ func (q *Queries) GetAllVendorsForRealms(ctx context.Context, realmIds []string)
 }
 
 const getAmbiguousProposals = `-- name: GetAmbiguousProposals :many
-SELECT id, realm_id, source_type, raw_amount, raw_date, raw_description, predicted_vendor_id, predicted_account_id, confidence_score, ai_reasoning, erp_transaction_id, sync_status, error_message, created_at, updated_at, event_source FROM shadow_erp.proposed_transactions
+SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at FROM fignode.staging_transactions
 WHERE realm_id = $1
   AND confidence_score < $2
-  AND sync_status = 'PENDING'
+  AND status = 'PENDING'
 ORDER BY created_at DESC
 `
 
 type GetAmbiguousProposalsParams struct {
-	RealmID         string
+	RealmID         pgtype.Text
 	ConfidenceScore pgtype.Numeric
 }
 
-func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousProposalsParams) ([]ShadowErpProposedTransaction, error) {
+func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousProposalsParams) ([]FignodeStagingTransaction, error) {
 	rows, err := q.db.Query(ctx, getAmbiguousProposals, arg.RealmID, arg.ConfidenceScore)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ShadowErpProposedTransaction
+	var items []FignodeStagingTransaction
 	for rows.Next() {
-		var i ShadowErpProposedTransaction
+		var i FignodeStagingTransaction
 		if err := rows.Scan(
 			&i.ID,
+			&i.SessionID,
 			&i.RealmID,
 			&i.SourceType,
+			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
-			&i.RawDescription,
+			&i.PlaidTransactionID,
+			&i.PlaidAccountID,
+			&i.MerchantName,
+			&i.LogoUrl,
+			&i.PlaidCategory,
+			&i.IsPending,
 			&i.PredictedVendorID,
+			&i.PredictedVendorName,
+			&i.PredictedCustomerID,
+			&i.PredictedCustomerName,
 			&i.PredictedAccountID,
+			&i.PredictedAccountName,
 			&i.ConfidenceScore,
 			&i.AiReasoning,
+			&i.HumanAction,
+			&i.SwipedBy,
+			&i.SwipedAt,
+			&i.OverrideVendorID,
+			&i.OverrideCustomerID,
+			&i.OverrideAccountID,
+			&i.DuplicateOf,
+			&i.IsRecurring,
+			&i.SplitSuggestion,
+			&i.Status,
 			&i.ErpTransactionID,
-			&i.SyncStatus,
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.EventSource,
 		); err != nil {
 			return nil, err
 		}
@@ -471,7 +527,7 @@ func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousPro
 }
 
 const getBillByERPID = `-- name: GetBillByERPID :one
-SELECT id, erp_id, realm_id, vendor_id, doc_number, total_amount, balance, due_date, txn_date, sync_token, created_at, updated_at, deleted_at, event_source FROM shadow_erp.bills
+SELECT id, erp_id, realm_id, vendor_id, doc_number, total_amount, balance, due_date, txn_date, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.bills
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -494,16 +550,16 @@ func (q *Queries) GetBillByERPID(ctx context.Context, arg GetBillByERPIDParams) 
 		&i.DueDate,
 		&i.TxnDate,
 		&i.SyncToken,
+		&i.EventSource,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const getCompanyInfo = `-- name: GetCompanyInfo :one
-SELECT id, realm_id, erp_id, sync_token, company_name, legal_name, domain, country, fiscal_year_start_month, company_start_date, supported_languages, company_addr, legal_addr, primary_phone, email, web_addr, name_values, erp_created_time, erp_updated_time, created_at, updated_at, event_source FROM shadow_erp.company_info
+SELECT id, realm_id, erp_id, sync_token, company_name, legal_name, domain, country, fiscal_year_start_month, company_start_date, supported_languages, company_addr, legal_addr, primary_phone, email, web_addr, name_values, event_source, erp_created_time, erp_updated_time, created_at, updated_at FROM shadow_erp.company_info
 WHERE realm_id = $1
 `
 
@@ -528,11 +584,11 @@ func (q *Queries) GetCompanyInfo(ctx context.Context, realmID string) (ShadowErp
 		&i.Email,
 		&i.WebAddr,
 		&i.NameValues,
+		&i.EventSource,
 		&i.ErpCreatedTime,
 		&i.ErpUpdatedTime,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
@@ -547,7 +603,8 @@ SELECT
     last_webhook_vendor,
     last_webhook_customer,
     last_webhook_invoice,
-    last_webhook_bill
+    last_webhook_bill,
+    last_webhook_transaction
 FROM toro_core.erp_connections
 WHERE erp_system = $1 AND realm_id = $2
 `
@@ -558,15 +615,16 @@ type GetConnectionWithWebhookTimesParams struct {
 }
 
 type GetConnectionWithWebhookTimesRow struct {
-	ErpSystem           string
-	RealmID             string
-	EntityID            pgtype.UUID
-	LastSyncTimestamp   pgtype.Timestamptz
-	LastWebhookAccount  pgtype.Timestamptz
-	LastWebhookVendor   pgtype.Timestamptz
-	LastWebhookCustomer pgtype.Timestamptz
-	LastWebhookInvoice  pgtype.Timestamptz
-	LastWebhookBill     pgtype.Timestamptz
+	ErpSystem              string
+	RealmID                string
+	EntityID               pgtype.UUID
+	LastSyncTimestamp      pgtype.Timestamptz
+	LastWebhookAccount     pgtype.Timestamptz
+	LastWebhookVendor      pgtype.Timestamptz
+	LastWebhookCustomer    pgtype.Timestamptz
+	LastWebhookInvoice     pgtype.Timestamptz
+	LastWebhookBill        pgtype.Timestamptz
+	LastWebhookTransaction pgtype.Timestamptz
 }
 
 func (q *Queries) GetConnectionWithWebhookTimes(ctx context.Context, arg GetConnectionWithWebhookTimesParams) (GetConnectionWithWebhookTimesRow, error) {
@@ -582,12 +640,13 @@ func (q *Queries) GetConnectionWithWebhookTimes(ctx context.Context, arg GetConn
 		&i.LastWebhookCustomer,
 		&i.LastWebhookInvoice,
 		&i.LastWebhookBill,
+		&i.LastWebhookTransaction,
 	)
 	return i, err
 }
 
 const getCustomerByERPID = `-- name: GetCustomerByERPID :one
-SELECT id, erp_id, realm_id, display_name, sync_token, created_at, updated_at, deleted_at, event_source FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -605,16 +664,16 @@ func (q *Queries) GetCustomerByERPID(ctx context.Context, arg GetCustomerByERPID
 		&i.RealmID,
 		&i.DisplayName,
 		&i.SyncToken,
+		&i.EventSource,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const getCustomerByName = `-- name: GetCustomerByName :one
-SELECT id, erp_id, realm_id, display_name, sync_token, created_at, updated_at, deleted_at, event_source FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
 WHERE realm_id = $1
   AND deleted_at IS NULL
   AND display_name ILIKE $2
@@ -635,16 +694,16 @@ func (q *Queries) GetCustomerByName(ctx context.Context, arg GetCustomerByNamePa
 		&i.RealmID,
 		&i.DisplayName,
 		&i.SyncToken,
+		&i.EventSource,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const getCustomersByRealm = `-- name: GetCustomersByRealm :many
-SELECT id, erp_id, realm_id, display_name, sync_token, created_at, updated_at, deleted_at, event_source FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
 WHERE realm_id = $1 AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -664,10 +723,10 @@ func (q *Queries) GetCustomersByRealm(ctx context.Context, realmID string) ([]Sh
 			&i.RealmID,
 			&i.DisplayName,
 			&i.SyncToken,
+			&i.EventSource,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
-			&i.EventSource,
 		); err != nil {
 			return nil, err
 		}
@@ -680,7 +739,7 @@ func (q *Queries) GetCustomersByRealm(ctx context.Context, realmID string) ([]Sh
 }
 
 const getCustomersUpdatedSince = `-- name: GetCustomersUpdatedSince :many
-SELECT id, erp_id, realm_id, display_name, sync_token, created_at, updated_at, deleted_at, event_source FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
 ORDER BY updated_at ASC
 `
@@ -705,10 +764,10 @@ func (q *Queries) GetCustomersUpdatedSince(ctx context.Context, arg GetCustomers
 			&i.RealmID,
 			&i.DisplayName,
 			&i.SyncToken,
+			&i.EventSource,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
-			&i.EventSource,
 		); err != nil {
 			return nil, err
 		}
@@ -721,7 +780,7 @@ func (q *Queries) GetCustomersUpdatedSince(ctx context.Context, arg GetCustomers
 }
 
 const getERPConnection = `-- name: GetERPConnection :one
-SELECT id, entity_id, erp_system, realm_id, access_token, refresh_token, expires_at, last_sync_timestamp, last_webhook_account, last_webhook_vendor, last_webhook_customer, last_webhook_invoice, last_webhook_bill, created_at, updated_at FROM toro_core.erp_connections
+SELECT id, entity_id, erp_system, realm_id, access_token, refresh_token, expires_at, last_sync_timestamp, last_webhook_account, last_webhook_vendor, last_webhook_customer, last_webhook_invoice, last_webhook_bill, last_webhook_transaction, created_at, updated_at FROM toro_core.erp_connections
 WHERE entity_id = $1
 `
 
@@ -742,6 +801,7 @@ func (q *Queries) GetERPConnection(ctx context.Context, entityID pgtype.UUID) (T
 		&i.LastWebhookCustomer,
 		&i.LastWebhookInvoice,
 		&i.LastWebhookBill,
+		&i.LastWebhookTransaction,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -779,7 +839,7 @@ func (q *Queries) GetERPTokens(ctx context.Context, arg GetERPTokensParams) (Get
 }
 
 const getInvoiceByERPID = `-- name: GetInvoiceByERPID :one
-SELECT id, erp_id, realm_id, customer_id, doc_number, total_amount, balance, due_date, txn_date, sync_token, created_at, updated_at, deleted_at, event_source FROM shadow_erp.invoices
+SELECT id, erp_id, realm_id, customer_id, doc_number, total_amount, balance, due_date, txn_date, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.invoices
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -802,44 +862,63 @@ func (q *Queries) GetInvoiceByERPID(ctx context.Context, arg GetInvoiceByERPIDPa
 		&i.DueDate,
 		&i.TxnDate,
 		&i.SyncToken,
+		&i.EventSource,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const getProposedTransactionByID = `-- name: GetProposedTransactionByID :one
-SELECT id, realm_id, source_type, raw_amount, raw_date, raw_description, predicted_vendor_id, predicted_account_id, confidence_score, ai_reasoning, erp_transaction_id, sync_status, error_message, created_at, updated_at, event_source FROM shadow_erp.proposed_transactions WHERE id = $1
+SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at FROM fignode.staging_transactions WHERE id = $1
 `
 
-func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID) (ShadowErpProposedTransaction, error) {
+func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID) (FignodeStagingTransaction, error) {
 	row := q.db.QueryRow(ctx, getProposedTransactionByID, id)
-	var i ShadowErpProposedTransaction
+	var i FignodeStagingTransaction
 	err := row.Scan(
 		&i.ID,
+		&i.SessionID,
 		&i.RealmID,
 		&i.SourceType,
+		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.RawDescription,
+		&i.PlaidTransactionID,
+		&i.PlaidAccountID,
+		&i.MerchantName,
+		&i.LogoUrl,
+		&i.PlaidCategory,
+		&i.IsPending,
 		&i.PredictedVendorID,
+		&i.PredictedVendorName,
+		&i.PredictedCustomerID,
+		&i.PredictedCustomerName,
 		&i.PredictedAccountID,
+		&i.PredictedAccountName,
 		&i.ConfidenceScore,
 		&i.AiReasoning,
+		&i.HumanAction,
+		&i.SwipedBy,
+		&i.SwipedAt,
+		&i.OverrideVendorID,
+		&i.OverrideCustomerID,
+		&i.OverrideAccountID,
+		&i.DuplicateOf,
+		&i.IsRecurring,
+		&i.SplitSuggestion,
+		&i.Status,
 		&i.ErpTransactionID,
-		&i.SyncStatus,
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const getProposedTransactionByValues = `-- name: GetProposedTransactionByValues :one
-SELECT id, realm_id, source_type, raw_amount, raw_date, raw_description, predicted_vendor_id, predicted_account_id, confidence_score, ai_reasoning, erp_transaction_id, sync_status, error_message, created_at, updated_at, event_source FROM shadow_erp.proposed_transactions
+SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at FROM fignode.staging_transactions
 WHERE realm_id = $1
   AND predicted_vendor_id = $2
   AND raw_date = $3
@@ -848,37 +927,56 @@ LIMIT 1
 `
 
 type GetProposedTransactionByValuesParams struct {
-	RealmID           string
+	RealmID           pgtype.Text
 	PredictedVendorID pgtype.UUID
 	RawDate           pgtype.Date
 	RawAmount         pgtype.Numeric
 }
 
-func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetProposedTransactionByValuesParams) (ShadowErpProposedTransaction, error) {
+func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetProposedTransactionByValuesParams) (FignodeStagingTransaction, error) {
 	row := q.db.QueryRow(ctx, getProposedTransactionByValues,
 		arg.RealmID,
 		arg.PredictedVendorID,
 		arg.RawDate,
 		arg.RawAmount,
 	)
-	var i ShadowErpProposedTransaction
+	var i FignodeStagingTransaction
 	err := row.Scan(
 		&i.ID,
+		&i.SessionID,
 		&i.RealmID,
 		&i.SourceType,
+		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.RawDescription,
+		&i.PlaidTransactionID,
+		&i.PlaidAccountID,
+		&i.MerchantName,
+		&i.LogoUrl,
+		&i.PlaidCategory,
+		&i.IsPending,
 		&i.PredictedVendorID,
+		&i.PredictedVendorName,
+		&i.PredictedCustomerID,
+		&i.PredictedCustomerName,
 		&i.PredictedAccountID,
+		&i.PredictedAccountName,
 		&i.ConfidenceScore,
 		&i.AiReasoning,
+		&i.HumanAction,
+		&i.SwipedBy,
+		&i.SwipedAt,
+		&i.OverrideVendorID,
+		&i.OverrideCustomerID,
+		&i.OverrideAccountID,
+		&i.DuplicateOf,
+		&i.IsRecurring,
+		&i.SplitSuggestion,
+		&i.Status,
 		&i.ErpTransactionID,
-		&i.SyncStatus,
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
@@ -911,7 +1009,7 @@ func (q *Queries) GetRealmsForEntities(ctx context.Context, authorizedEntityIds 
 }
 
 const getRecentCorrections = `-- name: GetRecentCorrections :many
-SELECT id, realm_id, user_id, raw_input, ai_prediction, user_correction, correction_type, confidence_score, created_at, event_source FROM shadow_erp.ai_corrections
+SELECT id, realm_id, user_id, raw_input, ai_prediction, user_correction, correction_type, confidence_score, event_source, created_at FROM shadow_erp.ai_corrections
 WHERE realm_id = $1 AND correction_type = $2
 ORDER BY created_at DESC
 LIMIT $3
@@ -941,8 +1039,8 @@ func (q *Queries) GetRecentCorrections(ctx context.Context, arg GetRecentCorrect
 			&i.UserCorrection,
 			&i.CorrectionType,
 			&i.ConfidenceScore,
-			&i.CreatedAt,
 			&i.EventSource,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1062,7 +1160,7 @@ func (q *Queries) GetUnifiedTransactions(ctx context.Context, realmID string) ([
 
 const getVectorSyncState = `-- name: GetVectorSyncState :one
 
-SELECT realm_id, last_coa_sync, last_vendor_sync, last_customer_sync, coa_vector_count, vendor_vector_count, customer_vector_count, created_at, updated_at, event_source FROM shadow_erp.vector_sync_state
+SELECT realm_id, last_coa_sync, last_vendor_sync, last_customer_sync, coa_vector_count, vendor_vector_count, customer_vector_count, event_source, created_at, updated_at FROM shadow_erp.vector_sync_state
 WHERE realm_id = $1
 `
 
@@ -1080,15 +1178,15 @@ func (q *Queries) GetVectorSyncState(ctx context.Context, realmID string) (Shado
 		&i.CoaVectorCount,
 		&i.VendorVectorCount,
 		&i.CustomerVectorCount,
+		&i.EventSource,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const getVendor = `-- name: GetVendor :one
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at, event_source FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
 WHERE realm_id = $1 AND id = $2
 `
 
@@ -1108,16 +1206,16 @@ func (q *Queries) GetVendor(ctx context.Context, arg GetVendorParams) (ShadowErp
 		&i.SyncToken,
 		&i.LastKnownAccountID,
 		&i.AiSynonyms,
+		&i.EventSource,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const getVendorByERPID = `-- name: GetVendorByERPID :one
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at, event_source FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -1137,17 +1235,17 @@ func (q *Queries) GetVendorByERPID(ctx context.Context, arg GetVendorByERPIDPara
 		&i.SyncToken,
 		&i.LastKnownAccountID,
 		&i.AiSynonyms,
+		&i.EventSource,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const getVendorByNameOrSynonym = `-- name: GetVendorByNameOrSynonym :one
 
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at, event_source FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
 WHERE realm_id = $1
   AND deleted_at IS NULL
   AND (
@@ -1177,16 +1275,16 @@ func (q *Queries) GetVendorByNameOrSynonym(ctx context.Context, arg GetVendorByN
 		&i.SyncToken,
 		&i.LastKnownAccountID,
 		&i.AiSynonyms,
+		&i.EventSource,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-		&i.EventSource,
 	)
 	return i, err
 }
 
 const getVendorsByRealm = `-- name: GetVendorsByRealm :many
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at, event_source FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
 WHERE realm_id = $1 AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -1208,10 +1306,10 @@ func (q *Queries) GetVendorsByRealm(ctx context.Context, realmID string) ([]Shad
 			&i.SyncToken,
 			&i.LastKnownAccountID,
 			&i.AiSynonyms,
+			&i.EventSource,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
-			&i.EventSource,
 		); err != nil {
 			return nil, err
 		}
@@ -1224,7 +1322,7 @@ func (q *Queries) GetVendorsByRealm(ctx context.Context, realmID string) ([]Shad
 }
 
 const getVendorsUpdatedSince = `-- name: GetVendorsUpdatedSince :many
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, created_at, updated_at, deleted_at, event_source FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
 ORDER BY updated_at ASC
 `
@@ -1251,10 +1349,10 @@ func (q *Queries) GetVendorsUpdatedSince(ctx context.Context, arg GetVendorsUpda
 			&i.SyncToken,
 			&i.LastKnownAccountID,
 			&i.AiSynonyms,
+			&i.EventSource,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
-			&i.EventSource,
 		); err != nil {
 			return nil, err
 		}
@@ -1491,6 +1589,23 @@ func (q *Queries) UpdateLastWebhookInvoice(ctx context.Context, arg UpdateLastWe
 	return err
 }
 
+const updateLastWebhookTransaction = `-- name: UpdateLastWebhookTransaction :exec
+UPDATE toro_core.erp_connections
+SET last_webhook_transaction = $3, updated_at = NOW()
+WHERE erp_system = $1 AND realm_id = $2
+`
+
+type UpdateLastWebhookTransactionParams struct {
+	ErpSystem              string
+	RealmID                string
+	LastWebhookTransaction pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateLastWebhookTransaction(ctx context.Context, arg UpdateLastWebhookTransactionParams) error {
+	_, err := q.db.Exec(ctx, updateLastWebhookTransaction, arg.ErpSystem, arg.RealmID, arg.LastWebhookTransaction)
+	return err
+}
+
 const updateLastWebhookVendor = `-- name: UpdateLastWebhookVendor :exec
 UPDATE toro_core.erp_connections
 SET last_webhook_vendor = $3, updated_at = NOW()
@@ -1509,15 +1624,15 @@ func (q *Queries) UpdateLastWebhookVendor(ctx context.Context, arg UpdateLastWeb
 }
 
 const updateProposedTransactionSyncStatus = `-- name: UpdateProposedTransactionSyncStatus :exec
-UPDATE shadow_erp.proposed_transactions
-SET sync_status = $2, erp_transaction_id = $3, error_message = $4,
-    event_source = 'toro_internal', updated_at = NOW()
+UPDATE fignode.staging_transactions
+SET status = $2, erp_transaction_id = $3, error_message = $4,
+    updated_at = NOW()
 WHERE id = $1
 `
 
 type UpdateProposedTransactionSyncStatusParams struct {
 	ID               pgtype.UUID
-	SyncStatus       pgtype.Text
+	Status           string
 	ErpTransactionID pgtype.Text
 	ErrorMessage     pgtype.Text
 }
@@ -1525,7 +1640,7 @@ type UpdateProposedTransactionSyncStatusParams struct {
 func (q *Queries) UpdateProposedTransactionSyncStatus(ctx context.Context, arg UpdateProposedTransactionSyncStatusParams) error {
 	_, err := q.db.Exec(ctx, updateProposedTransactionSyncStatus,
 		arg.ID,
-		arg.SyncStatus,
+		arg.Status,
 		arg.ErpTransactionID,
 		arg.ErrorMessage,
 	)
@@ -1919,6 +2034,62 @@ func (q *Queries) UpsertInvoice(ctx context.Context, arg UpsertInvoiceParams) er
 		arg.TxnDate,
 		arg.SyncToken,
 		arg.CustomerErpID,
+	)
+	return err
+}
+
+const upsertStagingTransaction = `-- name: UpsertStagingTransaction :exec
+INSERT INTO fignode.staging_transactions (
+    realm_id,
+    erp_transaction_id,
+    source_type,
+    raw_amount,
+    raw_date,
+    raw_description,
+    predicted_vendor_id,
+    predicted_account_id,
+    status
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6,
+    (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.erp_id = $7 AND shadow_erp.vendors.realm_id = $1),
+    (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.erp_id = $8 AND shadow_erp.accounts.realm_id = $1),
+    $9
+)
+ON CONFLICT (realm_id, erp_transaction_id) DO UPDATE SET
+    source_type = EXCLUDED.source_type,
+    raw_amount = EXCLUDED.raw_amount,
+    raw_date = EXCLUDED.raw_date,
+    raw_description = EXCLUDED.raw_description,
+    predicted_vendor_id = EXCLUDED.predicted_vendor_id,
+    predicted_account_id = EXCLUDED.predicted_account_id,
+    status = EXCLUDED.status,
+    updated_at = NOW()
+`
+
+type UpsertStagingTransactionParams struct {
+	RealmID          pgtype.Text
+	ErpTransactionID pgtype.Text
+	SourceType       string
+	RawAmount        pgtype.Numeric
+	RawDate          pgtype.Date
+	RawDescription   pgtype.Text
+	ErpID            string
+	ErpID_2          string
+	Status           string
+}
+
+func (q *Queries) UpsertStagingTransaction(ctx context.Context, arg UpsertStagingTransactionParams) error {
+	_, err := q.db.Exec(ctx, upsertStagingTransaction,
+		arg.RealmID,
+		arg.ErpTransactionID,
+		arg.SourceType,
+		arg.RawAmount,
+		arg.RawDate,
+		arg.RawDescription,
+		arg.ErpID,
+		arg.ErpID_2,
+		arg.Status,
 	)
 	return err
 }

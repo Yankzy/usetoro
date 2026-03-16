@@ -10,6 +10,7 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
+	qboadapter "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks"
 	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -130,6 +131,13 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 				c.logger.Info("Skipping Echo Event for Bill", "entity_id", entityID, "sync_token", qboEntity.SyncToken)
 				return nil
 			}
+			entityData = qboEntity
+		}
+	case "Purchase":
+		qboEntity, err := client.FindPurchaseById(entityID)
+		err2 = err
+		if err2 == nil {
+			// Skip Echo checks for Purchases since webhook events are low-frequency for Bank Feeds
 			entityData = qboEntity
 		}
 	case "Attachable":
@@ -302,6 +310,27 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 			SyncToken:   bill.SyncToken,
 		})
 
+	case "Purchase":
+		p := data.(*quickbooks.Purchase)
+		mappedTx := qboadapter.MapPurchaseToTransaction(*p)
+
+		// Format to string precisely
+		amountStr := fmt.Sprintf("%.2f", mappedTx.Amount)
+		var amountNumeric pgtype.Numeric
+		_ = amountNumeric.Scan(amountStr)
+
+		err = c.store.Queries.UpsertStagingTransaction(ctx, database.UpsertStagingTransactionParams{
+			RealmID:          pgtype.Text{String: realmID, Valid: true},
+			ErpTransactionID: pgtype.Text{String: mappedTx.ExternalID, Valid: true},
+			SourceType:       "QBO_SYNC",
+			RawAmount:        amountNumeric,
+			RawDate:          pgtype.Date{Time: mappedTx.Date, Valid: !mappedTx.Date.IsZero()},
+			RawDescription:   pgtype.Text{String: mappedTx.Description, Valid: mappedTx.Description != ""},
+			ErpID:            mappedTx.VendorID,
+			ErpID_2:          mappedTx.AccountID,
+			Status:           "PENDING",
+		})
+
 	case "Attachable":
 		attachable := data.(*quickbooks.Attachable)
 
@@ -421,6 +450,7 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 		"Customer":   getMaxTime(conn.LastWebhookCustomer.Time, lastSync, maxLookback),
 		"Invoice":    getMaxTime(conn.LastWebhookInvoice.Time, lastSync, maxLookback),
 		"Bill":       getMaxTime(conn.LastWebhookBill.Time, lastSync, maxLookback),
+		"Purchase":   getMaxTime(conn.LastWebhookTransaction.Time, lastSync, maxLookback),
 		"Attachable": getMaxTime(lastSync, lastSync, maxLookback),
 	}
 
@@ -476,6 +506,11 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 						entities = queryResp.Bill
 						count = len(queryResp.Bill)
 					}
+				case "Purchase":
+					if len(queryResp.Purchase) > 0 {
+						entities = queryResp.Purchase
+						count = len(queryResp.Purchase)
+					}
 				case "Attachable":
 					if len(queryResp.Attachable) > 0 {
 						entities = queryResp.Attachable
@@ -503,6 +538,8 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 			batchErr = c.batchUpsertInvoices(ctx, realmID, entities.([]quickbooks.Invoice))
 		case "Bill":
 			batchErr = c.batchUpsertBills(ctx, realmID, entities.([]quickbooks.Bill))
+		case "Purchase":
+			batchErr = c.batchUpsertTransactions(ctx, realmID, entities.([]quickbooks.Purchase))
 		case "Attachable":
 			batchErr = c.batchUpsertAttachables(ctx, realmID, entities.([]quickbooks.Attachable))
 		}
@@ -716,6 +753,48 @@ func (c *QBOConnector) SyncFullVendors(ctx context.Context, tenantID, realmID st
 
 	c.logger.Info("✅ Full vendor sync completed", "realm_id", realmID, "count", len(vendors))
 	return len(vendors), nil
+}
+
+// SyncFullPurchases performs a full Purchase sync for the specified realm.
+// If realmID is empty, it is resolved from tenantID.
+func (c *QBOConnector) SyncFullPurchases(ctx context.Context, tenantID, realmID string) (int, error) {
+	if realmID == "" && tenantID != "" {
+		conn, err := c.store.GetQBOConnection(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get QBO connection for tenant %s: %w", tenantID, err)
+		}
+		realmID = conn.RealmID
+	}
+
+	if realmID == "" {
+		return 0, fmt.Errorf("realmID is required")
+	}
+
+	c.logger.Info("🔄 Running full Purchases sync", "realm_id", realmID, "tenant_id", tenantID)
+
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return 0, err
+	}
+
+	purchases, err := client.FindPurchases()
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch purchases: %w", err)
+	}
+
+	if err := c.batchUpsertTransactions(ctx, realmID, purchases); err != nil {
+		return 0, fmt.Errorf("failed to upsert purchases: %w", err)
+	}
+
+	if err := c.store.Queries.UpdateLastSyncTimestamp(ctx, database.UpdateLastSyncTimestampParams{
+		RealmID:           realmID,
+		LastSyncTimestamp: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		return 0, fmt.Errorf("failed to update last sync timestamp: %w", err)
+	}
+
+	c.logger.Info("✅ Full Purchases sync completed", "realm_id", realmID, "count", len(purchases))
+	return len(purchases), nil
 }
 
 // SyncCompanyInfo fetches the QBO CompanyInfo for the given realm and upserts it
@@ -1046,6 +1125,47 @@ func (c *QBOConnector) batchUpsertAttachables(ctx context.Context, realmID strin
 	return nil
 }
 
+// batchUpsertTransactions uses a PostgreSQL transaction to upsert multiple transactions efficiently into fignode
+func (c *QBOConnector) batchUpsertTransactions(ctx context.Context, realmID string, purchases []quickbooks.Purchase) error {
+	tx, err := c.store.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := c.store.Queries.WithTx(tx)
+
+	for _, p := range purchases {
+		mappedTx := qboadapter.MapPurchaseToTransaction(p)
+
+		// Format to string precisely
+		amountStr := fmt.Sprintf("%.2f", mappedTx.Amount)
+		var amountNumeric pgtype.Numeric
+		_ = amountNumeric.Scan(amountStr)
+
+		if err := qtx.UpsertStagingTransaction(ctx, database.UpsertStagingTransactionParams{
+			RealmID:          pgtype.Text{String: realmID, Valid: true},
+			ErpTransactionID: pgtype.Text{String: mappedTx.ExternalID, Valid: true},
+			SourceType:       "QBO_SYNC",
+			RawAmount:        amountNumeric,
+			RawDate:          pgtype.Date{Time: mappedTx.Date, Valid: !mappedTx.Date.IsZero()},
+			RawDescription:   pgtype.Text{String: mappedTx.Description, Valid: mappedTx.Description != ""},
+			ErpID:            mappedTx.VendorID,
+			ErpID_2:          mappedTx.AccountID,
+			Status:           "PENDING",
+		}); err != nil {
+			return fmt.Errorf("failed to upsert transaction %s: %w", mappedTx.ExternalID, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	c.logger.Debug("💾 Batch upserted QBO transactions to Fignode staging", "count", len(purchases))
+	return nil
+}
+
 // updateLastWebhookTime updates the last successful webhook timestamp for the given entity type
 func (c *QBOConnector) updateLastWebhookTime(ctx context.Context, realmID, entityType string, timestamp time.Time) error {
 	ts := pgtype.Timestamptz{Time: timestamp, Valid: true}
@@ -1053,28 +1173,39 @@ func (c *QBOConnector) updateLastWebhookTime(ctx context.Context, realmID, entit
 	switch entityType {
 	case "Account":
 		return c.store.Queries.UpdateLastWebhookAccount(ctx, database.UpdateLastWebhookAccountParams{
+			ErpSystem:          "quickbooks_online",
 			RealmID:            realmID,
 			LastWebhookAccount: ts,
 		})
 	case "Vendor":
 		return c.store.Queries.UpdateLastWebhookVendor(ctx, database.UpdateLastWebhookVendorParams{
+			ErpSystem:         "quickbooks_online",
 			RealmID:           realmID,
 			LastWebhookVendor: ts,
 		})
 	case "Customer":
 		return c.store.Queries.UpdateLastWebhookCustomer(ctx, database.UpdateLastWebhookCustomerParams{
+			ErpSystem:           "quickbooks_online",
 			RealmID:             realmID,
 			LastWebhookCustomer: ts,
 		})
 	case "Invoice":
 		return c.store.Queries.UpdateLastWebhookInvoice(ctx, database.UpdateLastWebhookInvoiceParams{
+			ErpSystem:          "quickbooks_online",
 			RealmID:            realmID,
 			LastWebhookInvoice: ts,
 		})
 	case "Bill":
 		return c.store.Queries.UpdateLastWebhookBill(ctx, database.UpdateLastWebhookBillParams{
+			ErpSystem:       "quickbooks_online",
 			RealmID:         realmID,
 			LastWebhookBill: ts,
+		})
+	case "Purchase":
+		return c.store.Queries.UpdateLastWebhookTransaction(ctx, database.UpdateLastWebhookTransactionParams{
+			ErpSystem:              "quickbooks_online",
+			RealmID:                realmID,
+			LastWebhookTransaction: ts,
 		})
 	default:
 		// Unsupported entity type, silently skip (no error)

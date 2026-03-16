@@ -19,7 +19,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25' # Matches go.mod requirement approximately (1.25 is very new, using latest stable usually fine or stick to standard)
+          go-version: '1.24' # Matches go.mod requirement approximately (1.25 is very new, using latest stable usually fine or stick to standard)
           # Note: user has go 1.25 in go.mod. GitHub actions might not have 1.25 explicitly named yet if it's cutting edge, 
           # but usually setup-go supports "stable". Let's use "stable" or "1.24" if 1.25 is strict.
           # Actually, let's just use "stable" to be safe.

@@ -12,7 +12,7 @@ CREATE PUBLICATION toro_ledger_pub FOR TABLE
     toro_core.users,
     toro_core.erp_connections;
 
--- Dynamically add all tables in the shadow_erp schema
+-- Dynamically add all tables in the shadow_erp schema, but explicitly ignore clean-up staging
 DO $$
 DECLARE
     tbl record;
@@ -21,6 +21,7 @@ BEGIN
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = 'shadow_erp' AND table_type = 'BASE TABLE'
+          AND table_name NOT IN ('cleanup_sessions', 'cleanup_staging')
     LOOP
         EXECUTE format('ALTER PUBLICATION toro_ledger_pub ADD TABLE shadow_erp.%I', tbl.table_name);
     END LOOP;

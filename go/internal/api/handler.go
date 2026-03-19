@@ -16,7 +16,6 @@ import (
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/resilience"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
-	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -71,7 +70,6 @@ type Handler struct {
 	AttachableService  *accounting.AttachableService
 	TransactionService *accounting.TransactionService
 	EntityService      *accounting.EntityService
-	LLMClient          *ai.LLMClient
 
 	// Cleanup Mode dependencies
 	DBPool          *pgxpool.Pool
@@ -95,7 +93,6 @@ func NewHandler(
 	attachableService *accounting.AttachableService,
 	transactionService *accounting.TransactionService,
 	entityService *accounting.EntityService,
-	llmClient *ai.LLMClient,
 	dbPool *pgxpool.Pool,
 	cleanupDB *database.Queries,
 	cleanupNATS *queue.Client,
@@ -117,7 +114,6 @@ func NewHandler(
 		AttachableService:  attachableService,
 		TransactionService: transactionService,
 		EntityService:      entityService,
-		LLMClient:          llmClient,
 		DBPool:             dbPool,
 		CleanupDB:          cleanupDB,
 		CleanupNATS:        cleanupNATS,

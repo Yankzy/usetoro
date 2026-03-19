@@ -16,9 +16,9 @@ require (
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/lithammer/fuzzysearch v1.1.8
 	github.com/nats-io/nats.go v1.48.0
+	github.com/openai/openai-go/v3 v3.29.0
 	github.com/pinecone-io/go-pinecone/v4 v4.1.4
 	github.com/redis/go-redis/v9 v9.17.3
-	github.com/sashabaranov/go-openai v1.41.2
 	github.com/sony/gobreaker v1.0.0
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
@@ -38,7 +38,6 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/jackc/pgio v1.0.0 // indirect
-	github.com/openai/openai-go/v3 v3.28.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/richardlehane/mscfb v1.0.6 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect

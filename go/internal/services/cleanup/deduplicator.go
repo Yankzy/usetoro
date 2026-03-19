@@ -7,20 +7,24 @@ import (
 
 // EnrichedRow is an in-memory representation used during enrichment and dedup.
 type EnrichedRow struct {
-	ID                 string
-	SessionID          string
-	RealmID            string
-	RawDescription     string
-	RawAmount          float64
-	RawDate            time.Time
-	RawVendorName      string
-	PredictedVendorID  string // empty = unresolved
-	PredictedAccountID string // empty = unresolved
-	NormalizedVendor   string
-	ConfidenceScore    float64
-	AIReasoning        string
-	IsRecurring        bool
-	SplitSuggestion    []SplitLine
+	ID                  string
+	SessionID           string
+	RealmID             string
+	RawDescription      string
+	RawAmount           float64
+	RawDate             time.Time
+	RawVendorName       string
+	RawCustomerName     string
+	PredictedVendorID    string // empty = unresolved
+	PredictedCustomerID  string // empty = unresolved
+	PredictedAccountID   string // empty = unresolved
+	PredictedAccountName string
+	NormalizedVendor    string
+	NormalizedCustomer  string
+	ConfidenceScore     float64
+	AIReasoning         string
+	IsRecurring         bool
+	SplitSuggestion     []SplitLine
 	// Set by dedup pass:
 	DuplicateOf string // ID of the canonical row, empty if not a duplicate
 }
@@ -85,7 +89,7 @@ func (d *Deduplicator) AnnotateRecurring(rows []EnrichedRow) {
 			continue
 		}
 		s := sig{
-			vendor: coalesce(row.PredictedVendorID, row.NormalizedVendor, row.RawVendorName),
+			vendor: coalesce(row.PredictedVendorID, row.PredictedCustomerID, row.NormalizedVendor, row.NormalizedCustomer, row.RawVendorName, row.RawCustomerName),
 			amount: roundCents(row.RawAmount),
 		}
 		counts[s]++
@@ -96,7 +100,7 @@ func (d *Deduplicator) AnnotateRecurring(rows []EnrichedRow) {
 			continue
 		}
 		s := sig{
-			vendor: coalesce(rows[i].PredictedVendorID, rows[i].NormalizedVendor, rows[i].RawVendorName),
+			vendor: coalesce(rows[i].PredictedVendorID, rows[i].PredictedCustomerID, rows[i].NormalizedVendor, rows[i].NormalizedCustomer, rows[i].RawVendorName, rows[i].RawCustomerName),
 			amount: roundCents(rows[i].RawAmount),
 		}
 		if counts[s] >= 3 {
@@ -108,7 +112,7 @@ func (d *Deduplicator) AnnotateRecurring(rows []EnrichedRow) {
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 func dupKey(row *EnrichedRow, date time.Time) string {
-	vendor := coalesce(row.PredictedVendorID, row.NormalizedVendor, row.RawVendorName)
+	vendor := coalesce(row.PredictedVendorID, row.PredictedCustomerID, row.NormalizedVendor, row.NormalizedCustomer, row.RawVendorName, row.RawCustomerName)
 	cents := roundCents(row.RawAmount)
 	dateStr := ""
 	if !date.IsZero() {

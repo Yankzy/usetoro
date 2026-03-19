@@ -22,7 +22,6 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/ingest"
 	"github.com/Yankzy/usetoro/internal/queue"
-	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/services/cleanup"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/dgraph-io/ristretto"
@@ -92,7 +91,54 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	}
 	defer q.Close()
 
-	logger.Info("✅ Connected to NATS JetStream")
+	// Provision all configured NATS JetStream streams globally for the platform
+	for svcName, srvCfg := range cfg.NATS.Services {
+		// 1. Provision main service stream
+		if srvCfg.StreamName != "" && len(srvCfg.JetStream.Subjects) > 0 {
+			streamCfg := &nats.StreamConfig{
+				Name:        srvCfg.StreamName,
+				Subjects:    srvCfg.JetStream.Subjects,
+				Storage:     nats.FileStorage,
+				MaxAge:      srvCfg.JetStream.MaxAge,
+				Replicas:    srvCfg.JetStream.Replicas,
+				DenyDelete:  srvCfg.JetStream.DenyDelete,
+				DenyPurge:   srvCfg.JetStream.DenyPurge,
+				AllowRollup: srvCfg.JetStream.AllowRollup,
+				AllowDirect: srvCfg.JetStream.AllowDirect,
+			}
+			if streamCfg.Replicas == 0 {
+				streamCfg.Replicas = 1
+			}
+			if err := q.EnsureStream(streamCfg); err != nil {
+				logger.Warn("Failed to ensure configured stream", "service", svcName, "stream", srvCfg.StreamName, "error", err)
+			}
+		}
+
+		// 2. Provision component streams
+		for compName, compCfg := range srvCfg.Components {
+			if compCfg.StreamName != "" && len(compCfg.JetStream.Subjects) > 0 {
+				compStreamCfg := &nats.StreamConfig{
+					Name:        compCfg.StreamName,
+					Subjects:    compCfg.JetStream.Subjects,
+					Storage:     nats.FileStorage,
+					MaxAge:      compCfg.JetStream.MaxAge,
+					Replicas:    compCfg.JetStream.Replicas,
+					DenyDelete:  compCfg.JetStream.DenyDelete,
+					DenyPurge:   compCfg.JetStream.DenyPurge,
+					AllowRollup: compCfg.JetStream.AllowRollup,
+					AllowDirect: compCfg.JetStream.AllowDirect,
+				}
+				if compStreamCfg.Replicas == 0 {
+					compStreamCfg.Replicas = 1
+				}
+				if err := q.EnsureStream(compStreamCfg); err != nil {
+					logger.Warn("Failed to ensure component stream", "service", svcName, "component", compName, "stream", compCfg.StreamName, "error", err)
+				}
+			}
+		}
+	}
+
+	logger.Info("✅ Connected to NATS JetStream and Ensured configured streams")
 
 	// 3. Ristretto Cache (L1 Cache)
 	cache, err := ristretto.NewCache(&ristretto.Config{
@@ -217,23 +263,9 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		logger.Info("✅ Connected to Redis")
 	}
 
-	// 6. AI Client
-	openaiKey := os.Getenv("OPENAI_API_KEY")
-	var llmClient *ai.LLMClient
-	if openaiKey != "" {
-		llmClient, err = ai.NewLLMClient(openaiKey, "")
-		if err != nil {
-			logger.Warn("Failed to init LLM Client", "error", err)
-		} else {
-			logger.Info("✅ Initialized LLM Client")
-		}
-	} else {
-		logger.Warn("OPENAI_API_KEY missing - AI mapping features will not work")
-	}
-
 	// DI: Create Server with cleanup exporter for Excel/PDF endpoints.
 	cleanupExporter := cleanup.NewExporter(database.New(dbPool))
-	srv := api.NewServer(cfg, logger, st, pub, qboConfig, authenticator, redisClient, q, cleanupExporter, llmClient)
+	srv := api.NewServer(cfg, logger, st, pub, qboConfig, authenticator, redisClient, q, cleanupExporter)
 
 	// =========================================================================
 	// STARTUP & GRACEFUL SHUTDOWN

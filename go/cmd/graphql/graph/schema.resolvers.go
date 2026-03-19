@@ -1481,12 +1481,7 @@ func (r *mutationResolver) postCleanupSessionHelper(ctx context.Context, session
 				continue
 			}
 
-			amount := 0.0
-			if row.RawAmount.Valid {
-				if f, err2 := row.RawAmount.Float64Value(); err2 == nil {
-					amount = f.Float64
-				}
-			}
+			amount := parseDirtyStringAmount(row.RawAmount)
 
 			fignodeTx := database.FignodeStagingTransaction{
 				ID:                 row.ID,

@@ -5,41 +5,53 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/Yankzy/usetoro/tap/pkg/llm"
 )
 
+// Runnable interfaces all runnable agent instances (both declarative Runtime and internal modules).
+type Runnable interface {
+	Start() error
+	Stop() error
+}
+
 // Supervisor manages the lifecycle of all active agents.
-// It ensures that agents are started, stopped, and updated safely.
+// It acts as the central Runner, supporting both generic pipeline agents and custom compiled internal agents.
 type Supervisor struct {
 	mu     sync.RWMutex
-	agents map[string]*Runtime
+	agents map[string]Runnable
 
 	logger *slog.Logger
 	bus    EventBus
 	mem    MemoryStore
+
+	// Registry of internal compiled agent modules
+	internalRegistry map[string]func(*slog.Logger, EventBus, AgentConfig, MemoryStore) Runnable
 }
 
 // NewSupervisor creates the control plane for the agent hive.
-// It requires the EventBus (nervous system) and Memory Store (long-term storage).
 func NewSupervisor(logger *slog.Logger, bus EventBus, mem MemoryStore) *Supervisor {
 	return &Supervisor{
-		agents: make(map[string]*Runtime),
-		logger: logger,
-		bus:    bus,
-		mem:    mem,
+		agents:           make(map[string]Runnable),
+		internalRegistry: make(map[string]func(*slog.Logger, EventBus, AgentConfig, MemoryStore) Runnable),
+		logger:           logger,
+		bus:              bus,
+		mem:              mem,
 	}
 }
 
+// RegisterInternalAgent binds an internal module string (from config) to a factory function.
+// e.g. "cleanup-agent" -> cleanup.NewAgent
+func (s *Supervisor) RegisterInternalAgent(moduleName string, factory func(*slog.Logger, EventBus, AgentConfig, MemoryStore) Runnable) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.internalRegistry[moduleName] = factory
+}
+
 // LoadAgents reconciles the desired state (configs) with the actual running state.
-// It is idempotent: calling it with the same config does nothing.
-// Calling it with updated config restarts the specific agent.
 func (s *Supervisor) LoadAgents(configs []AgentConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for _, cfg := range configs {
-		// Check if agent is already running
 		if existing, exists := s.agents[cfg.DID]; exists {
 			s.logger.Info("♻️ Reloading Agent", "did", cfg.DID)
 			if err := existing.Stop(); err != nil {
@@ -48,34 +60,35 @@ func (s *Supervisor) LoadAgents(configs []AgentConfig) error {
 			delete(s.agents, cfg.DID)
 		}
 
-		// Initialize the LLM Client using the Factory
-		// We pass empty string for apiKey to let the factory/adapter resolve it from ENV based on provider
-		// Or we could pass specific keys if we had them in config.
-		llmClient, err := llm.GetClient(cfg.Provider, "")
-		if err != nil {
-			s.logger.Error("Failed to create LLM client", "did", cfg.DID, "provider", cfg.Provider, "error", err)
-			continue
-		}
+		var agentInstance Runnable
 
-		// Initialize the Agent Runtime
-		rt := NewRuntime(s.logger, s.bus, cfg, llmClient, s.mem)
+		// Determine if this is an internal compiled Go agent or a generic declarative agent
+		if cfg.Engine == "internal" {
+			factory, ok := s.internalRegistry[cfg.InternalModule]
+			if !ok {
+				s.logger.Error("Unknown internal module", "module", cfg.InternalModule, "did", cfg.DID)
+				continue
+			}
+			agentInstance = factory(s.logger, s.bus, cfg, s.mem)
+		} else {
+			// Declarative Runtime
+			agentInstance = NewRuntime(s.logger, s.bus, cfg, s.mem)
+		}
 
 		// Start the Agent (Non-blocking)
-		if err := rt.Start(); err != nil {
+		if err := agentInstance.Start(); err != nil {
 			s.logger.Error("❌ Failed to start agent", "did", cfg.DID, "error", err)
-			// We continue loading other agents even if one fails
 			continue
 		}
 
-		s.agents[cfg.DID] = rt
+		s.agents[cfg.DID] = agentInstance
 		s.logger.Info("✅ Agent Active", "did", cfg.DID, "role", cfg.Name)
 	}
 
 	return nil
 }
 
-// Run starts the supervisor's monitoring loop.
-// It blocks until the context is canceled.
+// Run starts the supervisor's monitoring heartbeat.
 func (s *Supervisor) Run(ctx context.Context) error {
 	s.logger.Info("👀 Supervisor Monitoring Active")
 
@@ -92,13 +105,11 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			s.mu.RUnlock()
 
 			s.logger.Info("Creating Heartbeat", "active_agents", count)
-			// Future: Add deeper health checks here (e.g., ping agents, check NATS lag)
 		}
 	}
 }
 
-// Shutdown gracefully stops all running agents, ensuring in-flight tasks
-// have a chance to complete (up to the context deadline).
+// Shutdown gracefully stops all running agents.
 func (s *Supervisor) Shutdown(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -106,17 +117,16 @@ func (s *Supervisor) Shutdown(ctx context.Context) {
 	s.logger.Info("🔻 Supervisor shutting down all agents...")
 
 	var wg sync.WaitGroup
-	for did, agent := range s.agents {
+	for did, agentInstance := range s.agents {
 		wg.Add(1)
-		go func(d string, a *Runtime) {
+		go func(d string, a Runnable) {
 			defer wg.Done()
 			if err := a.Stop(); err != nil {
 				s.logger.Error("Error stopping agent", "did", d, "error", err)
 			}
-		}(did, agent)
+		}(did, agentInstance)
 	}
 
-	// Wait for cleanup or context timeout
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()

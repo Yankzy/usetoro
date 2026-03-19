@@ -7,14 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/Yankzy/usetoro/tap/pkg/identity"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/xuri/excelize/v2"
@@ -23,7 +23,6 @@ import (
 const (
 	maxCleanupFileSize = 20 << 20 // 20 MiB
 	maxCleanupRows     = 10_000
-	cleanupEnrichSubj  = "cleanup.enrich.%s" // cleanup.enrich.{realmID}
 )
 
 // CleanupExporter defines the export operations required by the cleanup endpoints.
@@ -32,37 +31,27 @@ type CleanupExporter interface {
 	ExportAuditPDF(ctx context.Context, sessionID string) ([]byte, error)
 }
 
-// rawRow is an intermediate struct used during CSV/XLSX parsing.
-type rawRow struct {
-	Date        string
-	Description string
-	Amount      string
-	Vendor      string
-}
-
 // HandleCleanupUpload ingests a CSV or XLSX file of messy transactions.
 // POST /cleanup/upload (multipart/form-data: realm_id, file)
 func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// 1. Auth: extract user from JWT.
-	userID, err := h.extractUserID(r)
-	if err != nil {
+	// 1. Auth: extract user claims from JWT.
+	claims, err := h.extractUserClaims(r)
+	if err != nil || claims == nil {
 		JSONError(w, h.Logger, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	// 2. Parse multipart — limit memory to 32 MiB for form fields.
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		JSONError(w, h.Logger, http.StatusBadRequest, "invalid multipart form")
-		return
-	}
+	// 2. Fetch the realm_id for this user's entity
+	entityUUID := pgtype.UUID{Bytes: claims.EntityID, Valid: true}
 
-	// realm_id is optional — if absent the session runs in Excel-only mode (no QBO posting).
-	realmIDStr := strings.TrimSpace(r.FormValue("realm_id"))
+	// We allow the upload to proceed even if no realm_id is linked yet (Excel-only offline mode).
 	var realmID pgtype.Text
-	if realmIDStr != "" {
-		realmID = pgtype.Text{String: realmIDStr, Valid: true}
+	var scannedRealmID string
+	err = h.DBPool.QueryRow(ctx, `SELECT realm_id FROM toro_core.erp_connections WHERE entity_id = $1 LIMIT 1`, entityUUID).Scan(&scannedRealmID)
+	if err == nil && scannedRealmID != "" {
+		realmID = pgtype.Text{String: scannedRealmID, Valid: true}
 	}
 
 	file, header, err := r.FormFile("file")
@@ -76,17 +65,17 @@ func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Parse rows based on extension.
 	name := strings.ToLower(header.Filename)
-	var rows []rawRow
+	var rows [][]string
 	switch {
 	case strings.HasSuffix(name, ".csv"):
-		rows, err = parseCSV(ctx, h.LLMClient, h.Logger, limitedFile)
+		rows, err = parseCSV(r.Context(), limitedFile)
 	case strings.HasSuffix(name, ".xlsx"):
 		data, readErr := io.ReadAll(limitedFile)
 		if readErr != nil {
 			JSONError(w, h.Logger, http.StatusBadRequest, "failed to read file")
 			return
 		}
-		rows, err = parseXLSX(ctx, h.LLMClient, h.Logger, data)
+		rows, err = parseXLSX(r.Context(), data)
 	default:
 		JSONError(w, h.Logger, http.StatusBadRequest, "unsupported file type — use .csv or .xlsx")
 		return
@@ -117,7 +106,7 @@ func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
 
 	qtx := h.CleanupDB.WithTx(tx)
 
-	pgUserID := pgtype.UUID{Bytes: userID, Valid: true}
+	pgUserID := pgtype.UUID{Bytes: claims.UserID, Valid: true}
 	session, err := qtx.CreateCleanupSession(ctx, database.CreateCleanupSessionParams{
 		CreatedBy: pgUserID,
 		FileName:  pgtype.Text{String: header.Filename, Valid: true},
@@ -130,46 +119,50 @@ func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inserted := 0
-	for _, row := range rows {
-		amount, parseErr := strconv.ParseFloat(strings.ReplaceAll(row.Amount, ",", ""), 64)
-		if parseErr != nil {
-			h.Logger.Warn("cleanup upload: skipping row with invalid amount",
-				"amount_str", row.Amount, "session_id", session.ID)
-			continue
-		}
+	// 4. Broadcast the task to the TAP Agent Network
+	payload := map[string]interface{}{
+		"session_id": session.ID,
+		"realm_id":   realmID.String,
+		"rows":       rows,
+	}
+	payloadBytes, _ := json.Marshal(payload)
 
-		var rawDate pgtype.Date
-		if row.Date != "" {
-			if t := parseFlexibleDate(row.Date); !t.IsZero() {
-				rawDate = pgtype.Date{Time: t, Valid: true}
-			}
-		}
+	taskDef := core.TaskDefinition{
+		ID:         uuid.New().String(),
+		Domain:     "accounting.cleanup",
+		Complexity: 0,
+		Reward:     1, // 1 micro-TORO
+		Payload:    payloadBytes,
+	}
 
-		var amountNumeric pgtype.Numeric
-		if scanErr := amountNumeric.Scan(fmt.Sprintf("%.2f", amount)); scanErr != nil {
-			continue
-		}
+	// The gate API acts as the broadcaster. We need a DID for it.
+	// For now, we'll generate an ephemeral one, but ideally the API has a static identity.
+	kp, _ := identity.GenerateKeyPair()
+	gateDID := identity.CreateDID(kp.Public)
 
-		// Determine source type from file extension
-		sourceTypeStr := "csv"
-		if strings.HasSuffix(name, ".xlsx") {
-			sourceTypeStr = "excel" // mapping xlsx to 'excel' as it's more standard
-		}
+	cfpEnv, err := core.NewEnvelope(
+		uuid.New().String(),
+		gateDID,
+		"",                  // Broadcast
+		uuid.New().String(), // New Conversation CID
+		core.CFP,
+		taskDef,
+	)
+	if err != nil {
+		h.Logger.Error("failed to create CFP envelope", "error", err)
+		JSONError(w, h.Logger, http.StatusInternalServerError, "failed to dispatch task")
+		return
+	}
+	cfpEnv.Signature = kp.Sign(cfpEnv.Body)
 
-		if _, insertErr := qtx.InsertCleanupRow(ctx, database.InsertCleanupRowParams{
-			SessionID:      session.ID,
-			RealmID:        realmID,
-			SourceType:     sourceTypeStr,
-			RawDescription: pgtype.Text{String: row.Description, Valid: row.Description != ""},
-			RawAmount:      amountNumeric,
-			RawDate:        rawDate,
-		}); insertErr != nil {
-			h.Logger.Error("cleanup upload: insert row", "error", insertErr)
-			JSONError(w, h.Logger, http.StatusInternalServerError, "internal server error")
-			return
-		}
-		inserted++
+	cfpBytes, _ := json.Marshal(cfpEnv)
+
+	// Broadcast on NATS JetStream topic (0 is complexity)
+	topic := "tasks.accounting.cleanup.0"
+	if err := h.CleanupNATS.Publish(topic, cfpBytes); err != nil {
+		h.Logger.Error("failed to publish CFP", "error", err)
+		JSONError(w, h.Logger, http.StatusInternalServerError, "failed to dispatch task")
+		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -178,20 +171,19 @@ func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. CDC event (ledger.shadow_erp_cleanup_sessions.insert) will trigger the CleanupWorker automatically.
 	sessionIDStr := uuid.UUID(session.ID.Bytes).String()
 
-	h.Logger.Info("cleanup upload accepted",
+	h.Logger.Info("cleanup upload delegated to TAP Agent",
 		"session_id", sessionIDStr,
 		"realm_id", realmID.String,
-		"rows_inserted", inserted,
+		"rows_extracted", len(rows),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusAccepted) // 202 Accepted because processing is async
 	json.NewEncoder(w).Encode(map[string]string{
 		"session_id": sessionIDStr,
-		"status":     "PENDING",
+		"status":     "PROCESSING",
 	})
 }
 
@@ -199,7 +191,7 @@ func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
 // GET /cleanup/{session_id}/export
 func (h *Handler) HandleCleanupExport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if _, err := h.extractUserID(r); err != nil {
+	if claims, err := h.extractUserClaims(r); claims == nil || err != nil {
 		JSONError(w, h.Logger, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -232,7 +224,7 @@ func (h *Handler) HandleCleanupExport(w http.ResponseWriter, r *http.Request) {
 // GET /cleanup/{session_id}/audit
 func (h *Handler) HandleCleanupAudit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if _, err := h.extractUserID(r); err != nil {
+	if claims, err := h.extractUserClaims(r); claims == nil || err != nil {
 		JSONError(w, h.Logger, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -263,7 +255,7 @@ func (h *Handler) HandleCleanupAudit(w http.ResponseWriter, r *http.Request) {
 
 // ─── parsing helpers ──────────────────────────────────────────────────────────
 
-func parseCSV(ctx context.Context, llmClient *ai.LLMClient, logger *slog.Logger, r io.Reader) ([]rawRow, error) {
+func parseCSV(ctx context.Context, r io.Reader) ([][]string, error) {
 	cr := csv.NewReader(r)
 	cr.LazyQuotes = true
 	cr.TrimLeadingSpace = true
@@ -274,6 +266,8 @@ func parseCSV(ctx context.Context, llmClient *ai.LLMClient, logger *slog.Logger,
 	}
 
 	var allRows [][]string
+	allRows = append(allRows, headers) // include headers for AI
+
 	for {
 		rec, err := cr.Read()
 		if err == io.EOF {
@@ -288,31 +282,10 @@ func parseCSV(ctx context.Context, llmClient *ai.LLMClient, logger *slog.Logger,
 		return nil, nil
 	}
 
-	sampleLimit := len(allRows)
-	if sampleLimit > 5 {
-		sampleLimit = 5
-	}
-	
-	systemPrompt := "You are a highly precise data-mapping assistant for an accounting application. Your sole purpose is to output valid JSON matching the exact schema requested, without markdown formatting."
-	userPrompt := buildMappingPrompt(headers, allRows[:sampleLimit])
-
-	var mapping ColumnMapping
-	if err := llmClient.GenerateJSON(ctx, systemPrompt, userPrompt, &mapping); err != nil {
-		return nil, fmt.Errorf("LLM mapping failed: %w", err)
-	}
-
-	logger.Info("🤖 LLM Column Mapping Complete (CSV)",
-		"mapping", mapping,
-	)
-
-	var rows []rawRow
-	for _, rec := range allRows {
-		rows = append(rows, mapRowUsingLLM(rec, mapping))
-	}
-	return rows, nil
+	return allRows, nil
 }
 
-func parseXLSX(ctx context.Context, llmClient *ai.LLMClient, logger *slog.Logger, data []byte) ([]rawRow, error) {
+func parseXLSX(ctx context.Context, data []byte) ([][]string, error) {
 	f, err := excelize.OpenReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open xlsx: %w", err)
@@ -331,85 +304,7 @@ func parseXLSX(ctx context.Context, llmClient *ai.LLMClient, logger *slog.Logger
 		return nil, nil
 	}
 
-	headers := allRows[0]
-	dataRows := allRows[1:]
-
-	sampleLimit := len(dataRows)
-	if sampleLimit > 5 {
-		sampleLimit = 5
-	}
-
-	systemPrompt := "You are a highly precise data-mapping assistant for an accounting application. Your sole purpose is to output valid JSON matching the exact schema requested, without markdown formatting."
-	userPrompt := buildMappingPrompt(headers, dataRows[:sampleLimit])
-
-	var mapping ColumnMapping
-	if err := llmClient.GenerateJSON(ctx, systemPrompt, userPrompt, &mapping); err != nil {
-		return nil, fmt.Errorf("LLM mapping failed: %w", err)
-	}
-
-	logger.Info("🤖 LLM Column Mapping Complete (XLSX)",
-		"mapping", mapping,
-	)
-
-	var rows []rawRow
-	for _, rec := range dataRows {
-		rows = append(rows, mapRowUsingLLM(rec, mapping))
-	}
-	return rows, nil
-}
-
-func mapRowUsingLLM(rec []string, m ColumnMapping) rawRow {
-	row := rawRow{}
-	if m.DateColIdx != nil {
-		row.Date = fieldAt(rec, *m.DateColIdx)
-	}
-	if m.DescriptionColIdx != nil {
-		row.Description = fieldAt(rec, *m.DescriptionColIdx)
-	}
-	if m.VendorColIdx != nil {
-		row.Vendor = fieldAt(rec, *m.VendorColIdx)
-	}
-
-	if m.IsSplitAmount {
-		debitAmt := 0.0
-		creditAmt := 0.0
-		if m.DebitColIdx != nil {
-			str := strings.ReplaceAll(fieldAt(rec, *m.DebitColIdx), ",", "")
-			debitAmt, _ = strconv.ParseFloat(str, 64)
-		}
-		if m.CreditColIdx != nil {
-			str := strings.ReplaceAll(fieldAt(rec, *m.CreditColIdx), ",", "")
-			creditAmt, _ = strconv.ParseFloat(str, 64)
-		}
-
-		finalAmt := creditAmt
-		if m.IsExpensePositive {
-			// standard logic: if expense is positive, subtract it
-			finalAmt -= debitAmt
-		} else {
-			// if it's false, then amounts are likely already properly signed, or add them
-			finalAmt += debitAmt
-		}
-		row.Amount = fmt.Sprintf("%.2f", finalAmt)
-
-	} else if m.AmountColIdx != nil {
-		amtStr := strings.ReplaceAll(fieldAt(rec, *m.AmountColIdx), ",", "")
-		amt, _ := strconv.ParseFloat(amtStr, 64)
-
-		if m.IsExpensePositive {
-			amt = -amt
-		}
-		row.Amount = fmt.Sprintf("%.2f", amt)
-	}
-
-	return row
-}
-
-func fieldAt(rec []string, idx int) string {
-	if idx < 0 || idx >= len(rec) {
-		return ""
-	}
-	return strings.TrimSpace(rec[idx])
+	return allRows, nil
 }
 
 var dateLayouts = []string{
@@ -431,21 +326,20 @@ func parseFlexibleDate(s string) time.Time {
 
 // ─── auth + routing helpers ───────────────────────────────────────────────────
 
-func (h *Handler) extractUserID(r *http.Request) ([16]byte, error) {
-	var zero [16]byte
+func (h *Handler) extractUserClaims(r *http.Request) (*auth.UserClaims, error) {
 	authHeader := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		return zero, fmt.Errorf("missing bearer token")
+		return nil, fmt.Errorf("missing bearer token")
 	}
 	if h.Authenticator == nil {
-		return zero, nil // dev mode
+		return nil, nil // dev mode
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	claims, err := h.Authenticator.VerifyToken(r.Context(), token)
 	if err != nil {
-		return zero, err
+		return nil, err
 	}
-	return claims.UserID, nil
+	return claims, nil
 }
 
 func parsePathUUID(r *http.Request, param string) (string, error) {

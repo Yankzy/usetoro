@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -236,7 +237,7 @@ func mapStagingRowToModel(r database.FignodeStagingTransaction) *model.FignodeSt
 		SessionID:   sessionID,
 		RealmID:     &realmID,
 		SourceType:  r.SourceType,
-		RawAmount:   numericToFloat64(r.RawAmount),
+		RawAmount:   parseDirtyStringAmount(r.RawAmount),
 		IsDuplicate: r.DuplicateOf.Valid,
 		IsRecurring: r.IsRecurring,
 		Status:      r.Status,
@@ -305,7 +306,7 @@ func mapSessionRowToModel(r database.GetSessionRowsRow) *model.FignodeStagingRow
 		SessionID:   sessionID,
 		RealmID:     &rowRealmID,
 		SourceType:  r.SourceType,
-		RawAmount:   numericToFloat64(r.RawAmount),
+		RawAmount:   parseDirtyStringAmount(r.RawAmount),
 		IsDuplicate: r.DuplicateOf.Valid,
 		IsRecurring: r.IsRecurring,
 		Status:      r.Status,
@@ -387,7 +388,7 @@ func mapGetPendingSessionRowsRowToModel(r database.GetPendingSessionRowsRow) *mo
 		SessionID:   sessionID,
 		RealmID:     &realmID,
 		SourceType:  r.SourceType,
-		RawAmount:   numericToFloat64(r.RawAmount),
+		RawAmount:   parseDirtyStringAmount(r.RawAmount),
 		IsDuplicate: r.DuplicateOf.Valid,
 		IsRecurring: r.IsRecurring,
 		Status:      r.Status,
@@ -469,7 +470,7 @@ func mapGetCleanupRowRowToModel(r database.GetCleanupRowRow) *model.FignodeStagi
 		SessionID:   sessionID,
 		RealmID:     &realmID,
 		SourceType:  r.SourceType,
-		RawAmount:   numericToFloat64(r.RawAmount),
+		RawAmount:   parseDirtyStringAmount(r.RawAmount),
 		IsDuplicate: r.DuplicateOf.Valid,
 		IsRecurring: r.IsRecurring,
 		Status:      r.Status,
@@ -535,7 +536,7 @@ func mapOverrideCleanupRowRowToModel(r database.OverrideCleanupRowRow) *model.Fi
 		SessionID:   sessionID,
 		RealmID:     &realmID,
 		SourceType:  r.SourceType,
-		RawAmount:   numericToFloat64(r.RawAmount),
+		RawAmount:   parseDirtyStringAmount(r.RawAmount),
 		IsDuplicate: r.DuplicateOf.Valid,
 		IsRecurring: r.IsRecurring,
 		Status:      r.Status,
@@ -631,12 +632,16 @@ func buildQBOPurchase(
 	return purchase
 }
 
-func numericToFloat64(n pgtype.Numeric) float64 {
-	if !n.Valid {
+func parseDirtyStringAmount(s string) float64 {
+	if s == "" {
 		return 0
 	}
-	f, _ := n.Float64Value()
-	return f.Float64
+	cleaned := strings.ReplaceAll(s, "*", "")
+	cleaned = strings.TrimSpace(cleaned)
+	if f, err := strconv.ParseFloat(cleaned, 64); err == nil {
+		return f
+	}
+	return 0
 }
 
 func uuidStrFromPG(u pgtype.UUID) string {
@@ -661,7 +666,7 @@ func mapGetPendingRealmRowsRowToModel(r database.GetPendingRealmRowsRow) *model.
 		SessionID:   sessionID,
 		RealmID:     &realmID,
 		SourceType:  r.SourceType,
-		RawAmount:   numericToFloat64(r.RawAmount),
+		RawAmount:   parseDirtyStringAmount(r.RawAmount),
 		IsDuplicate: r.DuplicateOf.Valid,
 		IsRecurring: r.IsRecurring,
 		Status:      r.Status,

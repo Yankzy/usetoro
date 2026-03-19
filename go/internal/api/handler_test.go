@@ -160,7 +160,6 @@ func TestHandleStripeWebhook(t *testing.T) {
 				nil,
 				nil,
 				nil,
-				nil,
 			)
 
 			// Construct request

@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS fignode.staging_transactions (
     -- A. Raw Input (Universal)
     source_type          TEXT NOT NULL DEFAULT 'BankFeed', -- 'CSV', 'BankFeed', 'Receipt'
     raw_description      TEXT,                             -- e.g., "AMZN Mktp US"
-    raw_amount           DECIMAL(15,2) NOT NULL,
+    raw_amount           TEXT NOT NULL,
     raw_date             DATE,
 
     -- B. Plaid / Open Banking Specifics (Rich Data)
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS fignode.staging_transactions (
     ai_reasoning         TEXT,                             -- "Matches past Starbucks purchases"
 
     -- D. Human "Swipe" Mechanics (The Tinder Action)
-    human_action         TEXT,                             -- 'SWIPED_RIGHT', 'SWIPED_LEFT', 'SKIPPED'
+    human_action         TEXT,                             -- 'SWIPED_RIGHT', 'SWIPED_LEFT', 'SKIPPED', 'ASK_CLIENT'
     swiped_by            UUID REFERENCES toro_core.users(id) ON DELETE SET NULL,
     swiped_at            TIMESTAMPTZ,
     override_vendor_id   UUID REFERENCES shadow_erp.vendors(id) ON DELETE SET NULL,

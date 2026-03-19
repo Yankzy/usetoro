@@ -53,7 +53,7 @@ type FignodeStagingTransaction struct {
 	RealmID               pgtype.Text
 	SourceType            string
 	RawDescription        pgtype.Text
-	RawAmount             pgtype.Numeric
+	RawAmount             string
 	RawDate               pgtype.Date
 	PlaidTransactionID    pgtype.Text
 	PlaidAccountID        pgtype.Text

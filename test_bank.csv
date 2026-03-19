@@ -1,6 +1,15 @@
-Trans Date,Post Date,Line Item,Payee Name,Money Out,Money In,Balance
-03/01/2026,03/02/2026,ACH Electronic Debit,PG&E,150.00,,4500.00
-03/03/2026,03/03/2026,Point of Sale,STARBUCKS STORE 1234,4.50,,4495.50
-03/05/2026,03/06/2026,Wire Transfer In,CLIENT PAYMENT,,2500.00,6995.50
-03/06/2026,03/06/2026,Credit Card Payment,AMEX EPAY,500.00,,6495.50
-03/10/2026,03/10/2026,Monthly Fee,BANK MAINT FEE,25.00,,6470.50
+*** STATEMENT OF ACCOUNTS ***,,,,,,
+"Account Title:","BUSS CHK **8392",,,,,
+"Period:","03/01/2026 - 03/31/2026",,,,,
+"Primary Owner:", "*** JOHN DOE ***",,,,,
+"Status:","*** ACTIVE ***",,,,,
+,,,,,,
+"Date","Description","Ref**Number","Amt(Dr)","Amt(Cr)","Balance","**NOTES**"
+"03/01/26","*** STRIPE TRANSFER REF# 9988 ***","SD-901",,"*** 3,500.00 ***","$13,500.00",""
+"03/03/26","POS PUR *** AWS CLOUD *** WA","","*** 450.00 ***",,"$13,050.00","*** WEB ***"
+"03/05/26","ACH DEB *** GUSTO PAY *** ID:123","","*** 8,200.00 ***",,"$4,850.00",""
+"03/10/26","*** MAINTENANCE FEE ***","","15.00",,"$4,835.00",""
+"03/12/26","CHK **1001** CASHD","**1001**","1,200.00",,"$3,635.00",""
+"03/15/26","POS PUR *** UBER TRIP *** CA","","35.40",,"$3,599.60",""
+"03/18/26","DEP *** VENMO CASHOUT ***","",,"*** 150.00 ***","$3,749.60","*** WEB ***"
+"03/19/26","ACH DEB *** CHASE CARD AUTOPAY *** 8392","","*** 1,250.00 ***",,"$2,499.60",""

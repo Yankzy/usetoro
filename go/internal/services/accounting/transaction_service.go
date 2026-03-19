@@ -88,8 +88,7 @@ func (s *TransactionService) postExpense(
 		txnDate = time.Now()
 	}
 
-	amountNum := pgtype.Numeric{}
-	amountNum.Scan(fmt.Sprintf("%.2f", input.Amount))
+	amountStr := fmt.Sprintf("%.2f", input.Amount)
 
 	sourceType := "Bill"
 	if input.Paid {
@@ -104,7 +103,7 @@ func (s *TransactionService) postExpense(
 		existing, err := s.repo.GetProposedTransactionByValues(ctx, database.GetProposedTransactionByValuesParams{
 			RealmID:   realmID,
 			RawDate:   pgtype.Date{Time: txnDate, Valid: true},
-			RawAmount: amountNum,
+			RawAmount: amountStr,
 		})
 
 		if err == nil && (existing.Status == "SYNCED" || existing.Status == "PENDING_CLASSIFICATION") {
@@ -118,7 +117,7 @@ func (s *TransactionService) postExpense(
 		proposed, err := s.repo.CreateProposedTransaction(ctx, database.CreateProposedTransactionParams{
 			RealmID:         realmID,
 			SourceType:      sourceType,
-			RawAmount:       amountNum,
+			RawAmount:       amountStr,
 			RawDate:         pgtype.Date{Time: txnDate, Valid: true},
 			RawDescription:  pgtype.Text{String: input.Description, Valid: input.Description != ""},
 			ConfidenceScore: pgtype.Numeric{Valid: false},

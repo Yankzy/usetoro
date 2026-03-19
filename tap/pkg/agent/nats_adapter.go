@@ -18,7 +18,8 @@ func NewNatsAdapter(nc *nats.Conn, js nats.JetStreamContext) *NatsAdapter {
 }
 
 func (n *NatsAdapter) Publish(subject string, data []byte) error {
-	return n.nc.Publish(subject, data)
+	_, err := n.js.Publish(subject, data)
+	return err
 }
 
 func (n *NatsAdapter) RequestWithContext(ctx context.Context, subject string, data []byte) (*nats.Msg, error) {

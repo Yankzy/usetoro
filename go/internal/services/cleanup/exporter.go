@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/xuri/excelize/v2"
+	"strings"
 )
 
 // Exporter generates Excel and PDF exports for a completed cleanup session.
@@ -263,10 +264,8 @@ func (e *Exporter) ExportAuditPDF(ctx context.Context, sessionID string) ([]byte
 			desc = truncate(row.RawDescription.String, 30)
 		}
 		amtStr := ""
-		if row.RawAmount.Valid {
-			if f, err := row.RawAmount.Float64Value(); err == nil {
-				amtStr = fmt.Sprintf("$%.2f", f.Float64)
-			}
+		if row.RawAmount != "" {
+			amtStr = row.RawAmount
 		}
 		accountName := ""
 		if row.OverrideAccountName.Valid {
@@ -330,9 +329,11 @@ func writeExcelRow(f *excelize.File, sheet string, rowNum int, row database.GetS
 		account = row.PredictedAccountName.String
 	}
 	amount := 0.0
-	if row.RawAmount.Valid {
-		if f2, err := row.RawAmount.Float64Value(); err == nil {
-			amount = f2.Float64
+	if row.RawAmount != "" {
+		cleaned := strings.ReplaceAll(row.RawAmount, "*", "")
+		cleaned = strings.TrimSpace(cleaned)
+		if f2, err := strconv.ParseFloat(cleaned, 64); err == nil {
+			amount = f2
 		}
 	}
 	confidence := ""

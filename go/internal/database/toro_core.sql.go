@@ -47,3 +47,17 @@ func (q *Queries) GetEntityDescendants(ctx context.Context, id pgtype.UUID) ([]p
 	}
 	return items, nil
 }
+
+const getRealmIDByEntityID = `-- name: GetRealmIDByEntityID :one
+SELECT realm_id
+FROM toro_core.erp_connections
+WHERE entity_id = $1
+LIMIT 1
+`
+
+func (q *Queries) GetRealmIDByEntityID(ctx context.Context, entityID pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getRealmIDByEntityID, entityID)
+	var realm_id string
+	err := row.Scan(&realm_id)
+	return realm_id, err
+}

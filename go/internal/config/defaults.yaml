@@ -58,7 +58,6 @@ nats:
         <<: *jetstream-default
         subjects:
           - contracts.request
-          - proof.submit
           - raw.ingest.samsara
 
     almanac:
@@ -75,6 +74,15 @@ nats:
         <<: *jetstream-default
         subjects:
           - ledger.>
+
+    tasks:
+      stream_name: TASKS
+      jetstream:
+        <<: *jetstream-default
+        max_age: 168h # 7 days
+        subjects:
+          - tasks.>
+          - proof.>
 agents:
   - did: "did:toro:agent:stripe_processor"
     name: "Stripe Receipt Processor"
@@ -103,3 +111,13 @@ agents:
         skill: "tasks.draft_email"
       - name: "send_whatsapp"
         skill: "tasks.send"
+
+  - did: "did:toro:agent:cleanup_1"
+    name: "Accounting Cleanup Agent"
+    engine: "internal"
+    internal_module: "cleanup-agent"
+    
+  - did: "did:toro:agent:enrichment_1"
+    name: "Accounting Enrichment Agent"
+    engine: "internal"
+    internal_module: "enrichment-agent"

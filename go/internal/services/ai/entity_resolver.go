@@ -21,15 +21,24 @@ type EntityMatch struct {
 	EntityType string // "vendor", "customer"
 }
 
-// EntityResolver handles robust matching of entities (Vendors/Customers)
+type VectorQuerier interface {
+	QueryVectors(ctx context.Context, namespace string, vector []float32, topK int, filter map[string]interface{}) ([]vector.Match, error)
+}
+
+type TextEmbedder interface {
+	Embed(ctx context.Context, text string) ([]float32, error)
+}
+
+// EntityResolver handles robust metadata-filtered querying of entities
 type EntityResolver struct {
 	store        *store.Store
-	vectorClient *vector.PineconeClient
-	embedder     *vector.Embedder
+	vectorClient VectorQuerier
+	embedder     TextEmbedder
 	threshold    float64
 }
 
-// NewEntityResolver creates a new entity resolver
+// NewEntityResolver generates a configured resolver structure holding Fignode ecosystem services
+// By typing as concrete pointers but storing as interfaces, we retain external caller compatibility while allowing internal mock injections.
 func NewEntityResolver(s *store.Store, vc *vector.PineconeClient, e *vector.Embedder, threshold float64) *EntityResolver {
 	return &EntityResolver{
 		store:        s,
@@ -228,4 +237,124 @@ func (r *EntityResolver) Learn(ctx context.Context, realmID, rawInput, userCorre
 	}
 
 	return nil
+}
+
+// ResolveVendor explicitly filters Pinecone for entity_type vendor.
+func (r *EntityResolver) ResolveVendor(ctx context.Context, realmID, rawDescription string) (*EntityMatch, error) {
+	if rawDescription == "" {
+		return nil, nil
+	}
+
+	queryVector, err := r.embedder.Embed(ctx, rawDescription)
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed vendor description: %w", err)
+	}
+
+	filter := map[string]interface{}{
+		"entity_type": map[string]interface{}{"$eq": "vendor"},
+	}
+
+	matches, err := r.vectorClient.QueryVectors(ctx, realmID, queryVector, 1, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query vendor vectors: %w", err)
+	}
+
+	return r.getTopMatch(matches, "vendor")
+}
+
+// ResolveCustomer explicitly filters Pinecone for entity_type customer.
+func (r *EntityResolver) ResolveCustomer(ctx context.Context, realmID, rawDescription string) (*EntityMatch, error) {
+	if rawDescription == "" {
+		return nil, nil
+	}
+
+	queryVector, err := r.embedder.Embed(ctx, rawDescription)
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed customer description: %w", err)
+	}
+
+	filter := map[string]interface{}{
+		"entity_type": map[string]interface{}{"$eq": "customer"},
+	}
+
+	matches, err := r.vectorClient.QueryVectors(ctx, realmID, queryVector, 1, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query customer vectors: %w", err)
+	}
+
+	return r.getTopMatch(matches, "customer")
+}
+
+// ResolveAccount merges contexts and strictly routes money_in and money_out transactions safely outside of cash mappings using MongoDB syntax.
+func (r *EntityResolver) ResolveAccount(ctx context.Context, realmID, transactionType, rawDescription, resolvedEntityName string) (*EntityMatch, error) {
+	if rawDescription == "" {
+		return nil, nil
+	}
+
+	enrichedText := fmt.Sprintf("Entity: %s. Description: %s", resolvedEntityName, rawDescription)
+
+	queryVector, err := r.embedder.Embed(ctx, enrichedText)
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed account context: %w", err)
+	}
+
+	var filter map[string]interface{}
+
+	if transactionType == "money_out" {
+		filter = map[string]interface{}{
+			"entity_type": map[string]interface{}{"$eq": "account"},
+			"classification": map[string]interface{}{
+				"$in": []string{"Expense", "Asset", "Cost of Goods Sold"},
+			},
+			"account_type": map[string]interface{}{
+				"$nin": []string{"Bank", "Credit Card", "Accounts Receivable", "Other Current Asset"},
+			},
+		}
+	} else if transactionType == "money_in" {
+		filter = map[string]interface{}{
+			"entity_type": map[string]interface{}{"$eq": "account"},
+			"classification": map[string]interface{}{
+				"$in": []string{"Revenue", "Income", "Liability", "Equity"},
+			},
+			"account_type": map[string]interface{}{
+				"$nin": []string{"Bank", "Accounts Payable"},
+			},
+		}
+	} else {
+		filter = map[string]interface{}{
+			"entity_type": map[string]interface{}{"$eq": "account"},
+		}
+	}
+
+	matches, err := r.vectorClient.QueryVectors(ctx, realmID, queryVector, 1, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query account vectors: %w", err)
+	}
+
+	return r.getTopMatch(matches, "account")
+}
+
+// getTopMatch safely unpacks the structured Fignode metadata
+func (r *EntityResolver) getTopMatch(matches []vector.Match, entityType string) (*EntityMatch, error) {
+	if len(matches) == 0 {
+		return nil, nil
+	}
+
+	top := matches[0]
+	if top.Score < r.threshold {
+		return nil, nil
+	}
+
+	name, ok := top.Metadata["name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("metadata missing 'name' string key")
+	}
+
+	return &EntityMatch{
+		ID:         top.ID,
+		Name:       name,
+		Score:      top.Score,
+		EntityType: entityType,
+		Source:     "vector",
+	}, nil
 }

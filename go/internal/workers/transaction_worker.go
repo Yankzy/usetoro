@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 
 	"github.com/Yankzy/usetoro/internal/cdc"
 	"github.com/Yankzy/usetoro/internal/database"
@@ -205,10 +207,16 @@ func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.FignodeSt
 		}
 	}
 
-	amt, _ := tx.RawAmount.Float64Value()
+	var amt float64
+	cleaned := strings.ReplaceAll(tx.RawAmount, "*", "")
+	cleaned = strings.TrimSpace(cleaned)
+	if f, err := strconv.ParseFloat(cleaned, 64); err == nil {
+		amt = f
+	}
+
 	input := erp.ExpenseInput{
 		RealmID:     tx.RealmID.String,
-		Amount:      amt.Float64,
+		Amount:      amt,
 		TxnDate:     tx.RawDate.Time,
 		Description: tx.RawDescription.String,
 		VendorHint:  vendorErpID,

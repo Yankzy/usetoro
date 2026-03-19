@@ -1,8 +1,10 @@
 package ai
 
 import (
+	"context"
 	"testing"
 
+	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -75,5 +77,131 @@ func TestLayer3FuzzyRank(t *testing.T) {
 		}
 		result := resolver.layer3FuzzyRank("Home Depot", candidates)
 		assert.Equal(t, "Home Depot Inc", result.Name)
+	})
+}
+
+// --- Pinecone Vector Query Unittests ---
+
+type MockVectorClient struct {
+	lastNamespace string
+	lastFilter    map[string]interface{}
+}
+
+func (m *MockVectorClient) QueryVectors(ctx context.Context, namespace string, v []float32, topK int, filter map[string]interface{}) ([]vector.Match, error) {
+	m.lastNamespace = namespace
+	m.lastFilter = filter
+	return []vector.Match{
+		{ID: "mock_id", Score: 0.99, Metadata: map[string]interface{}{"name": "Mock Name"}},
+	}, nil
+}
+
+type MockEmbedder struct{}
+
+func (m *MockEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	return []float32{1.0, 0.0, 0.0}, nil
+}
+
+func TestResolveVendorFilters(t *testing.T) {
+	mockVC := &MockVectorClient{}
+	mockEmb := &MockEmbedder{}
+
+	resolver := &EntityResolver{
+		vectorClient: mockVC,
+		embedder:     mockEmb,
+		threshold:    0.8,
+	}
+
+	realmID := "9341456276406470"
+	match, err := resolver.ResolveVendor(context.Background(), realmID, "test vendor")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, match)
+
+	// Verify namespace is tracking the QuickBooks Realm ID properly
+	assert.Equal(t, realmID, mockVC.lastNamespace)
+
+	// Verify strict MongoDB style syntax
+	expectedFilter := map[string]interface{}{
+		"entity_type": map[string]interface{}{"$eq": "vendor"},
+	}
+	assert.Equal(t, expectedFilter, mockVC.lastFilter)
+}
+
+func TestResolveCustomerFilters(t *testing.T) {
+	mockVC := &MockVectorClient{}
+	mockEmb := &MockEmbedder{}
+
+	resolver := &EntityResolver{
+		vectorClient: mockVC,
+		embedder:     mockEmb,
+		threshold:    0.8,
+	}
+
+	realmID := "9341456276406470"
+	resolver.ResolveCustomer(context.Background(), realmID, "test customer")
+
+	assert.Equal(t, realmID, mockVC.lastNamespace)
+	expectedFilter := map[string]interface{}{
+		"entity_type": map[string]interface{}{"$eq": "customer"},
+	}
+	assert.Equal(t, expectedFilter, mockVC.lastFilter)
+}
+
+func TestResolveAccountFilters(t *testing.T) {
+	mockVC := &MockVectorClient{}
+	mockEmb := &MockEmbedder{}
+
+	resolver := &EntityResolver{
+		vectorClient: mockVC,
+		embedder:     mockEmb,
+		threshold:    0.8,
+	}
+
+	realmID := "9341456276406470"
+
+	t.Run("Money Out Query (Expense/Asset)", func(t *testing.T) {
+		resolver.ResolveAccount(context.Background(), realmID, "money_out", "desc", "Name")
+		assert.Equal(t, realmID, mockVC.lastNamespace)
+		
+		expectedFilter := map[string]interface{}{
+			"entity_type": map[string]interface{}{"$eq": "account"},
+			"classification": map[string]interface{}{
+				"$in": []string{"Expense", "Asset", "Cost of Goods Sold"},
+			},
+			"account_type": map[string]interface{}{
+				"$nin": []string{"Bank", "Credit Card", "Accounts Receivable", "Other Current Asset"},
+			},
+		}
+		assert.Equal(t, expectedFilter, mockVC.lastFilter)
+	})
+
+	t.Run("Money In Query (Revenue/Liability)", func(t *testing.T) {
+		resolver.ResolveAccount(context.Background(), realmID, "money_in", "desc", "Name")
+		assert.Equal(t, realmID, mockVC.lastNamespace)
+
+		expectedFilter := map[string]interface{}{
+			"entity_type": map[string]interface{}{"$eq": "account"},
+			"classification": map[string]interface{}{
+				"$in": []string{"Revenue", "Income", "Liability", "Equity"},
+			},
+			"account_type": map[string]interface{}{
+				"$nin": []string{"Bank", "Accounts Payable"},
+			},
+		}
+		assert.Equal(t, expectedFilter, mockVC.lastFilter)
+	})
+
+	t.Run("Fallback Query (Without classification filters)", func(t *testing.T) {
+		// Testing the without-filters branch explicitly
+		resolver.ResolveAccount(context.Background(), realmID, "unknown_type", "desc", "Name")
+		assert.Equal(t, realmID, mockVC.lastNamespace)
+
+		expectedFilter := map[string]interface{}{
+			"entity_type": map[string]interface{}{"$eq": "account"},
+		}
+		
+		// By comparing this to the explicit 'money_in' and 'money_out' queries,
+		// we verify that the AI logic properly scopes down when Fignode provides financial direction.
+		assert.Equal(t, expectedFilter, mockVC.lastFilter)
 	})
 }

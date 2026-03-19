@@ -25,9 +25,9 @@ func NewLLMClient(apiKey, model string) (*LLMClient, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("OpenAI API key is required")
 	}
-	// Fallback to gpt-4o-mini if no model specified for fast/cheap testing
+	// Fallback to gpt-5.4 if no model specified for fast/cheap testing
 	if model == "" {
-		model = openai.GPT4oMini
+		model = string(shared.ChatModelGPT5_4)
 	}
 	return &LLMClient{
 		client: openai.NewClient(apiKey),

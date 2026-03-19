@@ -23,7 +23,7 @@ type TaskDefinition struct {
 	Complexity TaskComplexity `json:"complexity"` // Used for NATS routing permissions
 
 	// The Incentive
-	Reward   int64  `json:"reward"`   // Amount in micros
+	Reward   int64  `json:"reward"`   // Amount in micrions
 	Currency string `json:"currency"` // e.g., "USD", "TORO"
 
 	// The "Black Box" Payload.

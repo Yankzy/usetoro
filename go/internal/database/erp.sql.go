@@ -85,7 +85,7 @@ RETURNING id, session_id, realm_id, source_type, raw_description, raw_amount, ra
 type CreateProposedTransactionParams struct {
 	RealmID            pgtype.Text
 	SourceType         string
-	RawAmount          pgtype.Numeric
+	RawAmount          string
 	RawDate            pgtype.Date
 	RawDescription     pgtype.Text
 	PredictedVendorID  pgtype.UUID
@@ -930,7 +930,7 @@ type GetProposedTransactionByValuesParams struct {
 	RealmID           pgtype.Text
 	PredictedVendorID pgtype.UUID
 	RawDate           pgtype.Date
-	RawAmount         pgtype.Numeric
+	RawAmount         string
 }
 
 func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetProposedTransactionByValuesParams) (FignodeStagingTransaction, error) {
@@ -2071,7 +2071,7 @@ type UpsertStagingTransactionParams struct {
 	RealmID          pgtype.Text
 	ErpTransactionID pgtype.Text
 	SourceType       string
-	RawAmount        pgtype.Numeric
+	RawAmount        string
 	RawDate          pgtype.Date
 	RawDescription   pgtype.Text
 	ErpID            string

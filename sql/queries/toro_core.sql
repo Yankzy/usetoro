@@ -13,3 +13,9 @@ WITH RECURSIVE entity_tree AS (
     INNER JOIN entity_tree et ON child.parent_id = et.id
 )
 SELECT id FROM entity_tree;
+
+-- name: GetRealmIDByEntityID :one
+SELECT realm_id
+FROM toro_core.erp_connections
+WHERE entity_id = $1
+LIMIT 1;

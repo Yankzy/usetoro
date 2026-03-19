@@ -316,14 +316,12 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 
 		// Format to string precisely
 		amountStr := fmt.Sprintf("%.2f", mappedTx.Amount)
-		var amountNumeric pgtype.Numeric
-		_ = amountNumeric.Scan(amountStr)
 
 		err = c.store.Queries.UpsertStagingTransaction(ctx, database.UpsertStagingTransactionParams{
 			RealmID:          pgtype.Text{String: realmID, Valid: true},
 			ErpTransactionID: pgtype.Text{String: mappedTx.ExternalID, Valid: true},
 			SourceType:       "QBO_SYNC",
-			RawAmount:        amountNumeric,
+			RawAmount:        amountStr,
 			RawDate:          pgtype.Date{Time: mappedTx.Date, Valid: !mappedTx.Date.IsZero()},
 			RawDescription:   pgtype.Text{String: mappedTx.Description, Valid: mappedTx.Description != ""},
 			ErpID:            mappedTx.VendorID,
@@ -1140,14 +1138,12 @@ func (c *QBOConnector) batchUpsertTransactions(ctx context.Context, realmID stri
 
 		// Format to string precisely
 		amountStr := fmt.Sprintf("%.2f", mappedTx.Amount)
-		var amountNumeric pgtype.Numeric
-		_ = amountNumeric.Scan(amountStr)
 
 		if err := qtx.UpsertStagingTransaction(ctx, database.UpsertStagingTransactionParams{
 			RealmID:          pgtype.Text{String: realmID, Valid: true},
 			ErpTransactionID: pgtype.Text{String: mappedTx.ExternalID, Valid: true},
 			SourceType:       "QBO_SYNC",
-			RawAmount:        amountNumeric,
+			RawAmount:        amountStr,
 			RawDate:          pgtype.Date{Time: mappedTx.Date, Valid: !mappedTx.Date.IsZero()},
 			RawDescription:   pgtype.Text{String: mappedTx.Description, Valid: mappedTx.Description != ""},
 			ErpID:            mappedTx.VendorID,

@@ -55,7 +55,7 @@ func TestAlmanacTools(t *testing.T) {
 	defer sub.Unsubscribe()
 
 	t.Run("ResolveAgentByDID", func(t *testing.T) {
-		entry, err := ResolveAgentByDID(nc, "did:toro:testagent", 1*time.Second)
+		entry, err := ResolveAgentByDID(nc, "did:toro:testcaller", "did:toro:testagent", 1*time.Second)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -65,7 +65,7 @@ func TestAlmanacTools(t *testing.T) {
 	})
 
 	t.Run("FindAgents", func(t *testing.T) {
-		entries, err := FindAgents(nc, "logistics.trucking", 1*time.Second)
+		entries, err := FindAgents(nc, "did:toro:testcaller", "logistics.trucking", 1*time.Second)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -75,7 +75,7 @@ func TestAlmanacTools(t *testing.T) {
 	})
 
 	t.Run("ResolveAgentsByCapability", func(t *testing.T) {
-		entries, err := ResolveAgentsByCapability(nc, "logistics.trucking", 1*time.Second)
+		entries, err := ResolveAgentsByCapability(nc, "did:toro:testcaller", "logistics.trucking", 1*time.Second)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -86,7 +86,7 @@ func TestAlmanacTools(t *testing.T) {
 
 	t.Run("ResolveAgent", func(t *testing.T) {
 		query := AlmanacQuery{DID: "did:toro:testagent"}
-		entry, err := ResolveAgent(nc, query, 1*time.Second)
+		entry, err := ResolveAgent(nc, "did:toro:testcaller", query, 1*time.Second)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -96,7 +96,7 @@ func TestAlmanacTools(t *testing.T) {
 	})
 
 	t.Run("NotFound", func(t *testing.T) {
-		_, err := ResolveAgentByDID(nc, "did:toro:unknown", 1*time.Second)
+		_, err := ResolveAgentByDID(nc, "did:toro:testcaller", "did:toro:unknown", 1*time.Second)
 		if err == nil {
 			t.Fatalf("Expected error for unknown DID, but got none")
 		}

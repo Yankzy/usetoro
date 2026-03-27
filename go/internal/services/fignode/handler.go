@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/auth"
@@ -62,9 +63,14 @@ func NewRouter(h *Handler) http.Handler {
 	// Protected (require auth)
 	mux.Handle("GET /api/v1/user/stats", h.requireAuth(http.HandlerFunc(h.HandleGetStats)))
 	mux.Handle("GET /api/v1/leaderboard", h.requireAuth(http.HandlerFunc(h.HandleGetLeaderboard)))
+	mux.Handle("GET /api/v1/transactions/batch", h.requireAuth(http.HandlerFunc(h.HandleGetTransactionsBatch)))
 
 	mux.Handle("POST /api/v1/team/invite", h.requireAuth(http.HandlerFunc(h.HandleTeamInvite)))
 	mux.Handle("POST /api/v1/team/invite/validate", h.requireAuth(http.HandlerFunc(h.HandleTeamInviteValidate)))
+
+	// Unprotected (auth)
+	mux.HandleFunc("POST /api/v1/auth/register", h.HandleRegister)
+	mux.HandleFunc("POST /api/v1/auth/login", h.HandleLogin)
 
 	// Health
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -229,6 +235,18 @@ func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {
 	pgUID := pgtype.UUID{Bytes: userID, Valid: true}
 	stats, err := h.db.GetEmployeeStats(r.Context(), pgUID)
 	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			// Profile not created yet
+			resp := &UserStats{
+				TotalCleared:    0,
+				TodayCleared:    0,
+				Streak:          0,
+				AiAccuracyScore: 1.0,
+			}
+			h.cache.SetStats(r.Context(), userID, resp)
+			writeJSON(w, 200, resp)
+			return
+		}
 		writeError(w, 500, "INTERNAL", "Failed to fetch stats")
 		return
 	}

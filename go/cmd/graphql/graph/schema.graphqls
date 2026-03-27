@@ -65,6 +65,15 @@ input UpdateQboAccountInput {
   active: Boolean
 }
 
+input UpdateQboCompanyInput {
+  realmId: ID!
+  companyName: String
+  legalName: String
+  domain: String
+  country: String
+}
+
+
 input SoftDeleteQboAccountInput {
   realmId: ID!
   accountId: ID!
@@ -84,6 +93,8 @@ type Mutation {
   createQboAccount(input: CreateQboAccountInput!): Account!
   updateQboAccount(input: UpdateQboAccountInput!): Account!
   softDeleteQboAccount(input: SoftDeleteQboAccountInput!): Account!
+
+  updateQboCompanyInfo(input: UpdateQboCompanyInput!): QBOCompany!
 
   # Fignode & Clean-Up Mode mutations
   fignodeCategorize(rowId: ID!, accountId: ID, vendorId: ID, action: String!): FignodeStagingRow!

@@ -47,7 +47,7 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		host = r.Host
 	}
 
-	client := NewClient(h.hub, conn, h.logger, h.messageHandler, host)
+	client := NewClient(h.hub, conn, h.logger, h.messageHandler, host, r.Context())
 	h.hub.register <- client
 
 	// Start the client's read and write pumps

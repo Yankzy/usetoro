@@ -207,3 +207,24 @@ SET ai_accuracy_score = CASE
     END,
     updated_at = now()
 WHERE user_id = @user_id;
+
+-- =========================================================================
+-- Transactions Batch
+-- =========================================================================
+
+-- name: GetPendingFignodeTransactions :many
+SELECT * FROM fignode.staging_transactions
+WHERE status = 'PENDING_AI' 
+  AND human_action IS NULL
+  AND session_id IS NOT NULL -- Example: filter logic
+ORDER BY created_at DESC
+LIMIT 10;
+
+-- =========================================================================
+-- Fignode Transactions Startup
+-- =========================================================================
+
+-- name: GetInitialEnrichedTransactionsByRealm :many
+SELECT * FROM fignode.staging_transactions
+WHERE status = 'ENRICHED' AND realm_id = $1 AND duplicate_of IS NULL
+ORDER BY created_at DESC LIMIT 50;

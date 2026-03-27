@@ -415,6 +415,72 @@ func (q *Queries) GetEmployeeStats(ctx context.Context, userID pgtype.UUID) (Get
 	return i, err
 }
 
+const getInitialEnrichedTransactionsByRealm = `-- name: GetInitialEnrichedTransactionsByRealm :many
+
+SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at FROM fignode.staging_transactions
+WHERE status = 'ENRICHED' AND realm_id = $1 AND duplicate_of IS NULL
+ORDER BY created_at DESC LIMIT 50
+`
+
+// =========================================================================
+// Fignode Transactions Startup
+// =========================================================================
+func (q *Queries) GetInitialEnrichedTransactionsByRealm(ctx context.Context, realmID pgtype.Text) ([]FignodeStagingTransaction, error) {
+	rows, err := q.db.Query(ctx, getInitialEnrichedTransactionsByRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FignodeStagingTransaction
+	for rows.Next() {
+		var i FignodeStagingTransaction
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RealmID,
+			&i.SourceType,
+			&i.RawDescription,
+			&i.RawAmount,
+			&i.RawDate,
+			&i.PlaidTransactionID,
+			&i.PlaidAccountID,
+			&i.MerchantName,
+			&i.LogoUrl,
+			&i.PlaidCategory,
+			&i.IsPending,
+			&i.PredictedVendorID,
+			&i.PredictedVendorName,
+			&i.PredictedCustomerID,
+			&i.PredictedCustomerName,
+			&i.PredictedAccountID,
+			&i.PredictedAccountName,
+			&i.ConfidenceScore,
+			&i.AiReasoning,
+			&i.HumanAction,
+			&i.SwipedBy,
+			&i.SwipedAt,
+			&i.OverrideVendorID,
+			&i.OverrideCustomerID,
+			&i.OverrideAccountID,
+			&i.DuplicateOf,
+			&i.IsRecurring,
+			&i.SplitSuggestion,
+			&i.Status,
+			&i.ErpTransactionID,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLatestLeaderboardSnapshot = `-- name: GetLatestLeaderboardSnapshot :one
 SELECT entries, computed_at
 FROM fignode.leaderboard_snapshots
@@ -433,6 +499,75 @@ func (q *Queries) GetLatestLeaderboardSnapshot(ctx context.Context, period strin
 	var i GetLatestLeaderboardSnapshotRow
 	err := row.Scan(&i.Entries, &i.ComputedAt)
 	return i, err
+}
+
+const getPendingFignodeTransactions = `-- name: GetPendingFignodeTransactions :many
+
+SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at FROM fignode.staging_transactions
+WHERE status = 'PENDING_AI' 
+  AND human_action IS NULL
+  AND session_id IS NOT NULL -- Example: filter logic
+ORDER BY created_at DESC
+LIMIT 10
+`
+
+// =========================================================================
+// Transactions Batch
+// =========================================================================
+func (q *Queries) GetPendingFignodeTransactions(ctx context.Context) ([]FignodeStagingTransaction, error) {
+	rows, err := q.db.Query(ctx, getPendingFignodeTransactions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FignodeStagingTransaction
+	for rows.Next() {
+		var i FignodeStagingTransaction
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RealmID,
+			&i.SourceType,
+			&i.RawDescription,
+			&i.RawAmount,
+			&i.RawDate,
+			&i.PlaidTransactionID,
+			&i.PlaidAccountID,
+			&i.MerchantName,
+			&i.LogoUrl,
+			&i.PlaidCategory,
+			&i.IsPending,
+			&i.PredictedVendorID,
+			&i.PredictedVendorName,
+			&i.PredictedCustomerID,
+			&i.PredictedCustomerName,
+			&i.PredictedAccountID,
+			&i.PredictedAccountName,
+			&i.ConfidenceScore,
+			&i.AiReasoning,
+			&i.HumanAction,
+			&i.SwipedBy,
+			&i.SwipedAt,
+			&i.OverrideVendorID,
+			&i.OverrideCustomerID,
+			&i.OverrideAccountID,
+			&i.DuplicateOf,
+			&i.IsRecurring,
+			&i.SplitSuggestion,
+			&i.Status,
+			&i.ErpTransactionID,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const incrementEmployeeCleared = `-- name: IncrementEmployeeCleared :exec

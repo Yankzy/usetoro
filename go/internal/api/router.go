@@ -1,9 +1,13 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/Yankzy/usetoro/tap/pkg/micrion"
+)
 
 // NewRouter sets up the HTTP routes for the application.
-func NewRouter(h *Handler) *http.ServeMux {
+func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", h.Check) // Legacy
 	mux.HandleFunc("GET /health/live", h.Liveness)
@@ -34,8 +38,23 @@ func NewRouter(h *Handler) *http.ServeMux {
 	mux.HandleFunc("GET /cleanup/{session_id}/export", h.HandleCleanupExport)
 	mux.HandleFunc("GET /cleanup/{session_id}/audit", h.HandleCleanupAudit)
 
+	// Wallet Operations (Stripe / Checks)
+	mux.HandleFunc("GET /wallet/balance", h.HandleGetWalletBalance)
+	mux.HandleFunc("POST /wallet/topup", h.HandleCreateWalletTopUp)
+
+	// Agent Tollbooth Endpoints (Strictly Metered)
+	agentToll := micrion.TollboothMiddleware(wm, 1616)
+	mux.Handle("GET /agent/realms/{realmId}/transactions", agentToll(http.HandlerFunc(h.HandleGetUnifiedTransactions)))
+	mux.Handle("GET /agent/realms/{realmId}/accounts", agentToll(http.HandlerFunc(h.HandleGetAccounts)))
+	mux.Handle("GET /agent/realms/{realmId}/vendors", agentToll(http.HandlerFunc(h.HandleGetVendors)))
+	mux.Handle("GET /agent/realms/{realmId}/customers", agentToll(http.HandlerFunc(h.HandleGetCustomers)))
+	mux.Handle("POST /agent/cleanup/upload", agentToll(http.HandlerFunc(h.HandleCleanupUpload)))
+
 	// Backward compatibility: specific Stripe endpoint
 	mux.HandleFunc("POST /webhooks/stripe/{conn_id}", h.HandleStripeWebhook)
+
+	// E2E Redux Test Flow (Global Entrypoint)
+	mux.HandleFunc("POST /test/redux", h.HandleTestRedux)
 
 	return mux
 }

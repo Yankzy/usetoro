@@ -16,6 +16,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/resilience"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
+	"github.com/Yankzy/usetoro/tap/pkg/micrion"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,6 +43,7 @@ type SecretGetter interface {
 type EventPublisher interface {
 	PublishWebhookEvent(ctx context.Context, provider, connID, toroEventID, providerEventID, providerEventType string, body []byte) error
 	PublishQBOEvent(ctx context.Context, eventType, realmID string, data []byte) error
+	PublishRaw(ctx context.Context, subject string, data []byte) error
 	Ping(ctx context.Context) error
 }
 
@@ -74,8 +76,9 @@ type Handler struct {
 	// Cleanup Mode dependencies
 	DBPool          *pgxpool.Pool
 	CleanupDB       *database.Queries
-	CleanupNATS     *queue.Client
-	CleanupExporter CleanupExporter
+	CleanupNATS        *queue.Client
+	CleanupExporter    CleanupExporter
+	WalletManager      *micrion.WalletManager
 }
 
 // NewHandler creates a new Handler.
@@ -97,6 +100,7 @@ func NewHandler(
 	cleanupDB *database.Queries,
 	cleanupNATS *queue.Client,
 	cleanupExporter CleanupExporter,
+	wm *micrion.WalletManager,
 ) *Handler {
 	return &Handler{
 		Logger:             logger,
@@ -118,6 +122,7 @@ func NewHandler(
 		CleanupDB:          cleanupDB,
 		CleanupNATS:        cleanupNATS,
 		CleanupExporter:    cleanupExporter,
+		WalletManager:      wm,
 	}
 }
 
@@ -297,6 +302,36 @@ func (h *Handler) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// Inject "stripe" as the provider for backward compatibility
 	r.SetPathValue("provider", "stripe")
 	h.HandleWebhook(w, r)
+}
+
+// HandleTestRedux triggers the E2E Redux agent natively via NATS globally.
+func (h *Handler) HandleTestRedux(w http.ResponseWriter, r *http.Request) {
+	requestID := r.Header.Get("X-Request-ID")
+	if requestID == "" {
+		requestID = uuid.New().String()
+	}
+	ctx := context.WithValue(r.Context(), "request_id", requestID)
+
+	var payload struct {
+		Message string `json:"message"`
+	}
+	// Best effort parse
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		payload.Message = "trigger raw redux event"
+	}
+	
+	rawBytes, _ := json.Marshal(payload)
+	err := h.Pub.PublishRaw(ctx, "redux.test", rawBytes)
+	
+	if err != nil {
+		h.Logger.Error("Failed to publish redux NATS hook from API Gateway", "error", err)
+		JSONError(w, h.Logger, http.StatusServiceUnavailable, "NATS unavailable")
+		return
+	}
+	
+	h.Logger.Info("🔥 [E2E TEST] Trigger published via API Gateway on /test/redux")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "ok", "message": "Redux Test Agent Triggered via NATS from Gateway"}`))
 }
 
 // =========================================================================

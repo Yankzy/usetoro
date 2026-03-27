@@ -315,8 +315,8 @@ func writeExcelRow(f *excelize.File, sheet string, rowNum int, row database.GetS
 		dateStr = row.RawDate.Time.Format("2006-01-02")
 	}
 	vendor := ""
-	if row.PredictedVendorName.Valid {
-		vendor = row.PredictedVendorName.String
+	if row.PredictedVendorName != "" {
+		vendor = row.PredictedVendorName
 	}
 	desc := ""
 	if row.RawDescription.Valid {

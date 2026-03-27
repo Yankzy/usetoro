@@ -3,6 +3,10 @@ package wshandler
 import (
 	"log/slog"
 	"sync"
+
+	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/queue"
+	"github.com/Yankzy/usetoro/internal/services/ai"
 )
 
 // Hub maintains the set of active clients and broadcasts messages to the clients.
@@ -22,18 +26,30 @@ type Hub struct {
 	// Logger
 	logger *slog.Logger
 
+	// JetStream access
+	queueClient *queue.Client
+
+	// Database access
+	db *database.Queries
+
+	// OpenAI Client
+	llm *ai.LLMClient
+
 	// Mutex for thread-safe operations
 	mu sync.RWMutex
 }
 
 // NewHub creates a new Hub instance
-func NewHub(logger *slog.Logger) *Hub {
+func NewHub(logger *slog.Logger, queueClient *queue.Client, db *database.Queries, llm *ai.LLMClient) *Hub {
 	return &Hub{
-		broadcast:  make(chan []byte, 256),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		clients:    make(map[*Client]bool),
-		logger:     logger,
+		broadcast:   make(chan []byte, 256),
+		register:    make(chan *Client),
+		unregister:  make(chan *Client),
+		clients:     make(map[*Client]bool),
+		logger:      logger,
+		queueClient: queueClient,
+		db:          db,
+		llm:         llm,
 	}
 }
 

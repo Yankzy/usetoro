@@ -38,6 +38,11 @@ func NewSupervisor(logger *slog.Logger, bus EventBus, mem MemoryStore) *Supervis
 	}
 }
 
+// Bus returns the internal NATS/EventBus router securely.
+func (s *Supervisor) Bus() EventBus {
+	return s.bus
+}
+
 // RegisterInternalAgent binds an internal module string (from config) to a factory function.
 // e.g. "cleanup-agent" -> cleanup.NewAgent
 func (s *Supervisor) RegisterInternalAgent(moduleName string, factory func(*slog.Logger, EventBus, AgentConfig, MemoryStore) Runnable) {
@@ -101,10 +106,10 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			s.mu.RLock()
-			count := len(s.agents)
 			s.mu.RUnlock()
 
-			s.logger.Info("Creating Heartbeat", "active_agents", count)
+			// count := len(s.agents)
+			// s.logger.Info("Creating Heartbeat", "active_agents", count)
 		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/store"
+	"github.com/Yankzy/usetoro/tap/pkg/micrion"
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 )
@@ -57,6 +58,25 @@ func NewServer(
 		natsConn = natsClient.Conn()
 	}
 
+	var kv nats.KeyValue
+	var wm *micrion.WalletManager
+	if natsConn != nil {
+		js, err := natsConn.JetStream()
+		if err != nil {
+			logger.Error("Failed to get JetStream context for Micrions", "error", err)
+			panic(err)
+		}
+		kv, err = micrion.SetupKV(js)
+		if err != nil {
+			logger.Error("Failed to setup Micrions KV store", "error", err)
+			panic(err)
+		}
+		ledger := store.NewWalletLedger(st.Queries)
+		wm = micrion.NewWalletManager(ledger, kv)
+	} else {
+		logger.Warn("NATS connection is nil - Gate Agent routes will fail securely without KV store")
+	}
+
 	transactionService := accounting.NewTransactionService(logger, st.Queries, nil, nil, nil, nil, natsConn, "toro.erp.events.*")
 	entityService := accounting.NewEntityService(logger, st.Queries)
 
@@ -64,9 +84,9 @@ func NewServer(
 		logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig,
 		authenticator, redisClient, st.Queries, reconciler, attachableService,
 		transactionService, entityService,
-		st.Pool, st.Queries, natsClient, cleanupExporter,
+		st.Pool, st.Queries, natsClient, cleanupExporter, wm,
 	)
-	mux := NewRouter(h)
+	mux := NewRouter(h, wm)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

@@ -40,12 +40,15 @@ type EntityResolver struct {
 // NewEntityResolver generates a configured resolver structure holding Fignode ecosystem services
 // By typing as concrete pointers but storing as interfaces, we retain external caller compatibility while allowing internal mock injections.
 func NewEntityResolver(s *store.Store, vc *vector.PineconeClient, e *vector.Embedder, threshold float64) *EntityResolver {
-	return &EntityResolver{
-		store:        s,
-		vectorClient: vc,
-		embedder:     e,
-		threshold:    threshold,
+	resolver := &EntityResolver{
+		store:     s,
+		embedder:  e,
+		threshold: threshold,
 	}
+	if vc != nil {
+		resolver.vectorClient = vc
+	}
+	return resolver
 }
 
 // ResolveEntity attempts to find the best match for an entity name using a 3-layer strategy
@@ -113,6 +116,10 @@ func (r *EntityResolver) layer1DBMatch(ctx context.Context, realmID, entityType,
 }
 
 func (r *EntityResolver) layer2VectorMatch(ctx context.Context, realmID, entityType, name string) ([]EntityMatch, error) {
+	if r.vectorClient == nil {
+		return nil, nil
+	}
+
 	queryVector, err := r.embedder.Embed(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to embed entity name: %w", err)
@@ -241,7 +248,7 @@ func (r *EntityResolver) Learn(ctx context.Context, realmID, rawInput, userCorre
 
 // ResolveVendor explicitly filters Pinecone for entity_type vendor.
 func (r *EntityResolver) ResolveVendor(ctx context.Context, realmID, rawDescription string) (*EntityMatch, error) {
-	if rawDescription == "" {
+	if rawDescription == "" || r.vectorClient == nil {
 		return nil, nil
 	}
 
@@ -264,7 +271,7 @@ func (r *EntityResolver) ResolveVendor(ctx context.Context, realmID, rawDescript
 
 // ResolveCustomer explicitly filters Pinecone for entity_type customer.
 func (r *EntityResolver) ResolveCustomer(ctx context.Context, realmID, rawDescription string) (*EntityMatch, error) {
-	if rawDescription == "" {
+	if rawDescription == "" || r.vectorClient == nil {
 		return nil, nil
 	}
 
@@ -287,7 +294,7 @@ func (r *EntityResolver) ResolveCustomer(ctx context.Context, realmID, rawDescri
 
 // ResolveAccount merges contexts and strictly routes money_in and money_out transactions safely outside of cash mappings using MongoDB syntax.
 func (r *EntityResolver) ResolveAccount(ctx context.Context, realmID, transactionType, rawDescription, resolvedEntityName string) (*EntityMatch, error) {
-	if rawDescription == "" {
+	if rawDescription == "" || r.vectorClient == nil {
 		return nil, nil
 	}
 

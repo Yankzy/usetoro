@@ -166,6 +166,7 @@ type ComplexityRoot struct {
 		SyncQboChartOfAccounts func(childComplexity int, realmID string) int
 		SyncQboCustomers       func(childComplexity int, realmID string) int
 		UpdateQboAccount       func(childComplexity int, input model.UpdateQboAccountInput) int
+		UpdateQboCompanyInfo   func(childComplexity int, input model.UpdateQboCompanyInput) int
 		VerifyOtp              func(childComplexity int, email string, otp string) int
 	}
 
@@ -263,6 +264,7 @@ type MutationResolver interface {
 	CreateQboAccount(ctx context.Context, input model.CreateQboAccountInput) (*model.Account, error)
 	UpdateQboAccount(ctx context.Context, input model.UpdateQboAccountInput) (*model.Account, error)
 	SoftDeleteQboAccount(ctx context.Context, input model.SoftDeleteQboAccountInput) (*model.Account, error)
+	UpdateQboCompanyInfo(ctx context.Context, input model.UpdateQboCompanyInput) (*model.QBOCompany, error)
 	FignodeCategorize(ctx context.Context, rowID string, accountID *string, vendorID *string, action string) (*model.FignodeStagingRow, error)
 	ApproveAllByVendor(ctx context.Context, sessionID string, vendorID string) (int32, error)
 	PostFignodeSession(ctx context.Context, sessionID string) (*model.FignodePostResult, error)
@@ -944,6 +946,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.UpdateQboAccount(childComplexity, args["input"].(model.UpdateQboAccountInput)), true
+	case "Mutation.updateQboCompanyInfo":
+		if e.complexity.Mutation.UpdateQboCompanyInfo == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateQboCompanyInfo_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.UpdateQboCompanyInfo(childComplexity, args["input"].(model.UpdateQboCompanyInput)), true
 	case "Mutation.verifyOTP":
 		if e.complexity.Mutation.VerifyOtp == nil {
 			break
@@ -1399,6 +1412,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputSignupInput,
 		ec.unmarshalInputSoftDeleteQboAccountInput,
 		ec.unmarshalInputUpdateQboAccountInput,
+		ec.unmarshalInputUpdateQboCompanyInput,
 	)
 	first := true
 
@@ -1682,6 +1696,17 @@ func (ec *executionContext) field_Mutation_updateQboAccount_args(ctx context.Con
 	var err error
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNUpdateQboAccountInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐUpdateQboAccountInput)
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateQboCompanyInfo_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input", ec.unmarshalNUpdateQboCompanyInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐUpdateQboCompanyInput)
 	if err != nil {
 		return nil, err
 	}
@@ -4964,6 +4989,55 @@ func (ec *executionContext) fieldContext_Mutation_softDeleteQboAccount(ctx conte
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_softDeleteQboAccount_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateQboCompanyInfo(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_updateQboCompanyInfo,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().UpdateQboCompanyInfo(ctx, fc.Args["input"].(model.UpdateQboCompanyInput))
+		},
+		nil,
+		ec.marshalNQBOCompany2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐQBOCompany,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_updateQboCompanyInfo(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "realmId":
+				return ec.fieldContext_QBOCompany_realmId(ctx, field)
+			case "companyName":
+				return ec.fieldContext_QBOCompany_companyName(ctx, field)
+			case "connectedAt":
+				return ec.fieldContext_QBOCompany_connectedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type QBOCompany", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateQboCompanyInfo_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -9325,6 +9399,61 @@ func (ec *executionContext) unmarshalInputUpdateQboAccountInput(ctx context.Cont
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputUpdateQboCompanyInput(ctx context.Context, obj any) (model.UpdateQboCompanyInput, error) {
+	var it model.UpdateQboCompanyInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"realmId", "companyName", "legalName", "domain", "country"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "realmId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("realmId"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.RealmID = data
+		case "companyName":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("companyName"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.CompanyName = data
+		case "legalName":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("legalName"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.LegalName = data
+		case "domain":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("domain"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Domain = data
+		case "country":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("country"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Country = data
+		}
+	}
+
+	return it, nil
+}
+
 // endregion **************************** input.gotpl *****************************
 
 // region    ************************** interface.gotpl ***************************
@@ -9985,6 +10114,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "softDeleteQboAccount":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_softDeleteQboAccount(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateQboCompanyInfo":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateQboCompanyInfo(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -11620,6 +11756,20 @@ func (ec *executionContext) marshalNPageInfo2ᚖgithubᚗcomᚋYankzyᚋusetoro�
 	return ec._PageInfo(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNQBOCompany2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐQBOCompany(ctx context.Context, sel ast.SelectionSet, v model.QBOCompany) graphql.Marshaler {
+	return ec._QBOCompany(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNQBOCompany2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐQBOCompany(ctx context.Context, sel ast.SelectionSet, v *model.QBOCompany) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._QBOCompany(ctx, sel, v)
+}
+
 func (ec *executionContext) unmarshalNRecordCorrectionInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐRecordCorrectionInput(ctx context.Context, v any) (model.RecordCorrectionInput, error) {
 	res, err := ec.unmarshalInputRecordCorrectionInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -11821,6 +11971,11 @@ func (ec *executionContext) marshalNTransaction2ᚖgithubᚗcomᚋYankzyᚋuseto
 
 func (ec *executionContext) unmarshalNUpdateQboAccountInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐUpdateQboAccountInput(ctx context.Context, v any) (model.UpdateQboAccountInput, error) {
 	res, err := ec.unmarshalInputUpdateQboAccountInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNUpdateQboCompanyInput2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐUpdateQboCompanyInput(ctx context.Context, v any) (model.UpdateQboCompanyInput, error) {
+	res, err := ec.unmarshalInputUpdateQboCompanyInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 

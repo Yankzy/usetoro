@@ -177,5 +177,16 @@ func (e *CleanupWorker) handleProof(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	e.logger.Info("cleanup worker: fully completed TAP DB inserts. Waiting for Enrichment Agent.")
+
+	js, jsErr := e.nc.JetStream()
+	if jsErr == nil {
+		_, pubErr := js.Publish("proof.accounting.cleanup.inserted", msg.Data)
+		if pubErr != nil {
+			e.logger.Error("cleanup worker: failed to publish inserted proof", "error", pubErr)
+		}
+	} else {
+		e.logger.Error("cleanup worker: failed to get jetstream context", "error", jsErr)
+	}
+
 	return nil
 }

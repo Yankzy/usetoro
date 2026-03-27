@@ -83,9 +83,17 @@ nats:
         subjects:
           - tasks.>
           - proof.>
+
+    redux:
+      stream_name: REDUX_TEST
+      jetstream:
+        <<: *jetstream-default
+        subjects:
+          - redux.>
 agents:
   - did: "did:toro:agent:stripe_processor"
     name: "Stripe Receipt Processor"
+    model: "gpt-4o-mini"
     # The Trigger: What wakes me up?
     subscription:
       subject: "stripe.>" # Matches your Gate stream
@@ -103,6 +111,7 @@ agents:
 
   - did: "did:toro:agent:chaser"
     name: "Invoice Chaser"
+    model: "gpt-4o-mini"
     subscription:
       subject: "qbo.invoice.overdue"
       queue_group: "chaser_group"
@@ -114,10 +123,18 @@ agents:
 
   - did: "did:toro:agent:cleanup_1"
     name: "Accounting Cleanup Agent"
+    model: "gpt-4o-mini"
     engine: "internal"
     internal_module: "cleanup-agent"
     
-  - did: "did:toro:agent:enrichment_1"
-    name: "Accounting Enrichment Agent"
+  - did: "did:toro:agent:reconcile_expense_1"
+    name: "Expense Reconciliation Agent"
+    model: "gpt-4o-mini"
     engine: "internal"
-    internal_module: "enrichment-agent"
+    internal_module: "reconcile-expense-agent"
+
+  - did: "did:toro:agent:reconcile_revenue_1"
+    name: "Revenue Reconciliation Agent"
+    model: "gpt-4o-mini"
+    engine: "internal"
+    internal_module: "reconcile-revenue-agent"

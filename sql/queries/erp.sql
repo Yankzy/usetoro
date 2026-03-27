@@ -538,3 +538,22 @@ ON CONFLICT (realm_id) DO UPDATE SET
 -- name: GetCompanyInfo :one
 SELECT * FROM shadow_erp.company_info
 WHERE realm_id = $1;
+
+-- name: UpdateCompanyTaxonomy :exec
+UPDATE shadow_erp.company_info
+SET industry = $2, industry_icon = $3, business_model = $4, mindset_hint = $5
+WHERE realm_id = $1;
+
+-- name: UpdateVendorTaxonomy :exec
+UPDATE shadow_erp.vendors
+SET industry = $3, industry_icon = $4, vendor_description = $5, vendor_url = $6
+WHERE realm_id = $1 AND erp_id = $2;
+
+-- name: GetCustomerByID :one
+SELECT * FROM shadow_erp.customers
+WHERE id = $1;
+
+-- name: UpdateCustomerTaxonomy :exec
+UPDATE shadow_erp.customers
+SET industry = $3, industry_icon = $4, customer_description = $5, customer_url = $6
+WHERE realm_id = $1 AND erp_id = $2;

@@ -65,6 +65,13 @@ func (m *MockPublisher) PublishWebhookEvent(ctx context.Context, provider, connI
 	return nil
 }
 
+func (m *MockPublisher) PublishRaw(ctx context.Context, subject string, data []byte) error {
+	if m.PublishErr != nil {
+		return m.PublishErr
+	}
+	return nil
+}
+
 func (m *MockPublisher) PublishQBOEvent(ctx context.Context, eventType, realmID string, data []byte) error {
 	if m.PublishErr != nil {
 		return m.PublishErr
@@ -160,6 +167,7 @@ func TestHandleStripeWebhook(t *testing.T) {
 				nil,
 				nil,
 				nil,
+				nil, // Added an extra nil argument here
 			)
 
 			// Construct request

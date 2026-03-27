@@ -185,18 +185,26 @@ type ShadowErpCompanyInfo struct {
 	ErpUpdatedTime       pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
+	Industry             pgtype.Text
+	IndustryIcon         pgtype.Text
+	BusinessModel        pgtype.Text
+	MindsetHint          pgtype.Text
 }
 
 type ShadowErpCustomer struct {
-	ID          pgtype.UUID
-	ErpID       string
-	RealmID     string
-	DisplayName string
-	SyncToken   string
-	EventSource string
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
-	DeletedAt   pgtype.Timestamptz
+	ID                  pgtype.UUID
+	ErpID               string
+	RealmID             string
+	DisplayName         string
+	SyncToken           string
+	EventSource         string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	DeletedAt           pgtype.Timestamptz
+	Industry            pgtype.Text
+	IndustryIcon        pgtype.Text
+	CustomerDescription pgtype.Text
+	CustomerUrl         pgtype.Text
 }
 
 type ShadowErpInvoice struct {
@@ -281,6 +289,10 @@ type ShadowErpVendor struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	DeletedAt          pgtype.Timestamptz
+	Industry           pgtype.Text
+	IndustryIcon       pgtype.Text
+	VendorDescription  pgtype.Text
+	VendorUrl          pgtype.Text
 }
 
 type ToroCoreAgentMemoryRule struct {
@@ -349,6 +361,15 @@ type ToroCoreRefreshToken struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type ToroCoreStalledMessage struct {
+	ID              pgtype.UUID
+	AgentDid        string
+	OriginalSubject string
+	Payload         []byte
+	ErrorReason     string
+	CreatedAt       pgtype.Timestamptz
+}
+
 type ToroCoreTeamInvite struct {
 	ID        pgtype.UUID
 	Token     string
@@ -391,6 +412,26 @@ type ToroCoreUser struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type ToroCoreWallet struct {
+	ID                     pgtype.UUID
+	EntityID               pgtype.UUID
+	TotalPurchasedMicrions int64
+	TotalBurnedMicrions    int64
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+}
+
+type ToroCoreWalletTransaction struct {
+	ID              pgtype.UUID
+	WalletID        pgtype.UUID
+	TransactionType string
+	MicrionAmount   int64
+	UsdAmount       pgtype.Int8
+	StripeSessionID pgtype.Text
+	NatsRevision    pgtype.Int8
+	CreatedAt       pgtype.Timestamptz
+}
+
 type ToroCoreWebhooksProviderconnection struct {
 	ID            pgtype.UUID
 	ConnectionID  string
@@ -398,4 +439,22 @@ type ToroCoreWebhooksProviderconnection struct {
 	IsActive      pgtype.Bool
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type ToroCoreWorkflow struct {
+	ID         pgtype.UUID
+	EntityID   pgtype.UUID
+	State      []byte
+	SequenceID int64
+	Status     string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type ToroCoreWorkflowHistory struct {
+	ID         pgtype.UUID
+	WorkflowID pgtype.UUID
+	Role       string
+	Content    []byte
+	CreatedAt  pgtype.Timestamptz
 }

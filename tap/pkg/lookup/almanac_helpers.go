@@ -34,25 +34,25 @@ func RegisterAlmanac(nc *nats.Conn, kp *identity.KeyPair, did, capability string
 }
 
 // FindAgents performs a synchronous NATS Request to find agents by capability.
-func FindAgents(nc *nats.Conn, capability string, timeout time.Duration) ([]AlmanacEntry, error) {
-	client := New(nc)
+func FindAgents(nc *nats.Conn, callerDID, capability string, timeout time.Duration) ([]AlmanacEntry, error) {
+	client := New(nc, callerDID)
 	return client.FindAgents(capability, timeout)
 }
 
 // ResolveAgentByDID looks up a specific agent by DID.
-func ResolveAgentByDID(nc *nats.Conn, did string, timeout time.Duration) (*AlmanacEntry, error) {
-	client := New(nc)
+func ResolveAgentByDID(nc *nats.Conn, callerDID, did string, timeout time.Duration) (*AlmanacEntry, error) {
+	client := New(nc, callerDID)
 	return client.ResolveByDID(did, timeout)
 }
 
 // ResolveAgentsByCapability looks up agents by capability type.
-func ResolveAgentsByCapability(nc *nats.Conn, capability string, timeout time.Duration) ([]AlmanacEntry, error) {
-	client := New(nc)
+func ResolveAgentsByCapability(nc *nats.Conn, callerDID, capability string, timeout time.Duration) ([]AlmanacEntry, error) {
+	client := New(nc, callerDID)
 	return client.ResolveByCapabilityType(capability, timeout)
 }
 
 // ResolveAgent looks up agents by multiple criteria.
-func ResolveAgent(nc *nats.Conn, query AlmanacQuery, timeout time.Duration) (*AlmanacEntry, error) {
-	client := New(nc)
+func ResolveAgent(nc *nats.Conn, callerDID string, query AlmanacQuery, timeout time.Duration) (*AlmanacEntry, error) {
+	client := New(nc, callerDID)
 	return client.Resolve(query, timeout)
 }

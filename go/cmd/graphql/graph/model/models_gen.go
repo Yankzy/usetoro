@@ -202,6 +202,14 @@ type UpdateQboAccountInput struct {
 	Active         *bool   `json:"active,omitempty"`
 }
 
+type UpdateQboCompanyInput struct {
+	RealmID     string  `json:"realmId"`
+	CompanyName *string `json:"companyName,omitempty"`
+	LegalName   *string `json:"legalName,omitempty"`
+	Domain      *string `json:"domain,omitempty"`
+	Country     *string `json:"country,omitempty"`
+}
+
 type User struct {
 	ID       string `json:"id"`
 	Email    string `json:"email"`

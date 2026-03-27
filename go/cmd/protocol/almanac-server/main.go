@@ -2,21 +2,21 @@ package main
 
 import (
 	"context"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"log"
+	"log/slog"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/tap/pkg/daemon"
+	"github.com/Yankzy/usetoro/tap/pkg/identity"
 	"github.com/Yankzy/usetoro/tap/pkg/lookup"
+	"github.com/Yankzy/usetoro/tap/pkg/micrion"
 )
 
 // --- Data Structures ---
@@ -32,9 +32,9 @@ type AgentRecord struct {
 }
 
 type AlmanacServer struct {
-	nc      *nats.Conn
-	rdb     *redis.Client
-	rootCAs *x509.CertPool // The Trust Anchor
+	nc  *nats.Conn
+	rdb *redis.Client
+	kv  nats.KeyValue // Used for charging Micrions
 }
 
 // --- Main Entry Point ---
@@ -48,23 +48,7 @@ func main() {
 		log.Fatalf("Config Load Failed: %v", err)
 	}
 
-	// 2. Load Root CA (The Authority)
-	// We need this to verify that the Agents aren't fake
-	caPath := os.Getenv("TORO_ROOT_CA_PATH")
-	if caPath == "" {
-		caPath = "/etc/toro/certs/root_ca.crt" // Default path in Docker
-	}
-
-	caCertPEM, err := os.ReadFile(caPath)
-	if err != nil {
-		log.Fatalf("❌ Failed to read Root CA from %s: %v", caPath, err)
-	}
-
-	rootCAs := x509.NewCertPool()
-	if ok := rootCAs.AppendCertsFromPEM(caCertPEM); !ok {
-		log.Fatalf("❌ Failed to parse Root CA PEM")
-	}
-	log.Println("🔐 Loaded Toro Root CA")
+	// CA verification has been removed as per user request.
 
 	// 3. Connect to NATS
 	url := cfg.NATS.URL
@@ -76,6 +60,16 @@ func main() {
 		log.Fatalf("❌ Failed to connect to NATS: %v", err)
 	}
 	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		log.Fatalf("❌ Failed to get JetStream context: %v", err)
+	}
+
+	kv, err := micrion.SetupKV(js)
+	if err != nil {
+		log.Fatalf("❌ Failed to setup Micrions KV: %v", err)
+	}
 
 	// 4. Connect to Redis
 	redisURL := os.Getenv("REDIS_URL")
@@ -89,9 +83,9 @@ func main() {
 	rdb := redis.NewClient(opt)
 
 	server := &AlmanacServer{
-		nc:      nc,
-		rdb:     rdb,
-		rootCAs: rootCAs,
+		nc:  nc,
+		rdb: rdb,
+		kv:  kv,
 	}
 
 	// 5. Configure Subscriptions
@@ -106,11 +100,18 @@ func main() {
 		log.Fatalf("❌ Sub error: %v", err)
 	}
 
-	log.Println("📖 Almanac Server Online (CA Verified). Listening...")
+	// === Unified Daemon Runner Setup ===
+	
+	d := daemon.New(slog.Default(), func() (*config.Config, error) {
+		return cfg, nil
+	}, ":9090")
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
+	log.Println("📖 Almanac Server & Agents Runner Online. Listening...")
+
+	// 6. Run daemon natively blocking execution on the OS signal lifecycle hook securely
+	if err := d.Run(context.Background()); err != nil {
+		log.Fatalf("Protocol Daemon unexpectedly terminated: %v", err)
+	}
 }
 
 // --- Handlers ---
@@ -122,39 +123,16 @@ func (s *AlmanacServer) handleRegister(msg *nats.Msg) {
 		return
 	}
 
-	// --- STEP 1: CA Verification (The Gatekeeper) ---
-
-	// A. Parse the PEM Block from the payload
-	block, _ := pem.Decode([]byte(payload.CertificatePEM))
-	if block == nil {
-		log.Printf("❌ Registration Rejected: Invalid PEM for DID %s", payload.DID)
-		return
-	}
-
-	cert, err := x509.ParseCertificate(block.Bytes)
+	// --- STEP 1: Verify Ownership (Our Keys) ---
+	pubKeyHex, err := identity.PubKeyFromDID(payload.DID)
 	if err != nil {
-		log.Printf("❌ Registration Rejected: Unparseable Cert for DID %s", payload.DID)
+		log.Printf("❌ Registration Rejected: Invalid DID format for %s: %v", payload.DID, err)
 		return
 	}
 
-	// B. Verify the Chain of Trust
-	// Removed explicit ExtKeyUsage to allow general validation
-	opts := x509.VerifyOptions{
-		Roots:       s.rootCAs,
-		CurrentTime: time.Now(),
-	}
-
-	if _, err := cert.Verify(opts); err != nil {
-		log.Printf("❌ Registration Rejected: Untrusted Cert for DID %s (Err: %v)", payload.DID, err)
-		// TODO: Publish a "Registration Failed" event back to the agent?
-		return
-	}
-
-	// C. Verify Ownership (DID Match)
-	// The CommonName (CN) or URI SAN in the cert MUST match the DID claiming to register
-	// Assuming CN holds the DID for simplicity
-	if cert.Subject.CommonName != payload.DID {
-		log.Printf("❌ Registration Rejected: Cert CN (%s) does not match DID (%s)", cert.Subject.CommonName, payload.DID)
+	valid, err := identity.Verify(pubKeyHex, []byte(payload.DID), payload.Signature)
+	if err != nil || !valid {
+		log.Printf("❌ Registration Rejected: Invalid Signature for DID %s (Err: %v)", payload.DID, err)
 		return
 	}
 
@@ -167,20 +145,17 @@ func (s *AlmanacServer) handleRegister(msg *nats.Msg) {
 		Capabilities: payload.Capabilities,
 		LastSeen:     time.Now().UTC(),
 		Expiry:       payload.Expiry,
-		CertSerial:   cert.SerialNumber.String(),
+		CertSerial:   "", // Removed cert dependencies
 	}
 
 	recordBytes, _ := json.Marshal(record)
 	ctx := context.Background()
 	pipe := s.rdb.Pipeline()
 
-	// Logic: Use the Expiry from the payload, but cap it at Cert Expiry
+	// Logic: Use the Expiry from the payload
 	ttl := time.Until(payload.Expiry)
-	if time.Now().Add(ttl).After(cert.NotAfter) {
-		ttl = time.Until(cert.NotAfter) // Don't let them register past their cert life
-	}
 	if ttl < 0 {
-		log.Printf("⚠️ Cert expired for %s", payload.DID)
+		log.Printf("⚠️ Payload Expiry in the past for %s", payload.DID)
 		return
 	}
 
@@ -209,6 +184,22 @@ func (s *AlmanacServer) handleQuery(msg *nats.Msg) {
 	if err := json.Unmarshal(msg.Data, &query); err != nil {
 		return // Ignore bad requests
 	}
+
+	// MicroBurn Toll Enforcement (1,616 Micrions)
+	// TEMPORARY BYPASS:
+	/*
+	if query.CallerDID == "" {
+		log.Printf("⚠️ Query empty DID, bypassing toll for now")
+		s.nc.Publish(msg.Reply, []byte(`{"error": "402 Payment Required: CallerDID missing"}`))
+		return
+	} else {
+		if _, err := micrion.MicroBurn(s.kv, query.CallerDID, micrion.InfraTollCost); err != nil {
+			log.Printf("❌ Query toll failed for %s: %v", query.CallerDID, err)
+			s.nc.Publish(msg.Reply, []byte(`{"error": "402 Payment Required: Insufficient Micrions"}`))
+			return
+		}
+	}
+	*/
 
 	ctx := context.Background()
 

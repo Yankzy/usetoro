@@ -255,6 +255,19 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	}
 	workerManager.Register(cleanupWorker)
 
+	enrichmentWorker, err := workers.NewEnrichmentWorker(st.Queries, q.Conn(), logger)
+	if err != nil {
+		return fmt.Errorf("failed to init enrichment worker: %w", err)
+	}
+	workerManager.Register(enrichmentWorker)
+
+	fignodeLLM, _ := ai.NewLLMClient(os.Getenv("OPENAI_API_KEY"), "")
+	fignodePublisherWorker, err := workers.NewFignodePublisherWorker(st.Queries, q.Conn(), logger, fignodeLLM)
+	if err != nil {
+		return fmt.Errorf("failed to init fignode publisher worker: %w", err)
+	}
+	workerManager.Register(fignodePublisherWorker)
+
 	workerErrors := make(chan error, 6) // Increased buffer
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

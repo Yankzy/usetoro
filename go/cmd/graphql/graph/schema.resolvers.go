@@ -642,6 +642,53 @@ func (r *mutationResolver) SoftDeleteQboAccount(ctx context.Context, input model
 	return mapDatabaseAccountToModel(&dbAccount), nil
 }
 
+// UpdateQboCompanyInfo is the resolver for the updateQboCompanyInfo field.
+func (r *mutationResolver) UpdateQboCompanyInfo(ctx context.Context, input model.UpdateQboCompanyInput) (*model.QBOCompany, error) {
+	entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+	if entityID == uuid.Nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	qboConn, _, err := r.getQBOConnectorHelper(ctx, input.RealmID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert input to quickbooks.CompanyInfo
+	qboInfo := &quickbooks.CompanyInfo{}
+	if input.CompanyName != nil {
+		qboInfo.CompanyName = *input.CompanyName
+	}
+	if input.LegalName != nil {
+		qboInfo.LegalName = *input.LegalName
+	}
+	if input.Domain != nil {
+		qboInfo.Domain = *input.Domain
+	}
+	if input.Country != nil {
+		qboInfo.Country = *input.Country
+	}
+
+	updatedInfo, err := qboConn.UpdateCompanyInfo(ctx, entityID.String(), input.RealmID, qboInfo)
+	if err != nil {
+		r.Logger.Error("Failed to update QBO Company", "realm_id", input.RealmID, "error", err)
+		return nil, fmt.Errorf("failed to update company info")
+	}
+
+	// Fetch connection info for connectedAt mapping
+	conn, err := r.Store.GetQBOConnection(ctx, entityID.String())
+	var connectedAt *time.Time
+	if err == nil {
+		connectedAt = &conn.CreatedAt.Time
+	}
+
+	return &model.QBOCompany{
+		RealmID:     input.RealmID,
+		CompanyName: updatedInfo.CompanyName,
+		ConnectedAt: connectedAt,
+	}, nil
+}
+
 // FignodeCategorize is the resolver for the fignodeCategorize field.
 // This is used by the mobile/desktop app to swipe transactions.
 func (r *mutationResolver) FignodeCategorize(ctx context.Context, rowID string, accountID *string, vendorID *string, action string) (*model.FignodeStagingRow, error) {
@@ -1114,6 +1161,55 @@ func (r *queryResolver) FignodeSession(ctx context.Context, sessionID string) (*
 	return mapSessionToModel(session), nil
 }
 
+// FignodeBatch is the resolver for the fignodeBatch field.
+func (r *queryResolver) FignodeBatch(ctx context.Context, sessionID *string, limit int32) ([]*model.FignodeStagingRow, error) {
+	var out []*model.FignodeStagingRow
+
+	if sessionID != nil && *sessionID != "" {
+		sessionUUID, errParse := uuid.Parse(*sessionID)
+		if errParse != nil {
+			return nil, fmt.Errorf("invalid session id")
+		}
+		rows, err := r.Store.Queries.GetPendingSessionRows(ctx, pgtype.UUID{Bytes: sessionUUID, Valid: true})
+		if err != nil {
+			r.Logger.Error("FignodeBatch error", "error", err)
+			return nil, fmt.Errorf("failed to fetch batch")
+		}
+		max := int(limit)
+		if len(rows) < max {
+			max = len(rows)
+		}
+		for _, row := range rows[:max] {
+			out = append(out, mapGetPendingSessionRowsRowToModel(row))
+		}
+	} else {
+		// Fetch pending rows for currently authenticated user's active Realm
+		entityID, _ := ctx.Value(auth.EntityIDKey).(uuid.UUID)
+		if entityID == uuid.Nil {
+			return nil, fmt.Errorf("unauthorized")
+		}
+		conn, connErr := r.Store.GetQBOConnection(ctx, entityID.String())
+		if connErr != nil {
+			return nil, fmt.Errorf("no qbo connection")
+		}
+
+		arg := database.GetPendingRealmRowsParams{
+			RealmID: pgtype.Text{String: conn.RealmID, Valid: true},
+			Limit:   limit,
+		}
+		realmRows, err := r.Store.Queries.GetPendingRealmRows(ctx, arg)
+		if err != nil {
+			r.Logger.Error("FignodeBatch error", "error", err)
+			return nil, fmt.Errorf("failed fetching realm transactions")
+		}
+		for _, row := range realmRows {
+			out = append(out, mapGetPendingRealmRowsRowToModel(row))
+		}
+	}
+
+	return out, nil
+}
+
 // StagingRows is the resolver for the stagingRows field.
 func (r *queryResolver) StagingRows(ctx context.Context, sessionID string, status *string) ([]*model.FignodeStagingRow, error) {
 	sessionUUID, err := uuid.Parse(sessionID)
@@ -1386,231 +1482,3 @@ func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 
 type mutationResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
-
-// !!! WARNING !!!
-// The code below was going to be deleted when updating resolvers. It has been copied here so you have
-// one last chance to move it out of harms way if you want. There are two reasons this happens:
-//   - When renaming or deleting a resolver the old code will be put in here. You can safely delete
-//     it when you're done.
-//   - You have helper methods in this file. Move them out to keep these resolver files clean.
-func (r *mutationResolver) postCleanupSessionHelper(ctx context.Context, sessionID string) (*model.FignodePostResult, error) {
-	sessionUUID, err := uuid.Parse(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid session id")
-	}
-	pgSessionID := pgtype.UUID{Bytes: sessionUUID, Valid: true}
-
-	// Fetch the session to get realm_id.
-	session, err := r.Store.Queries.GetCleanupSession(ctx, pgSessionID)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("session not found")
-		}
-		r.Logger.Error("PostCleanupSession: get session", "error", err)
-		return nil, fmt.Errorf("internal server error")
-	}
-
-	approvedRows, err := r.Store.Queries.GetApprovedRows(ctx, pgSessionID)
-	if err != nil {
-		r.Logger.Error("PostCleanupSession: get approved rows", "error", err)
-		return nil, fmt.Errorf("internal server error")
-	}
-	if len(approvedRows) == 0 {
-		return &model.FignodePostResult{
-			SessionID: sessionID, PostedCount: 0, ErrorCount: 0, Errors: []string{},
-		}, nil
-	}
-
-	if !session.RealmID.Valid || session.RealmID.String == "" {
-		return nil, fmt.Errorf("this session has no QBO connection — download the Excel export instead")
-	}
-
-	// Build QBO connector using shared helper.
-	qboConnector, _, err := r.getQBOConnectorHelper(ctx, session.RealmID.String)
-	if err != nil {
-		return nil, err
-	}
-	qboClient, err := qboConnector.ClientForRealm(ctx, session.RealmID.String)
-	if err != nil {
-		r.Logger.Error("PostCleanupSession: get QBO client", "realm_id", session.RealmID, "error", err)
-		return nil, fmt.Errorf("failed to connect to QuickBooks")
-	}
-
-	result := &model.FignodePostResult{
-		SessionID: sessionID,
-		Errors:    []string{},
-	}
-
-	// Process in batches of BatchMaxSize (30).
-	const batchMax = 30
-	for batchStart := 0; batchStart < len(approvedRows); batchStart += batchMax {
-		end := batchStart + batchMax
-		if end > len(approvedRows) {
-			end = len(approvedRows)
-		}
-		batch := approvedRows[batchStart:end]
-
-		// Build batch requests, mapping staging rows → QBO Purchase objects.
-		builder := quickbooks.NewBatchBuilder()
-		rowIDBatch := make([]pgtype.UUID, 0, len(batch))
-
-		for _, row := range batch {
-			// Resolve effective vendor + account (override takes precedence over prediction).
-			accountPgID := row.OverrideAccountID
-			if !accountPgID.Valid {
-				accountPgID = row.PredictedAccountID
-			}
-			vendorPgID := row.OverrideVendorID
-			if !vendorPgID.Valid {
-				vendorPgID = row.PredictedVendorID
-			}
-
-			if !accountPgID.Valid {
-				result.ErrorCount++
-				result.Errors = append(result.Errors,
-					fmt.Sprintf("row %s: no account resolved", uuidStrFromPG(row.ID)))
-				continue
-			}
-
-			// Look up QBO IDs from shadow tables.
-			acct, err := r.Store.Queries.GetAccountByID(ctx, accountPgID)
-			if err != nil {
-				result.ErrorCount++
-				result.Errors = append(result.Errors,
-					fmt.Sprintf("row %s: account lookup failed: %v", uuidStrFromPG(row.ID), err))
-				continue
-			}
-
-			amount := parseDirtyStringAmount(row.RawAmount)
-
-			fignodeTx := database.FignodeStagingTransaction{
-				ID:                 row.ID,
-				SessionID:          row.SessionID,
-				RealmID:            row.RealmID,
-				RawDescription:     row.RawDescription,
-				RawAmount:          row.RawAmount,
-				RawDate:            row.RawDate,
-				PredictedVendorID:  row.PredictedVendorID,
-				PredictedAccountID: row.PredictedAccountID,
-				ConfidenceScore:    row.ConfidenceScore,
-				AiReasoning:        row.AiReasoning,
-				DuplicateOf:        row.DuplicateOf,
-				IsRecurring:        row.IsRecurring,
-				SplitSuggestion:    row.SplitSuggestion,
-				OverrideVendorID:   row.OverrideVendorID,
-				OverrideAccountID:  row.OverrideAccountID,
-				Status:             row.Status,
-				ErpTransactionID:   row.ErpTransactionID,
-				CreatedAt:          row.CreatedAt,
-				UpdatedAt:          row.UpdatedAt,
-			}
-			purchase := buildQBOPurchase(fignodeTx, acct.ErpID, vendorPgID, r.Store.Queries, ctx, amount)
-			builder.AddCreate("Purchase", purchase)
-			rowIDBatch = append(rowIDBatch, row.ID)
-		}
-
-		if builder.Count() == 0 {
-			continue
-		}
-
-		batchResp, batchErr := qboClient.BatchContext(ctx, builder.Build())
-		if batchErr != nil {
-			r.Logger.Error("PostCleanupSession: batch call failed", "error", batchErr)
-			for _, id := range rowIDBatch {
-				result.ErrorCount++
-				result.Errors = append(result.Errors,
-					fmt.Sprintf("row %s: batch error: %v", uuidStrFromPG(id), batchErr))
-			}
-			continue
-		}
-
-		// Map responses back to rows.
-		for i, resp := range batchResp.BatchItemResponse {
-			if i >= len(rowIDBatch) {
-				break
-			}
-			rowID := rowIDBatch[i]
-			if resp.HasError() {
-				result.ErrorCount++
-				result.Errors = append(result.Errors,
-					fmt.Sprintf("row %s: QBO error: %s", uuidStrFromPG(rowID), resp.GetError()))
-				continue
-			}
-			// Extract the created Purchase ID.
-			qboTxnID := ""
-			if resp.Purchase != nil {
-				qboTxnID = resp.Purchase.Id
-			}
-			if markErr := r.Store.Queries.MarkRowPosted(ctx, database.MarkRowPostedParams{
-				ID:               rowID,
-				ErpTransactionID: pgtype.Text{String: qboTxnID, Valid: qboTxnID != ""},
-			}); markErr != nil {
-				r.Logger.Warn("PostCleanupSession: mark row posted failed",
-					"row_id", uuidStrFromPG(rowID), "error", markErr)
-			}
-			result.PostedCount++
-		}
-	}
-
-	// Mark session as POSTED if all rows were posted.
-	if result.ErrorCount == 0 {
-		if statusErr := r.Store.Queries.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
-			ID:     pgSessionID,
-			Status: "POSTED",
-		}); statusErr != nil {
-			r.Logger.Warn("PostCleanupSession: update session status failed", "error", statusErr)
-		}
-	}
-
-	return result, nil
-}
-func (r *queryResolver) cleanupSessionsHelper(ctx context.Context, realmID *string) ([]*model.FignodeSession, error) {
-	arg := database.ListCleanupSessionsParams{}
-	if realmID != nil && *realmID != "" {
-		arg.RealmID = pgtype.Text{String: *realmID, Valid: true}
-	} else {
-		// Fall back to user-scoped listing.
-		userID, _ := ctx.Value(auth.UserIDKey).(uuid.UUID)
-		if userID != uuid.Nil {
-			arg.CreatedBy = pgtype.UUID{Bytes: userID, Valid: true}
-		}
-	}
-
-	rows, err := r.Store.Queries.ListCleanupSessions(ctx, arg)
-	if err != nil {
-		r.Logger.Error("CleanupSessions: db error", "realm_id", realmID, "error", err)
-		return nil, fmt.Errorf("internal server error")
-	}
-	out := make([]*model.FignodeSession, 0, len(rows))
-	for _, s := range rows {
-		out = append(out, mapSessionToModel(s))
-	}
-	return out, nil
-}
-func (r *queryResolver) cleanupRowsHelper(ctx context.Context, sessionID string, status *string) ([]*model.FignodeStagingRow, error) {
-	sessionUUID, err := uuid.Parse(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid session id")
-	}
-	pgSessionID := pgtype.UUID{Bytes: sessionUUID, Valid: true}
-
-	var pgStatus pgtype.Text
-	if status != nil {
-		pgStatus = pgtype.Text{String: *status, Valid: true}
-	}
-
-	rows, err := r.Store.Queries.GetSessionRows(ctx, database.GetSessionRowsParams{
-		SessionID: pgSessionID,
-		Status:    pgStatus,
-	})
-	if err != nil {
-		r.Logger.Error("CleanupRows: db error", "session_id", sessionID, "error", err)
-		return nil, fmt.Errorf("internal server error")
-	}
-
-	out := make([]*model.FignodeStagingRow, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, mapSessionRowToModel(row))
-	}
-	return out, nil
-}

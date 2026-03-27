@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
-	"github.com/Yankzy/usetoro/tap/pkg/identity"
 	"github.com/nats-io/nats.go"
 )
 
@@ -48,96 +49,62 @@ type RawRow struct {
 }
 
 type CleanupAgent struct {
-	logger *slog.Logger
-	bus    agent.EventBus
-	cfg    agent.AgentConfig
-	mem    agent.MemoryStore
-	rt     *agent.Runtime
-	kp     *identity.KeyPair
-	sub    *nats.Subscription
+	*agent.BaseAgent
+	rt *agent.Runtime
+	db *database.Queries
 }
 
-func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, mem agent.MemoryStore) agent.Runnable {
-	kp, _ := identity.GenerateKeyPair()
-	cfg.DID = identity.CreateDID(kp.Public)
-	return &CleanupAgent{
-		logger: logger,
-		bus:    bus,
-		cfg:    cfg,
-		mem:    mem,
-		rt:     agent.NewRuntime(logger, bus, cfg, mem),
-		kp:     kp,
-	}
-}
+func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, mem agent.MemoryStore, db *database.Queries) agent.Runnable {
+	var a CleanupAgent
+	a.rt = agent.NewRuntime(logger, bus, cfg, mem)
+	a.db = db
 
-func (a *CleanupAgent) Start() error {
-	a.logger.Info("🤖 TAP Cleanup AI Agent Initializing...", "did", a.cfg.DID)
+	handler := func(msg *nats.Msg) {
+		a.Logger.Info("📡 [DEBUG] cleanup-agent received JetStream message", "topic", msg.Subject, "data_length", len(msg.Data))
 
-	// Register with Almanac
-	inbox := core.BuildAgentInbox(a.cfg.DID)
-	// Publish Almanac registration directly
-	regPayload := map[string]interface{}{
-		"did":       a.cfg.DID,
-		"endpoints": []string{inbox},
-		"capabilities": []map[string]interface{}{
-			{"type": "accounting.cleanup"},
-		},
-		"expiry": time.Now().Add(24 * time.Hour).Unix(),
-	}
-	regBytes, _ := json.Marshal(regPayload)
-	a.bus.Publish("almanac.register", regBytes)
-
-	// Subscribe to CFP
-	topic := "tasks.accounting.cleanup.>"
-	sub, err := a.bus.QueueSubscribe(topic, "cleanup-group", func(msg *nats.Msg) {
-		a.logger.Info("📡 [DEBUG] cleanup-agent received JetStream message", "topic", msg.Subject, "data_length", len(msg.Data))
-		
 		meta, metaErr := msg.Metadata()
 		if metaErr == nil && meta.NumDelivered > 3 {
-			a.logger.Error("Poison pill detected, terminating message", "subject", msg.Subject)
+			a.Logger.Error("Poison pill detected, terminating message", "subject", msg.Subject)
 			msg.Term()
 			return
 		}
 
 		if err := a.handleCFP(msg); err != nil {
-			a.logger.Error("Transient error processing message, nacking", "error", err)
+			a.Logger.Error("Transient error processing message, nacking", "error", err)
+			if strings.Contains(err.Error(), "insufficient funds") {
+				_, _ = a.db.LogStalledMessage(context.Background(), database.LogStalledMessageParams{
+					AgentDid:        cfg.DID,
+					OriginalSubject: msg.Subject,
+					Payload:         msg.Data,
+					ErrorReason:     "Paywall deadlocked: " + err.Error(),
+				})
+				msg.Term()
+				return
+			}
 			msg.Nak()
 			return
 		}
 
 		msg.Ack()
-	}, nats.Durable("cleanup-agent-durable"), nats.DeliverAll(), nats.AckExplicit())
-	if err != nil {
-		return err
 	}
-	a.sub = sub
 
-	a.logger.Info("👂 Listening for CFPs", "topic", topic)
-	return nil
-}
-
-func (a *CleanupAgent) Stop() error {
-	if a.sub != nil {
-		// NATS Go client subscriptons don't enforce Drain vs Unsubscribe based on type abstraction easily here without assert,
-		// but since it's just cleanup we return nil
-		return nil
-	}
-	return nil
+	a.BaseAgent = agent.NewBaseAgent(logger, bus, cfg, mem, "accounting.cleanup", "tasks.accounting.cleanup.>", "cleanup-group", "cleanup-agent-durable", handler)
+	return &a
 }
 
 func (a *CleanupAgent) handleCFP(msg *nats.Msg) error {
 	var env core.Envelope
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
-		a.logger.Error("Failed to parse envelope", "error", err)
+		a.Logger.Error("Failed to parse envelope", "error", err)
 		return nil
 	}
 
 	if env.Performative != core.CFP {
-		a.logger.Error("Received non-CFP", "performative", env.Performative)
+		a.Logger.Error("Received non-CFP", "performative", env.Performative)
 		return nil
 	}
 
-	a.logger.Info("📨 Received CFP", "sender", env.SenderDID, "cid", env.ConversationID)
+	a.Logger.Info("📨 Received CFP", "sender", env.SenderDID, "cid", env.ConversationID)
 
 	proposal := map[string]interface{}{
 		"price": 1,
@@ -146,17 +113,17 @@ func (a *CleanupAgent) handleCFP(msg *nats.Msg) error {
 
 	replyEnv, _ := core.NewEnvelope(
 		uuid.New().String(),
-		a.cfg.DID,
+		a.Cfg.DID,
 		env.SenderDID,
 		env.ConversationID,
 		core.PROPOSE,
 		proposal,
 	)
-	replyEnv.Signature = a.kp.Sign(replyEnv.Body)
+	replyEnv.Signature = a.KP.Sign(replyEnv.Body)
 	replyBytes, _ := json.Marshal(replyEnv)
 
-	if err := a.bus.Publish(core.BuildAgentInbox(env.SenderDID), replyBytes); err != nil {
-		a.logger.Error("Failed to publish proposal", "error", err)
+	if err := a.Bus.Publish(core.BuildAgentInbox(env.SenderDID), replyBytes); err != nil {
+		a.Logger.Error("Failed to publish proposal", "error", err)
 		return err
 	}
 
@@ -172,17 +139,72 @@ func (a *CleanupAgent) executeTask(cfpEnv core.Envelope) error {
 	payloadBytes, _ := json.Marshal(task.Payload)
 	json.Unmarshal(payloadBytes, &payload)
 
-	a.logger.Info("🧠 Processing AI mapping", "session", payload.SessionID, "rows", len(payload.Rows))
+	a.Logger.Info("🧠 Processing AI mapping via Redux global wrapper", "session", payload.SessionID, "rows", len(payload.Rows))
 
-	mapping, err := a.mapRowsUsingLLM(context.Background(), payload.Rows)
+	var workflowID, entityID pgtype.UUID
+	_ = workflowID.Scan(payload.SessionID)
+	_ = entityID.Scan(payload.RealmID)
+
+	var finalRows map[string]RawRow
+
+	llmCallback := func(currentSeq uint64) ([]json.RawMessage, error) {
+		mapping, err := a.mapRowsUsingLLM(context.Background(), payload.Rows)
+		if err != nil {
+			return nil, err
+		}
+
+		finalRows = parseRows(payload, mapping)
+		finalRowsJSON, _ := json.Marshal(finalRows)
+
+		patch1 := `{"op": "add", "path": "/status", "value": "COLUMNS_MAPPED"}`
+		patch2 := fmt.Sprintf(`{"op": "add", "path": "/mapped_rows", "value": %s}`, string(finalRowsJSON))
+
+		return []json.RawMessage{[]byte(patch1), []byte(patch2)}, nil
+	}
+
+	err := a.ExecuteGlobalWorkflow(
+		context.Background(),
+		a.db,
+		workflowID,
+		llmCallback,
+	)
+
 	if err != nil {
-		a.logger.Error("AI Processing failed", "error", err)
 		return err
 	}
 
-	a.logger.Info("✅ AI Mapping complete", "confidence", mapping.ConfidenceScore)
+	a.Logger.Info("✅ AI Mapping complete & structural arrays entirely isolated without local Redux evaluation!")
 
-	var finalRows []RawRow
+	var proofList []RawRow
+	for _, row := range finalRows {
+		proofList = append(proofList, row)
+	}
+	mappingBytes, _ := json.Marshal(proofList)
+	proof := core.Proof{
+		TaskID:    task.ID,
+		Type:      core.ProofAPI,
+		Data:      mappingBytes,
+		Timestamp: time.Now().Unix(),
+	}
+	proof.Signature = a.KP.Sign(proof.Data)
+
+	proofEnv, _ := core.NewEnvelope(uuid.New().String(), a.Cfg.DID, "did:toro:hive", cfpEnv.ConversationID, core.INFORM, proof)
+	proofEnv.Signature = a.KP.Sign(proofEnv.Body)
+
+	finalBytes, _ := json.Marshal(proofEnv)
+	targetTopic := "proof.accounting.cleanup.columns"
+	a.Logger.Info("🚀 [DEBUG] cleanup-agent sending message to JetStream", "topic", targetTopic, "data_length", len(finalBytes))
+	
+	if pubErr := a.Bus.Publish(targetTopic, finalBytes); pubErr != nil {
+		a.Logger.Error("Failed to publish proof", "error", pubErr)
+		return pubErr
+	}
+
+	return nil
+}
+
+func parseRows(payload cleanupTaskPayload, mapping *LLMColumnMapping) map[string]RawRow {
+	finalRows := make(map[string]RawRow)
 	for i := 1; i < len(payload.Rows); i++ {
 		rec := payload.Rows[i]
 		if len(rec) == 0 {
@@ -215,51 +237,50 @@ func (a *CleanupAgent) executeTask(cfpEnv core.Envelope) error {
 		}
 
 		if row.Description != "" && row.Amount != "" {
-			finalRows = append(finalRows, row)
+			rowID := fmt.Sprintf("row_%d", i)
+			finalRows[rowID] = row
 		}
 	}
-
-	mappingBytes, _ := json.Marshal(finalRows)
-	proof := core.Proof{
-		TaskID:    task.ID,
-		Type:      core.ProofAPI,
-		Data:      mappingBytes,
-		Timestamp: time.Now().Unix(),
-	}
-	proof.Signature = a.kp.Sign(proof.Data)
-
-	proofEnv, _ := core.NewEnvelope(uuid.New().String(), a.cfg.DID, "did:toro:hive", cfpEnv.ConversationID, core.INFORM, proof)
-	proofEnv.Signature = a.kp.Sign(proofEnv.Body)
-
-	finalBytes, _ := json.Marshal(proofEnv)
-	targetTopic := "proof.accounting.cleanup.columns"
-	a.logger.Info("🚀 [DEBUG] cleanup-agent sending message to JetStream", "topic", targetTopic, "data_length", len(finalBytes))
-	if err := a.bus.Publish(targetTopic, finalBytes); err != nil {
-		a.logger.Error("Failed to publish proof", "error", err)
-		return err
-	}
-	
-	return nil
+	return finalRows
 }
 
 func (a *CleanupAgent) mapRowsUsingLLM(ctx context.Context, rows [][]string) (*LLMColumnMapping, error) {
 	prompt := buildUserPrompt(rows)
 
-	systemInstruction := "You are an expert data analyst parsing raw bank statement CSV headers. Analyze the columns and map them to standard accounting fields. You MUST reply with valid JSON conforming to the LLMColumnMapping schema."
+	systemInstruction := `You are an expert data analyst parsing raw bank statement CSV headers. Analyze the columns and map them to standard accounting fields. You MUST reply with valid JSON.
+The JSON must strictly conform to this schema and ONLY contain these fields:
+{
+  "date_col_idx": <int>,
+  "description_col_idx": <int>,
+  "amount_col_idx": <int>,
+  "is_split_amount": <false unless there are clearly SEPARATE debit and credit columns>,
+  "debit_col_idx": <null if not split>,
+  "credit_col_idx": <null if not split>,
+  "vendor_col_idx": <null if no explicit vendor column>,
+  "customer_col_idx": <null if no customer column>,
+  "is_expense_positive": <bool>,
+  "confidence_score": <float 0 to 1>
+}
+Crucially, ensure description_col_idx corresponds to the memo/description column, not the date column! Use proper null types in JSON, never use 0 to represent absence!`
 	fullPrompt := fmt.Sprintf("%s\n\n%s", systemInstruction, prompt)
 
-	respText, err := a.rt.Exec(ctx, fullPrompt)
+	respText, err := a.rt.ExecWithPaging(ctx, fullPrompt, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Clean JSON markdown blocks if present
-	respText = strings.TrimPrefix(respText, "```json")
-	respText = strings.TrimSuffix(respText, "```")
-	respText = strings.TrimSpace(respText)
+	return extractJSONToMapping(respText)
+}
+
+func extractJSONToMapping(respText string) (*LLMColumnMapping, error) {
+	firstIdx := strings.Index(respText, "{")
+	lastIdx := strings.LastIndex(respText, "}")
+	if firstIdx != -1 && lastIdx != -1 && lastIdx > firstIdx {
+		respText = respText[firstIdx : lastIdx+1]
+	}
 
 	var mapping LLMColumnMapping
-	err = json.Unmarshal([]byte(respText), &mapping)
+	err := json.Unmarshal([]byte(respText), &mapping)
 	return &mapping, err
 }
 
@@ -277,20 +298,31 @@ func cleanArtifacts(val string) string {
 
 func buildUserPrompt(rows [][]string) string {
 	var sb strings.Builder
-	sb.WriteString("Analyze the following sample rows from a bank statement CSV and determine the 0-based column indices for Date, Description, Amount, Customer, and  Vendor (if distinct from description).\n\n")
+	sb.WriteString("Analyze the following sample rows from a bank statement CSV and determine the 0-based column indices for Date, Description, Amount, Customer, and Vendor (if distinct from description).\n\n")
 	sb.WriteString("Also determine if the amounts are split into separate Debit/Credit columns instead of a single Amount column. If so, set is_split_amount to true and provide those indices instead of amount_col_idx.\n\n")
 	sb.WriteString("Crucially, determine the sign convention (is_expense_positive). Look at obvious expenses (like 'AMZN', 'AWS', 'Starbucks', 'Uber'). If their amount is a positive number, set `is_expense_positive` to true. If their amount is negative (e.g. -45.00), set it to false.\n\n")
-	sb.WriteString("Sample Data (Up to 5 rows):\n")
-	sb.WriteString("---------------------------\n")
+	sb.WriteString("You MUST assign a `confidence_score` (0 to 1) representing how certain you are of this mapping. If you mainly see header rows and cannot find clear transaction rows to determine the sign convention, return a low confidence score.\n\n")
+	sb.WriteString("Sample Data (Up to 20 valid rows):\n")
 
+	var validRows int
 	for i, row := range rows {
+		cols := 0
+		for _, col := range row {
+			if strings.TrimSpace(col) != "" {
+				cols++
+			}
+		}
+		if cols < 2 {
+			continue // Skip empty or single-column title rows
+		}
+
 		rowStr := strings.Join(row, " | ")
 		sb.WriteString(fmt.Sprintf("Row %d: %s\n", i, rowStr))
-		if i >= 5 {
+		validRows++
+		if validRows >= 20 {
 			break
 		}
 	}
 
-	sb.WriteString("---------------------------\n")
 	return sb.String()
 }

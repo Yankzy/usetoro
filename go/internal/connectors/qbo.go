@@ -891,6 +891,26 @@ func (c *QBOConnector) SyncCompanyInfo(ctx context.Context, tenantID, realmID st
 	return nil
 }
 
+// UpdateCompanyInfo updates the company info in QBO and upserts it to the shadow DB.
+func (c *QBOConnector) UpdateCompanyInfo(ctx context.Context, tenantID, realmID string, info *quickbooks.CompanyInfo) (*quickbooks.CompanyInfo, error) {
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return nil, err
+	}
+
+	updatedInfo, err := client.UpdateCompanyInfoContext(ctx, info)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update company info in QBO: %w", err)
+	}
+
+	// Re-sync to shadow DB to pull the freshest state directly from QBO correctly formatted
+	if err := c.SyncCompanyInfo(ctx, tenantID, realmID); err != nil {
+		return nil, fmt.Errorf("failed to sync updated company info to shadow db: %w", err)
+	}
+
+	return updatedInfo, nil
+}
+
 func jsonNumberToNumeric(n json.Number) pgtype.Numeric {
 	s := string(n)
 	if s == "" {

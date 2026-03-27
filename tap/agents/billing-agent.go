@@ -55,7 +55,7 @@ func BillingAgent() {
 	log.Printf("👂 Listening on %s", myInbox)
 
 	// 4. Discovery: Find OCR Capability
-	client := lookup.New(nc)
+	client := lookup.New(nc, did)
 	log.Println("🔍 Searching for 'perception.ocr' agents...")
 	entries, err := client.FindAgents("perception.ocr", 2*time.Second)
 	if err != nil || len(entries) == 0 {

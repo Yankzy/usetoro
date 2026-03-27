@@ -25,6 +25,12 @@ const (
 
 	// MessageTypeRequestAuthURL is sent by client to request auth URL generation
 	MessageTypeRequestAuthURL MessageType = "request_auth_url"
+
+	// MessageTypeSubscribeCards is sent by client to opt-in to retrieving JetStream cards
+	MessageTypeSubscribeCards MessageType = "subscribe_cards"
+
+	// MessageTypeSwipeResult is sent by client upon categorizing a transaction
+	MessageTypeSwipeResult MessageType = "swipe_result"
 )
 
 // Message represents a WebSocket message structure

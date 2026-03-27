@@ -14,7 +14,7 @@ else
 endif
 
 # App Services
-SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker fignode
+SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker fignode protocol
 
 # Allow passing service names as arguments, e.g., "make rebuild nginx" or "make restart nginx"
 ifneq ($(filter rebuild restart,$(firstword $(MAKECMDGOALS))),)

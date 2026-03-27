@@ -15,8 +15,11 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/queue"
+	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/wshandler"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 )
@@ -129,6 +132,34 @@ func main() {
 	logger.Info("Connected to Redis")
 	defer rdb.Close()
 
+	// Connect to Database
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		logger.Error("DATABASE_URL is required")
+		os.Exit(1)
+	}
+
+	dbConfig, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		logger.Error("Failed to parse database url", "error", err)
+		os.Exit(1)
+	}
+
+	dbPool, err := pgxpool.NewWithConfig(context.Background(), dbConfig)
+	if err != nil {
+		logger.Error("Failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer dbPool.Close()
+
+	if err := dbPool.Ping(context.Background()); err != nil {
+		logger.Error("Failed to ping database", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Connected to PostgreSQL")
+
+	queries := database.New(dbPool)
+
 	// Initialize NATS connection
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
@@ -158,6 +189,17 @@ func main() {
 				MaxAge:   72 * time.Hour,
 			}
 			if err := queueClient.EnsureStream(streamCfg); err == nil {
+				// Ensure cards stream exists
+				cardsStreamCfg := &nats.StreamConfig{
+					Name:     "cards",
+					Subjects: []string{"cards.>"},
+					Storage:  nats.FileStorage,
+					MaxAge:   72 * time.Hour,
+				}
+				if err := queueClient.EnsureStream(cardsStreamCfg); err != nil {
+					logger.Error("Failed to ensure cards stream", "error", err)
+				}
+
 				logger.Info("Connected to NATS and JetStream stream ensured")
 				lastErr = nil
 				break
@@ -179,8 +221,10 @@ func main() {
 	}
 	defer queueClient.Close()
 
-	// Create WebSocket hub
-	hub := wshandler.NewHub(logger)
+	// Create WebSocket hub & LLM Context Wrapper
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	llmClient, _ := ai.NewLLMClient(apiKey, "")
+	hub := wshandler.NewHub(logger, queueClient, queries, llmClient)
 	go hub.Run()
 
 	// Create and start QBO event consumer

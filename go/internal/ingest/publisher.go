@@ -119,3 +119,26 @@ func (p *Publisher) PublishQBOEvent(ctx context.Context, eventType, realmID stri
 
 	return err
 }
+
+// PublishRaw publishes an arbitrary payload to a specific NATS subject explicitly via Circuit Breaker limits.
+func (p *Publisher) PublishRaw(ctx context.Context, subject string, data []byte) error {
+	_, err := p.breaker.Execute(func() (interface{}, error) {
+		msg := nats.NewMsg(subject)
+		msg.Data = data
+		msg.Header.Set("Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
+
+		// Add request ID from context if available
+		if requestID, ok := ctx.Value("request_id").(string); ok {
+			msg.Header.Set("Request-ID", requestID)
+		}
+
+		_, publishErr := p.q.PublishMsg(msg, nats.Context(ctx))
+		return nil, publishErr
+	})
+
+	if err == gobreaker.ErrOpenState {
+		return fmt.Errorf("circuit breaker open: NATS is unhealthy")
+	}
+
+	return err
+}

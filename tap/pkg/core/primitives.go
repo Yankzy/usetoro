@@ -7,6 +7,9 @@ import (
 
 // --- 1. The Task Primitive (The Work) ---
 
+// MicrionMultiplier defines the fractional conversion unit. (e.g. 1 USD = 1,000,000 uC)
+const MicrionMultiplier int64 = 1_000_000
+
 // TaskComplexity defines the skill tier required.
 type TaskComplexity int
 

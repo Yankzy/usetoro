@@ -279,7 +279,7 @@ func (q *Queries) GetRuleAuditLogsByTransaction(ctx context.Context, transaction
 }
 
 const getVendorByID = `-- name: GetVendorByID :one
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors WHERE id = $1
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at, industry, industry_icon, vendor_description, vendor_url FROM shadow_erp.vendors WHERE id = $1
 `
 
 func (q *Queries) GetVendorByID(ctx context.Context, id pgtype.UUID) (ShadowErpVendor, error) {
@@ -297,6 +297,10 @@ func (q *Queries) GetVendorByID(ctx context.Context, id pgtype.UUID) (ShadowErpV
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Industry,
+		&i.IndustryIcon,
+		&i.VendorDescription,
+		&i.VendorUrl,
 	)
 	return i, err
 }

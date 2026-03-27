@@ -384,7 +384,7 @@ func (q *Queries) GetAllActiveConnections(ctx context.Context) ([]GetAllActiveCo
 }
 
 const getAllCustomersForRealms = `-- name: GetAllCustomersForRealms :many
-SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at, industry, industry_icon, customer_description, customer_url FROM shadow_erp.customers
 WHERE realm_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -408,6 +408,10 @@ func (q *Queries) GetAllCustomersForRealms(ctx context.Context, realmIds []strin
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Industry,
+			&i.IndustryIcon,
+			&i.CustomerDescription,
+			&i.CustomerUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -420,7 +424,7 @@ func (q *Queries) GetAllCustomersForRealms(ctx context.Context, realmIds []strin
 }
 
 const getAllVendorsForRealms = `-- name: GetAllVendorsForRealms :many
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at, industry, industry_icon, vendor_description, vendor_url FROM shadow_erp.vendors
 WHERE realm_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -446,6 +450,10 @@ func (q *Queries) GetAllVendorsForRealms(ctx context.Context, realmIds []string)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Industry,
+			&i.IndustryIcon,
+			&i.VendorDescription,
+			&i.VendorUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -559,7 +567,7 @@ func (q *Queries) GetBillByERPID(ctx context.Context, arg GetBillByERPIDParams) 
 }
 
 const getCompanyInfo = `-- name: GetCompanyInfo :one
-SELECT id, realm_id, erp_id, sync_token, company_name, legal_name, domain, country, fiscal_year_start_month, company_start_date, supported_languages, company_addr, legal_addr, primary_phone, email, web_addr, name_values, event_source, erp_created_time, erp_updated_time, created_at, updated_at FROM shadow_erp.company_info
+SELECT id, realm_id, erp_id, sync_token, company_name, legal_name, domain, country, fiscal_year_start_month, company_start_date, supported_languages, company_addr, legal_addr, primary_phone, email, web_addr, name_values, event_source, erp_created_time, erp_updated_time, created_at, updated_at, industry, industry_icon, business_model, mindset_hint FROM shadow_erp.company_info
 WHERE realm_id = $1
 `
 
@@ -589,6 +597,10 @@ func (q *Queries) GetCompanyInfo(ctx context.Context, realmID string) (ShadowErp
 		&i.ErpUpdatedTime,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Industry,
+		&i.IndustryIcon,
+		&i.BusinessModel,
+		&i.MindsetHint,
 	)
 	return i, err
 }
@@ -646,7 +658,7 @@ func (q *Queries) GetConnectionWithWebhookTimes(ctx context.Context, arg GetConn
 }
 
 const getCustomerByERPID = `-- name: GetCustomerByERPID :one
-SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at, industry, industry_icon, customer_description, customer_url FROM shadow_erp.customers
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -668,12 +680,42 @@ func (q *Queries) GetCustomerByERPID(ctx context.Context, arg GetCustomerByERPID
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Industry,
+		&i.IndustryIcon,
+		&i.CustomerDescription,
+		&i.CustomerUrl,
+	)
+	return i, err
+}
+
+const getCustomerByID = `-- name: GetCustomerByID :one
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at, industry, industry_icon, customer_description, customer_url FROM shadow_erp.customers
+WHERE id = $1
+`
+
+func (q *Queries) GetCustomerByID(ctx context.Context, id pgtype.UUID) (ShadowErpCustomer, error) {
+	row := q.db.QueryRow(ctx, getCustomerByID, id)
+	var i ShadowErpCustomer
+	err := row.Scan(
+		&i.ID,
+		&i.ErpID,
+		&i.RealmID,
+		&i.DisplayName,
+		&i.SyncToken,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Industry,
+		&i.IndustryIcon,
+		&i.CustomerDescription,
+		&i.CustomerUrl,
 	)
 	return i, err
 }
 
 const getCustomerByName = `-- name: GetCustomerByName :one
-SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at, industry, industry_icon, customer_description, customer_url FROM shadow_erp.customers
 WHERE realm_id = $1
   AND deleted_at IS NULL
   AND display_name ILIKE $2
@@ -698,12 +740,16 @@ func (q *Queries) GetCustomerByName(ctx context.Context, arg GetCustomerByNamePa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Industry,
+		&i.IndustryIcon,
+		&i.CustomerDescription,
+		&i.CustomerUrl,
 	)
 	return i, err
 }
 
 const getCustomersByRealm = `-- name: GetCustomersByRealm :many
-SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at, industry, industry_icon, customer_description, customer_url FROM shadow_erp.customers
 WHERE realm_id = $1 AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -727,6 +773,10 @@ func (q *Queries) GetCustomersByRealm(ctx context.Context, realmID string) ([]Sh
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Industry,
+			&i.IndustryIcon,
+			&i.CustomerDescription,
+			&i.CustomerUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -739,7 +789,7 @@ func (q *Queries) GetCustomersByRealm(ctx context.Context, realmID string) ([]Sh
 }
 
 const getCustomersUpdatedSince = `-- name: GetCustomersUpdatedSince :many
-SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at, industry, industry_icon, customer_description, customer_url FROM shadow_erp.customers
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
 ORDER BY updated_at ASC
 `
@@ -768,6 +818,10 @@ func (q *Queries) GetCustomersUpdatedSince(ctx context.Context, arg GetCustomers
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Industry,
+			&i.IndustryIcon,
+			&i.CustomerDescription,
+			&i.CustomerUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -1186,7 +1240,7 @@ func (q *Queries) GetVectorSyncState(ctx context.Context, realmID string) (Shado
 }
 
 const getVendor = `-- name: GetVendor :one
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at, industry, industry_icon, vendor_description, vendor_url FROM shadow_erp.vendors
 WHERE realm_id = $1 AND id = $2
 `
 
@@ -1210,12 +1264,16 @@ func (q *Queries) GetVendor(ctx context.Context, arg GetVendorParams) (ShadowErp
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Industry,
+		&i.IndustryIcon,
+		&i.VendorDescription,
+		&i.VendorUrl,
 	)
 	return i, err
 }
 
 const getVendorByERPID = `-- name: GetVendorByERPID :one
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at, industry, industry_icon, vendor_description, vendor_url FROM shadow_erp.vendors
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -1239,13 +1297,17 @@ func (q *Queries) GetVendorByERPID(ctx context.Context, arg GetVendorByERPIDPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Industry,
+		&i.IndustryIcon,
+		&i.VendorDescription,
+		&i.VendorUrl,
 	)
 	return i, err
 }
 
 const getVendorByNameOrSynonym = `-- name: GetVendorByNameOrSynonym :one
 
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at, industry, industry_icon, vendor_description, vendor_url FROM shadow_erp.vendors
 WHERE realm_id = $1
   AND deleted_at IS NULL
   AND (
@@ -1279,12 +1341,16 @@ func (q *Queries) GetVendorByNameOrSynonym(ctx context.Context, arg GetVendorByN
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Industry,
+		&i.IndustryIcon,
+		&i.VendorDescription,
+		&i.VendorUrl,
 	)
 	return i, err
 }
 
 const getVendorsByRealm = `-- name: GetVendorsByRealm :many
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at, industry, industry_icon, vendor_description, vendor_url FROM shadow_erp.vendors
 WHERE realm_id = $1 AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -1310,6 +1376,10 @@ func (q *Queries) GetVendorsByRealm(ctx context.Context, realmID string) ([]Shad
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Industry,
+			&i.IndustryIcon,
+			&i.VendorDescription,
+			&i.VendorUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -1322,7 +1392,7 @@ func (q *Queries) GetVendorsByRealm(ctx context.Context, realmID string) ([]Shad
 }
 
 const getVendorsUpdatedSince = `-- name: GetVendorsUpdatedSince :many
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at, industry, industry_icon, vendor_description, vendor_url FROM shadow_erp.vendors
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
 ORDER BY updated_at ASC
 `
@@ -1353,6 +1423,10 @@ func (q *Queries) GetVendorsUpdatedSince(ctx context.Context, arg GetVendorsUpda
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Industry,
+			&i.IndustryIcon,
+			&i.VendorDescription,
+			&i.VendorUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -1480,6 +1554,58 @@ type SoftDeleteVendorParams struct {
 
 func (q *Queries) SoftDeleteVendor(ctx context.Context, arg SoftDeleteVendorParams) error {
 	_, err := q.db.Exec(ctx, softDeleteVendor, arg.DeletedAt, arg.RealmID, arg.ErpID)
+	return err
+}
+
+const updateCompanyTaxonomy = `-- name: UpdateCompanyTaxonomy :exec
+UPDATE shadow_erp.company_info
+SET industry = $2, industry_icon = $3, business_model = $4, mindset_hint = $5
+WHERE realm_id = $1
+`
+
+type UpdateCompanyTaxonomyParams struct {
+	RealmID       string
+	Industry      pgtype.Text
+	IndustryIcon  pgtype.Text
+	BusinessModel pgtype.Text
+	MindsetHint   pgtype.Text
+}
+
+func (q *Queries) UpdateCompanyTaxonomy(ctx context.Context, arg UpdateCompanyTaxonomyParams) error {
+	_, err := q.db.Exec(ctx, updateCompanyTaxonomy,
+		arg.RealmID,
+		arg.Industry,
+		arg.IndustryIcon,
+		arg.BusinessModel,
+		arg.MindsetHint,
+	)
+	return err
+}
+
+const updateCustomerTaxonomy = `-- name: UpdateCustomerTaxonomy :exec
+UPDATE shadow_erp.customers
+SET industry = $3, industry_icon = $4, customer_description = $5, customer_url = $6
+WHERE realm_id = $1 AND erp_id = $2
+`
+
+type UpdateCustomerTaxonomyParams struct {
+	RealmID             string
+	ErpID               string
+	Industry            pgtype.Text
+	IndustryIcon        pgtype.Text
+	CustomerDescription pgtype.Text
+	CustomerUrl         pgtype.Text
+}
+
+func (q *Queries) UpdateCustomerTaxonomy(ctx context.Context, arg UpdateCustomerTaxonomyParams) error {
+	_, err := q.db.Exec(ctx, updateCustomerTaxonomy,
+		arg.RealmID,
+		arg.ErpID,
+		arg.Industry,
+		arg.IndustryIcon,
+		arg.CustomerDescription,
+		arg.CustomerUrl,
+	)
 	return err
 }
 
@@ -1678,6 +1804,33 @@ type UpdateVendorSynonymsByERPIDParams struct {
 
 func (q *Queries) UpdateVendorSynonymsByERPID(ctx context.Context, arg UpdateVendorSynonymsByERPIDParams) error {
 	_, err := q.db.Exec(ctx, updateVendorSynonymsByERPID, arg.RealmID, arg.ErpID, arg.AiSynonyms)
+	return err
+}
+
+const updateVendorTaxonomy = `-- name: UpdateVendorTaxonomy :exec
+UPDATE shadow_erp.vendors
+SET industry = $3, industry_icon = $4, vendor_description = $5, vendor_url = $6
+WHERE realm_id = $1 AND erp_id = $2
+`
+
+type UpdateVendorTaxonomyParams struct {
+	RealmID           string
+	ErpID             string
+	Industry          pgtype.Text
+	IndustryIcon      pgtype.Text
+	VendorDescription pgtype.Text
+	VendorUrl         pgtype.Text
+}
+
+func (q *Queries) UpdateVendorTaxonomy(ctx context.Context, arg UpdateVendorTaxonomyParams) error {
+	_, err := q.db.Exec(ctx, updateVendorTaxonomy,
+		arg.RealmID,
+		arg.ErpID,
+		arg.Industry,
+		arg.IndustryIcon,
+		arg.VendorDescription,
+		arg.VendorUrl,
+	)
 	return err
 }
 

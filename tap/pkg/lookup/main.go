@@ -10,6 +10,7 @@ import (
 
 // AlmanacQuery defines the search criteria
 type AlmanacQuery struct {
+	CallerDID      string                 `json:"caller_did,omitempty"`      // Added for billing the Micrion Toll
 	CapabilityType string                 `json:"capability_type,omitempty"` // e.g., "logistics.trucking"
 	DID            string                 `json:"did,omitempty"`             // Direct lookup by DID
 	MetaFilter     map[string]interface{} `json:"meta_filter,omitempty"`     // e.g., {"location": "New York"}
@@ -42,16 +43,20 @@ type RegistrationPayload struct {
 
 // Client handles discovery operations
 type Client struct {
-	nc *nats.Conn
+	nc        *nats.Conn
+	callerDID string
 }
 
-func New(nc *nats.Conn) *Client {
-	return &Client{nc: nc}
+func New(nc *nats.Conn, callerDID string) *Client {
+	return &Client{nc: nc, callerDID: callerDID}
 }
 
 // FindAgents performs a synchronous NATS Request to find agents.
 func (c *Client) FindAgents(capability string, timeout time.Duration) ([]AlmanacEntry, error) {
-	query := AlmanacQuery{CapabilityType: capability}
+	query := AlmanacQuery{
+		CallerDID:      c.callerDID,
+		CapabilityType: capability,
+	}
 
 	reqData, err := json.Marshal(query)
 	if err != nil {
@@ -74,6 +79,7 @@ func (c *Client) FindAgents(capability string, timeout time.Duration) ([]Almanac
 
 // Resolve looks up agents by multiple criteria
 func (c *Client) Resolve(query AlmanacQuery, timeout time.Duration) (*AlmanacEntry, error) {
+	query.CallerDID = c.callerDID
 	reqData, err := json.Marshal(query)
 	if err != nil {
 		return nil, fmt.Errorf("marshal error: %w", err)
@@ -98,7 +104,10 @@ func (c *Client) Resolve(query AlmanacQuery, timeout time.Duration) (*AlmanacEnt
 
 // ResolveByDID looks up a specific agent by DID
 func (c *Client) ResolveByDID(did string, timeout time.Duration) (*AlmanacEntry, error) {
-	query := AlmanacQuery{DID: did}
+	query := AlmanacQuery{
+		CallerDID: c.callerDID,
+		DID:       did,
+	}
 	reqData, err := json.Marshal(query)
 	if err != nil {
 		return nil, fmt.Errorf("marshal error: %w", err)
@@ -123,7 +132,10 @@ func (c *Client) ResolveByDID(did string, timeout time.Duration) (*AlmanacEntry,
 
 // ResolveByCapabilityType looks up agents by capability type
 func (c *Client) ResolveByCapabilityType(capability string, timeout time.Duration) ([]AlmanacEntry, error) {
-	query := AlmanacQuery{CapabilityType: capability}
+	query := AlmanacQuery{
+		CallerDID:      c.callerDID,
+		CapabilityType: capability,
+	}
 	reqData, err := json.Marshal(query)
 	if err != nil {
 		return nil, fmt.Errorf("marshal error: %w", err)

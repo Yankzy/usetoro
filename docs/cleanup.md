@@ -41,7 +41,8 @@ The process relies on an event-driven, choreography-based microservice architect
   2. Extracts the first few rows (up to 20) of the payload and sends them to the LLM.
   3. The LLM acts as an expert data analyst and outputs a strict JSON mapping denoting the 0-based column indices for Date, Description, Amount, Vendor, and identifies the sign convention (`is_expense_positive`) or split Debit/Credit columns.
   4. The agent uses this mapping to parse the rest of the file, transforming the raw rows into a uniform `RawRow` schema.
-  5. The agent wraps the standardized `RawRow`s into a `core.Proof` (Type: `core.ProofAPI` / `"proof.api"`) envelope (Performative: `INFORM`, target: `did:toro:hive`) and publishes it to the NATS topic `proof.accounting.cleanup.columns`.
+  5. The agent wraps the standardized `RawRow`s into a `core.Proof` (Type: `core.ProofAPI` / `"proof.api"`) envelope (Performative: `INFORM`, target: `did:toro:hive`) and publishes it to the NATS JetStream topic `proof.accounting.cleanup.columns`.
+  6. **Reliability (JetStream):** Operates on a durable consumer (`cleanup-agent-durable`) with `AckExplicit`. Transient failures trigger `msg.Nak()`, and poison pills (retries > 3) trigger `msg.Term()`.
 
 ### 3. Database Persistence (`Cleanup Worker`)
 **File:** `go/internal/workers/cleanup_worker.go`
@@ -52,6 +53,7 @@ The process relies on an event-driven, choreography-based microservice architect
   2. Updates the cleanup session status in the database to `PROCESSING`.
   3. Iterates over the standardized rows and inserts them into the database (`toro_cleanup.session_rows`) using `InsertCleanupRow`. 
   4. At this point, the raw structural parsing is complete, and the data is securely staged in Postgres.
+  5. **Reliability (JetStream):** Operates on a durable consumer (`cleanup-worker-durable`) with `AckExplicit`. Transients trigger `msg.Nak()`, while poison pills (retries > 3) update the session status to `ERROR` before calling `msg.Term()`.
 
 ### 4. Semantic AI Enrichment (`TAP Enrichment AI Agent`)
 **File:** `tap/agents/enrichment/agent.go`
@@ -69,3 +71,4 @@ The process relies on an event-driven, choreography-based microservice architect
   6. **Persistence:** Batch updates the rows in the database via `UpdateRowEnrichment`.
   7. Updates the session status to `ENRICHED`.
   8. Broadcasts a final completion event `proof.accounting.cleanup.enrichment` to notify the system that the workflow logic is complete.
+  9. **Reliability (JetStream):** Operates on a durable consumer (`enrichment-agent-durable`) with `AckExplicit`. Transients trigger `msg.Nak()`, while poison pills (retries > 3) update the session status to `ERROR` and call `msg.Term()`.

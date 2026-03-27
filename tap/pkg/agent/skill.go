@@ -22,21 +22,21 @@ type Skill struct {
 // Use resolves a DID to a Skill struct
 // This is the "Import" function
 // Use skill by DID
-func Use(nc *nats.Conn, did string) (*Skill, error) {
+func Use(nc *nats.Conn, callerDID string, targetDID string) (*Skill, error) {
 	// 1. Resolve DID to NATS Subject (Discovery) via Almanac
-	client := lookup.New(nc)
+	client := lookup.New(nc, callerDID)
 	// 5 second timeout for discovery
-	entry, err := client.ResolveByDID(did, 5*time.Second)
+	entry, err := client.ResolveByDID(targetDID, 5*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("skill resolution failed: %w", err)
 	}
 
 	if len(entry.Endpoints) == 0 {
-		return nil, fmt.Errorf("skill %s has no endpoints", did)
+		return nil, fmt.Errorf("skill %s has no endpoints", targetDID)
 	}
 
 	return &Skill{
-		DID:    did,
+		DID:    targetDID,
 		Topic:  entry.Endpoints[0], // Use the first endpoint
 		Client: nc,
 	}, nil

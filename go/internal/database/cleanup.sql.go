@@ -350,8 +350,8 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
-       v.display_name AS predicted_vendor_name,
-       c.display_name AS predicted_customer_name,
+       COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
+       COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
        a.name         AS predicted_account_name,
        a.account_type AS predicted_account_type,
        ov.display_name AS override_vendor_name,
@@ -397,8 +397,8 @@ type GetPendingRealmRowsRow struct {
 	ErpTransactionID      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
-	PredictedVendorName   pgtype.Text
-	PredictedCustomerName pgtype.Text
+	PredictedVendorName   string
+	PredictedCustomerName string
 	PredictedAccountName  pgtype.Text
 	PredictedAccountType  pgtype.Text
 	OverrideVendorName    pgtype.Text
@@ -463,8 +463,8 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
-       v.display_name AS predicted_vendor_name,
-       c.display_name AS predicted_customer_name,
+       COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
+       COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
        a.name         AS predicted_account_name,
        a.account_type AS predicted_account_type,
        ov.display_name AS override_vendor_name,
@@ -504,8 +504,8 @@ type GetPendingSessionRowsRow struct {
 	ErpTransactionID      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
-	PredictedVendorName   pgtype.Text
-	PredictedCustomerName pgtype.Text
+	PredictedVendorName   string
+	PredictedCustomerName string
 	PredictedAccountName  pgtype.Text
 	PredictedAccountType  pgtype.Text
 	OverrideVendorName    pgtype.Text
@@ -570,8 +570,8 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
-       v.display_name AS predicted_vendor_name,
-       c.display_name AS predicted_customer_name,
+       COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
+       COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
        a.name         AS predicted_account_name,
        a.account_type AS predicted_account_type,
        ov.display_name AS override_vendor_name,
@@ -617,8 +617,8 @@ type GetSessionRowsRow struct {
 	ErpTransactionID      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
-	PredictedVendorName   pgtype.Text
-	PredictedCustomerName pgtype.Text
+	PredictedVendorName   string
+	PredictedCustomerName string
 	PredictedAccountName  pgtype.Text
 	PredictedAccountType  pgtype.Text
 	OverrideVendorName    pgtype.Text

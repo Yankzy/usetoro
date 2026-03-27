@@ -49,6 +49,11 @@ func (h *MessageHandler) HandleMessage(ctx context.Context, data []byte) ([]byte
 	case MessageTypeRequestAuthURL:
 		return h.handleRequestAuthURL(ctx, msg)
 
+	case MessageTypeSubscribeCards, MessageType("request_cards"), MessageTypeSwipeResult:
+		// These are natively intercepted by the WebSocket readPump core safely,
+		// or they just don't have HTTP endpoints built for them currently.
+		return nil, nil
+
 	default:
 		h.logger.Warn("Unknown message type", "type", msg.Type)
 		return NewErrorMessage("Unknown message type")

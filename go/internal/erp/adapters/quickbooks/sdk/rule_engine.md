@@ -1,4 +1,4 @@
-# QBO Rule Engine Documentation
+# Rule Engine Documentation
 
 The Rule Engine provides a fast, deterministic, and hierarchical system to evaluate transactions against user-defined conditions (e.g., string matching, regex, amount thresholds). It is designed to evaluate logic securely and rapidly without relying on slower, non-deterministic AI models.
 

@@ -71,7 +71,7 @@ func main() {
 
 	// 4. Dependencies
 	repo := store.NewRedisStore(rdb)
-	machine := contract.NewContract(repo)
+	machine := contract.NewContract(repo, nil, nil, nil, nil, nil, nil)
 
 	// 5. Subscribe via JetStream durable consumers (at-least-once delivery)
 	settlementConfig, ok := cfg.NATS.Services["settlement"]

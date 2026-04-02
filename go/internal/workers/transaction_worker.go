@@ -61,21 +61,22 @@ func NewTransactionWorker(
 	}, nil
 }
 
-func (w *TransactionWorker) Start(ctx context.Context) error {
-	w.logger.Info("🚀 TransactionWorker CDC consumer started")
+func (w *TransactionWorker) Init(ctx context.Context) error {
+	return nil
+}
 
-	subjectAll := "ledger.shadow_erp_proposed_transactions.*"
-
-	sub, err := w.js.QueueSubscribe(subjectAll, "toro-tx-workers", func(msg *nats.Msg) {
-		w.handleEvent(ctx, msg)
-	}, nats.ManualAck(), nats.BindStream("LEDGER"))
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to %s: %w", subjectAll, err)
+func (w *TransactionWorker) Subscriptions() []SubscriptionConfig {
+	return []SubscriptionConfig{
+		{
+			Subject: "ledger.shadow_erp_proposed_transactions.*",
+			Group:   "toro-tx-workers",
+			Options: []nats.SubOpt{nats.ManualAck(), nats.BindStream("LEDGER")},
+		},
 	}
+}
 
-	<-ctx.Done()
-	w.logger.Info("🛑 TransactionWorker shutting down")
-	sub.Unsubscribe()
+func (w *TransactionWorker) Handle(ctx context.Context, msg *nats.Msg) error {
+	w.handleEvent(ctx, msg)
 	return nil
 }
 

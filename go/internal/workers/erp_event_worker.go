@@ -47,25 +47,23 @@ func NewERPEventWorker(
 	}, nil
 }
 
-// Start begins processing events from the configured NATS subject.
-func (w *ERPEventWorker) Start(ctx context.Context) error {
-	subject := w.cfg.NatsERPEventSubject
+func (w *ERPEventWorker) Init(ctx context.Context) error {
+	return nil
+}
 
-	// We use a Queue Subscribe to ensure multiple instances of Toro share the load
-	// and don't double-process the same event.
-	sub, err := w.js.QueueSubscribe(subject, "toro-erp-event-workers", func(msg *nats.Msg) {
-		w.processMessage(ctx, msg)
-	}, nats.ManualAck(), nats.BindStream("TORO_ERP_EVENTS"))
-
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to %s: %w", subject, err)
+func (w *ERPEventWorker) Subscriptions() []SubscriptionConfig {
+	return []SubscriptionConfig{
+		{
+			Subject: w.cfg.NatsERPEventSubject,
+			Group:   "toro-erp-event-workers",
+			Options: []nats.SubOpt{nats.ManualAck(), nats.BindStream("TORO_ERP_EVENTS")},
+		},
 	}
+}
 
-	w.logger.Info("🎧 ERP Event Worker started", "subject", subject)
-
-	<-ctx.Done()
-	w.logger.Info("🛑 ERP Event Worker shutting down")
-	return sub.Unsubscribe()
+func (w *ERPEventWorker) Handle(ctx context.Context, msg *nats.Msg) error {
+	w.processMessage(ctx, msg)
+	return nil
 }
 
 func (w *ERPEventWorker) processMessage(ctx context.Context, msg *nats.Msg) {

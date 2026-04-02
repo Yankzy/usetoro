@@ -126,7 +126,7 @@ func (r *Runtime) handleTrigger(msg *nats.Msg) {
 	msg.Ack()
 }
 
-// ExecWithPaging replaces naive text calls with an advanced Tool Calling interceptor structurally validating document arrays securely natively!
+// ExecWithPaging replaces naive text calls with an advanced Tool Calling interceptor structurally validating document arrays securely!
 func (r *Runtime) ExecWithPaging(ctx context.Context, prompt string, pages []PageContext, fetcher DocumentFetcher) (string, error) {
 	client := openai.NewClient()
 

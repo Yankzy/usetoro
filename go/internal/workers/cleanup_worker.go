@@ -42,32 +42,26 @@ func NewCleanupWorker(
 	}, nil
 }
 
-func (e *CleanupWorker) Start(ctx context.Context) error {
-	subject := "proof.accounting.cleanup.columns"
-	e.logger.Info("🛫 CleanupWorker started listening to TAP proofs via JetStream", "subject", subject)
+func (e *CleanupWorker) Init(ctx context.Context) error {
+	return nil
+}
 
-	js, err := e.nc.JetStream()
-	if err != nil {
-		return fmt.Errorf("cleanup worker failed to bind jetstream context: %w", err)
+func (e *CleanupWorker) Subscriptions() []SubscriptionConfig {
+	return []SubscriptionConfig{
+		{
+			Subject: "proof.accounting.cleanup.columns",
+			Group:   "cleanup-worker-group",
+			Options: []nats.SubOpt{nats.Durable("cleanup-worker-durable"), nats.DeliverAll(), nats.AckExplicit()},
+		},
 	}
+}
 
-	sub, err := js.QueueSubscribe(subject, "cleanup-worker-group", func(msg *nats.Msg) {
-		e.logger.Info("📡 [DEBUG] cleanup_worker received JetStream TAP message", "topic", msg.Subject, "data_length", len(msg.Data))
-		if err := e.handleProof(ctx, msg); err != nil {
-			e.logger.Error("cleanup worker transient error", "error", err)
-			msg.Nak()
-			return
-		}
-		msg.Ack()
-	}, nats.Durable("cleanup-worker-durable"), nats.DeliverAll(), nats.AckExplicit())
-
-	if err != nil {
-		return fmt.Errorf("cleanup worker TAP proof subscribe: %w", err)
+func (e *CleanupWorker) Handle(ctx context.Context, msg *nats.Msg) error {
+	e.logger.Info("📡 [DEBUG] cleanup_worker received JetStream TAP message", "topic", msg.Subject, "data_length", len(msg.Data))
+	if err := e.handleProof(ctx, msg); err != nil {
+		e.logger.Error("cleanup worker transient error", "error", err)
+		return err
 	}
-
-	<-ctx.Done()
-	_ = sub.Unsubscribe()
-	e.logger.Info("🛑 CleanupWorker stopped")
 	return nil
 }
 

@@ -47,32 +47,26 @@ func (w *FignodePublisherWorker) numericToFloat64Precise(n pgtype.Numeric) float
 	return f.Float64
 }
 
-func (w *FignodePublisherWorker) Start(ctx context.Context) error {
-	subject := "proof.accounting.cleanup.reconcile.>"
-	w.logger.Info("🛫 FignodePublisherWorker started listening to JetStream", "subject", subject)
+func (w *FignodePublisherWorker) Init(ctx context.Context) error {
+	return nil
+}
 
-	js, err := w.nc.JetStream()
-	if err != nil {
-		return fmt.Errorf("fignode publisher worker failed to bind jetstream context: %w", err)
+func (w *FignodePublisherWorker) Subscriptions() []SubscriptionConfig {
+	return []SubscriptionConfig{
+		{
+			Subject: "proof.accounting.cleanup.reconcile.>",
+			Group:   "fignode-publisher-group",
+			Options: []nats.SubOpt{nats.Durable("fignode-publisher-durable"), nats.DeliverAll(), nats.AckExplicit()},
+		},
 	}
+}
 
-	sub, err := js.QueueSubscribe(subject, "fignode-publisher-group", func(msg *nats.Msg) {
-		w.logger.Info("📡 [DEBUG] fignode-publisher-worker received JetStream message", "topic", msg.Subject, "data_length", len(msg.Data))
-		if err := w.handleProof(ctx, msg); err != nil {
-			w.logger.Error("fignode publisher worker transient error", "error", err)
-			msg.Nak()
-			return
-		}
-		msg.Ack()
-	}, nats.Durable("fignode-publisher-durable"), nats.DeliverAll(), nats.AckExplicit())
-
-	if err != nil {
-		return fmt.Errorf("fignode publisher worker queue subscribe: %w", err)
+func (w *FignodePublisherWorker) Handle(ctx context.Context, msg *nats.Msg) error {
+	w.logger.Info("📡 [DEBUG] fignode-publisher-worker received JetStream message", "topic", msg.Subject, "data_length", len(msg.Data))
+	if err := w.handleProof(ctx, msg); err != nil {
+		w.logger.Error("fignode publisher worker transient error", "error", err)
+		return err
 	}
-
-	<-ctx.Done()
-	_ = sub.Unsubscribe()
-	w.logger.Info("🛑 FignodePublisherWorker stopped")
 	return nil
 }
 

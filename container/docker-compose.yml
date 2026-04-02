@@ -340,7 +340,23 @@ services:
     networks:
       - toro-net
 
-
+  neo4j:
+    image: neo4j:5
+    restart: always
+    environment:
+      NEO4J_AUTH: neo4j/toro_password
+      NEO4J_apoc_export_file_enabled: "true"
+      NEO4J_apoc_import_file_enabled: "true"
+      NEO4J_apoc_import_file_use__neo4j__config: "true"
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - toro-net
 
 volumes:
   redis_data:
@@ -348,7 +364,7 @@ volumes:
   nats_2_data:
   nats_3_data:
   svix_redis_data:
-
+  neo4j_data:
 
 networks:
   toro-net:

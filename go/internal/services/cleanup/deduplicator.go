@@ -21,6 +21,8 @@ type EnrichedRow struct {
 	PredictedAccountName string
 	NormalizedVendor    string
 	NormalizedCustomer  string
+	MerchantName        string
+	PlaidCategory       string
 	ConfidenceScore     float64
 	AIReasoning         string
 	IsRecurring         bool

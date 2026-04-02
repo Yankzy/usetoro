@@ -217,7 +217,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	}
 
 	// 7. Start Workers
-	workerManager := workers.NewManager(logger)
+	workerManager := workers.NewManager(logger, q.Conn())
 
 	erpEventWorker, err := workers.NewERPEventWorker(
 		logger,
@@ -255,13 +255,14 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	}
 	workerManager.Register(cleanupWorker)
 
-	enrichmentWorker, err := workers.NewEnrichmentWorker(st.Queries, q.Conn(), logger)
+	fignodeLLM, _ := ai.NewLLMClient(os.Getenv("OPENAI_API_KEY"), "")
+	
+	enrichmentWorker, err := workers.NewEnrichmentWorker(st.Queries, q.Conn(), logger, fignodeLLM)
 	if err != nil {
 		return fmt.Errorf("failed to init enrichment worker: %w", err)
 	}
 	workerManager.Register(enrichmentWorker)
 
-	fignodeLLM, _ := ai.NewLLMClient(os.Getenv("OPENAI_API_KEY"), "")
 	fignodePublisherWorker, err := workers.NewFignodePublisherWorker(st.Queries, q.Conn(), logger, fignodeLLM)
 	if err != nil {
 		return fmt.Errorf("failed to init fignode publisher worker: %w", err)

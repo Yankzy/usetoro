@@ -42,10 +42,14 @@ type TaskDefinition struct {
 type ContractStatus string
 
 const (
-	ContractDraft    ContractStatus = "DRAFT"
-	ContractLocked   ContractStatus = "LOCKED"  // Binding
-	ContractSettled  ContractStatus = "SETTLED" // Paid
-	ContractDisputed ContractStatus = "DISPUTED"
+	ContractDraft      ContractStatus = "DRAFT"
+	ContractProposed   ContractStatus = "PROPOSED"
+	ContractValidated  ContractStatus = "VALIDATED"
+	ContractEscrowed   ContractStatus = "ESCROWED"
+	ContractLocked     ContractStatus = "LOCKED"      // Binding
+	ContractInProgress ContractStatus = "IN_PROGRESS" // Being Worked On
+	ContractSettled    ContractStatus = "SETTLED"     // Paid
+	ContractDisputed   ContractStatus = "DISPUTED"
 )
 
 // Contract represents the locked state between two agents.
@@ -116,6 +120,9 @@ type Identity struct {
 	// A list of service endpoints for interaction. This tells other agents
 	// how to communicate with this one (e.g., where to send messages or tasks).
 	Services []ServiceEndpoint `json:"service,omitempty"`
+
+	// CapabilityVector measures the agent's competency in specific domains (e.g., {"logistics": 0.95}).
+	CapabilityVector map[string]float64 `json:"capabilityVector,omitempty"`
 
 	// Metadata for lifecycle management.
 	Created time.Time `json:"created"`

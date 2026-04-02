@@ -56,6 +56,7 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
+       cs.merchant_name, cs.plaid_category,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
        COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
        COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
@@ -80,6 +81,7 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
+       cs.merchant_name, cs.plaid_category,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
        COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
        COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
@@ -105,6 +107,7 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
+       cs.merchant_name, cs.plaid_category,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
        COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
        COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
@@ -128,7 +131,9 @@ ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC;
 SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date,
        predicted_vendor_id, predicted_customer_id, predicted_account_id,
        confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
-       override_vendor_id, override_customer_id, override_account_id, status, erp_transaction_id,
+       override_vendor_id, override_customer_id, override_account_id, 
+       merchant_name, plaid_category,
+       status, erp_transaction_id,
        created_at, updated_at
 FROM fignode.staging_transactions
 WHERE id = $1;
@@ -147,6 +152,8 @@ SET
     duplicate_of            = $10,
     is_recurring            = $11,
     split_suggestion        = $12,
+    merchant_name           = $13,
+    plaid_category          = $14,
     status                  = 'ENRICHED',
     updated_at              = NOW()
 WHERE id = $1;

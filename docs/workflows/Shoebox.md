@@ -3,7 +3,7 @@
 
 ### 1. Executive Summary & The "Time-to-Value" Demo
 * **Objective:** Ingest massive historical datasets (thousands of neglected transactions across 12-18 months), automatically categorize the high-confidence deterministic patterns, and route the ambiguous long-tail to a high-speed, swipe-based mobile UI for the human operator.
-* **The Demo Value:** You upload a monstrous, 2,000-row bank statement CSV covering an entire year. In seconds, Toro OS auto-categorizes 1,600 of them (the recurring SaaS subscriptions, payroll, utilities) with 100% mathematical certainty. The remaining 400 anomalies instantly pop up on the CPA's Fignode Mobile App. You share your iPhone screen on the Zoom call and clear 50 transactions in 60 seconds using the Tinder-style swipe UI. 
+* **The Demo Value:** You upload a monstrous, 2,000-row bank statement CSV covering an entire year. In seconds, Toro OS auto-categorizes 1,600 of them (the recurring SaaS subscriptions, payroll, utilities) with 100% mathematical certainty. The remaining 400 anomalies instantly pop up on the CPA's Fignode Mobile App. 
 * **Why it closes the deal:** It proves that your architecture bridges the gap between backend compute scale and human-in-the-loop velocity. You don't just find the anomalies; you build the fastest possible UX to resolve them. 
 
 ### 2. Architectural Definitions (The Toro Physics)

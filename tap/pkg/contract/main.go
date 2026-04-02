@@ -9,15 +9,56 @@ import (
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/identity"
 	"github.com/Yankzy/usetoro/tap/pkg/store"
+	"github.com/Yankzy/usetoro/tap/pkg/constraint"
+	"github.com/Yankzy/usetoro/tap/pkg/incentive"
+	"github.com/Yankzy/usetoro/tap/pkg/reputation"
+	"github.com/Yankzy/usetoro/tap/pkg/verification"
+	"github.com/Yankzy/usetoro/tap/pkg/dispute"
 )
 
 // Machine orchestrates the state transitions of a contract.
 type Machine struct {
-	repo store.Repository
+	repo       store.Repository
+	Reputation reputation.Engine
+	Incentive  incentive.Engine
+	Constraint constraint.Engine
+	Verify     verification.Engine
+	Dispute    dispute.Engine
+	EscrowMgr  incentive.EscrowManager
 }
 
-func NewContract(repo store.Repository) *Machine {
-	return &Machine{repo: repo}
+func NewContract(repo store.Repository, rep reputation.Engine, inc incentive.Engine, cons constraint.Engine, ver verification.Engine, disp dispute.Engine, esc incentive.EscrowManager) *Machine {
+	return &Machine{
+		repo:       repo,
+		Reputation: rep,
+		Incentive:  inc,
+		Constraint: cons,
+		Verify:     ver,
+		Dispute:    disp,
+		EscrowMgr:  esc,
+	}
+}
+
+// Propose initiates the contract negotiation phase, executing Constraint Engine checks.
+func (m *Machine) Propose(ctx context.Context, req *core.Contract) (*core.Contract, error) {
+	// Execute pre-execution constraint gatekeepers
+	pass, err := m.Constraint.Evaluate(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("constraint evaluation failed: %w", err)
+	}
+	if !pass {
+		return nil, fmt.Errorf("transaction denied by constraint engine")
+	}
+
+	req.Status = core.ContractProposed
+	return req, nil
+}
+
+// Escrow locks the appropriate funds as designated by the Incentive Engine.
+func (m *Machine) Escrow(ctx context.Context, req *core.Contract) (*core.Contract, error) {
+	// To be fully implemented: Escrow.Lock
+	req.Status = core.ContractEscrowed
+	return req, nil
 }
 
 // Lock validates both party signatures and transitions a contract to LOCKED.
@@ -71,6 +112,23 @@ func (m *Machine) Settle(ctx context.Context, proof *core.Proof) (bool, *core.Co
 
 	if err := m.repo.UpdateContractStatus(ctx, contract.ID, core.ContractSettled); err != nil {
 		return false, nil, err
+	}
+
+	// SUBMIT OUTCOME TO REPUTATION ENGINE ON SUCCESSFUL PAYMENT
+	if m.Reputation != nil {
+		go func() {
+			eval := &reputation.Evaluation{
+				TaskID:    contract.ID,
+				Submitter: contract.InitiatorDID,
+				Target:    contract.AcceptorDID,
+				Outcome:   "SUCCESS",
+				Weight:    1.0, 
+				Timestamp: time.Now().UTC().Unix(),
+			}
+			if err := m.Reputation.SubmitOutcome(context.Background(), eval); err != nil {
+				log.Printf("⚠️  Failed to submit outcome to reputation engine: %v", err)
+			}
+		}()
 	}
 
 	contract.Status = core.ContractSettled

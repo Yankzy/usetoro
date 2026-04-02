@@ -260,7 +260,9 @@ const getCleanupRow = `-- name: GetCleanupRow :one
 SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date,
        predicted_vendor_id, predicted_customer_id, predicted_account_id,
        confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
-       override_vendor_id, override_customer_id, override_account_id, status, erp_transaction_id,
+       override_vendor_id, override_customer_id, override_account_id, 
+       merchant_name, plaid_category,
+       status, erp_transaction_id,
        created_at, updated_at
 FROM fignode.staging_transactions
 WHERE id = $1
@@ -285,6 +287,8 @@ type GetCleanupRowRow struct {
 	OverrideVendorID    pgtype.UUID
 	OverrideCustomerID  pgtype.UUID
 	OverrideAccountID   pgtype.UUID
+	MerchantName        pgtype.Text
+	PlaidCategory       pgtype.Text
 	Status              string
 	ErpTransactionID    pgtype.Text
 	CreatedAt           pgtype.Timestamptz
@@ -313,6 +317,8 @@ func (q *Queries) GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanup
 		&i.OverrideVendorID,
 		&i.OverrideCustomerID,
 		&i.OverrideAccountID,
+		&i.MerchantName,
+		&i.PlaidCategory,
 		&i.Status,
 		&i.ErpTransactionID,
 		&i.CreatedAt,
@@ -349,6 +355,7 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
+       cs.merchant_name, cs.plaid_category,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
        COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
        COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
@@ -393,6 +400,8 @@ type GetPendingRealmRowsRow struct {
 	OverrideVendorID      pgtype.UUID
 	OverrideCustomerID    pgtype.UUID
 	OverrideAccountID     pgtype.UUID
+	MerchantName          pgtype.Text
+	PlaidCategory         pgtype.Text
 	Status                string
 	ErpTransactionID      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
@@ -434,6 +443,8 @@ func (q *Queries) GetPendingRealmRows(ctx context.Context, arg GetPendingRealmRo
 			&i.OverrideVendorID,
 			&i.OverrideCustomerID,
 			&i.OverrideAccountID,
+			&i.MerchantName,
+			&i.PlaidCategory,
 			&i.Status,
 			&i.ErpTransactionID,
 			&i.CreatedAt,
@@ -462,6 +473,7 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
+       cs.merchant_name, cs.plaid_category,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
        COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
        COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
@@ -500,6 +512,8 @@ type GetPendingSessionRowsRow struct {
 	OverrideVendorID      pgtype.UUID
 	OverrideCustomerID    pgtype.UUID
 	OverrideAccountID     pgtype.UUID
+	MerchantName          pgtype.Text
+	PlaidCategory         pgtype.Text
 	Status                string
 	ErpTransactionID      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
@@ -541,6 +555,8 @@ func (q *Queries) GetPendingSessionRows(ctx context.Context, sessionID pgtype.UU
 			&i.OverrideVendorID,
 			&i.OverrideCustomerID,
 			&i.OverrideAccountID,
+			&i.MerchantName,
+			&i.PlaidCategory,
 			&i.Status,
 			&i.ErpTransactionID,
 			&i.CreatedAt,
@@ -569,6 +585,7 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
+       cs.merchant_name, cs.plaid_category,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
        COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
        COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
@@ -613,6 +630,8 @@ type GetSessionRowsRow struct {
 	OverrideVendorID      pgtype.UUID
 	OverrideCustomerID    pgtype.UUID
 	OverrideAccountID     pgtype.UUID
+	MerchantName          pgtype.Text
+	PlaidCategory         pgtype.Text
 	Status                string
 	ErpTransactionID      pgtype.Text
 	CreatedAt             pgtype.Timestamptz
@@ -654,6 +673,8 @@ func (q *Queries) GetSessionRows(ctx context.Context, arg GetSessionRowsParams) 
 			&i.OverrideVendorID,
 			&i.OverrideCustomerID,
 			&i.OverrideAccountID,
+			&i.MerchantName,
+			&i.PlaidCategory,
 			&i.Status,
 			&i.ErpTransactionID,
 			&i.CreatedAt,
@@ -1013,6 +1034,8 @@ SET
     duplicate_of            = $10,
     is_recurring            = $11,
     split_suggestion        = $12,
+    merchant_name           = $13,
+    plaid_category          = $14,
     status                  = 'ENRICHED',
     updated_at              = NOW()
 WHERE id = $1
@@ -1031,6 +1054,8 @@ type UpdateRowEnrichmentParams struct {
 	DuplicateOf           pgtype.UUID
 	IsRecurring           bool
 	SplitSuggestion       []byte
+	MerchantName          pgtype.Text
+	PlaidCategory         pgtype.Text
 }
 
 func (q *Queries) UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichmentParams) error {
@@ -1047,6 +1072,8 @@ func (q *Queries) UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichme
 		arg.DuplicateOf,
 		arg.IsRecurring,
 		arg.SplitSuggestion,
+		arg.MerchantName,
+		arg.PlaidCategory,
 	)
 	return err
 }

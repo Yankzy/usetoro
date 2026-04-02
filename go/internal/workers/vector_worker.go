@@ -58,45 +58,37 @@ func NewVectorSyncWorker(logger *slog.Logger, s *store.Store, vc *vector.Pinecon
 	}, nil
 }
 
-// Start runs the background worker
-func (w *VectorSyncWorker) Start(ctx context.Context) error {
-	w.logger.Info("🚀 VectorSyncWorker CDC event consumer started")
-
-	// Start the batch processor
+func (w *VectorSyncWorker) Init(ctx context.Context) error {
+	w.logger.Info("🚀 VectorSyncWorker batch processor started")
+	// Start the batch processor. Note: We don't wait for WaitGroup in StartAll natively,
+	// but processBatches handles ctx.Done() and will flush then return.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go w.processBatches(ctx, &wg)
+	return nil
+}
 
+func (w *VectorSyncWorker) Subscriptions() []SubscriptionConfig {
 	subjects := []string{
 		"ledger.accounts.*",
 		"ledger.vendors.*",
 		"ledger.customers.*",
 	}
 
-	var subs []*nats.Subscription
+	var configs []SubscriptionConfig
 	for _, subject := range subjects {
-		// Use a unique queue group / durable name per subject to prevent NATS consumer mismatch
-		// We use nats.DeliverNew() to skip the massive backlog and prevent OpenAI API exhaustion
 		queueGroup := "toro-pinecone-v2-" + strings.ReplaceAll(strings.ReplaceAll(subject, ".*", ""), ".", "-")
-		sub, err := w.js.QueueSubscribe(subject, queueGroup, func(msg *nats.Msg) {
-			w.handleEvent(ctx, msg)
-		}, nats.ManualAck(), nats.AckWait(5*time.Minute), nats.MaxDeliver(5), nats.BindStream("LEDGER"), nats.DeliverNew())
-
-		if err != nil {
-			return fmt.Errorf("failed to subscribe to %s: %w", subject, err)
-		}
-		w.logger.Info("🎧 VectorSyncWorker subscribed", "subject", subject)
-		subs = append(subs, sub)
+		configs = append(configs, SubscriptionConfig{
+			Subject: subject,
+			Group:   queueGroup,
+			Options: []nats.SubOpt{nats.ManualAck(), nats.AckWait(5 * time.Minute), nats.MaxDeliver(5), nats.BindStream("LEDGER"), nats.DeliverNew()},
+		})
 	}
+	return configs
+}
 
-	<-ctx.Done()
-	w.logger.Info("🛑 VectorSyncWorker shutting down")
-
-	for _, sub := range subs {
-		sub.Unsubscribe()
-	}
-
-	wg.Wait()
+func (w *VectorSyncWorker) Handle(ctx context.Context, msg *nats.Msg) error {
+	w.handleEvent(ctx, msg)
 	return nil
 }
 

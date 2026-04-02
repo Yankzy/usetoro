@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/services/cleanup"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/redux"
@@ -42,47 +43,44 @@ type EnrichmentWorker struct {
 	dedup  *cleanup.Deduplicator
 	nc     *nats.Conn
 	logger *slog.Logger
+	llm    *ai.LLMClient
 }
 
 func NewEnrichmentWorker(
 	db *database.Queries,
 	nc *nats.Conn,
 	logger *slog.Logger,
+	llm    *ai.LLMClient,
 ) (*EnrichmentWorker, error) {
 	return &EnrichmentWorker{
 		db:     db,
 		nc:     nc,
 		dedup:  cleanup.NewDeduplicator(),
 		logger: logger,
+		llm:    llm,
 	}, nil
 }
 
-func (e *EnrichmentWorker) Start(ctx context.Context) error {
-	subject := "proof.accounting.cleanup.inserted"
-	e.logger.Info("🛫 EnrichmentWorker started listening to JetStream", "subject", subject)
+func (e *EnrichmentWorker) Init(ctx context.Context) error {
+	return nil
+}
 
-	js, err := e.nc.JetStream()
-	if err != nil {
-		return fmt.Errorf("enrichment worker failed to bind jetstream context: %w", err)
+func (e *EnrichmentWorker) Subscriptions() []SubscriptionConfig {
+	return []SubscriptionConfig{
+		{
+			Subject: "proof.accounting.cleanup.inserted",
+			Group:   "enrichment-group",
+			Options: []nats.SubOpt{nats.Durable("enrichment-inserted-durable"), nats.DeliverAll(), nats.AckExplicit()},
+		},
 	}
+}
 
-	sub, err := js.QueueSubscribe(subject, "enrichment-group", func(msg *nats.Msg) {
-		e.logger.Info("📡 [DEBUG] enrichment-worker received JetStream message", "topic", msg.Subject, "data_length", len(msg.Data))
-		if err := e.handleColumnsProof(ctx, msg); err != nil {
-			e.logger.Error("enrichment worker transient error", "error", err)
-			msg.Nak()
-			return
-		}
-		msg.Ack()
-	}, nats.Durable("enrichment-inserted-durable"), nats.DeliverAll(), nats.AckExplicit())
-
-	if err != nil {
-		return fmt.Errorf("enrichment worker queue subscribe: %w", err)
+func (e *EnrichmentWorker) Handle(ctx context.Context, msg *nats.Msg) error {
+	e.logger.Info("📡 [DEBUG] enrichment-worker received JetStream message", "topic", msg.Subject, "data_length", len(msg.Data))
+	if err := e.handleColumnsProof(ctx, msg); err != nil {
+		e.logger.Error("enrichment worker transient error", "error", err)
+		return err
 	}
-
-	<-ctx.Done()
-	_ = sub.Unsubscribe()
-	e.logger.Info("🛑 EnrichmentWorker stopped")
 	return nil
 }
 
@@ -398,7 +396,14 @@ func (e *EnrichmentWorker) persistEnrichedRow(ctx context.Context, er cleanup.En
 		DuplicateOf:           dupOf,
 		IsRecurring:           er.IsRecurring,
 		SplitSuggestion:       splitJSON,
+		MerchantName:          pgtype.Text{String: er.MerchantName, Valid: er.MerchantName != ""},
+		PlaidCategory:         pgtype.Text{String: er.PlaidCategory, Valid: er.PlaidCategory != ""},
 	})
+}
+
+type EnrichmentExtract struct {
+	MerchantName  string `json:"merchant_name"`
+	PlaidCategory string `json:"plaid_category"`
 }
 
 func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row database.GetPendingSessionRowsRow) (cleanup.EnrichedRow, error) {
@@ -418,6 +423,20 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 	}
 	if row.RawDate.Valid {
 		er.RawDate = row.RawDate.Time
+	}
+
+	// NATIVE LLM EXTRACTION
+	if e.llm != nil {
+		systemPrompt := "You are a financial data categorization engine. Given a raw bank transaction description, extract the pure merchant/customer name and a generalized physical industry category (e.g. 'Software', 'Food and Drink'). Return exactly the JSON format requested."
+		userPrompt := fmt.Sprintf("Analyze this raw bank transaction: \"%s\"", er.RawDescription)
+		
+		var extract EnrichmentExtract
+		if err := e.llm.GenerateJSON(ctx, systemPrompt, userPrompt, &extract); err == nil {
+			er.MerchantName = extract.MerchantName
+			er.PlaidCategory = extract.PlaidCategory
+		} else {
+			e.logger.Warn("Failed LLM extraction", "err", err)
+		}
 	}
 
 	er.ConfidenceScore = 1.0

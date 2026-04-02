@@ -2,24 +2,39 @@ package workers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+
+	"github.com/nats-io/nats.go"
 )
+
+// SubscriptionConfig defines a single JetStream subscription requirement
+type SubscriptionConfig struct {
+	Subject string
+	Group   string
+	Options []nats.SubOpt
+}
 
 // Worker defines the interface for all background workers
 type Worker interface {
-	Start(ctx context.Context) error
+	Init(ctx context.Context) error
+	Subscriptions() []SubscriptionConfig
+	Handle(ctx context.Context, msg *nats.Msg) error
 }
 
 // Manager orchestrates the lifecycle of multiple background workers
 type Manager struct {
-	logger  *slog.Logger
-	workers []Worker
+	logger        *slog.Logger
+	workers       []Worker
+	nc            *nats.Conn
+	subscriptions []*nats.Subscription
 }
 
 // NewManager creates a new worker manager
-func NewManager(logger *slog.Logger) *Manager {
+func NewManager(logger *slog.Logger, nc *nats.Conn) *Manager {
 	return &Manager{
 		logger: logger,
+		nc:     nc,
 	}
 }
 
@@ -28,30 +43,52 @@ func (m *Manager) Register(w Worker) {
 	m.workers = append(m.workers, w)
 }
 
-// StartAll starts all registered workers concurrently and blocks until ctx finishes or an error occurs.
+// StartAll subscribes all registered workers and blocks until ctx finishes.
 func (m *Manager) StartAll(ctx context.Context) error {
-	m.logger.Info("Starting all background workers", "count", len(m.workers))
+	m.logger.Info("Starting all background workers centrally", "count", len(m.workers))
 
 	if len(m.workers) == 0 {
 		<-ctx.Done()
 		return nil
 	}
 
-	errCh := make(chan error, len(m.workers))
+	js, err := m.nc.JetStream()
+	if err != nil {
+		return fmt.Errorf("dispatcher failed to bind jetstream context: %w", err)
+	}
 
 	for _, w := range m.workers {
-		worker := w // Capture for goroutine
-		go func() {
-			if err := worker.Start(ctx); err != nil {
-				errCh <- err
+		worker := w
+
+		if err := worker.Init(ctx); err != nil {
+			return fmt.Errorf("failed to init worker %T: %w", worker, err)
+		}
+
+		for _, subCfg := range worker.Subscriptions() {
+			sub, err := js.QueueSubscribe(subCfg.Subject, subCfg.Group, func(msg *nats.Msg) {
+				if err := worker.Handle(ctx, msg); err != nil {
+					m.logger.Error("worker handle error", "subject", msg.Subject, "error", err)
+					msg.Nak()
+					return
+				}
+				msg.Ack()
+			}, subCfg.Options...)
+
+			if err != nil {
+				return fmt.Errorf("failed to subscribe worker %T to %s: %w", worker, subCfg.Subject, err)
 			}
-		}()
+
+			m.subscriptions = append(m.subscriptions, sub)
+			m.logger.Info("Worker subscribed successfully", "type", fmt.Sprintf("%T", worker), "subject", subCfg.Subject, "group", subCfg.Group)
+		}
 	}
 
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-		return nil
+	<-ctx.Done()
+
+	m.logger.Info("Stopping all background workers logically")
+	for _, sub := range m.subscriptions {
+		_ = sub.Unsubscribe()
 	}
+
+	return nil
 }

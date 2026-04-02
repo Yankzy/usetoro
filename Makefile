@@ -190,3 +190,5 @@ clean_db:
 	$(MAKE) upd
 	cd go && go build -o ../bin/store-webhook-secret ./cmd/store-webhook-secret/main.go && .. && ./bin/store-webhook-secret
 
+scr:
+	scrcpy --window-title "iPhone"

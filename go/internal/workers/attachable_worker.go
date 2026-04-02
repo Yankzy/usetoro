@@ -35,22 +35,23 @@ func NewAttachableWorker(logger *slog.Logger, nc *nats.Conn, attachableService *
 	}, nil
 }
 
-func (w *AttachableWorker) Start(ctx context.Context) error {
-	w.logger.Info("🚀 AttachableWorker CDC event consumer started")
+func (w *AttachableWorker) Init(ctx context.Context) error {
+	return nil
+}
 
-	subject := "ledger.shadow_erp_attachables.insert"
-
-	sub, err := w.js.QueueSubscribe(subject, "toro-attachable-workers", func(msg *nats.Msg) {
-		w.handleEvent(ctx, msg)
-	}, nats.ManualAck(), nats.BindStream("LEDGER"))
-
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to %s: %w", subject, err)
+func (w *AttachableWorker) Subscriptions() []SubscriptionConfig {
+	return []SubscriptionConfig{
+		{
+			Subject: "ledger.shadow_erp_attachables.insert",
+			Group:   "toro-attachable-workers",
+			Options: []nats.SubOpt{nats.ManualAck(), nats.BindStream("LEDGER")},
+		},
 	}
+}
 
-	<-ctx.Done()
-	w.logger.Info("🛑 AttachableWorker shutting down")
-	return sub.Unsubscribe()
+func (w *AttachableWorker) Handle(ctx context.Context, msg *nats.Msg) error {
+	w.handleEvent(ctx, msg)
+	return nil
 }
 
 func (w *AttachableWorker) handleEvent(ctx context.Context, msg *nats.Msg) {

@@ -137,6 +137,8 @@ func (e *RevenueReconciliationAgent) handleEnrichmentProof(ctx context.Context, 
 		duplicateOf         pgtype.UUID
 		isRecurring         bool
 		split               []byte
+        merchantName        pgtype.Text
+        plaidCategory       pgtype.Text
 	}
 
 	ch := make(chan updatedRow, len(revenueRows))
@@ -173,7 +175,7 @@ func (e *RevenueReconciliationAgent) handleEnrichmentProof(ctx context.Context, 
 					if aErr == nil && aMatch != nil {
 						_ = aID.Scan(aMatch.ID)
 						aName = pgtype.Text{String: aMatch.Name, Valid: true}
-						reasoning = pgtype.Text{String: aMatch.Name, Valid: true}
+						reasoning = pgtype.Text{String: fmt.Sprintf("Matched historical '%s' mappings to '%s' with %.0f%% spatial confidence", cMatch.Name, aMatch.Name, aMatch.Score * 100), Valid: true}
 						conf += aMatch.Score
 					}
 					conf = conf / 2.0
@@ -197,6 +199,8 @@ func (e *RevenueReconciliationAgent) handleEnrichmentProof(ctx context.Context, 
 				duplicateOf:         row.DuplicateOf,
 				isRecurring:         row.IsRecurring,
 				split:               row.SplitSuggestion,
+				merchantName:        row.MerchantName,
+				plaidCategory:       row.PlaidCategory,
 			}
 			return nil
 		})
@@ -221,6 +225,8 @@ func (e *RevenueReconciliationAgent) handleEnrichmentProof(ctx context.Context, 
 			DuplicateOf:           er.duplicateOf,
 			IsRecurring:           er.isRecurring,
 			SplitSuggestion:       er.split,
+			MerchantName:          er.merchantName,
+			PlaidCategory:         er.plaidCategory,
 		})
 		if err != nil {
 			e.Logger.Error("revenue reconcile: persist row failed", "err", err)

@@ -16,6 +16,7 @@ require (
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/lithammer/fuzzysearch v1.1.8
 	github.com/nats-io/nats.go v1.48.0
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.4 // indirect
 	github.com/openai/openai-go/v3 v3.29.0
 	github.com/pinecone-io/go-pinecone/v4 v4.1.4
 	github.com/redis/go-redis/v9 v9.17.3

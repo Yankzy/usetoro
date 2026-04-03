@@ -45,8 +45,8 @@ static:
 clean:
 	git commit -am "clean up" && git push
 
-http:
-	ngrok http 3000
+ngrok:
+	ngrok http --url=prime-legible-turkey.ngrok-free.app 80
 
 logs:
 	$(DOCKER_COMPOSE) logs -f $(ARGS)

@@ -76,9 +76,9 @@ type Handler struct {
 	// Cleanup Mode dependencies
 	DBPool          *pgxpool.Pool
 	CleanupDB       *database.Queries
-	CleanupNATS        *queue.Client
-	CleanupExporter    CleanupExporter
-	WalletManager      *micrion.WalletManager
+	CleanupNATS     *queue.Client
+	CleanupExporter CleanupExporter
+	WalletManager   *micrion.WalletManager
 }
 
 // NewHandler creates a new Handler.
@@ -304,7 +304,7 @@ func (h *Handler) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	h.HandleWebhook(w, r)
 }
 
-// HandleTestRedux triggers the E2E Redux agent natively via NATS globally.
+// HandleTestRedux triggers the E2E Redux agent via NATS globally.
 func (h *Handler) HandleTestRedux(w http.ResponseWriter, r *http.Request) {
 	requestID := r.Header.Get("X-Request-ID")
 	if requestID == "" {
@@ -319,16 +319,16 @@ func (h *Handler) HandleTestRedux(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		payload.Message = "trigger raw redux event"
 	}
-	
+
 	rawBytes, _ := json.Marshal(payload)
 	err := h.Pub.PublishRaw(ctx, "redux.test", rawBytes)
-	
+
 	if err != nil {
 		h.Logger.Error("Failed to publish redux NATS hook from API Gateway", "error", err)
 		JSONError(w, h.Logger, http.StatusServiceUnavailable, "NATS unavailable")
 		return
 	}
-	
+
 	h.Logger.Info("🔥 [E2E TEST] Trigger published via API Gateway on /test/redux")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status": "ok", "message": "Redux Test Agent Triggered via NATS from Gateway"}`))

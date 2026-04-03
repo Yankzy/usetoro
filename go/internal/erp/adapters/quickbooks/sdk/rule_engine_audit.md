@@ -49,7 +49,7 @@
 
 #### P0 (correctness: prevent false negatives)
 - [x] **Make candidate filtering descendant-safe** - Parent nodes form a keyword union of the full subtree.
-- [x] **Align token extraction with supported fields** - Handled natively in extraction.
+- [x] **Align token extraction with supported fields** - Handled in extraction.
 
 #### P1 (operational stability + performance)
 - [x] **Exclude invalid rules from the cached slice** - Validation is front-loaded before memory storage.

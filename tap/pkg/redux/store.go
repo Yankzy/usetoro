@@ -64,7 +64,7 @@ func (s *Store) Reduce(ctx context.Context, basePayloadBytes []byte, expectedSeq
 
 		start := time.Now()
 
-		// Strict Monotonic Idempotent Pipeline Check restricting double-delivery exceptions natively
+		// Strict Monotonic Idempotent Pipeline Check restricting double-delivery exceptions
 		if expectedSequence != 0 && event.SequenceID != expectedSequence {
 			faults = append(faults, DomainFault{
 				EventID: event.EventID,
@@ -107,7 +107,7 @@ func (s *Store) dispatch(ctx context.Context, state map[string]interface{}, even
 	}
 	slog.Debug("🛡️ [REDUX MIDDLEWARE] Path Security Checked (RBAC Approved safely)")
 
-	slog.Debug("🧮 [REDUX MATH] Executing jsonpatch.Apply core operations natively")
+	slog.Debug("🧮 [REDUX MATH] Executing jsonpatch.Apply core operations")
 	nextState, err := ApplyPatchReducer(state, event.PatchArray)
 	if err != nil {
 		slog.Error("❌ [REDUX FATAL] Mathematical rejection executing pure RFC 6902 strings", "error", err)

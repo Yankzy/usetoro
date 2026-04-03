@@ -101,14 +101,14 @@ func main() {
 	}
 
 	// === Unified Daemon Runner Setup ===
-	
+
 	d := daemon.New(slog.Default(), func() (*config.Config, error) {
 		return cfg, nil
 	}, ":9090")
 
 	log.Println("📖 Almanac Server & Agents Runner Online. Listening...")
 
-	// 6. Run daemon natively blocking execution on the OS signal lifecycle hook securely
+	// 6. Run daemon blocking execution on the OS signal lifecycle hook securely
 	if err := d.Run(context.Background()); err != nil {
 		log.Fatalf("Protocol Daemon unexpectedly terminated: %v", err)
 	}
@@ -188,17 +188,17 @@ func (s *AlmanacServer) handleQuery(msg *nats.Msg) {
 	// MicroBurn Toll Enforcement (1,616 Micrions)
 	// TEMPORARY BYPASS:
 	/*
-	if query.CallerDID == "" {
-		log.Printf("⚠️ Query empty DID, bypassing toll for now")
-		s.nc.Publish(msg.Reply, []byte(`{"error": "402 Payment Required: CallerDID missing"}`))
-		return
-	} else {
-		if _, err := micrion.MicroBurn(s.kv, query.CallerDID, micrion.InfraTollCost); err != nil {
-			log.Printf("❌ Query toll failed for %s: %v", query.CallerDID, err)
-			s.nc.Publish(msg.Reply, []byte(`{"error": "402 Payment Required: Insufficient Micrions"}`))
+		if query.CallerDID == "" {
+			log.Printf("⚠️ Query empty DID, bypassing toll for now")
+			s.nc.Publish(msg.Reply, []byte(`{"error": "402 Payment Required: CallerDID missing"}`))
 			return
+		} else {
+			if _, err := micrion.MicroBurn(s.kv, query.CallerDID, micrion.InfraTollCost); err != nil {
+				log.Printf("❌ Query toll failed for %s: %v", query.CallerDID, err)
+				s.nc.Publish(msg.Reply, []byte(`{"error": "402 Payment Required: Insufficient Micrions"}`))
+				return
+			}
 		}
-	}
 	*/
 
 	ctx := context.Background()

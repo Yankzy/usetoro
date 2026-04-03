@@ -50,7 +50,7 @@ func (h *MessageHandler) HandleMessage(ctx context.Context, data []byte) ([]byte
 		return h.handleRequestAuthURL(ctx, msg)
 
 	case MessageTypeSubscribeCards, MessageType("request_cards"), MessageTypeSwipeResult:
-		// These are natively intercepted by the WebSocket readPump core safely,
+		// These are intercepted by the WebSocket readPump core safely,
 		// or they just don't have HTTP endpoints built for them currently.
 		return nil, nil
 

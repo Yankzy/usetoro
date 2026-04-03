@@ -48,7 +48,7 @@ agents:
     system_prompt: "You are an invoice collection assistant..."
 ```
 
-The runtime automatically subscribes to the parsed topics. Whenever a message arrives, the runtime builds the context and natively triggers an LLM completion loop via the standard `openai.NewClient().Responses.New(...)` API wrapper built into `rt.Exec()`.
+The runtime automatically subscribes to the parsed topics. Whenever a message arrives, the runtime builds the context and triggers an LLM completion loop via the standard `openai.NewClient().Responses.New(...)` API wrapper built into `rt.Exec()`.
 
 ### B. Compiled Internal Modules (Tutorial)
 For highly complex operations requiring deterministic logic, semantic vector lookups, or strict database transactions (like the Enrichment Agent), developers build custom compiled Go structs.
@@ -141,4 +141,4 @@ agents:
 4. **Negotiate**: It receives a `CFP`, uses tools/LLM to evaluate complexity, and sends a `PROPOSE`.
 5. **Execute Context**: Upon `ACCEPT`, it utilizes its built-in `rt.Exec()` wrapper to process raw textual inputs against its logic.
 6. **Submit**: It cryptographically signs its resulting data into a `core.Proof` and `INFORM`s the requester or Hive.
-7. **Shutdown**: The Supervisor issues `agent.Stop()` for memory-safe teardowns natively draining NATS subscriptions.
+7. **Shutdown**: The Supervisor issues `agent.Stop()` for memory-safe teardowns draining NATS subscriptions.

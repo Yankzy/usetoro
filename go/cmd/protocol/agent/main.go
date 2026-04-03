@@ -18,7 +18,7 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
-	// Pass a load functor so the TAP daemon can fetch our configuration natively
+	// Pass a load functor so the TAP daemon can fetch our configuration
 	loader := config.Load
 
 	// Spin up generic TAP Daemon

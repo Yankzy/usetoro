@@ -9,10 +9,10 @@ import (
 type PageContext struct {
 	Type    string `json:"type"`
 	Summary string `json:"summary"`
-	UUID    string `json:"-"` // Hidden from LLM serialization natively
+	UUID    string `json:"-"` // Hidden from LLM serialization
 }
 
-// GenerateLocalContextMap generates a deterministic dictionary map bypassing UUID BPE hallucinations natively.
+// GenerateLocalContextMap generates a deterministic dictionary map bypassing UUID BPE hallucinations.
 func GenerateLocalContextMap(pages []PageContext) (map[int]string, []byte) {
 	localMap := make(map[int]string)
 
@@ -41,5 +41,5 @@ func GenerateLocalContextMap(pages []PageContext) (map[int]string, []byte) {
 	return localMap, pagesJSON
 }
 
-// DocumentFetcher defines the external database callback resolving UUID to raw text natively outside Redux bounds.
+// DocumentFetcher defines the external database callback resolving UUID to raw text outside Redux bounds.
 type DocumentFetcher func(ctx context.Context, uuid string) (string, error)

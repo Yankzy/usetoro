@@ -8,11 +8,12 @@ import (
 	"sync"
 	"time"
 
+	"strings"
+
 	"github.com/Yankzy/usetoro/internal/cdc"
 	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/nats-io/nats.go"
-	"strings"
 )
 
 const (
@@ -60,7 +61,7 @@ func NewVectorSyncWorker(logger *slog.Logger, s *store.Store, vc *vector.Pinecon
 
 func (w *VectorSyncWorker) Init(ctx context.Context) error {
 	w.logger.Info("🚀 VectorSyncWorker batch processor started")
-	// Start the batch processor. Note: We don't wait for WaitGroup in StartAll natively,
+	// Start the batch processor. Note: We don't wait for WaitGroup in StartAll,
 	// but processBatches handles ctx.Done() and will flush then return.
 	var wg sync.WaitGroup
 	wg.Add(1)

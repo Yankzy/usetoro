@@ -21,7 +21,7 @@ type RFC6902Event struct {
 
 // DomainFault encapsulates a structural validation, RBAC rejection, or mapping error efficiently.
 // It is explicitly returned ephemerally in-memory, empowering the Host Orchestrator to suspend infinite LLM loops
-// natively through redis circuit breakers without irrevocably polluting persistent databases.
+// through redis circuit breakers without irrevocably polluting persistent databases.
 type DomainFault struct {
 	EventID string `json:"event_id"`
 	Error   string `json:"error"`

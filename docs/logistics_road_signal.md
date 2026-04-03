@@ -86,7 +86,7 @@ Objective: Deliver the signal through high-engagement, scarcity-driven channels.
 
 REQ 6.1 - SMS Teaser: On Sunday at 08:00 Local Carrier Time, fire an SMS via Twilio to all opted-in carriers: "The Road Signal: Dry van rates dropped 4% in the Midwest. 2 brokers flagged for late payments. Tap to read full report: [Unique_Link]"
 
-REQ 6.2 - In-App Rendering: Render the report natively within the Toro Compliance OS mobile/web dashboard.
+REQ 6.2 - In-App Rendering: Render the report within the Toro Compliance OS mobile/web dashboard.
 
 REQ 6.3 - Scarcity Enforcement: Do NOT publish the report to public web pages, Facebook, or Twitter. The URL must require an authenticated session. Scarcity increases status.
 

@@ -53,13 +53,13 @@ treasury_transfers: Immutable log of actual money movement.
 
 The Integration: When OpCo pays a vendor via Toro Treasury, the treasury_transfers table records it. Toro's AI auto-categorizes it, and the Sync Engine pushes a completed Journal Entry down into QuickBooks.
 
-Multi-Entity Handling: Toro handles the cash natively. QBO handles the accounting. The CEO gets a consolidated dashboard on Toro.
+Multi-Entity Handling: Toro handles the cash. QBO handles the accounting. The CEO gets a consolidated dashboard on Toro.
 
 2.2 Go-To-Market (GTM)
 
 Pitch: "Stop logging into 5 different bank accounts. Move your cash to Toro Treasury for instant Zero-Balance Account (ZBA) consolidation and free AP/AR automation."
 
-Adoption: The CPA mandates the switch because Toro Treasury automatically categorizes 100% of transactions natively, eliminating the remaining bookkeeping work.
+Adoption: The CPA mandates the switch because Toro Treasury automatically categorizes 100% of transactions, eliminating the remaining bookkeeping work.
 
 PHASE 3: THE SYSTEM OF RECORD (The Kill Shot)
 

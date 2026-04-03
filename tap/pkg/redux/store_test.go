@@ -129,7 +129,7 @@ func TestPayloadByteLimits(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(faults) != 1 || !strings.Contains(faults[0].Error, "payload exceeds maximum") {
-		t.Fatalf("OOM size limit bypassed natively: %v", faults)
+		t.Fatalf("OOM size limit bypassed: %v", faults)
 	}
 }
 

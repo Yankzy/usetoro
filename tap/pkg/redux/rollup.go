@@ -16,7 +16,7 @@ import (
 )
 
 // RollupWorker consumes RFC6902 Events from NATS JetStream and batches them securely into Postgres.
-// It directly fulfills the architectural rule preventing thousands of AI agents from locking the SQL connection pool natively.
+// It directly fulfills the architectural rule preventing thousands of AI agents from locking the SQL connection pool.
 type RollupWorker struct {
 	Logger  *slog.Logger
 	JS      nats.JetStreamContext
@@ -44,14 +44,14 @@ func (w *RollupWorker) Start(ctx context.Context) error {
 		Subjects: []string{"workflow.trace.>"},
 	})
 	if err != nil {
-		w.Logger.Warn("Rollup worker stream configuration warning natively (might already exist)", "error", err)
+		w.Logger.Warn("Rollup worker stream configuration warning (might already exist)", "error", err)
 	}
 
 	w.Logger.Info("💾 [REDUX ROLLUP] Monitoring workflow.trace.> JetStream for 50-event compaction batches")
 
 	sub, err := w.JS.PullSubscribe("workflow.trace.>", "redux_rollup_layer", nats.BindStream("WORKFLOW"))
 	if err != nil {
-		return fmt.Errorf("failed to pull subscribe to workflow trace correctly natively: %w", err)
+		return fmt.Errorf("failed to pull subscribe to workflow trace correctly: %w", err)
 	}
 
 	go w.consumeLoop(ctx, sub)
@@ -93,7 +93,7 @@ func (w *RollupWorker) processBatch(ctx context.Context, msgs []*nats.Msg) {
 
 		var event RFC6902Event
 		if err := json.Unmarshal(msg.Data, &event); err != nil {
-			w.Logger.Error("Corrupted Redux Event natively dropped", "error", err)
+			w.Logger.Error("Corrupted Redux Event dropped", "error", err)
 			msg.Term() // Poison isolation 
 			continue
 		}
@@ -131,7 +131,7 @@ func (w *RollupWorker) processBatch(ctx context.Context, msgs []*nats.Msg) {
 				State:      nextState,
 			})
             
-			// Immutable event history trace natively
+			// Immutable event history trace
 			for _, ev := range events {
 				rawEvt, _ := json.Marshal(ev)
 				qtx.LogWorkflowHistory(ctx, database.LogWorkflowHistoryParams{

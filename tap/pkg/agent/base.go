@@ -54,7 +54,7 @@ func (b *BaseAgent) ExecuteGlobalWorkflow(
 	b.Logger.Info("Step 4: Booting Reasoning Loop")
 	patchArray, llmErr := llmCallback(currentSeq)
 	if llmErr != nil {
-		return fmt.Errorf("llm payload sequence generation failed natively: %w", llmErr)
+		return fmt.Errorf("llm payload sequence generation failed: %w", llmErr)
 	}
 
 	b.Logger.Info("Step 5: Executing Entropy checks avoiding system prefix overflows")

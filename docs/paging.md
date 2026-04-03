@@ -11,7 +11,7 @@ Agents pass an array of `PageContext` metadata structs to the Runtime before exe
 type PageContext struct {
 	Type    string `json:"type"`
 	Summary string `json:"summary"`
-	UUID    string `json:"-"` // Hidden from LLM serialization natively
+	UUID    string `json:"-"` // Hidden from LLM serialization
 }
 ```
 

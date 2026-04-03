@@ -21,7 +21,7 @@ Mixing the responsibilities of these components leads to tangled coupling, tight
 ## 2. Workers (Event-Driven Deterministic Pipelines)
 **Workers** are functionally pure, background pipelines meant to handle infrastructure processing reliably without cognitive loops (e.g., `EnrichmentWorker`).
 
-- **Role**: Execute guaranteed data mutations and state synchronizations natively.
+- **Role**: Execute guaranteed data mutations and state synchronizations.
 - **Networking**: They strictly react to downstream JetStream subjects (e.g., responding to `cleanup.inserted`) and sit within a centralized Dispatcher pattern.
 - **Rule of Thumb**: If it performs a strict, pre-defined, deterministic operation without LLM inference (like Change Data Capture or webhook processing), it is a Worker. Do not add LLM logic to workers.
 

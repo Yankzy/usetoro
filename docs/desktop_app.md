@@ -171,7 +171,7 @@ If the recipient does not have the app:
 
 ## 4. Mobile Implementation (React Native)
 
-The frontend must render these blocks natively.
+The frontend must render these blocks.
 
 ### 4.1 Component Architecture
 

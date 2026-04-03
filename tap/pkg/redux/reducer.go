@@ -8,8 +8,8 @@ import (
 )
 
 // ApplyPatchReducer evaluates mathematical transformations completely isolated from
-// routing constraints natively isolating execution limits structurally.
-// Operates as a pure function implicitly avoiding native pointer drifts gracefully securely natively.
+// routing constraints isolating execution limits structurally.
+// Operates as a pure function implicitly avoiding native pointer drifts gracefully securely.
 func ApplyPatchReducer(state map[string]interface{}, patchArray []json.RawMessage) (map[string]interface{}, error) {
 	if len(patchArray) == 0 {
 		return state, nil
@@ -30,7 +30,7 @@ func ApplyPatchReducer(state map[string]interface{}, patchArray []json.RawMessag
 		return nil, fmt.Errorf("reducer decode patch form: %w", err)
 	}
 
-	// Native JSON merge strictly guaranteeing out-of-order bounds allocations conservatively cleanly inherently mapping correctly natively automatically.
+	// Native JSON merge strictly guaranteeing out-of-order bounds allocations conservatively cleanly inherently mapping correctly automatically.
 	compiledBytes, err := patch.Apply(stateBytes)
 	if err != nil {
 		return nil, err

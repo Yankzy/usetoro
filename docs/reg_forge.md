@@ -27,7 +27,7 @@ Reduce compliance costs and risks by 50-70% while accelerating business velocity
 (unchanged from v1.0)  
 Enterprises struggle with regulatory velocity, context gaps, tool fragmentation, and AI-specific governance demands. RegForge solves this with thick, context-aware autonomy and full auditability.
 
-The Go-first decision directly addresses enterprise concerns: Python-heavy backends often hit concurrency, memory, and deployment limits at scale. Go eliminates those issues natively.
+The Go-first decision directly addresses enterprise concerns: Python-heavy backends often hit concurrency, memory, and deployment limits at scale. Go eliminates those issues.
 
 ### 3. User Personas & Use Cases
 (unchanged from v1.0)  

@@ -30,7 +30,7 @@ func EnforcePayloadBoundariesMiddleware(patchArray []json.RawMessage, req Engine
 		}
 
 		// Security Boundary: Root Structure Replacements
-		// Since _sys was mathematically discarded from the Engine's awareness, evaluating root modifications natively prevents doomsday events.
+		// Since _sys was mathematically discarded from the Engine's awareness, evaluating root modifications prevents doomsday events.
 		if (op.Op == "replace" || op.Op == "remove") && (op.Path == "/" || op.Path == "") {
 			req.Metrics.RecordRuleViolation("RootReplace")
 			return ErrRootReplace
@@ -88,7 +88,7 @@ func EnforceNoArrayMiddleware(data map[string]interface{}, metrics MetricsRecord
 	return nil
 }
 
-// EnforceSchemaMiddleware natively traps business payload schema drift automatically preventing UI breakages.
+// EnforceSchemaMiddleware traps business payload schema drift automatically preventing UI breakages.
 func EnforceSchemaMiddleware(dataMap map[string]interface{}, schema *jsonschema.Schema, metrics MetricsRecorder) error {
 	if schema == nil {
 		return nil

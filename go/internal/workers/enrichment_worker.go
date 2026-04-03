@@ -37,7 +37,7 @@ func FormatHashTags(raw string) string {
 }
 
 // EnrichmentWorker acts as a purely deterministic data processing worker
-// avoiding AI-based agent scaffolding natively.
+// avoiding AI-based agent scaffolding.
 type EnrichmentWorker struct {
 	db     *database.Queries
 	dedup  *cleanup.Deduplicator
@@ -50,7 +50,7 @@ func NewEnrichmentWorker(
 	db *database.Queries,
 	nc *nats.Conn,
 	logger *slog.Logger,
-	llm    *ai.LLMClient,
+	llm *ai.LLMClient,
 ) (*EnrichmentWorker, error) {
 	return &EnrichmentWorker{
 		db:     db,
@@ -309,7 +309,7 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		e.logger.Error("Redux engine rejection during enrichment worker manual sequence", "err", reduceErr, "faults", faults)
 	}
 
-	// Persist the unified structured DB data natively
+	// Persist the unified structured DB data
 	for _, ptr := range allRows {
 		if dbErr := e.persistEnrichedRow(ctx, *ptr); dbErr != nil {
 			e.logger.Error("enrichment worker: persist row failed", "err", dbErr)
@@ -429,7 +429,7 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 	if e.llm != nil {
 		systemPrompt := "You are a financial data categorization engine. Given a raw bank transaction description, extract the pure merchant/customer name and a generalized physical industry category (e.g. 'Software', 'Food and Drink'). Return exactly the JSON format requested."
 		userPrompt := fmt.Sprintf("Analyze this raw bank transaction: \"%s\"", er.RawDescription)
-		
+
 		var extract EnrichmentExtract
 		if err := e.llm.GenerateJSON(ctx, systemPrompt, userPrompt, &extract); err == nil {
 			er.MerchantName = extract.MerchantName

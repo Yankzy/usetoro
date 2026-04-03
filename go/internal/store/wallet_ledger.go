@@ -37,17 +37,17 @@ func (l *WalletLedger) LogPurchase(ctx context.Context, entityID string, stripeS
 	pgUSD := pgtype.Int8{Int64: usdAmount, Valid: true}
 
 	_, err = l.queries.LogPurchase(ctx, database.LogPurchaseParams{
-		EntityID:               pgID,
-		StripeSessionID:        pgSession,
-		UsdAmount:              pgUSD,
-		MicrionAmount:          micrionAmount,
+		EntityID:        pgID,
+		StripeSessionID: pgSession,
+		UsdAmount:       pgUSD,
+		MicrionAmount:   micrionAmount,
 	})
 	return err
 }
 
 func (l *WalletLedger) LogBulkBurn(ctx context.Context, entityID string, agentDID string, burnedAmount int64, natsRevision uint64) error {
 	if entityID == "system" || entityID == "SYSTEM" {
-		return nil // Natively bypass the Wallet Ledger SQL table entirely for core infrastructure algorithms
+		return nil // bypass the Wallet Ledger SQL table entirely for core infrastructure algorithms
 	}
 
 	eID, err := uuid.Parse(entityID)
@@ -58,9 +58,9 @@ func (l *WalletLedger) LogBulkBurn(ctx context.Context, entityID string, agentDI
 	pgRev := pgtype.Int8{Int64: int64(natsRevision), Valid: true}
 
 	_, err = l.queries.LogBulkBurn(ctx, database.LogBulkBurnParams{
-		EntityID:       pgID,
-		NatsRevision:   pgRev,
-		MicrionAmount:  burnedAmount,
+		EntityID:      pgID,
+		NatsRevision:  pgRev,
+		MicrionAmount: burnedAmount,
 	})
 	return err
 }

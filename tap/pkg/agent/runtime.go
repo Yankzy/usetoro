@@ -186,7 +186,7 @@ func (r *Runtime) ExecWithPaging(ctx context.Context, prompt string, pages []Pag
 				// Base case completion structurally verified
 				return msg.Content, nil
 			}
-			return "", fmt.Errorf("empty response natively generated without tools")
+			return "", fmt.Errorf("empty response generated without tools")
 		}
 
 		// Tool Interceptor Loop matching strict structural execution paradigms
@@ -199,7 +199,7 @@ func (r *Runtime) ExecWithPaging(ctx context.Context, prompt string, pages []Pag
 				_ = json.Unmarshal([]byte(toolCall.Function.Arguments), &args)
 
 				if pageCount >= maxPages {
-					errorMsg := "SYSTEM ERROR: MAX_PAGES_PER_CYCLE reached natively. Aborting fetch. Must explicitly emit outputs directly structurally."
+					errorMsg := "SYSTEM ERROR: MAX_PAGES_PER_CYCLE reached. Aborting fetch. Must explicitly emit outputs directly structurally."
 					messages = append(messages, openai.ToolMessage(toolCall.ID, errorMsg))
 					continue
 				}

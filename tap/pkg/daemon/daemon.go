@@ -158,7 +158,7 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 	rollupWorker := redux.NewRollupWorker(d.Logger, js, dbPool)
 	g.Go(func() error {
 		if err := rollupWorker.Start(ctx); err != nil {
-			d.Logger.Error("Fatal Rollup Initialization natively failing bounds", "err", err)
+			d.Logger.Error("Fatal Rollup Initialization failing bounds", "err", err)
 			return err
 		}
 		return nil

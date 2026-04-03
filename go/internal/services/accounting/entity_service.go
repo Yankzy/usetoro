@@ -16,7 +16,7 @@ type EntityRepository interface {
 	GetCustomersByRealm(ctx context.Context, realmID string) ([]database.ShadowErpCustomer, error)
 }
 
-// EntityService handles pulling base ERPEntities natively from shadow databases
+// EntityService handles pulling base ERPEntities from shadow databases
 type EntityService struct {
 	logger *slog.Logger
 	repo   EntityRepository

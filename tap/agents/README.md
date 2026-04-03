@@ -12,7 +12,7 @@ To deploy a new Agent into the Toro ecosystem, developers do not modify the `Pro
 
 1. Build a new Go package under `tap/agents/` (e.g., `tap/agents/fraud_detector`).
 2. Open `tap/agents/registry.go`.
-3. Import your new package block natively.
+3. Import your new package block.
 4. Insert a new `supervisor.RegisterInternalAgent` initialization block inside the `RegisterAll` payload.
 5. If your agent executes system state mutations over JetStream or Postgres, ensure its EventBus/DB instance is wrapped with the `micrion` wrappers inside the closure to fund its execution compute.
 

@@ -12,7 +12,7 @@ The Protocol Daemon initializes and manages the host node environment for the ec
 The Daemon supports zero-downtime Agent configuration reloads.
 
 - **Trigger Mechanisms:** Administrators execute a `SIGHUP` signal to the host process or issue an HTTP `POST /reload` request directly to the Admin debugging port (e.g. `:9090`).
-- **Processing Flow:** The Daemon triggers `LoadFunc()` reloading the explicit YAML string natively. It passes the updated object configurations into the Supervisor environment.
+- **Processing Flow:** The Daemon triggers `LoadFunc()` reloading the explicit YAML string. It passes the updated object configurations into the Supervisor environment.
 - **Diff Management:** The Supervisor identifies the configuration schema changes against actively spinning routines. It executes new agents, terminates deleted agents, and applies specific prompt/model modifications without disrupting unaffected active pipelines.
 - **UI Integration:** This enables frontend UX workflows where system operators can build, customize, or disable autonomous Agents dynamically over `defaults.yaml` edits.
 
@@ -68,7 +68,7 @@ curl http://localhost:9090/health
 ```
 
 **2. Hot Reloading via Signal (`SIGHUP`):**
-Send a hangup signal to the process identifier natively:
+Send a hangup signal to the process identifier:
 ```bash
 # Find the PID of the daemon process
 PID=$(lsof -t -i:9090)

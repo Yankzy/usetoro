@@ -20,7 +20,7 @@ CREATE TABLE toro_core.workflows (
 CREATE INDEX idx_workflows_entity_id ON toro_core.workflows(entity_id);
 CREATE INDEX idx_workflows_status ON toro_core.workflows(status);
 
--- Attach the standard toro_core updated_at trigger natively
+-- Attach the standard toro_core updated_at trigger
 CREATE TRIGGER update_workflows_updated_at
     BEFORE UPDATE ON toro_core.workflows
     FOR EACH ROW EXECUTE FUNCTION toro_core.update_updated_at_column();

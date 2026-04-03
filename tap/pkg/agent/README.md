@@ -47,9 +47,9 @@ To display progress updates to users on the frontend, state changes stream over 
 
 ## Context Paging & Garbage Collection (Algorithm 2)
 
-To prevent LLM token-bloat and recursive hallucination loops when evaluating massive documents (like bank PDFs), the `Runtime` embeds a "Virtual Memory" interceptor natively wrapped within `runtime.ExecWithPaging()`.
+To prevent LLM token-bloat and recursive hallucination loops when evaluating massive documents (like bank PDFs), the `Runtime` embeds a "Virtual Memory" interceptor wrapped within `runtime.ExecWithPaging()`.
 
 1. **The Ephemeral Pointer Map**: Before execution, `GenerateLocalContextMap()` iterates through available Postgres documents, binding their actual database UUIDs to lightweight 1-indexed integers (`local_ref`).
 2. **OpenAI Tool Interception**: The `PAGE_IN` Tool constraint is injected directly into the LLM logic limits. When the AI generates `{"tool_call": "PAGE_IN", "local_ref": 1}`, the Go Kernel intercepts the execution.
-3. **Execution Limits**: A hard OS circuit breaker (`MaxPages=3`) trips if the AI enters infinite fetching recursion natively. If safe, the `local_ref` is translated cleanly into the hidden UUID and resolved natively via the injected `DocumentFetcher` callback.
-4. **Organic Garbage Collection**: Because the bloated `[]openai.ChatCompletionMessageParamUnion` slice and pointer maps strictly reside within the `ExecWithPaging` function scope, the payload effortlessly falls out of scope upon the agent emitting its final `RFC6902` patch—triggering the Go Garbage Collector securely dropping the megabytes of memory footprint organically natively.
+3. **Execution Limits**: A hard OS circuit breaker (`MaxPages=3`) trips if the AI enters infinite fetching recursion. If safe, the `local_ref` is translated cleanly into the hidden UUID and resolved via the injected `DocumentFetcher` callback.
+4. **Organic Garbage Collection**: Because the bloated `[]openai.ChatCompletionMessageParamUnion` slice and pointer maps strictly reside within the `ExecWithPaging` function scope, the payload effortlessly falls out of scope upon the agent emitting its final `RFC6902` patch—triggering the Go Garbage Collector securely dropping the megabytes of memory footprint organically.

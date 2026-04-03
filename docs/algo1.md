@@ -98,11 +98,11 @@ To prevent the LLM from accidentally (or maliciously) using a JSON patch to dele
   * **Rule:** This is the *only* target exposed to the RFC 6902 `jsonpatch.Apply()` function.
 
 ### **3. The Pure Function Boundary (Postgres & Telemetry Decoupling)**
-Following strict Redux Toolkit principles, the Go Kernel Redux Engine is natively engineered as a **Pure Function**. It intentionally decouples external I/O integrations to preserve absolute zero-dependency determinism:
+Following strict Redux Toolkit principles, the Go Kernel Redux Engine is engineered as a **Pure Function**. It intentionally decouples external I/O integrations to preserve absolute zero-dependency determinism:
 
 **A. Database Decoupling (Postgres / NATS):**
 The Engine contains zero database adapter layers (`pgxpool.Pool`). The Parent Host Worker controls the DB Integration Loop:
-1. **Fetch:** The Host Worker natively executes `SELECT state FROM toro_core.workflows WHERE id = $1` to pull the raw Postgres snapshot.
+1. **Fetch:** The Host Worker executes `SELECT state FROM toro_core.workflows WHERE id = $1` to pull the raw Postgres snapshot.
 2. **Inject:** The Host Worker explicitly feeds these raw snapshot bytes directly into the pure engine: `store.Reduce(ctx, baseStateBytes, events)`.
 3. **Commit:** The Engine directly returns the final compiled `[]byte` context, allowing the Host Worker to safely execute `UPDATE toro_core.workflows SET state = $2`.
 
@@ -118,7 +118,7 @@ Instead of a single procedural script, the Redux Engine strictly adheres to the 
 
 * **`store.go` (The Orchestrator):** Manages the core `Reduce()` loop, deeply clones state matrices to guarantee atomic rollbacks, and handles Go contexts.
 * **`reducer.go` (The Core Mutator):** A mathematically pure function executing `jsonpatch.Apply()`. It is strictly isolated from routing logic and safely returns new nested slices without polluting original memory.
-* **`middleware.go` (The Interceptors):** Custom hooks evaluating security boundaries asynchronously *before* and *after* the reducer fires. Evaluates Array Rules and JSON Schema Compliance natively.
+* **`middleware.go` (The Interceptors):** Custom hooks evaluating security boundaries asynchronously *before* and *after* the reducer fires. Evaluates Array Rules and JSON Schema Compliance.
 * **`telemetry.go` & `config.go`:** Strict metrics contracts (`MetricsRecorder`). The engine defaults identically to `noopMetrics` ensuring zero dependencies or framework overhead (like Prometheus or Datadog) unless explicitly wired by the parent application layer logic.
 * **`types.go` & `errors.go`:** Native wrappers locking JSON decoding via `json.RawMessage` arrays protecting mathematical intent precisely from missing `omitempty` bugs.
 
@@ -135,8 +135,8 @@ FOR EACH event IN unapplied_events:
   1. Deep-copy Base State into active snapshot boundary.
   2. Middleware PRE: `EnforceBoundsMiddleware` scans for `/_sys` violations.
   3. Middleware PRE: `EnforceRBACMiddleware` authorizes exact path vectors against the `actor`.
-  4. Reducer: Execute `ApplyPatchReducer` natively applying RFC 6902 strings.
-  5. Middleware POST: `EnforceNoArrayMiddleware` rejects index risks natively.
+  4. Reducer: Execute `ApplyPatchReducer` applying RFC 6902 strings.
+  5. Middleware POST: `EnforceNoArrayMiddleware` rejects index risks.
   6. Middleware POST: `EnforceSchemaMiddleware` matches W3C data layout dynamically.
 ```
 
@@ -144,16 +144,16 @@ FOR EACH event IN unapplied_events:
 Because LLMs are probabilistic, the infrastructure pipeline safely degrades when patches fail.
 
 * **If the entire Pipeline succeeds:**
-  * The snapshot pointer actively becomes the new compiled State Matrix natively.
-  * The loop continues to the next event natively logging latency telemetries.
+  * The snapshot pointer actively becomes the new compiled State Matrix.
+  * The loop continues to the next event logging latency telemetries.
 
 * **If *ANY* Middleware or Reducer step fails (The Ephemeral Circuit Breaker):**
-  * The `Store` safely ejects the mutated snapshot cleanly preserving the origin Matrix pointer natively.
-  * **The AI Feedback Loop:** Unlike typical DB-polluting ledgers, the `Store` explicitly returns the failure natively as a typed `[]DomainFault` array decoupled from the `[]byte` JSON.
+  * The `Store` safely ejects the mutated snapshot cleanly preserving the origin Matrix pointer.
+  * **The AI Feedback Loop:** Unlike typical DB-polluting ledgers, the `Store` explicitly returns the failure as a typed `[]DomainFault` array decoupled from the `[]byte` JSON.
   * *Why?* This allows the Host Worker to safely suspend agents breaking tracking limits without hard-writing `system_errors` tracking logs into Postgres permanently!
 
 **Step 4: Compilation Handoff**
-Once the loop finishes, the `Reduce()` function terminates natively returning the mathematically perfect `currentStateBytes`.
+Once the loop finishes, the `Reduce()` function terminates returning the mathematically perfect `currentStateBytes`.
 
 ### **4. Optimistic Concurrency (The "Test" Enforcement)**
 
@@ -209,9 +209,9 @@ Here are the three fatal blind spots in our current Redux / RFC 6902 design, and
 ### **Critique 4: The Error Loop Problem (Circuit Breaking)**
 * **The Blind Spot:** Injecting the AI's failure directly into the persistent `data.system_errors` array pollutes the core database ledger entirely. 
 * **The Failure:** If the AI reads a permanent database error and panics, it will generate *another* bad patch, causing an infinite NATS loop that burns your API tokens rapidly.
-* **The Fix: Ephemeral Context Defaults.** If a patch fails schema logic or the `test` lock, the state rolls back perfectly. The error is *never* committed to Postgres. Instead, the `Store` Engine returns the error natively in an explicit `[]DomainFault` array separated from the `[]byte` state. The Host Worker tracks these faults dynamically pushing them into short-term AI prompt memory directly intercepting Agent triggers via Redis-backed Circuit Breakers proactively.
+* **The Fix: Ephemeral Context Defaults.** If a patch fails schema logic or the `test` lock, the state rolls back perfectly. The error is *never* committed to Postgres. Instead, the `Store` Engine returns the error in an explicit `[]DomainFault` array separated from the `[]byte` state. The Host Worker tracks these faults dynamically pushing them into short-term AI prompt memory directly intercepting Agent triggers via Redis-backed Circuit Breakers proactively.
 
 ### **Critique 5: The Trust Problem (Path-Based RBAC Middleware)**
-* **The Blind Spot:** The Engine treats all events identically. If an AI decides to change the payout routing number randomly, the engine natively accepts the patch blindly. This represents an astronomical vulnerability scaling untrusted agents.
+* **The Blind Spot:** The Engine treats all events identically. If an AI decides to change the payout routing number randomly, the engine accepts the patch blindly. This represents an astronomical vulnerability scaling untrusted agents.
 * **The Failure:** The Agent executes `{"op": "replace", "path": "/data/admin_notes"}` overriding confidential human operations irreversibly locally.
-* **The Fix: Actor Middleware Hooks.** The Redux pipeline executes `EnforceRBACMiddleware` inherently. The API mapping defines `AccessControlMiddleware` binding exact paths natively against explicit actors. `actor: AI_AGENT` mapped natively only allows targeting matrices under `/data/receipts/` or `/data/status` implicitly. If it breaches out of bounds, it encounters a native `403 Forbidden` natively terminating pipeline flow gracefully upstream.
+* **The Fix: Actor Middleware Hooks.** The Redux pipeline executes `EnforceRBACMiddleware` inherently. The API mapping defines `AccessControlMiddleware` binding exact paths against explicit actors. `actor: AI_AGENT` mapped only allows targeting matrices under `/data/receipts/` or `/data/status` implicitly. If it breaches out of bounds, it encounters a native `403 Forbidden` terminating pipeline flow gracefully upstream.

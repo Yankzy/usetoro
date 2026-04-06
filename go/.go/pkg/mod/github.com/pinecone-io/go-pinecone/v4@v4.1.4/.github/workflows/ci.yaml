@@ -1,0 +1,47 @@
+name: ci
+on:
+  pull_request: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      pc-index-serverless:
+        image: ghcr.io/pinecone-io/pinecone-index:latest
+        ports:
+          - 5081:5081
+        env:
+          PORT: 5081
+          DIMENSION: 1536
+          METRIC: dotproduct
+          INDEX_TYPE: serverless
+      pc-index-pod:
+        image: ghcr.io/pinecone-io/pinecone-index:latest
+        ports:
+          - 5082:5082
+        env:
+          PORT: 5082
+          DIMENSION: 1536
+          METRIC: cosine
+          INDEX_TYPE: pod
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21.x'
+      - name: Install dependencies
+        run: |
+          go get ./pinecone
+      - name: Run tests
+        run: go test -count=1 -v ./pinecone
+        env:
+          PINECONE_API_KEY: ${{ secrets.API_KEY }}
+          PINECONE_CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          PINECONE_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+      - name: Run local integration tests
+        run: go test -count=1 -v ./pinecone -run TestRunLocalIntegrationSuite -tags=localServer
+        env:
+          PINECONE_INDEX_URL_POD: http://localhost:5082
+          PINECONE_INDEX_URL_SERVERLESS: http://localhost:5081
+          PINECONE_DIMENSION: 1536

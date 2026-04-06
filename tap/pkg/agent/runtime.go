@@ -12,19 +12,20 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 // Runtime represents a single, autonomous agent instance.
 type Runtime struct {
-	Config AgentConfig
+	Config core.AgentConfig
 	Logger *slog.Logger
-	Bus    EventBus
-	Memory MemoryStore
+	Bus    core.EventBus
+	Memory core.MemoryStore
 	sub    *nats.Subscription
 }
 
 // NewRuntime initializes the agent.
-func NewRuntime(logger *slog.Logger, bus EventBus, cfg AgentConfig, mem MemoryStore) *Runtime {
+func NewRuntime(logger *slog.Logger, bus core.EventBus, cfg core.AgentConfig, mem core.MemoryStore) *Runtime {
 	return &Runtime{
 		Config: cfg,
 		Logger: logger.With("did", cfg.DID),

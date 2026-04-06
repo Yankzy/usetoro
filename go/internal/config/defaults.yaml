@@ -91,50 +91,52 @@ nats:
         subjects:
           - redux.>
 agents:
-  - did: "did:toro:agent:stripe_processor"
-    name: "Stripe Receipt Processor"
-    model: "gpt-4o-mini"
-    # The Trigger: What wakes me up?
-    subscription:
-      subject: "stripe.>" # Matches your Gate stream
-      queue_group: "stripe_processor_group"
-    
-    # The Logic: What do I do? (Linear Pipeline)
-    steps:
-      - name: "ocr"
-        skill: "tasks.ocr"
-        timeout: "5s"
-      
-      - name: "classify"
-        skill: "tasks.classify"
-        timeout: "10s"
-
-  - did: "did:toro:agent:chaser"
-    name: "Invoice Chaser"
-    model: "gpt-4o-mini"
-    subscription:
-      subject: "qbo.invoice.overdue"
-      queue_group: "chaser_group"
-    steps:
-      - name: "generate_message"
-        skill: "tasks.draft_email"
-      - name: "send_whatsapp"
-        skill: "tasks.send"
-
   - did: "did:toro:agent:cleanup_1"
     name: "Accounting Cleanup Agent"
     model: "gpt-4o-mini"
     engine: "internal"
     internal_module: "cleanup-agent"
-    
+    dependencies:
+      database: false
+      db_queries: true
+      entity_resolver: false
+
   - did: "did:toro:agent:reconcile_expense_1"
     name: "Expense Reconciliation Agent"
     model: "gpt-4o-mini"
     engine: "internal"
     internal_module: "reconcile-expense-agent"
+    dependencies:
+      database: false
+      db_queries: true
+      entity_resolver: true
 
   - did: "did:toro:agent:reconcile_revenue_1"
     name: "Revenue Reconciliation Agent"
     model: "gpt-4o-mini"
     engine: "internal"
     internal_module: "reconcile-revenue-agent"
+    dependencies:
+      database: false
+      db_queries: true
+      entity_resolver: true
+
+  - did: "did:toro:agent:approval_1"
+    name: "Transaction Approval Agent"
+    model: "gpt-4o-mini"
+    engine: "internal"
+    internal_module: "approval-agent"
+    dependencies:
+      database: false
+      db_queries: false
+      entity_resolver: false
+
+  - did: "did:toro:agent:stripe_processor_1"
+    name: "Stripe Receipt Processor"
+    model: "gpt-4o-mini"
+    engine: "internal"
+    internal_module: "stripe-processor-agent"
+    dependencies:
+      database: false
+      db_queries: true
+      entity_resolver: false

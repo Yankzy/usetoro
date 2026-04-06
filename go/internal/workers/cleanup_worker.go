@@ -51,7 +51,7 @@ func (e *CleanupWorker) Subscriptions() []SubscriptionConfig {
 		{
 			Subject: "proof.accounting.cleanup.columns",
 			Group:   "cleanup-worker-group",
-			Options: []nats.SubOpt{nats.Durable("cleanup-worker-durable"), nats.DeliverAll(), nats.AckExplicit()},
+			Options: []nats.SubOpt{nats.Durable("cleanup-worker-durable-v2"), nats.DeliverAll(), nats.AckExplicit()},
 		},
 	}
 }

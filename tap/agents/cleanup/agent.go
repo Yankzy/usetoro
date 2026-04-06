@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/tap/agents"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/nats-io/nats.go"
@@ -54,10 +54,14 @@ type CleanupAgent struct {
 	db *database.Queries
 }
 
-func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, mem agent.MemoryStore, db *database.Queries) agent.Runnable {
+func init() {
+	agents.Register("cleanup-agent", NewAgent)
+}
+
+func NewAgent(env core.Environment) core.Runnable {
 	var a CleanupAgent
-	a.rt = agent.NewRuntime(logger, bus, cfg, mem)
-	a.db = db
+	a.rt = agent.NewRuntime(env.Logger, env.Bus, env.Config, env.Memory)
+	a.db = env.Queries
 
 	handler := func(msg *nats.Msg) {
 		a.Logger.Info("📡 [DEBUG] cleanup-agent received JetStream message", "topic", msg.Subject, "data_length", len(msg.Data))
@@ -73,7 +77,7 @@ func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, me
 			a.Logger.Error("Transient error processing message, nacking", "error", err)
 			if strings.Contains(err.Error(), "insufficient funds") {
 				_, _ = a.db.LogStalledMessage(context.Background(), database.LogStalledMessageParams{
-					AgentDid:        cfg.DID,
+					AgentDid:        env.Config.DID,
 					OriginalSubject: msg.Subject,
 					Payload:         msg.Data,
 					ErrorReason:     "Paywall deadlocked: " + err.Error(),
@@ -88,7 +92,7 @@ func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, me
 		msg.Ack()
 	}
 
-	a.BaseAgent = agent.NewBaseAgent(logger, bus, cfg, mem, "accounting.cleanup", "tasks.accounting.cleanup.>", "cleanup-group", "cleanup-agent-durable", handler)
+	a.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, env.Memory, "accounting.cleanup", "tasks.accounting.cleanup.>", "cleanup-group", "cleanup-agent-durable", handler)
 	return &a
 }
 

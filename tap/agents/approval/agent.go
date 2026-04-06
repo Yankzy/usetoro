@@ -3,10 +3,10 @@ package approval
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/Yankzy/usetoro/tap/agents"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
@@ -21,7 +21,11 @@ type ApprovalAgent struct {
 	*agent.BaseAgent
 }
 
-func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, mem agent.MemoryStore) agent.Runnable {
+func init() {
+	agents.Register("approval-agent", NewAgent)
+}
+
+func NewAgent(env core.Environment) core.Runnable {
 	var a ApprovalAgent
 
 	handler := func(msg *nats.Msg) {
@@ -43,7 +47,7 @@ func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, me
 		msg.Ack()
 	}
 
-	a.BaseAgent = agent.NewBaseAgent(logger, bus, cfg, mem, "accounting.approval", "accounting.approved", "approval-group", "approval-agent-durable", handler)
+	a.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, env.Memory, "accounting.approval", "accounting.approved", "approval-group", "approval-agent-durable", handler)
 	return &a
 }
 

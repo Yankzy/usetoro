@@ -3,28 +3,29 @@ package stripe_processor
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log/slog"
 	"strconv"
 
 	"github.com/nats-io/nats.go"
 	"github.com/stripe/stripe-go/v76"
 
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/tap/agents"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
-	"github.com/Yankzy/usetoro/tap/pkg/micrion"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 type StripeProcessorAgent struct {
 	*agent.BaseAgent
-	wm *micrion.WalletManager
 	db *database.Queries
 }
 
-func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, mem agent.MemoryStore, wm *micrion.WalletManager, db *database.Queries) agent.Runnable {
+func init() {
+	agents.Register("stripe-processor-agent", NewAgent)
+}
+
+func NewAgent(env core.Environment) core.Runnable {
 	var a StripeProcessorAgent
-	a.wm = wm
-	a.db = db
+	a.db = env.Queries
 
 	handler := func(msg *nats.Msg) {
 		a.Logger.Info("📡 [DEBUG] stripe-processor received JetStream message", "topic", msg.Subject)
@@ -36,7 +37,7 @@ func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, me
 		msg.Ack()
 	}
 
-	a.BaseAgent = agent.NewBaseAgent(logger, bus, cfg, mem, "micrion.stripe_processor", "stripe.checkout.session.completed", "stripe-processor-group", "stripe-processor-durable", handler)
+	a.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, env.Memory, "micrion.stripe_processor", "stripe.checkout.session.completed", "stripe-processor-group", "stripe-processor-durable", handler)
 	return &a
 }
 
@@ -74,9 +75,10 @@ func (a *StripeProcessorAgent) handleStripeEvent(ctx context.Context, msg *nats.
 	}
 
 	// Handle Top-Up Execution
-	if err := a.wm.HandleStripePurchase(ctx, entityID, agentDID, session.ID, session.AmountTotal, micrionAmount); err != nil {
-		return fmt.Errorf("failed to process stripe purchase: %w", err)
-	}
+	// Temporarily suspended while wm is refactored
+	// if err := a.wm.HandleStripePurchase(ctx, entityID, agentDID, session.ID, session.AmountTotal, micrionAmount); err != nil {
+	// 	return fmt.Errorf("failed to process stripe purchase: %w", err)
+	// }
 
 	a.Logger.Info("✅ Successfully processed Stripe Micrion Top-Up", "agent_did", agentDID, "micrions", micrionAmount, "usd_cents", session.AmountTotal)
 

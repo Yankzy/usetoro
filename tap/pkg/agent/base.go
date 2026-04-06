@@ -19,9 +19,9 @@ import (
 
 type BaseAgent struct {
 	Logger      *slog.Logger
-	Bus         EventBus
-	Cfg         AgentConfig
-	Mem         MemoryStore
+	Bus         core.EventBus
+	Cfg         core.AgentConfig
+	Mem         core.MemoryStore
 	KP          *identity.KeyPair
 	Sub         *nats.Subscription
 	AgentType   string
@@ -41,7 +41,7 @@ func (b *BaseAgent) ExecuteGlobalWorkflow(
 ) error {
 	b.Logger.Info("Step 2: Hydrating initial DB snapshot constraints intrinsically")
 	wf, err := db.GetWorkflow(ctx, workflowID)
-	
+
 	var currentSeq uint64
 	if err != nil {
 		currentSeq = 0
@@ -96,7 +96,7 @@ func (b *BaseAgent) ExecuteGlobalWorkflow(
 }
 
 // NewBaseAgent centralizes the boilerplate for DID generation and registration fields
-func NewBaseAgent(logger *slog.Logger, bus EventBus, cfg AgentConfig, mem MemoryStore, agentType, topic, queueGroup, durableName string, handler nats.MsgHandler) *BaseAgent {
+func NewBaseAgent(logger *slog.Logger, bus core.EventBus, cfg core.AgentConfig, mem core.MemoryStore, agentType, topic, queueGroup, durableName string, handler nats.MsgHandler) *BaseAgent {
 	kp, _ := identity.GenerateKeyPair()
 	cfg.DID = identity.CreateDID(kp.Public)
 	return &BaseAgent{

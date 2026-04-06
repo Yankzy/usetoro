@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Yankzy/usetoro/tap/pkg/agent"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/spf13/viper"
 )
 
@@ -56,7 +56,7 @@ type Config struct {
 	NatsERPEventSubject string     `mapstructure:"nats_erp_event_subject"`
 
 	// Agents Config
-	Agents []agent.AgentConfig `mapstructure:"agents"`
+	Agents []core.AgentConfig `mapstructure:"agents"`
 }
 
 type NATSConfig struct {

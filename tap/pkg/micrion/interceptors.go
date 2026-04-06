@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Yankzy/usetoro/tap/pkg/agent"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nats-io/nats.go"
@@ -19,13 +19,13 @@ const InfraTollCost = 1616
 
 // TolledEventBus wraps an EventBus to enforce a micrion toll on all outbound messages.
 type TolledEventBus struct {
-	underlying agent.EventBus
+	underlying core.EventBus
 	wm         *WalletManager
 	did        string
 }
 
 // NewTolledEventBus creates a new EventBus interceptor.
-func NewTolledEventBus(underlying agent.EventBus, wm *WalletManager, did string) *TolledEventBus {
+func NewTolledEventBus(underlying core.EventBus, wm *WalletManager, did string) *TolledEventBus {
 	return &TolledEventBus{
 		underlying: underlying,
 		wm:         wm,

@@ -15,9 +15,9 @@ type EnrichedRow struct {
 	RawDate             time.Time
 	RawVendorName       string
 	RawCustomerName     string
-	PredictedVendorID    string // empty = unresolved
-	PredictedCustomerID  string // empty = unresolved
-	PredictedAccountID   string // empty = unresolved
+	PredictedVendorID   string // empty = unresolved
+	PredictedCustomerID string // empty = unresolved
+	PredictedAccountID  string // empty = unresolved
 	PredictedAccountName string
 	NormalizedVendor    string
 	NormalizedCustomer  string
@@ -42,6 +42,14 @@ type Deduplicator struct{}
 
 // NewDeduplicator constructs a Deduplicator.
 func NewDeduplicator() *Deduplicator { return &Deduplicator{} }
+
+func vendorKey(row *EnrichedRow) string {
+	vendor := coalesce(row.PredictedVendorID, row.PredictedCustomerID, row.NormalizedVendor, row.NormalizedCustomer, row.MerchantName, row.RawVendorName, row.RawCustomerName)
+	if vendor == "" {
+		vendor = row.RawDescription
+	}
+	return vendor
+}
 
 // AnnotateDuplicates mutates rows in-place, setting DuplicateOf on rows that
 // appear to be duplicates. The canonical (first-seen) row keeps DuplicateOf="".
@@ -91,7 +99,7 @@ func (d *Deduplicator) AnnotateRecurring(rows []EnrichedRow) {
 			continue
 		}
 		s := sig{
-			vendor: coalesce(row.PredictedVendorID, row.PredictedCustomerID, row.NormalizedVendor, row.NormalizedCustomer, row.RawVendorName, row.RawCustomerName),
+			vendor: vendorKey(&row),
 			amount: roundCents(row.RawAmount),
 		}
 		counts[s]++
@@ -102,7 +110,7 @@ func (d *Deduplicator) AnnotateRecurring(rows []EnrichedRow) {
 			continue
 		}
 		s := sig{
-			vendor: coalesce(rows[i].PredictedVendorID, rows[i].PredictedCustomerID, rows[i].NormalizedVendor, rows[i].NormalizedCustomer, rows[i].RawVendorName, rows[i].RawCustomerName),
+			vendor: vendorKey(&rows[i]),
 			amount: roundCents(rows[i].RawAmount),
 		}
 		if counts[s] >= 3 {
@@ -114,7 +122,7 @@ func (d *Deduplicator) AnnotateRecurring(rows []EnrichedRow) {
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 func dupKey(row *EnrichedRow, date time.Time) string {
-	vendor := coalesce(row.PredictedVendorID, row.PredictedCustomerID, row.NormalizedVendor, row.NormalizedCustomer, row.RawVendorName, row.RawCustomerName)
+	vendor := vendorKey(row)
 	cents := roundCents(row.RawAmount)
 	dateStr := ""
 	if !date.IsZero() {

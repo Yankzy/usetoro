@@ -11,7 +11,7 @@ COPY tap /tap
 COPY go/ .
 
 # Build the protocol server
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /protocol ./cmd/protocol/almanac-server/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /protocol ./cmd/protocol/main.go
 
 # Stage 2: Runtime (Go Binary Only)
 FROM alpine:3.19

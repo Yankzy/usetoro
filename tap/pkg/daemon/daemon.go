@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/config"
-	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
@@ -78,7 +77,13 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 		return fmt.Errorf("jetstream error: %w", err)
 	}
 
-	kv, err := micrion.SetupKV(js)
+	// Ensure all standard TAP streams (TASKS, EVENTS, CONTRACTS) exist
+	if err := transport.InitStreams(js); err != nil {
+		d.Logger.Error("failed to initialize nats streams", "error", err)
+		return fmt.Errorf("stream init error: %w", err)
+	}
+
+	_, err = micrion.SetupKV(js)
 	if err != nil {
 		return fmt.Errorf("micrion kv error: %w", err)
 	}
@@ -103,8 +108,6 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 	}
 
 	mem := memory.NewManager(dbPool)
-	ledger := store.NewWalletLedger(database.New(dbPool))
-	wm := micrion.NewWalletManager(ledger, kv)
 
 	pineconeKey := os.Getenv("PINECONE_API_KEY")
 	openaiKey := os.Getenv("OPENAI_API_KEY")
@@ -118,16 +121,11 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 	entityResolver := ai.NewEntityResolver(st, pcObj, embedder, d.currentConfig.AIThreshold)
 
 	// 2. Initialize the Agent Supervisor (The Hive)
-	d.Supervisor = agent.NewSupervisor(d.Logger, bus, mem)
+	d.Supervisor = agent.NewSupervisor(d.Logger, bus, mem, dbPool, entityResolver)
 
-	deps := agents.AgentDependencies{
-		Ctx:            ctx,
-		DBPool:         dbPool,
-		WalletManager:  wm,
-		EntityResolver: entityResolver,
+	for name, factory := range agents.GetRegistry() {
+		d.Supervisor.RegisterInternalAgent(name, factory)
 	}
-
-	agents.RegisterAll(d.Supervisor, deps)
 
 	// 3. Load Initial Agent Configuration into the supervisor
 	if err := d.Supervisor.LoadAgents(d.currentConfig.Agents); err != nil {

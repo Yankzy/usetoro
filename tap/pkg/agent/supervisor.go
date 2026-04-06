@@ -5,54 +5,57 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-)
 
-// Runnable interfaces all runnable agent instances (both declarative Runtime and internal modules).
-type Runnable interface {
-	Start() error
-	Stop() error
-}
+	"github.com/jackc/pgx/v5/pgxpool"
+	
+	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+)
 
 // Supervisor manages the lifecycle of all active agents.
 // It acts as the central Runner, supporting both generic pipeline agents and custom compiled internal agents.
 type Supervisor struct {
 	mu     sync.RWMutex
-	agents map[string]Runnable
+	agents map[string]core.Runnable
 
 	logger *slog.Logger
-	bus    EventBus
-	mem    MemoryStore
+	bus    core.EventBus
+	mem    core.MemoryStore
+	dbPool *pgxpool.Pool
+	er     *ai.EntityResolver
 
 	// Registry of internal compiled agent modules
-	internalRegistry map[string]func(*slog.Logger, EventBus, AgentConfig, MemoryStore) Runnable
+	internalRegistry map[string]func(core.Environment) core.Runnable
 }
 
 // NewSupervisor creates the control plane for the agent hive.
-func NewSupervisor(logger *slog.Logger, bus EventBus, mem MemoryStore) *Supervisor {
+func NewSupervisor(logger *slog.Logger, bus core.EventBus, mem core.MemoryStore, dbPool *pgxpool.Pool, er *ai.EntityResolver) *Supervisor {
 	return &Supervisor{
-		agents:           make(map[string]Runnable),
-		internalRegistry: make(map[string]func(*slog.Logger, EventBus, AgentConfig, MemoryStore) Runnable),
+		agents:           make(map[string]core.Runnable),
+		internalRegistry: make(map[string]func(core.Environment) core.Runnable),
 		logger:           logger,
 		bus:              bus,
 		mem:              mem,
+		dbPool:           dbPool,
+		er:               er,
 	}
 }
 
 // Bus returns the internal NATS/EventBus router securely.
-func (s *Supervisor) Bus() EventBus {
+func (s *Supervisor) Bus() core.EventBus {
 	return s.bus
 }
 
 // RegisterInternalAgent binds an internal module string (from config) to a factory function.
-// e.g. "cleanup-agent" -> cleanup.NewAgent
-func (s *Supervisor) RegisterInternalAgent(moduleName string, factory func(*slog.Logger, EventBus, AgentConfig, MemoryStore) Runnable) {
+func (s *Supervisor) RegisterInternalAgent(moduleName string, factory func(core.Environment) core.Runnable) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.internalRegistry[moduleName] = factory
 }
 
 // LoadAgents reconciles the desired state (configs) with the actual running state.
-func (s *Supervisor) LoadAgents(configs []AgentConfig) error {
+func (s *Supervisor) LoadAgents(configs []core.AgentConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -65,7 +68,7 @@ func (s *Supervisor) LoadAgents(configs []AgentConfig) error {
 			delete(s.agents, cfg.DID)
 		}
 
-		var agentInstance Runnable
+		var agentInstance core.Runnable
 
 		// Determine if this is an internal compiled Go agent or a generic declarative agent
 		if cfg.Engine == "internal" {
@@ -74,7 +77,25 @@ func (s *Supervisor) LoadAgents(configs []AgentConfig) error {
 				s.logger.Error("Unknown internal module", "module", cfg.InternalModule, "did", cfg.DID)
 				continue
 			}
-			agentInstance = factory(s.logger, s.bus, cfg, s.mem)
+
+			env := core.Environment{
+				Logger: s.logger,
+				Bus:    s.bus,
+				Config: cfg,
+				Memory: s.mem,
+			}
+			
+			if cfg.Dependencies.Database {
+				env.DBPool = s.dbPool
+			}
+			if cfg.Dependencies.DBQueries {
+				env.Queries = database.New(s.dbPool)
+			}
+			if cfg.Dependencies.EntityResolver {
+				env.EntityResolver = s.er
+			}
+
+			agentInstance = factory(env)
 		} else {
 			// Declarative Runtime
 			agentInstance = NewRuntime(s.logger, s.bus, cfg, s.mem)
@@ -124,7 +145,7 @@ func (s *Supervisor) Shutdown(ctx context.Context) {
 	var wg sync.WaitGroup
 	for did, agentInstance := range s.agents {
 		wg.Add(1)
-		go func(d string, a Runnable) {
+		go func(d string, a core.Runnable) {
 			defer wg.Done()
 			if err := a.Stop(); err != nil {
 				s.logger.Error("Error stopping agent", "did", d, "error", err)

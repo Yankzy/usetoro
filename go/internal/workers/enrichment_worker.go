@@ -70,7 +70,7 @@ func (e *EnrichmentWorker) Subscriptions() []SubscriptionConfig {
 		{
 			Subject: "proof.accounting.cleanup.inserted",
 			Group:   "enrichment-group",
-			Options: []nats.SubOpt{nats.Durable("enrichment-inserted-durable"), nats.DeliverAll(), nats.AckExplicit()},
+			Options: []nats.SubOpt{nats.Durable("enrichment-inserted-durable-v2"), nats.DeliverAll(), nats.AckExplicit()},
 		},
 	}
 }

@@ -56,7 +56,7 @@ func (w *FignodePublisherWorker) Subscriptions() []SubscriptionConfig {
 		{
 			Subject: "proof.accounting.cleanup.reconcile.>",
 			Group:   "fignode-publisher-group",
-			Options: []nats.SubOpt{nats.Durable("fignode-publisher-durable"), nats.DeliverAll(), nats.AckExplicit()},
+			Options: []nats.SubOpt{nats.Durable("fignode-publisher-durable-v2"), nats.DeliverAll(), nats.AckExplicit()},
 		},
 	}
 }

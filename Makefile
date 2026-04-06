@@ -192,3 +192,10 @@ clean_db:
 
 scr:
 	scrcpy --window-title "iPhone"
+
+vndr:
+	cd go && GOWORK=off go mod tidy && GOWORK=off go mod vendor
+	cd tap && GOWORK=off go mod tidy && GOWORK=off go mod vendor
+
+rebuild_all:
+	$(MAKE) vndr && $(MAKE) down && $(MAKE) upd && $(MAKE) logs

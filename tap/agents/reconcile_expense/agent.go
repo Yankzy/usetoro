@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,6 +16,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 
+	"github.com/Yankzy/usetoro/tap/agents"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
@@ -27,10 +27,14 @@ type ExpenseReconciliationAgent struct {
 	entityResolver *ai.EntityResolver
 }
 
-func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, mem agent.MemoryStore, db *database.Queries, er *ai.EntityResolver) agent.Runnable {
+func init() {
+	agents.Register("reconcile-expense-agent", NewAgent)
+}
+
+func NewAgent(env core.Environment) core.Runnable {
 	var a ExpenseReconciliationAgent
-	a.db = db
-	a.entityResolver = er
+	a.db = env.Queries
+	a.entityResolver = env.EntityResolver
 
 	handler := func(msg *nats.Msg) {
 		a.Logger.Info("📡 [DEBUG] reconcile-expense received JetStream message", "topic", msg.Subject)
@@ -38,7 +42,7 @@ func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, me
 			a.Logger.Error("expense reconcile agent transient error", "error", err)
 			if strings.Contains(err.Error(), "insufficient funds") {
 				_, _ = a.db.LogStalledMessage(context.Background(), database.LogStalledMessageParams{
-					AgentDid:        cfg.DID,
+					AgentDid:        env.Config.DID,
 					OriginalSubject: msg.Subject,
 					Payload:         msg.Data,
 					ErrorReason:     "Paywall deadlocked: " + err.Error(),
@@ -52,7 +56,7 @@ func NewAgent(logger *slog.Logger, bus agent.EventBus, cfg agent.AgentConfig, me
 		msg.Ack()
 	}
 
-	a.BaseAgent = agent.NewBaseAgent(logger, bus, cfg, mem, "accounting.reconciliation.expense", "proof.accounting.cleanup.enrichment", "reconcile-expense-group", "reconcile-expense-durable", handler)
+	a.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, env.Memory, "accounting.reconciliation.expense", "proof.accounting.cleanup.enrichment", "reconcile-expense-group", "reconcile-expense-durable", handler)
 	return &a
 }
 

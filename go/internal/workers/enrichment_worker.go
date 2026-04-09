@@ -103,19 +103,28 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		return nil
 	}
 
-	var rows []map[string]interface{}
-	if err := json.Unmarshal(proof.Data, &rows); err != nil || len(rows) == 0 {
+	rows, err := ExtractRows(proof.Data)
+	if err != nil {
+		e.logger.Error("enrichment worker: failed to extract rows", "error", err)
+		return nil
+	}
+
+	if len(rows) == 0 {
 		return nil
 	}
 
 	sessionID, _ := rows[0]["SessionID"].(string)
 	if sessionID == "" {
+		e.logger.Warn("enrichment worker: missing SessionID in first row")
 		return nil
 	}
 	realmID, _ := rows[0]["RealmID"].(string)
 
 	var pgSessionID pgtype.UUID
-	pgSessionID.Scan(sessionID)
+	if err := pgSessionID.Scan(sessionID); err != nil || !pgSessionID.Valid {
+		e.logger.Error("enrichment worker: invalid session ID format", "session", sessionID, "error", err)
+		return nil
+	}
 
 	meta, metaErr := msg.Metadata()
 	if metaErr == nil && meta.NumDelivered > 3 {
@@ -128,15 +137,24 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		return nil
 	}
 
-	e.logger.Info("enrichment worker: waiting for database insertion sync", "session", sessionID)
+	e.logger.Info("enrichment worker: waiting for database insertion sync", "session", sessionID, "expected", len(rows), "realm", realmID)
 
 	var pendingRows []database.GetPendingSessionRowsRow
 	expectedCount := len(rows)
-	var err error
-	for retries := 0; retries < 10; retries++ {
+	for retries := 0; retries < 15; retries++ {
 		pendingRows, err = e.db.GetPendingSessionRows(ctx, pgSessionID)
-		e.logger.Info("enrichment worker loop", "expected", expectedCount, "found", len(pendingRows), "err", err)
-		if err == nil && len(pendingRows) == expectedCount {
+		if err != nil {
+			e.logger.Warn("enrichment worker: db query error during loop", "error", err)
+		}
+		
+		e.logger.Info("enrichment worker loop", 
+			"session", sessionID,
+			"attempt", retries+1,
+			"expected", expectedCount, 
+			"found", len(pendingRows),
+		)
+
+		if err == nil && len(pendingRows) >= expectedCount {
 			break
 		}
 		time.Sleep(1 * time.Second)

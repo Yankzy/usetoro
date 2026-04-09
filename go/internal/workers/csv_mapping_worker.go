@@ -108,24 +108,20 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 		return nil // not meant for us
 	}
 
-	var rowMap map[string]RawRow
-	if err := json.Unmarshal(proof.Data, &rowMap); err != nil {
-		e.logger.Error("csv mapping worker: failed to unmarshal rows map", "error", err)
+	rows, err := ExtractRows(proof.Data)
+	if err != nil {
+		e.logger.Error("csv mapping worker: failed to extract rows", "error", err)
 		return nil
 	}
 
-	if len(rowMap) == 0 {
+	if len(rows) == 0 {
 		e.logger.Warn("csv mapping worker: proof contained 0 rows")
 		return nil
 	}
 
 	// Get session/realm from the first row
-	var sessionID, realmID string
-	for _, r := range rowMap {
-		sessionID = r.SessionID
-		realmID = r.RealmID
-		break
-	}
+	sessionID, _ := rows[0]["SessionID"].(string)
+	realmID, _ := rows[0]["RealmID"].(string)
 
 	if sessionID == "" {
 		e.logger.Warn("csv mapping worker: missing sessionID in rows")
@@ -146,31 +142,38 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 		return nil
 	}
 
-	e.logger.Info("csv mapping worker: inserting AI-mapped rows", "session_id", sessionID, "count", len(rowMap))
+	e.logger.Info("csv mapping worker: inserting AI-mapped rows", "session_id", sessionID, "count", len(rows))
 
 	// Update session to PROCESSING
-	err := e.db.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
+	statusErr := e.db.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
 		ID:     pgSessionID,
 		Status: "PROCESSING",
 	})
-	if err != nil {
-		return fmt.Errorf("failed to update session status: %w", err)
+	if statusErr != nil {
+		return fmt.Errorf("failed to update session status: %w", statusErr)
 	}
 
 	// Insert rows
-	for _, row := range rowMap {
+	for _, r := range rows {
+		rawDescription, _ := r["Description"].(string)
+		rawAmount, _ := r["Amount"].(string)
+		rawDateStr, _ := r["Date"].(string)
+		vendorName, _ := r["Vendor"].(string)
+		customerName, _ := r["Customer"].(string)
+
 		var dDate pgtype.Date
-		dDate.Scan(row.Date)
+		dDate.Scan(rawDateStr)
 
 		_, err := e.db.InsertCleanupRow(ctx, database.InsertCleanupRowParams{
 			SessionID:             pgSessionID,
 			RealmID:               pgtype.Text{String: realmID, Valid: realmID != ""},
 			SourceType:            "CSV",
-			RawDescription:        pgtype.Text{String: row.Description, Valid: row.Description != ""},
-			RawAmount:             row.Amount,
+			RawDescription:        pgtype.Text{String: rawDescription, Valid: rawDescription != ""},
+			RawAmount:             rawAmount,
 			RawDate:               dDate,
-			PredictedVendorName:   pgtype.Text{String: row.Vendor, Valid: row.Vendor != ""},
-			PredictedCustomerName: pgtype.Text{String: row.Customer, Valid: row.Customer != ""},
+			Status:                "PENDING", // Match EnrichmentWorker query
+			PredictedVendorName:   pgtype.Text{String: vendorName, Valid: vendorName != ""},
+			PredictedCustomerName: pgtype.Text{String: customerName, Valid: customerName != ""},
 		})
 		if err != nil {
 			e.logger.Error("csv mapping worker: row insert failed", "error", err)

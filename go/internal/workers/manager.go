@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -149,4 +150,26 @@ func (m *Manager) LoadFromRegistry(deps Dependencies) error {
 		}
 	}
 	return nil
+}
+
+// ExtractRows is a helper to extract a slice of maps from a json.RawMessage,
+// supporting both JSON Arrays and JSON Objects (where values are extracted).
+func ExtractRows(data []byte) ([]map[string]interface{}, error) {
+	// 1. Try as Array
+	var slice []map[string]interface{}
+	if err := json.Unmarshal(data, &slice); err == nil {
+		return slice, nil
+	}
+
+	// 2. Try as Map
+	var m map[string]map[string]interface{}
+	if err := json.Unmarshal(data, &m); err == nil {
+		rows := make([]map[string]interface{}, 0, len(m))
+		for _, v := range m {
+			rows = append(rows, v)
+		}
+		return rows, nil
+	}
+
+	return nil, fmt.Errorf("data is neither a JSON array nor a JSON object")
 }

@@ -9,7 +9,7 @@
 -- 1. Workflows (The Redux Engine Base State)
 CREATE TABLE toro_core.workflows (
     id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    entity_id     UUID NOT NULL REFERENCES toro_core.entities(id) ON DELETE CASCADE,
+    entity_id     UUID REFERENCES toro_core.entities(id) ON DELETE CASCADE,
     state         JSONB NOT NULL DEFAULT '{}'::jsonb,
     sequence_id   BIGINT NOT NULL DEFAULT 0,    -- Tracks monotonic NATS idempotency
     status        TEXT NOT NULL DEFAULT 'open', -- 'open', 'processing', 'completed', 'failed'

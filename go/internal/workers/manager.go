@@ -4,8 +4,17 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 
 	"github.com/nats-io/nats.go"
+
+	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/erp"
+	"github.com/Yankzy/usetoro/internal/infra/vector"
+	"github.com/Yankzy/usetoro/internal/services/accounting"
+	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/internal/store"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // SubscriptionConfig defines a single JetStream subscription requirement
@@ -66,6 +75,13 @@ func (m *Manager) StartAll(ctx context.Context) error {
 
 		for _, subCfg := range worker.Subscriptions() {
 			sub, err := js.QueueSubscribe(subCfg.Subject, subCfg.Group, func(msg *nats.Msg) {
+				defer func() {
+					if r := recover(); r != nil {
+						m.logger.Error("worker panic recovered", "panic", r, "subject", msg.Subject, "stack", string(debug.Stack()))
+						msg.Nak()
+					}
+				}()
+
 				if err := worker.Handle(ctx, msg); err != nil {
 					m.logger.Error("worker handle error", "subject", msg.Subject, "error", err)
 					msg.Nak()
@@ -90,5 +106,47 @@ func (m *Manager) StartAll(ctx context.Context) error {
 		_ = sub.Unsubscribe()
 	}
 
+	return nil
+}
+
+// Dependencies contains the standard dependencies injected into workers.
+type Dependencies struct {
+	Logger          *slog.Logger
+	Config          *config.Config
+	Queue           *nats.Conn
+	Store           *store.Store
+	DBPool          *pgxpool.Pool
+	Pinecone        *vector.PineconeClient
+	Embedder        *vector.Embedder
+	EntityResolver  *ai.EntityResolver
+	CoAMapper       *ai.CoAMapper
+	AttachService   *accounting.AttachableService
+	ProviderFactory erp.ProviderFactory
+	RuleEngine      *accounting.RuleEngineService
+	LLMClient       *ai.LLMClient
+	FetchEntityFn   func(ctx context.Context, tenantID, realmID, entityType, entityID, op string) error
+}
+
+type WorkerFactory func(deps Dependencies) (Worker, error)
+
+var registry []WorkerFactory
+
+// RegisterFactory registers a factory function inside the worker registry.
+func RegisterFactory(factory WorkerFactory) {
+	registry = append(registry, factory)
+}
+
+// LoadFromRegistry invokes all registered factories and adds them to the manager.
+// Skip initialization if a factory returns (nil, nil) (e.g. for conditional dependencies).
+func (m *Manager) LoadFromRegistry(deps Dependencies) error {
+	for _, factory := range registry {
+		w, err := factory(deps)
+		if err != nil {
+			return err
+		}
+		if w != nil {
+			m.Register(w)
+		}
+	}
 	return nil
 }

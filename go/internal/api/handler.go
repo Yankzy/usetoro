@@ -74,11 +74,11 @@ type Handler struct {
 	EntityService      *accounting.EntityService
 
 	// Cleanup Mode dependencies
-	DBPool          *pgxpool.Pool
-	CleanupDB       *database.Queries
-	CleanupNATS     *queue.Client
-	CleanupExporter CleanupExporter
-	WalletManager   *micrion.WalletManager
+	DBPool        *pgxpool.Pool
+	DB            *database.Queries
+	NATS          *queue.Client
+	Exporter      Exporter
+	WalletManager *micrion.WalletManager
 }
 
 // NewHandler creates a new Handler.
@@ -99,7 +99,7 @@ func NewHandler(
 	dbPool *pgxpool.Pool,
 	cleanupDB *database.Queries,
 	cleanupNATS *queue.Client,
-	cleanupExporter CleanupExporter,
+	cleanupExporter Exporter,
 	wm *micrion.WalletManager,
 ) *Handler {
 	return &Handler{
@@ -119,9 +119,9 @@ func NewHandler(
 		TransactionService: transactionService,
 		EntityService:      entityService,
 		DBPool:             dbPool,
-		CleanupDB:          cleanupDB,
-		CleanupNATS:        cleanupNATS,
-		CleanupExporter:    cleanupExporter,
+		DB:                 cleanupDB,
+		NATS:               cleanupNATS,
+		Exporter:           cleanupExporter,
 		WalletManager:      wm,
 	}
 }

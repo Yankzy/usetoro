@@ -70,7 +70,7 @@ func (e *EnrichmentWorker) Subscriptions() []SubscriptionConfig {
 		{
 			Subject: "proof.accounting.cleanup.inserted",
 			Group:   "enrichment-group",
-			Options: []nats.SubOpt{nats.Durable("enrichment-inserted-durable-v2"), nats.DeliverAll(), nats.AckExplicit()},
+			Options: []nats.SubOpt{nats.Durable("enrichment-inserted-durable-v5"), nats.DeliverAll(), nats.AckExplicit()},
 		},
 	}
 }
@@ -442,3 +442,10 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 	er.ConfidenceScore = 1.0
 	return er, nil
 }
+
+func init() {
+	RegisterFactory(func(deps Dependencies) (Worker, error) {
+		return NewEnrichmentWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.LLMClient)
+	})
+}
+

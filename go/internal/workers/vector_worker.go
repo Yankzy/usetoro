@@ -269,3 +269,13 @@ func (w *VectorSyncWorker) flushBatch(ctx context.Context, batch []vectorBatchIt
 		}
 	}
 }
+
+func init() {
+	RegisterFactory(func(deps Dependencies) (Worker, error) {
+		if deps.Pinecone == nil || deps.Embedder == nil {
+			return nil, nil
+		}
+		return NewVectorSyncWorker(deps.Logger, deps.Store, deps.Pinecone, deps.Embedder, deps.Queue)
+	})
+}
+

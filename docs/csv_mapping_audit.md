@@ -8,7 +8,7 @@ Here is the breakdown of the working pipeline:
 ✅ **FULLY IMPLEMENTED.**
 - The `POST /cleanup/upload` API accepts `.csv` and `.xlsx` files.
 - It parses them and creates a new session in `fignode.staging_sessions` with the rows in `fignode.staging_transactions`.
-- A background NATS worker (`CleanupWorker`) intercepts the `INSERT` event and enriches all rows using AI (vendor resolution and CoA semantic mapping).
+- A background NATS worker (`CSVMappingWorker`) intercepts the `INSERT` event and enriches all rows using AI (vendor resolution and CoA semantic mapping).
 
 ### 2. "Do the clean up on the mobile app"
 ✅ **FULLY IMPLEMENTED.**

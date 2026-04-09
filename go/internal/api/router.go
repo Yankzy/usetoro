@@ -34,9 +34,10 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	mux.HandleFunc("GET /realms/{realmId}/customers", h.HandleGetCustomers)
 
 	// Clean-Up Mode: CSV/XLSX ingestion and exports
-	mux.HandleFunc("POST /cleanup/upload", h.HandleCleanupUpload)
-	mux.HandleFunc("GET /cleanup/{session_id}/export", h.HandleCleanupExport)
-	mux.HandleFunc("GET /cleanup/{session_id}/audit", h.HandleCleanupAudit)
+	mux.HandleFunc("POST /files/upload", h.HandleFileIngestion)
+	mux.HandleFunc("POST /files/upload/{domain}/{taskType}", h.HandleFileIngestion)
+	mux.HandleFunc("GET /files/{session_id}/export", h.HandleExport)
+	mux.HandleFunc("GET /files/{session_id}/audit", h.HandleAudit)
 
 	// Wallet Operations (Stripe / Checks)
 	mux.HandleFunc("GET /wallet/balance", h.HandleGetWalletBalance)
@@ -48,7 +49,7 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	mux.Handle("GET /agent/realms/{realmId}/accounts", agentToll(http.HandlerFunc(h.HandleGetAccounts)))
 	mux.Handle("GET /agent/realms/{realmId}/vendors", agentToll(http.HandlerFunc(h.HandleGetVendors)))
 	mux.Handle("GET /agent/realms/{realmId}/customers", agentToll(http.HandlerFunc(h.HandleGetCustomers)))
-	mux.Handle("POST /agent/cleanup/upload", agentToll(http.HandlerFunc(h.HandleCleanupUpload)))
+	mux.Handle("POST /agent/files/upload", agentToll(http.HandlerFunc(h.HandleFileIngestion)))
 
 	// Backward compatibility: specific Stripe endpoint
 	mux.HandleFunc("POST /webhooks/stripe/{conn_id}", h.HandleStripeWebhook)

@@ -34,9 +34,16 @@ type AgentConfig struct {
 	Provider       string                  `yaml:"provider" mapstructure:"provider"`
 	SystemPrompt   string                  `yaml:"system_prompt" mapstructure:"system_prompt"`
 	Tools          []ToolConfig            `yaml:"tools" mapstructure:"tools"`
-	Subscription   Subscription            `yaml:"subscription" mapstructure:"subscription"`
 	Steps          []Step                  `yaml:"steps" mapstructure:"steps"`
 	Dependencies   AgentDependenciesConfig `yaml:"dependencies" mapstructure:"dependencies"`
+
+	// Flattened configuration for natural language alignment
+	AgentType      string `yaml:"agent_type" mapstructure:"agent_type"`
+	PublishTo      string `yaml:"publish_to" mapstructure:"publish_to"`
+	SubscribeTo    string `yaml:"subscribe_to" mapstructure:"subscribe_to"`
+	QueueGroup     string `yaml:"queue_group" mapstructure:"queue_group"`
+	DurableName    string `yaml:"durable_name" mapstructure:"durable_name"`
+	WorkflowSchema string `yaml:"workflow_schema" mapstructure:"workflow_schema"`
 }
 
 type AgentDependenciesConfig struct {
@@ -52,11 +59,6 @@ type ToolConfig struct {
 }
 
 type State struct{}
-
-type Subscription struct {
-	Subject    string `yaml:"subject" mapstructure:"subject"`
-	QueueGroup string `yaml:"queue_group" mapstructure:"queue_group"`
-}
 
 type Step struct {
 	Name    string        `yaml:"name" mapstructure:"name"`

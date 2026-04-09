@@ -112,7 +112,7 @@ func loadEnvFile(filepath string) {
 }
 
 // Load reads defaults.yaml and overrides with ENV variables
-func Load() (*Config, error) {
+func Load() (*Config, *viper.Viper, error) {
 	v := viper.New()
 
 	// Try loading common .env file locations
@@ -180,19 +180,23 @@ func Load() (*Config, error) {
 		// It's okay if config file is missing IF we have all needed envs,
 		// but for NATS streams we likely need the file.
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("found config file but failed to read: %w", err)
+			return nil, v, fmt.Errorf("found config file but failed to read: %w", err)
 		}
 		// Log or proceed? We proceed and rely on valid env vars / defaults.
 	}
 
-	// 4. Unmarshal into our strict Go struct
+	c, err := Unmarshal(v)
+	return c, v, err
+}
+
+// Unmarshal converts the Viper configuration into our strict Go struct and performs validation
+func Unmarshal(v *viper.Viper) (*Config, error) {
 	var c Config
 	if err := v.Unmarshal(&c); err != nil {
 		return nil, fmt.Errorf("failed to parse config into struct: %w", err)
 	}
 
 	// Validation and post-processing
-
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
@@ -206,13 +210,10 @@ func Load() (*Config, error) {
 	// Automatically map internal Docker DSNs to localhost equivalents if running on host Mac
 	if !inDocker {
 		c.DatabaseURL = strings.Replace(c.DatabaseURL, "@db:5432", "@localhost:5435", 1)
-		// Usually NATS cluster URL comes as a list, replacing just the first node or entire string if it contains it
 		c.NATS.URL = strings.Replace(c.NATS.URL, "nats://nats-1:4222", "nats://localhost:4222", 1)
 	}
 
 	if c.NATS.URL == "" {
-		// Try to fallback to legacy NatsURL field if we were to support it,
-		// but we mapped NATS_URL to nats.url so it should be there.
 		return nil, fmt.Errorf("NATS_URL is required")
 	}
 

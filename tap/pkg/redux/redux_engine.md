@@ -5,7 +5,7 @@ The `tap/pkg/redux` package provides deterministic state mutations based on Redu
 
 ### I/O Decoupling
 * **Stateless Execution:** Evaluates raw bytes in memory. Postgres queries are deferred upstream to the Host APIs.
-* **Agnostic Observability:** Executes `noopMetrics` by default. Parent applications inject Prometheus tracking via `EngineConfig`.
+* **Agnostic Observability:** Executes `noOpMetrics` by default. Parent applications inject Prometheus tracking via `EngineConfig`.
 
 ---
 
@@ -71,7 +71,7 @@ func (a *MyAgent) process(ctx context.Context, sessionID pgtype.UUID) error {
 		},
 	}
 
-	// Phase 1: AI Feedback Loop
+	// Phase 1: Faults from previous Redux rejections are fed back so the LLM can self-correct
 	llmCallback := func(previousErrors []redux.DomainFault, currentSeq uint64) ([]redux.RFC6902Event, error) {
 		patchBytes := a.promptLLM(previousErrors)
 

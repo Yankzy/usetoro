@@ -19,7 +19,7 @@
    * *Action:* Slices the CSV into individual JSON structs.
    * *Action:* Publishes 2,000 individual `event.transaction.historical_ingested` messages to NATS in a high-throughput burst.
 3. **Pattern Matching Worker (The Sieve):** Subscribes to the ingestion stream. 
-   * *Action:* Evaluates every transaction against strict deterministic rules and historical ledger memory. 
+   * *Action:* Evaluates every transaction against Rule Engine. 
    * *Result:* 1,600 transactions hit 100% confidence matches (e.g., AWS, Gusto, WeWork). 
    * *Action:* Publishes 1,600 `event.ledger.proposal_generated` messages directly to the commit queue. 
    * *Result:* The remaining 400 transactions fail the deterministic check (e.g., a $4,000 charge to "Stripe" that could be a software tool or a contractor payout). 

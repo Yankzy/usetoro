@@ -9,13 +9,13 @@ You are an expert Go developer. Your task is to generate a complete, compilable 
 
 Agent Specification
 
-- Agent Name: [e.g. "Invoice Deduplication Agent"]
-- Package Name: [e.g. `invoice_dedup`]
-- `internal_module` key (must match defaults.yaml): [e.g. `"invoice-dedup-agent"`]
-- NATS subject it listens on: [e.g. `"proof.accounting.cleanup.columns"`]
-- NATS queue group: [e.g. `"invoice-dedup-group"`]
-- Durable consumer name: [e.g. `"invoice-dedup-durable"`]
-- Output NATS subject (what it publishes to): [e.g. `"proof.accounting.dedup.done"`]
+- Agent Name: "shoebox"
+- Package Name: `shoebox`
+- `internal_module` key (must match defaults.yaml): `"shoebox-agent"`
+- NATS subject it listens on: `"proof.accounting.cleanup.columns"`
+- NATS queue group: `"shoebox-group"`
+- Durable consumer name: `"shoebox-durable"`
+- Output NATS subject (what it publishes to): `"proof.accounting.dedup.done"`
 - Purpose / Business Logic:
   [Describe what the agent does in plain English. e.g. "Reads mapped rows from the cleanup stage, queries the database for existing transactions with the same description+amount+date, and marks duplicates before passing to reconciliation."]
 - Dependencies needed:
@@ -56,8 +56,8 @@ type Environment struct {
     Bus            EventBus             // NATS abstraction
     Config         AgentConfig          // Parsed from defaults.yaml
     Memory         MemoryStore          // Long-term RAG memory
-    DB             *database.Queries    // nil if dependencies.database = false
-    DBPool         *pgxpool.Pool        // nil if dependencies.database = false
+    Queries        *database.Queries    // nil if dependencies.db_queries = true
+    DBPool         *pgxpool.Pool        // nil if dependencies.database = true
     EntityResolver *ai.EntityResolver   // nil if dependencies.entity_resolver = false
 }
 ```
@@ -101,10 +101,6 @@ func NewBaseAgent(
     bus core.EventBus,
     cfg core.AgentConfig,
     mem core.MemoryStore,
-    agentType string,       // e.g. "accounting.dedup"
-    topic string,           // NATS subject to subscribe to
-    queueGroup string,
-    durableName string,
     handler nats.MsgHandler,
 ) *BaseAgent
 ```
@@ -119,7 +115,67 @@ b.KP          *identity.KeyPair   // for signing envelopes/proofs
 b.Sub         *nats.Subscription
 ```
 
-6. Messaging Protocol — TAP Envelopes
+6. Agent Runtime — Reasoning & ExecWithPaging
+
+Standard agents should use `agent.Runtime` for LLM interaction. This provides `ExecWithPaging` which supports structural document fetching and tool calling.
+
+```go
+// In your NewAgent constructor:
+a.rt = agent.NewRuntime(env.Logger, env.Bus, env.Config, env.Memory)
+
+// Usage:
+resp, err := a.rt.ExecWithPaging(ctx, prompt, nil, nil)
+```
+
+7. Redux Integration — `ExecuteGlobalWorkflow`
+
+If your agent uses an LLM to generate state mutations, you MUST run those patches through the Redux engine via `ExecuteGlobalWorkflow`. This provides RBAC, schema validation, array bans, payload limits, and a circuit-breaker retry loop.
+
+```go
+// LLMCallback receives faults from previous Redux rejections so the LLM can self-correct.
+type LLMCallback func(previousErrors []redux.DomainFault, currentSeq uint64, baseState []byte) ([]json.RawMessage, error)
+
+// WorkflowConfig holds per-invocation Redux tuning.
+type WorkflowConfig struct {
+    SchemaString string           // JSON Schema for post-patch drift validation
+    RBAC         redux.RBACPolicy // Actor path-authorization boundaries
+    InitialState []byte           // Base JSON state (nil defaults to "{}")
+}
+
+// Usage:
+// workflowID is a pgtype.UUID
+err := a.ExecuteGlobalWorkflow(
+    ctx,
+    a.Queries,
+    workflowID,
+    agent.WorkflowConfig{
+        SchemaString: `{"type": "object", "properties": {"status": {"type": "string"}}}`,
+        RBAC: redux.RBACPolicy{
+            AllowedPrefixes: map[string][]string{
+                a.Cfg.DID: {"/status", "/mapped_rows"},
+            },
+        },
+    },
+    llmCallback,
+    func(nextState []byte) error {
+        // Called ONLY after Redux validates the state.
+        // 1. Extract data from nextState
+        var validatedState map[string]json.RawMessage
+        json.Unmarshal(nextState, &validatedState)
+
+        // 2. Publish proof or internal service call
+        return nil
+    },
+)
+```
+
+Key behaviors:
+- The circuit breaker retries up to 3 times, feeding `DomainFault`s back to the LLM callback.
+- If all 3 attempts produce faults, the workflow returns an error.
+- The `onComplete` handler only fires after Redux validates the final state.
+- JetStream trace events are published automatically to `workflow.trace.<workflowID>`.
+
+8. Messaging Protocol — TAP Envelopes
 
 All inter-agent messages use `core.Envelope`. Incoming messages are expected to contain a specific `Performative` (verb):
 
@@ -148,7 +204,7 @@ type Envelope struct {
 func NewEnvelope(id, src, dst, cid string, verb Performative, body interface{}) (*Envelope, error)
 ```
 
-7. Proof — Standard Output Payload
+9. Proof — Standard Output Payload
 
 When your agent completes work, wrap output in a `core.Proof` and publish it inside an `INFORM` envelope:
 
@@ -164,7 +220,7 @@ type Proof struct {
 const ProofAPI ProofType = "proof.api"
 ```
 
-8. Poison Pill Pattern (Required)
+10. Poison Pill Pattern (Required)
 
 Every message handler MUST include this guard:
 
@@ -177,7 +233,7 @@ if metaErr == nil && meta.NumDelivered > 3 {
 }
 ```
 
-9. `defaults.yaml` Entry (include this in your response)
+11. `defaults.yaml` Entry (include this in your response)
 
 ```yaml
 - did: "did:toro:agent:<your_did_suffix>"
@@ -205,6 +261,8 @@ import (
     "github.com/Yankzy/usetoro/tap/agents"          // for agents.Register()
     "github.com/Yankzy/usetoro/tap/pkg/agent"         // for agent.BaseAgent, agent.NewBaseAgent
     "github.com/Yankzy/usetoro/tap/pkg/core"          // for core.Environment, core.Envelope, core.Proof etc.
+    "github.com/Yankzy/usetoro/tap/pkg/redux"         // for redux.RBACPolicy, redux.DomainFault
+    "github.com/jackc/pgx/v5/pgtype"                  // for workflowID (pgtype.UUID)
     "github.com/Yankzy/usetoro/internal/database"     // only if database dependency = true
 )
 ```

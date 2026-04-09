@@ -47,7 +47,7 @@ func NewAgent(env core.Environment) core.Runnable {
 		msg.Ack()
 	}
 
-	a.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, env.Memory, "accounting.approval", "accounting.approved", "approval-group", "approval-agent-durable", handler)
+	a.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, env.Memory, handler)
 	return &a
 }
 

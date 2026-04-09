@@ -123,8 +123,8 @@ PENDING
 
 ## Ingestion Engine
 
-**File:** `go/internal/api/cleanup_handler.go`  
-**Endpoint:** `POST /cleanup/upload` (gate service, `go/internal/api/router.go`)
+**File:** `go/internal/api/upload_handler.go`  
+**Endpoint:** `POST /files/upload` (gate service, `go/internal/api/router.go`)
 
 ### What it does
 
@@ -297,7 +297,7 @@ cmd/gate/main.go
     └── cleanup.NewExporter(db)
     └── api.NewServer(natsClient, exporter)
             └── api.NewHandler(…, cleanupDB, natsClient, exporter)
-                    ├── POST /cleanup/upload  → HandleCleanupUpload
+                    ├── POST /cleanup/upload  → HandleFileIngestion
                     ├── GET  /cleanup/{id}/export → HandleCleanupExport
                     └── GET  /cleanup/{id}/audit  → HandleCleanupAudit
 
@@ -308,7 +308,7 @@ cmd/graphql/server.go
             └── GraphQL mutations/queries
 ```
 
-The `CleanupExporter` interface in `go/internal/api/cleanup_handler.go` decouples the REST handler from the concrete `cleanup.Exporter` struct, enabling mock injection in tests.
+The `CleanupExporter` interface in `go/internal/api/upload_handler.go` decouples the REST handler from the concrete `cleanup.Exporter` struct, enabling mock injection in tests.
 
 ---
 
@@ -319,7 +319,7 @@ The `CleanupExporter` interface in `go/internal/api/cleanup_handler.go` decouple
 | `sql/schema/011_cleanup_mode.sql` | Migration: `cleanup_sessions` + `cleanup_staging` tables |
 | `sql/queries/cleanup.sql` | 18 sqlc queries for the staging pipeline |
 | `go/internal/database/cleanup.sql.go` | Auto-generated type-safe DB accessors |
-| `go/internal/api/cleanup_handler.go` | REST: upload, export, audit endpoints |
+| `go/internal/api/upload_handler.go` | REST: upload, export, audit endpoints |
 | `go/internal/api/router.go` | Route registration |
 | `go/internal/api/handler.go` | `Handler` struct with injected cleanup dependencies |
 | `go/internal/services/cleanup/enricher.go` | NATS consumer + AI enrichment orchestration |

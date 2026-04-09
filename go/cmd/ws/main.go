@@ -29,7 +29,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	// Load Configuration
-	cfg, err := config.Load()
+	cfg, _, err := config.Load()
 	if err != nil {
 		logger.Error("Configuration Loading Failed", "error", err)
 		os.Exit(1)

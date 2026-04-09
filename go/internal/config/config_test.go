@@ -25,7 +25,7 @@ func TestLoad_Defaults(t *testing.T) {
 		os.Unsetenv("NATS_URL")
 	}()
 
-	cfg, err := Load()
+	cfg, _, err := Load()
 	require.NoError(t, err)
 
 	assert.Equal(t, "8080", cfg.Port)
@@ -47,7 +47,7 @@ func TestLoad_AIThresholdEnvOverride(t *testing.T) {
 		os.Unsetenv("AI_THRESHOLD")
 	}()
 
-	cfg, err := Load()
+	cfg, _, err := Load()
 	require.NoError(t, err)
 	assert.InDelta(t, 0.85, cfg.AIThreshold, 1e-9)
 }
@@ -71,7 +71,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 		os.Unsetenv("NATS_URL")
 	}()
 
-	cfg, err := Load()
+	cfg, _, err := Load()
 	require.NoError(t, err)
 
 	assert.Equal(t, "9090", cfg.Port)
@@ -93,7 +93,7 @@ func TestLoad_Streams(t *testing.T) {
 		os.Unsetenv("NATS_URL")
 	}()
 
-	cfg, err := Load()
+	cfg, _, err := Load()
 	require.NoError(t, err)
 
 	// Check if services are loaded from defaults.yaml

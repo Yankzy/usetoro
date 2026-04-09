@@ -83,6 +83,7 @@ nats:
         subjects:
           - tasks.>
           - proof.>
+          - events.>
 
     redux:
       stream_name: REDUX_TEST
@@ -91,11 +92,33 @@ nats:
         subjects:
           - redux.>
 agents:
-  - did: "did:toro:agent:cleanup_1"
-    name: "Accounting Cleanup Agent"
-    model: "gpt-4o-mini"
+  - did: "did:toro:agent:csv_mapping_1"
+    name: "CSV Mapping Agent"
+    model: "gpt-5.4-mini"
     engine: "internal"
-    internal_module: "cleanup-agent"
+    internal_module: "csv-mapping-agent"
+    agent_type: "accounting.cleanup"
+    publish_to: "proof.accounting.cleanup.columns"
+    subscribe_to: "events.accounting.1.cleanup"
+    queue_group: "csv-mapping-group"
+    durable_name: "csv-mapping-agent-durable-v5"
+    workflow_schema: '{"type": "object", "properties": {"status": {"type": "string"}, "mapped_rows": {"type": "object"}}}'
+    system_prompt: |
+      You are an expert data analyst parsing raw bank statement CSV headers. Analyze the columns and map them to standard accounting fields. You MUST reply with valid JSON.
+      The JSON must strictly conform to this schema and ONLY contain these fields:
+      {
+        "date_col_idx": <int>,
+        "description_col_idx": <int>,
+        "amount_col_idx": <int>,
+        "is_split_amount": <false unless there are clearly SEPARATE debit and credit columns>,
+        "debit_col_idx": <null if not split>,
+        "credit_col_idx": <null if not split>,
+        "vendor_col_idx": <null if no explicit vendor column>,
+        "customer_col_idx": <null if no customer column>,
+        "is_expense_positive": <bool>,
+        "confidence_score": <float 0 to 1>
+      }
+      Crucially, ensure description_col_idx corresponds to the memo/description column, not the date column! Use proper null types in JSON, never use 0 to represent absence!
     dependencies:
       database: false
       db_queries: true
@@ -103,9 +126,14 @@ agents:
 
   - did: "did:toro:agent:reconcile_expense_1"
     name: "Expense Reconciliation Agent"
-    model: "gpt-4o-mini"
+    model: "gpt-5.4-mini"
     engine: "internal"
     internal_module: "reconcile-expense-agent"
+    agent_type: "accounting.reconcile-expense"
+    subscribe_to: "proof.accounting.cleanup.enrichment"
+    publish_to: "proof.accounting.cleanup.reconcile.expense"
+    queue_group: "reconcile-expense-group"
+    durable_name: "reconcile-expense-agent-durable-v5"
     dependencies:
       database: false
       db_queries: true
@@ -113,9 +141,14 @@ agents:
 
   - did: "did:toro:agent:reconcile_revenue_1"
     name: "Revenue Reconciliation Agent"
-    model: "gpt-4o-mini"
+    model: "gpt-5.4-mini"
     engine: "internal"
     internal_module: "reconcile-revenue-agent"
+    agent_type: "accounting.reconcile-revenue"
+    subscribe_to: "proof.accounting.cleanup.enrichment"
+    publish_to: "proof.accounting.cleanup.reconcile.revenue"
+    queue_group: "reconcile-revenue-group"
+    durable_name: "reconcile-revenue-agent-durable-v5"
     dependencies:
       database: false
       db_queries: true
@@ -123,9 +156,14 @@ agents:
 
   - did: "did:toro:agent:approval_1"
     name: "Transaction Approval Agent"
-    model: "gpt-4o-mini"
+    model: "gpt-5.4-mini"
     engine: "internal"
     internal_module: "approval-agent"
+    agent_type: "accounting.approval"
+    subscribe_to: "proof.accounting.cleanup.reconcile.>"
+    publish_to: "events.accounting.approved"
+    queue_group: "approval-group"
+    durable_name: "approval-agent-durable-v5"
     dependencies:
       database: false
       db_queries: false
@@ -133,9 +171,14 @@ agents:
 
   - did: "did:toro:agent:stripe_processor_1"
     name: "Stripe Receipt Processor"
-    model: "gpt-4o-mini"
+    model: "gpt-5.4-mini"
     engine: "internal"
     internal_module: "stripe-processor-agent"
+    agent_type: "accounting.stripe-processor"
+    subscribe_to: "stripe.>"
+    publish_to: "events.stripe.processed"
+    queue_group: "stripe-processor-group"
+    durable_name: "stripe-processor-agent-durable-v4"
     dependencies:
       database: false
       db_queries: true

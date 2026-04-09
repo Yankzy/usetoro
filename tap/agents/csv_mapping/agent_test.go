@@ -1,4 +1,4 @@
-package cleanup
+package csvmapping
 
 import (
 	"strings"

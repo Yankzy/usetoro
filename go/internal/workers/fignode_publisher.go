@@ -245,3 +245,10 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 	w.logger.Info("✅ Published enriched items to Websocket clients", "count", count, "session", sessionID)
 	return nil
 }
+
+func init() {
+	RegisterFactory(func(deps Dependencies) (Worker, error) {
+		return NewFignodePublisherWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.LLMClient)
+	})
+}
+

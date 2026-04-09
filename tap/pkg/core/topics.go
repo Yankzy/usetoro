@@ -6,10 +6,10 @@ import (
 
 // Standard NATS Subject Prefixes
 const (
-	PrefixTasks   = "tasks"
-	PrefixAgents  = "agents"
-	PrefixEvents  = "events"
-	PrefixAlmanac = "almanac"
+	PrefixTasks   = "tasks"   // For task routing
+	PrefixAgents  = "agents"  // For agent inbox
+	PrefixEvents  = "events"  // For event routing
+	PrefixAlmanac = "almanac" // For almanac routing
 )
 
 // --- Task Routing ---
@@ -21,11 +21,20 @@ func BuildTaskSubject(domain string, complexity TaskComplexity, taskType string)
 	return fmt.Sprintf("%s.%s.%d.%s", PrefixTasks, domain, complexity, taskType)
 }
 
+// Example: events.accounting.1.verify
+func BuildEventSubject(domain string, complexity TaskComplexity, taskType string) string {
+	return fmt.Sprintf("%s.%s.%d.%s", PrefixEvents, domain, complexity, taskType)
+}
+
+// Example: almanac.accounting.1.verify
+func BuildAlmanacSubject(domain string, complexity TaskComplexity, taskType string) string {
+	return fmt.Sprintf("%s.%s.%d.%s", PrefixAlmanac, domain, complexity, taskType)
+}
+
 // --- Agent Routing ---
 
 // BuildAgentInbox constructs the direct address for a specific Agent.
-// Format: agents.<did_suffix>.inbox
-// We strip the "did:toro:" prefix to keep subjects shorter.
+// Format: agents.did.inbox
 func BuildAgentInbox(did string) string {
 	return fmt.Sprintf("%s.%s.inbox", PrefixAgents, did)
 }

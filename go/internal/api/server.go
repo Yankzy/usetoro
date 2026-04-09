@@ -37,7 +37,7 @@ func NewServer(
 	authenticator *auth.Authenticator,
 	redisClient *redis.Client,
 	natsClient *queue.Client,
-	cleanupExporter CleanupExporter,
+	exporter Exporter,
 ) *Server {
 	// Initialize webhook verifier registry
 	registry := NewVerifierRegistry()
@@ -84,7 +84,7 @@ func NewServer(
 		logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig,
 		authenticator, redisClient, st.Queries, reconciler, attachableService,
 		transactionService, entityService,
-		st.Pool, st.Queries, natsClient, cleanupExporter, wm,
+		st.Pool, st.Queries, natsClient, exporter, wm,
 	)
 	mux := NewRouter(h, wm)
 

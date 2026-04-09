@@ -248,3 +248,10 @@ func (w *TransactionWorker) markError(ctx context.Context, txID pgtype.UUID, err
 		ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
 	})
 }
+
+func init() {
+	RegisterFactory(func(deps Dependencies) (Worker, error) {
+		return NewTransactionWorker(deps.Logger, deps.Queue, deps.DBPool, deps.Store.Queries, deps.EntityResolver, deps.CoAMapper, deps.RuleEngine, deps.ProviderFactory)
+	})
+}
+

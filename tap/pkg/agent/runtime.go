@@ -39,10 +39,9 @@ func NewRuntime(logger *slog.Logger, bus core.EventBus, cfg core.AgentConfig, me
 func (r *Runtime) Start() error {
 	var err error
 	r.sub, err = r.Bus.QueueSubscribe(
-		r.Config.Subscription.Subject,
-		r.Config.Subscription.QueueGroup,
+		r.Config.SubscribeTo,
+		r.Config.QueueGroup,
 		r.handleTrigger,
-		nats.BindStream("GATE"),
 		nats.Durable(r.Config.DID),
 		nats.ManualAck(),
 	)

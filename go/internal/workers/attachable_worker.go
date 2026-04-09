@@ -120,3 +120,10 @@ func (w *AttachableWorker) handleEvent(ctx context.Context, msg *nats.Msg) {
 	msg.Ack()
 	w.logger.Info("✅ Successfully processed pending attachable", "erp_id", erpID)
 }
+
+func init() {
+	RegisterFactory(func(deps Dependencies) (Worker, error) {
+		return NewAttachableWorker(deps.Logger, deps.Queue, deps.AttachService)
+	})
+}
+

@@ -149,3 +149,10 @@ func (w *ERPEventWorker) handleRecategorizeTransaction(ctx context.Context, even
 	w.logger.Info("✅ Successfully recategorized transaction in ERP", "erp_entity_id", payload.ERPEntityID)
 	return nil
 }
+
+func init() {
+	RegisterFactory(func(deps Dependencies) (Worker, error) {
+		return NewERPEventWorker(deps.Logger, deps.Config, deps.Queue, deps.ProviderFactory, deps.FetchEntityFn)
+	})
+}
+

@@ -4,7 +4,7 @@ Executes deterministic clustering for parsed bank rows. This pipeline maps dupli
 
 ## Execution Trigger 
 
-This worker boots inside the `sync` microservice process (`go/cmd/sync/main.go`). It subscribes to the JetStream subject `proof.accounting.cleanup.inserted`. This event guarantees the upstream `CleanupAgent` has flushed its parsed CSV data into the database.
+This worker boots inside the `sync` microservice process (`go/cmd/sync/main.go`). It subscribes to the JetStream subject `proof.accounting.cleanup.inserted`. This event guarantees the upstream `CSVMappingAgent` has flushed its parsed CSV data into the database.
 
 ## Architecture & Workflow 
 

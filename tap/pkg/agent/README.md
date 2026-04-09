@@ -6,7 +6,7 @@ Provides the core interface to build and orchestrate AI Agents, Tools, and Worke
 
 To maintain clear boundaries in the codebase, we differentiate components as follows:
 
-- **Agent**: An actor powered by an LLM loop. It receives JetStream events, evaluates prompt contexts to make decisions, and emits state changes via Redux JSON Patches (e.g., `CleanupAgent`).
+- **Agent**: An actor powered by an LLM loop. It receives JetStream events, evaluates prompt contexts to make decisions, and emits state changes via Redux JSON Patches (e.g., `CSVMappingAgent`).
 - **Tool**: A specific function exposed to an LLM via a JSON schema definition. The LLM evaluates its context and decides if it needs to execute the function (e.g., `query_tax_id`).
 - **Worker**: A deterministic Go struct that executes specific data pipelines in sequence. It does not use LLM prompt reasoning. It triggers based on specific upstream events (e.g., `EnrichmentWorker` deduplicating rows after insertion).
 

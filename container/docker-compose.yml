@@ -87,6 +87,11 @@ services:
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,fignode,public"
       REDIS_URL: redis://redis:6379
+      QBO_CLIENT_ID: ${QBO_CLIENT_ID}
+      QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
+      QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION:-false}
+      CDC_ENABLED: ${CDC_ENABLED:-true}
+      CDC_SYNC_INTERVAL: ${CDC_SYNC_INTERVAL:-1h}
     depends_on:
       db:
         condition: service_healthy

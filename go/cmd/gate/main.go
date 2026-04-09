@@ -34,7 +34,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	// 2. Load and Validate Configuration
-	cfg, err := config.Load()
+	cfg, _, err := config.Load()
 	if err != nil {
 		logger.Error("Configuration Loading Failed", "error", err)
 		os.Exit(1)

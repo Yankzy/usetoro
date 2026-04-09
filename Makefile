@@ -169,7 +169,7 @@ create_networks:
 
 	
 prune:
-	docker system prune -a --volumes -f && docker volume prune -f && docker network prune -f && sudo systemctl restart docker
+	docker builder prune -f && docker system prune --volumes -f
 
 install_make:
 	apt-get update && apt-get install -y zsh && chsh -s $(which zsh) root && make install && uv pip install --upgrade pip
@@ -199,3 +199,10 @@ vndr:
 
 rebuild_all:
 	$(MAKE) vndr && $(MAKE) down && $(MAKE) upd && $(MAKE) logs
+
+
+ingest-messy:
+	curl -v -X POST \
+		-H "Authorization: Bearer $(TOKEN)" \
+		-F "file=@/Users/Yankz/Downloads/Messy Bank Transactions - Generating Messy Bank Transaction Data.csv" \
+		http://localhost:8080/files/upload

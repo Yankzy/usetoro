@@ -27,7 +27,7 @@ import (
 const defaultStreamName = "SETTLEMENT"
 
 func main() {
-	cfg, err := config.Load()
+	cfg, _, err := config.Load()
 	if err != nil {
 		log.Fatalf("Configuration Loading Failed: %v", err)
 	}

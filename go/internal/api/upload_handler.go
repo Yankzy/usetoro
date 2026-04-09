@@ -21,37 +21,36 @@ import (
 )
 
 const (
-	maxCleanupFileSize = 20 << 20 // 20 MiB
-	maxCleanupRows     = 10_000
+	maxFileSize = 20 << 20 // 20 MiB
+	maxRows     = 10_000
 )
 
-// CleanupExporter defines the export operations required by the cleanup endpoints.
-type CleanupExporter interface {
+// Exporter defines the export operations required by the export endpoints.
+type Exporter interface {
 	ExportExcel(ctx context.Context, sessionID string) ([]byte, error)
 	ExportAuditPDF(ctx context.Context, sessionID string) ([]byte, error)
 }
 
-// HandleCleanupUpload ingests a CSV or XLSX file of messy transactions.
-// POST /cleanup/upload (multipart/form-data: realm_id, file)
-func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
+// HandleFileIngestion ingests ANY supported file type and broadcasts it for triage.
+// POST /files/upload/{domain}/{taskType} (multipart/form-data: file)
+func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	h.Logger.Info("📡 [DEBUG] HandleFileIngestion received request")
 
-	// 1. Auth: extract user claims from JWT.
+	// 1. Extract routing parameters from the URL path
+	domain := r.PathValue("domain")
+	taskType := r.PathValue("taskType")
+
+	if domain == "" || taskType == "" {
+		JSONError(w, h.Logger, http.StatusBadRequest, "domain and taskType path parameters are required")
+		return
+	}
+
+	// 2. Auth: extract user claims from JWT.
 	claims, err := h.extractUserClaims(r)
 	if err != nil || claims == nil {
 		JSONError(w, h.Logger, http.StatusUnauthorized, "unauthorized")
 		return
-	}
-
-	// 2. Fetch the realm_id for this user's entity
-	entityUUID := pgtype.UUID{Bytes: claims.EntityID, Valid: true}
-
-	// We allow the upload to proceed even if no realm_id is linked yet (Excel-only offline mode).
-	var realmID pgtype.Text
-	var scannedRealmID string
-	err = h.DBPool.QueryRow(ctx, `SELECT realm_id FROM toro_core.erp_connections WHERE entity_id = $1 LIMIT 1`, entityUUID).Scan(&scannedRealmID)
-	if err == nil && scannedRealmID != "" {
-		realmID = pgtype.Text{String: scannedRealmID, Valid: true}
 	}
 
 	file, header, err := r.FormFile("file")
@@ -61,135 +60,131 @@ func (h *Handler) HandleCleanupUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	limitedFile := io.LimitReader(file, maxCleanupFileSize+1)
+	limitedFile := io.LimitReader(file, maxFileSize+1)
 
 	// 3. Parse rows based on extension.
 	name := strings.ToLower(header.Filename)
 	var rows [][]string
 	switch {
 	case strings.HasSuffix(name, ".csv"):
-		rows, err = parseCSV(r.Context(), limitedFile)
+		rows, err = parseCSV(ctx, limitedFile)
 	case strings.HasSuffix(name, ".xlsx"):
 		data, readErr := io.ReadAll(limitedFile)
 		if readErr != nil {
 			JSONError(w, h.Logger, http.StatusBadRequest, "failed to read file")
 			return
 		}
-		rows, err = parseXLSX(r.Context(), data)
+		rows, err = parseXLSX(ctx, data)
 	default:
 		JSONError(w, h.Logger, http.StatusBadRequest, "unsupported file type — use .csv or .xlsx")
 		return
 	}
+
 	if err != nil {
-		h.Logger.Warn("cleanup file parse error", "file", header.Filename, "error", err)
 		JSONError(w, h.Logger, http.StatusBadRequest, fmt.Sprintf("parse error: %v", err))
 		return
 	}
-	if len(rows) == 0 {
-		JSONError(w, h.Logger, http.StatusBadRequest, "file contains no data rows")
-		return
-	}
-	if len(rows) > maxCleanupRows {
-		JSONError(w, h.Logger, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("file exceeds maximum of %d rows", maxCleanupRows))
-		return
+
+	// 4. Check for session requirements (e.g. accounting.cleanup)
+	var uploadID string
+	var realmIDStr string
+
+	if domain == "accounting" && (taskType == "cleanup" || taskType == "csv_mapping") {
+		// Fetch the realm_id for this user's entity
+		entityUUID := pgtype.UUID{Bytes: claims.EntityID, Valid: true}
+		var realmID pgtype.Text
+		var scannedRealmID string
+		err = h.DBPool.QueryRow(ctx, `SELECT realm_id FROM toro_core.erp_connections WHERE entity_id = $1 LIMIT 1`, entityUUID).Scan(&scannedRealmID)
+		if err == nil && scannedRealmID != "" {
+			realmID = pgtype.Text{String: scannedRealmID, Valid: true}
+		}
+		realmIDStr = realmID.String
+
+		// Create a persistent session in the database
+		pgUserID := pgtype.UUID{Bytes: claims.UserID, Valid: true}
+		session, err := h.DB.CreateCleanupSession(ctx, database.CreateCleanupSessionParams{
+			CreatedBy: pgUserID,
+			FileName:  pgtype.Text{String: header.Filename, Valid: true},
+			RowCount:  int32(len(rows)),
+			RealmID:   realmID,
+		})
+		if err != nil {
+			h.Logger.Error("file ingestion: create cleanup session", "error", err)
+			JSONError(w, h.Logger, http.StatusInternalServerError, "failed to initialize cleanup session")
+			return
+		}
+		uploadID = uuid.UUID(session.ID.Bytes).String()
+	} else {
+		// Use ephemeral upload ID for other domains
+		uploadID = uuid.New().String()
 	}
 
-	// 4. Insert session + rows in a single transaction.
-	tx, err := h.DBPool.Begin(ctx)
-	if err != nil {
-		h.Logger.Error("cleanup upload: begin tx", "error", err)
-		JSONError(w, h.Logger, http.StatusInternalServerError, "internal server error")
-		return
-	}
-	defer tx.Rollback(ctx)
-
-	qtx := h.CleanupDB.WithTx(tx)
-
-	pgUserID := pgtype.UUID{Bytes: claims.UserID, Valid: true}
-	session, err := qtx.CreateCleanupSession(ctx, database.CreateCleanupSessionParams{
-		CreatedBy: pgUserID,
-		FileName:  pgtype.Text{String: header.Filename, Valid: true},
-		RowCount:  int32(len(rows)),
-		RealmID:   realmID,
-	})
-	if err != nil {
-		h.Logger.Error("cleanup upload: create session", "error", err)
-		JSONError(w, h.Logger, http.StatusInternalServerError, "internal server error")
-		return
-	}
-
-	// 4. Broadcast the task to the TAP Agent Network
+	// 5. Build a dynamic event payload
 	payload := map[string]interface{}{
-		"session_id": session.ID,
-		"realm_id":   realmID.String,
+		"upload_id":  uploadID,
+		"session_id": uploadID, // Backward compatibility for agents expecting session_id
+		"filename":   header.Filename,
+		"entity_id":  claims.EntityID, // Pass identity context downstream
+		"user_id":    claims.UserID,
+		"domain":     domain, // Explicitly pass routing context to the agent
+		"task_type":  taskType,
+		"realm_id":   realmIDStr,
 		"rows":       rows,
 	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	taskDef := core.TaskDefinition{
-		ID:         uuid.New().String(),
-		Domain:     "accounting.cleanup",
+		ID:         uploadID,
+		Domain:     fmt.Sprintf("%s.%s", domain, taskType), // Dynamic domain definition
 		Complexity: 0,
-		Reward:     1, // 1 micro-TORO
 		Payload:    payloadBytes,
 	}
 
-	// The gate API acts as the broadcaster. We need a DID for it.
-	// For now, we'll generate an ephemeral one, but ideally the API has a static identity.
 	kp, _ := identity.GenerateKeyPair()
 	gateDID := identity.CreateDID(kp.Public)
 
-	cfpEnv, err := core.NewEnvelope(
+	// Use INFORM performative because the gateway is just announcing a fact, not asking for bids yet.
+	informEnv, err := core.NewEnvelope(
 		uuid.New().String(),
 		gateDID,
-		"",                  // Broadcast
-		uuid.New().String(), // New Conversation CID
+		"",
+		uuid.New().String(),
 		core.CFP,
 		taskDef,
 	)
 	if err != nil {
-		h.Logger.Error("failed to create CFP envelope", "error", err)
-		JSONError(w, h.Logger, http.StatusInternalServerError, "failed to dispatch task")
+		JSONError(w, h.Logger, http.StatusInternalServerError, "failed to package event")
 		return
 	}
-	cfpEnv.Signature = kp.Sign(cfpEnv.Body)
+	informEnv.Signature = kp.Sign(informEnv.Body)
+	informBytes, _ := json.Marshal(informEnv)
 
-	cfpBytes, _ := json.Marshal(cfpEnv)
-
-	// Broadcast on NATS JetStream topic (0 is complexity)
-	topic := "tasks.accounting.cleanup.0"
-	if err := h.CleanupNATS.Publish(topic, cfpBytes); err != nil {
-		h.Logger.Error("failed to publish CFP", "error", err)
-		JSONError(w, h.Logger, http.StatusInternalServerError, "failed to dispatch task")
+	// 6. Publish to NATS JetStream topic: e.g., events.accounting.1.cleanup
+	topic := core.BuildEventSubject(domain, core.ComplexityEntry, taskType)
+	if err := h.NATS.Publish(topic, informBytes); err != nil {
+		JSONError(w, h.Logger, http.StatusInternalServerError, "failed to emit event")
 		return
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		h.Logger.Error("cleanup upload: commit tx", "error", err)
-		JSONError(w, h.Logger, http.StatusInternalServerError, "internal server error")
-		return
-	}
-
-	sessionIDStr := uuid.UUID(session.ID.Bytes).String()
-
-	h.Logger.Info("cleanup upload delegated to TAP Agent",
-		"session_id", sessionIDStr,
-		"realm_id", realmID.String,
+	h.Logger.Info("HandleFileIngestion delegated to Triage Agent",
+		"upload_id", uploadID,
+		"domain", domain,
+		"task_type", taskType,
+		"topic", topic,
 		"rows_extracted", len(rows),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted) // 202 Accepted because processing is async
+	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{
-		"session_id": sessionIDStr,
-		"status":     "PROCESSING",
+		"upload_id": uploadID,
+		"status":    "TRIAGING",
+		"topic":     topic,
 	})
 }
 
-// HandleCleanupExport streams a cleaned-up session as an Excel file.
-// GET /cleanup/{session_id}/export
-func (h *Handler) HandleCleanupExport(w http.ResponseWriter, r *http.Request) {
+// HandleExport streams a cleaned-up session as an Excel file.
+func (h *Handler) HandleExport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if claims, err := h.extractUserClaims(r); claims == nil || err != nil {
 		JSONError(w, h.Logger, http.StatusUnauthorized, "unauthorized")
@@ -202,27 +197,26 @@ func (h *Handler) HandleCleanupExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.CleanupExporter == nil {
+	if h.Exporter == nil {
 		JSONError(w, h.Logger, http.StatusServiceUnavailable, "export not available")
 		return
 	}
 
-	data, err := h.CleanupExporter.ExportExcel(ctx, sessionID)
+	data, err := h.Exporter.ExportExcel(ctx, sessionID)
 	if err != nil {
-		h.Logger.Error("cleanup export excel", "session_id", sessionID, "error", err)
+		h.Logger.Error("export excel", "session_id", sessionID, "error", err)
 		JSONError(w, h.Logger, http.StatusInternalServerError, "export failed")
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="cleanup-%s.xlsx"`, sessionID))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="export-%s.xlsx"`, sessionID))
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)
 }
 
-// HandleCleanupAudit streams a PDF audit report for a completed session.
-// GET /cleanup/{session_id}/audit
-func (h *Handler) HandleCleanupAudit(w http.ResponseWriter, r *http.Request) {
+// HandleAudit streams a PDF audit report for a completed session.
+func (h *Handler) HandleAudit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if claims, err := h.extractUserClaims(r); claims == nil || err != nil {
 		JSONError(w, h.Logger, http.StatusUnauthorized, "unauthorized")
@@ -235,14 +229,14 @@ func (h *Handler) HandleCleanupAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.CleanupExporter == nil {
+	if h.Exporter == nil {
 		JSONError(w, h.Logger, http.StatusServiceUnavailable, "export not available")
 		return
 	}
 
-	data, err := h.CleanupExporter.ExportAuditPDF(ctx, sessionID)
+	data, err := h.Exporter.ExportAuditPDF(ctx, sessionID)
 	if err != nil {
-		h.Logger.Error("cleanup audit pdf", "session_id", sessionID, "error", err)
+		h.Logger.Error("audit pdf", "session_id", sessionID, "error", err)
 		JSONError(w, h.Logger, http.StatusInternalServerError, "audit export failed")
 		return
 	}

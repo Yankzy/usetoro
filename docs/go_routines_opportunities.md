@@ -31,7 +31,7 @@ Moving these to a dedicated folder (e.g., `go/internal/workers/` or `go/internal
 
 ### 4. Bulk Cleanup Ingestion (`CleanupHandler`)
 **Current State**: 
-[HandleCleanupUpload](file:///Users/Yankz/programming/usetoro/go/internal/api/cleanup_handler.go#41-201) ([go/internal/api/cleanup_handler.go](file:///Users/Yankz/programming/usetoro/go/internal/api/cleanup_handler.go)) parses CSV/XLSX files and synchronously inserts up to 10,000 rows into the database while the user's HTTP request hangs open waiting for it to finish.
+[HandleFileIngestion](file:///Users/Yankz/programming/usetoro/go/internal/api/upload_handler.go#41-201) ([go/internal/api/upload_handler.go](file:///Users/Yankz/programming/usetoro/go/internal/api/upload_handler.go)) parses CSV/XLSX files and synchronously inserts up to 10,000 rows into the database while the user's HTTP request hangs open waiting for it to finish.
 **Event-Driven Opportunity**:
 - The API handler creates a single `cleanup_sessions` row in the DB with the uploaded file payload/reference and immediately returns a `201 Accepted`.
 - CDC emits `ledger.cleanup_sessions.insert`.

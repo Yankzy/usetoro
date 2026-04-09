@@ -11,22 +11,22 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+	"github.com/spf13/viper"
+
 	"github.com/Yankzy/usetoro/internal/config"
-	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/services/ai"
-	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/Yankzy/usetoro/tap/agents"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/memory"
-	"github.com/Yankzy/usetoro/tap/pkg/micrion"
 	"github.com/Yankzy/usetoro/tap/pkg/redux"
-	"github.com/Yankzy/usetoro/tap/pkg/transport"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 	"golang.org/x/sync/errgroup"
 )
 
 // LoadFunc provides an abstract way to deliver fresh configuration to the Daemon without locking it to a specific format
-type LoadFunc func() (*config.Config, error)
+type LoadFunc func() (*config.Config, *viper.Viper, error)
 
 // ProtocolDaemon represents the running service state
 type ProtocolDaemon struct {
@@ -35,93 +35,56 @@ type ProtocolDaemon struct {
 	Supervisor *agent.Supervisor
 	AdminPort  string
 
+	// Shared Infrastructure (Injected)
+	DBPool         *pgxpool.Pool
+	NATS           *nats.Conn
+	JS             nats.JetStreamContext
+	EntityResolver *ai.EntityResolver
+
 	currentConfig *config.Config
+	v             *viper.Viper
 }
 
-// New creates a new isolated ProtocolDaemon
-func New(logger *slog.Logger, loadFunc LoadFunc, adminPort string) *ProtocolDaemon {
+// New creates a new ProtocolDaemon with injected dependencies
+func New(
+	logger *slog.Logger,
+	loadFunc LoadFunc,
+	adminPort string,
+	dbPool *pgxpool.Pool,
+	nc *nats.Conn,
+	js nats.JetStreamContext,
+	entityResolver *ai.EntityResolver,
+) *ProtocolDaemon {
 	if adminPort == "" {
 		adminPort = ":9090"
 	}
 	return &ProtocolDaemon{
-		LoadFunc:  loadFunc,
-		Logger:    logger,
-		AdminPort: adminPort,
+		LoadFunc:       loadFunc,
+		Logger:         logger,
+		AdminPort:      adminPort,
+		DBPool:         dbPool,
+		NATS:           nc,
+		JS:             js,
+		EntityResolver: entityResolver,
 	}
 }
 
 // Run executes the main event loop with lifecycle management
 func (d *ProtocolDaemon) Run(ctx context.Context) error {
-	// Create a context that cancels on OS Signals
-	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	// Initial Load of configuration
+	// 1. Initial Load of configuration
 	if err := d.loadConfig(); err != nil {
 		return fmt.Errorf("initial config load failed: %w", err)
 	}
 
-	// 1. Initialize NATS (The Nervous System)
-	natsURL := d.currentConfig.NATS.URL
-	if natsURL == "" {
-		natsURL = "nats://nats:4222"
-	}
-	nc, err := transport.Connect(natsURL)
-	if err != nil {
-		return fmt.Errorf("nats connect error: %w", err)
-	}
-	defer nc.Close()
+	// 2. Initialize the Nervous System (EventBus)
+	// We use the injected NATS connections
+	bus := agent.NewNatsAdapter(d.NATS, d.JS)
 
-	js, err := transport.JetStream(nc)
-	if err != nil {
-		return fmt.Errorf("jetstream error: %w", err)
-	}
+	// 3. Initialize Memory (Long-term Storage)
+	mem := memory.NewManager(d.DBPool)
 
-	// Ensure all standard TAP streams (TASKS, EVENTS, CONTRACTS) exist
-	if err := transport.InitStreams(js); err != nil {
-		d.Logger.Error("failed to initialize nats streams", "error", err)
-		return fmt.Errorf("stream init error: %w", err)
-	}
-
-	_, err = micrion.SetupKV(js)
-	if err != nil {
-		return fmt.Errorf("micrion kv error: %w", err)
-	}
-
-	// Wrap NATS with our EventBus Adapter
-	bus := agent.NewNatsAdapter(nc, js)
-
-	// 1.5 Initialize Database & Memory (Long-term Storage)
-	dbConfig, err := pgxpool.ParseConfig(d.currentConfig.DatabaseURL)
-	if err != nil {
-		return fmt.Errorf("db config error: %w", err)
-	}
-	dbPool, err := pgxpool.NewWithConfig(ctx, dbConfig)
-	if err != nil {
-		return fmt.Errorf("db connection error: %w", err)
-	}
-	defer dbPool.Close()
-
-	if err := dbPool.Ping(ctx); err != nil {
-		d.Logger.Error("db ping failed", "error", err)
-		return fmt.Errorf("db ping failed: %w", err)
-	}
-
-	mem := memory.NewManager(dbPool)
-
-	pineconeKey := os.Getenv("PINECONE_API_KEY")
-	openaiKey := os.Getenv("OPENAI_API_KEY")
-	if pineconeKey == "" {
-		d.Logger.Warn("PINECONE_API_KEY missing, skipping AI Entity Resolvers")
-	}
-
-	pcObj, _ := vector.NewPineconeClient(pineconeKey, d.currentConfig.PineconeIndex, d.currentConfig.EmbeddingDimensions)
-	embedder, _ := vector.NewEmbedder(openaiKey, d.currentConfig.EmbeddingModel, d.currentConfig.EmbeddingDimensions)
-	st, _ := store.NewStore(nil, nil, d.currentConfig.EncryptionKey)
-	entityResolver := ai.NewEntityResolver(st, pcObj, embedder, d.currentConfig.AIThreshold)
-
-	// 2. Initialize the Agent Supervisor (The Hive)
-	d.Supervisor = agent.NewSupervisor(d.Logger, bus, mem, dbPool, entityResolver)
+	// 4. Initialize the Agent Supervisor (The Hive)
+	d.Supervisor = agent.NewSupervisor(d.Logger, bus, mem, d.DBPool, d.EntityResolver)
 
 	for name, factory := range agents.GetRegistry() {
 		d.Supervisor.RegisterInternalAgent(name, factory)
@@ -146,6 +109,11 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 		return d.watchForReload(ctx)
 	})
 
+	// Sub-system B.2: Viper Watcher (Native hot-reloading)
+	g.Go(func() error {
+		return d.watchWithViper(ctx)
+	})
+
 	// Sub-system C: The Supervisor (keeps agents alive)
 	// Monitors health and prints heartbeats
 	g.Go(func() error {
@@ -153,7 +121,7 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 	})
 
 	// Sub-system D: Global Redux Rollup State Compactor
-	rollupWorker := redux.NewRollupWorker(d.Logger, js, dbPool)
+	rollupWorker := redux.NewRollupWorker(d.Logger, d.JS, d.DBPool)
 	g.Go(func() error {
 		if err := rollupWorker.Start(ctx); err != nil {
 			d.Logger.Error("Fatal Rollup Initialization failing bounds", "err", err)
@@ -241,15 +209,50 @@ func (d *ProtocolDaemon) watchForReload(ctx context.Context) error {
 		}
 	}
 }
+// watchWithViper leverages native Viper file watching to reload configurations
+func (d *ProtocolDaemon) watchWithViper(ctx context.Context) error {
+	if d.v == nil {
+		d.Logger.Warn("Viper instance missing, skipping native hot-reload")
+		return nil
+	}
+
+	d.v.OnConfigChange(func(e fsnotify.Event) {
+		d.Logger.Info("🔄 Config file change detected via Viper", "file", e.Name)
+		
+		newCfg, err := config.Unmarshal(d.v)
+		if err != nil {
+			d.Logger.Error("Failed to unmarshal updated configuration", "error", err)
+			return
+		}
+
+		d.currentConfig = newCfg
+
+		// HotLoad: The Supervisor will diff the new config against running agents
+		if d.Supervisor != nil {
+			if err := d.Supervisor.LoadAgents(d.currentConfig.Agents); err != nil {
+				d.Logger.Error("Failed to reload agents after config change", "error", err)
+			} else {
+				d.Logger.Info("✅ Configuration reloaded successfully via Viper")
+			}
+		}
+	})
+
+	d.v.WatchConfig()
+	d.Logger.Info("👁️  Viper Config Watcher active")
+
+	<-ctx.Done()
+	return nil
+}
 
 // loadConfig abstracts away the native configuration system to hot load gracefully
 func (d *ProtocolDaemon) loadConfig() error {
-	newCfg, err := d.LoadFunc()
+	newCfg, v, err := d.LoadFunc()
 	if err != nil {
 		return fmt.Errorf("failed to load external config: %w", err)
 	}
 
 	d.currentConfig = newCfg
+	d.v = v
 
 	// HotLoad: The Supervisor will diff the new config against running agents
 	// It starts new ones, updates existing ones, and stops removed ones.

@@ -13,9 +13,9 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// CleanupWorker subscribes to NATS CDC events and enriches staging rows
+// CSVMappingWorker subscribes to NATS CDC events and enriches staging rows
 // using the existing EntityResolver + CoAMapper AI services.
-type CleanupWorker struct {
+type CSVMappingWorker struct {
 	db             *database.Queries
 	entityResolver *ai.EntityResolver
 	coaMapper      *ai.CoAMapper
@@ -24,15 +24,15 @@ type CleanupWorker struct {
 	logger         *slog.Logger
 }
 
-// NewCleanupWorker creates a new worker for cleanup ingestion and enrichment.
-func NewCleanupWorker(
+// NewCSVMappingWorker creates a new worker for csv mapping ingestion and enrichment.
+func NewCSVMappingWorker(
 	db *database.Queries,
 	entityResolver *ai.EntityResolver,
 	coaMapper *ai.CoAMapper,
 	nc *nats.Conn,
 	logger *slog.Logger,
-) (*CleanupWorker, error) {
-	return &CleanupWorker{
+) (*CSVMappingWorker, error) {
+	return &CSVMappingWorker{
 		db:             db,
 		entityResolver: entityResolver,
 		coaMapper:      coaMapper,
@@ -42,24 +42,24 @@ func NewCleanupWorker(
 	}, nil
 }
 
-func (e *CleanupWorker) Init(ctx context.Context) error {
+func (e *CSVMappingWorker) Init(ctx context.Context) error {
 	return nil
 }
 
-func (e *CleanupWorker) Subscriptions() []SubscriptionConfig {
+func (e *CSVMappingWorker) Subscriptions() []SubscriptionConfig {
 	return []SubscriptionConfig{
 		{
 			Subject: "proof.accounting.cleanup.columns",
-			Group:   "cleanup-worker-group",
-			Options: []nats.SubOpt{nats.Durable("cleanup-worker-durable-v2"), nats.DeliverAll(), nats.AckExplicit()},
+			Group:   "csv-mapping-worker-group",
+			Options: []nats.SubOpt{nats.Durable("csv-mapping-worker-durable-v5"), nats.DeliverAll(), nats.AckExplicit()},
 		},
 	}
 }
 
-func (e *CleanupWorker) Handle(ctx context.Context, msg *nats.Msg) error {
-	e.logger.Info("📡 [DEBUG] cleanup_worker received JetStream TAP message", "topic", msg.Subject, "data_length", len(msg.Data))
+func (e *CSVMappingWorker) Handle(ctx context.Context, msg *nats.Msg) error {
+	e.logger.Info("📡 [DEBUG] csv_mapping_worker received JetStream TAP message", "topic", msg.Subject, "data_length", len(msg.Data))
 	if err := e.handleProof(ctx, msg); err != nil {
-		e.logger.Error("cleanup worker transient error", "error", err)
+		e.logger.Error("csv mapping worker transient error", "error", err)
 		return err
 	}
 	return nil
@@ -77,18 +77,18 @@ type RawRow struct {
 }
 
 // handleProof processes the finalized mapping output from the AI TAP Agent.
-func (e *CleanupWorker) handleProof(ctx context.Context, msg *nats.Msg) error {
+func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error {
 	// 1. Unmarshal TAP Envelope
 	var env map[string]interface{}
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
-		e.logger.Error("cleanup worker: bad proof envelope", "error", err)
+		e.logger.Error("csv mapping worker: bad proof envelope", "error", err)
 		return nil
 	}
 
 	// Double check this is an INFORM message
 	perf, ok := env["perf"].(string)
 	if !ok || (perf != "INFORM" && perf != "inform") {
-		e.logger.Warn("cleanup worker: dropping message, perf mismatch", "perf_val", env["perf"])
+		e.logger.Warn("csv mapping worker: dropping message, perf mismatch", "perf_val", env["perf"])
 		return nil
 	}
 
@@ -98,38 +98,46 @@ func (e *CleanupWorker) handleProof(ctx context.Context, msg *nats.Msg) error {
 		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(bodyBytes, &proof); err != nil {
-		e.logger.Error("cleanup worker: proof unmarshal error", "error", err)
+		e.logger.Error("csv mapping worker: proof unmarshal error", "error", err)
 		return nil
 	}
 
 	// Ensure proof type is proof.api or API_CALL
 	if proof.Type != "API_CALL" && proof.Type != "proof.api" {
-		e.logger.Warn("cleanup worker: dropping message, type mismatch", "type_val", proof.Type)
+		e.logger.Warn("csv mapping worker: dropping message, type mismatch", "type_val", proof.Type)
 		return nil // not meant for us
 	}
 
-	var rows []RawRow
-	if err := json.Unmarshal(proof.Data, &rows); err != nil || len(rows) == 0 {
+	var rowMap map[string]RawRow
+	if err := json.Unmarshal(proof.Data, &rowMap); err != nil {
+		e.logger.Error("csv mapping worker: failed to unmarshal rows map", "error", err)
 		return nil
 	}
 
-	if len(rows) == 0 {
-		e.logger.Warn("cleanup worker: proof contained 0 rows")
+	if len(rowMap) == 0 {
+		e.logger.Warn("csv mapping worker: proof contained 0 rows")
 		return nil
 	}
 
-	sessionID := rows[0].SessionID
+	// Get session/realm from the first row
+	var sessionID, realmID string
+	for _, r := range rowMap {
+		sessionID = r.SessionID
+		realmID = r.RealmID
+		break
+	}
+
 	if sessionID == "" {
+		e.logger.Warn("csv mapping worker: missing sessionID in rows")
 		return nil
 	}
-	realmID := rows[0].RealmID
 
 	var pgSessionID pgtype.UUID
 	pgSessionID.Scan(sessionID)
 
 	meta, metaErr := msg.Metadata()
 	if metaErr == nil && meta.NumDelivered > 3 {
-		e.logger.Error("cleanup worker: poison pill message exceeded max retries", "session", sessionID)
+		e.logger.Error("csv mapping worker: poison pill message exceeded max retries", "session", sessionID)
 		e.db.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
 			ID:     pgSessionID,
 			Status: "ERROR",
@@ -138,7 +146,7 @@ func (e *CleanupWorker) handleProof(ctx context.Context, msg *nats.Msg) error {
 		return nil
 	}
 
-	e.logger.Info("cleanup worker: inserting AI-mapped rows", "session_id", sessionID, "count", len(rows))
+	e.logger.Info("csv mapping worker: inserting AI-mapped rows", "session_id", sessionID, "count", len(rowMap))
 
 	// Update session to PROCESSING
 	err := e.db.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
@@ -150,7 +158,7 @@ func (e *CleanupWorker) handleProof(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	// Insert rows
-	for _, row := range rows {
+	for _, row := range rowMap {
 		var dDate pgtype.Date
 		dDate.Scan(row.Date)
 
@@ -165,22 +173,28 @@ func (e *CleanupWorker) handleProof(ctx context.Context, msg *nats.Msg) error {
 			PredictedCustomerName: pgtype.Text{String: row.Customer, Valid: row.Customer != ""},
 		})
 		if err != nil {
-			e.logger.Error("cleanup worker: row insert failed", "error", err)
+			e.logger.Error("csv mapping worker: row insert failed", "error", err)
 			return fmt.Errorf("transient db error inserting row: %w", err)
 		}
 	}
 
-	e.logger.Info("cleanup worker: fully completed TAP DB inserts. Waiting for Enrichment Agent.")
+	e.logger.Info("csv mapping worker: fully completed TAP DB inserts. Waiting for Enrichment Agent.")
 
 	js, jsErr := e.nc.JetStream()
 	if jsErr == nil {
 		_, pubErr := js.Publish("proof.accounting.cleanup.inserted", msg.Data)
 		if pubErr != nil {
-			e.logger.Error("cleanup worker: failed to publish inserted proof", "error", pubErr)
+			e.logger.Error("csv mapping worker: failed to publish inserted proof", "error", pubErr)
 		}
 	} else {
-		e.logger.Error("cleanup worker: failed to get jetstream context", "error", jsErr)
+		e.logger.Error("csv mapping worker: failed to get jetstream context", "error", jsErr)
 	}
 
 	return nil
+}
+
+func init() {
+	RegisterFactory(func(deps Dependencies) (Worker, error) {
+		return NewCSVMappingWorker(deps.Store.Queries, deps.EntityResolver, deps.CoAMapper, deps.Queue, deps.Logger)
+	})
 }

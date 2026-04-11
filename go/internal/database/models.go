@@ -451,6 +451,14 @@ type ToroCoreWorkflow struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type ToroCoreWorkflowBlueprint struct {
+	Name         string
+	TriggerTopic string
+	Definition   []byte
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type ToroCoreWorkflowHistory struct {
 	ID         pgtype.UUID
 	WorkflowID pgtype.UUID

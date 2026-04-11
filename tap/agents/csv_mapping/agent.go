@@ -15,6 +15,7 @@ import (
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/redux"
+	"github.com/Yankzy/usetoro/tap/workflows"
 	"github.com/nats-io/nats.go"
 )
 
@@ -154,10 +155,18 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		}
 	}
 
-	a.Logger.Info("🧠 Processing AI mapping via Redux global wrapper", "session", payload.SessionID, "rows", len(payload.Rows))
+	// IMPORTANT:
+	// - `task.ID` is the Orchestrator workflow instance UUID (row id in toro_core.workflows).
+	// - `payload.SessionID` is business context (upload/session id) carried inside the payload.
+	// Redux tracing + Rollup must use the workflow instance UUID, not the session id.
+	a.Logger.Info("🧠 Processing AI mapping via Redux global wrapper",
+		"workflow_id", task.ID,
+		"session_id", payload.SessionID,
+		"rows", len(payload.Rows),
+	)
 
 	var workflowID pgtype.UUID
-	_ = workflowID.Scan(payload.SessionID)
+	_ = workflowID.Scan(task.ID)
 
 	// Redux configuration: schema + RBAC boundaries for this agent
 	wfCfg := agent.WorkflowConfig{
@@ -223,8 +232,10 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		proofEnv.Signature = a.KP.Sign(proofEnv.Body)
 
 		finalBytes, _ := json.Marshal(proofEnv)
-		targetTopic := a.Cfg.PublishTo
-		a.Logger.Info("🚀 Publishing validated proof to JetStream", "topic", targetTopic, "data_length", len(finalBytes))
+		// Agents always return proofs to the Orchestrator inbox.
+		// The Orchestrator advances the workflow state machine to the next step.
+		targetTopic := workflows.OrchestratorInbox
+		a.Logger.Info("🚀 Publishing validated proof to Orchestrator", "topic", targetTopic, "data_length", len(finalBytes))
 
 		if pubErr := a.Bus.Publish(targetTopic, finalBytes); pubErr != nil {
 			a.Logger.Error("Failed to publish proof", "error", pubErr)

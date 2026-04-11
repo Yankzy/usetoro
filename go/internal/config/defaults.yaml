@@ -38,12 +38,7 @@ nats:
           - plaid.>
           - internal.>
 
-    ws:
-      stream_name: QBO_EVENTS # Consumes from QBO stream (defined in components)
-      jetstream:
-        <<: *jetstream-default
-        subjects:
-          - qbo.events.connected
+
 
     erp:
       stream_name: TORO_ERP_EVENTS
@@ -83,7 +78,6 @@ nats:
         subjects:
           - tasks.>
           - proof.>
-          - events.>
 
     redux:
       stream_name: REDUX_TEST
@@ -91,17 +85,33 @@ nats:
         <<: *jetstream-default
         subjects:
           - redux.>
+
+    workflows:
+      stream_name: WORKFLOWS
+      jetstream:
+        <<: *jetstream-default
+        subjects:
+          - orchestrator.inbox
+          - agents.>
+          - worker.inbox.>
+          - workflow.events.>
+          - workflow.query.>
+
+    workflow_triggers:
+      stream_name: WORKFLOW_TRIGGERS
+      jetstream:
+        <<: *jetstream-default
+        # Bootstrap wide so producers can publish even before the Orchestrator has synced subjects.
+        # The Orchestrator will reconcile this to the exact set of trigger topics stored in Postgres.
+        subjects:
+          - events.>
 agents:
   - did: "did:toro:agent:csv_mapping_1"
     name: "CSV Mapping Agent"
     model: "gpt-5.4-mini"
     engine: "internal"
     internal_module: "csv-mapping-agent"
-    agent_type: "accounting.cleanup"
-    publish_to: "proof.accounting.cleanup.columns"
-    subscribe_to: "events.accounting.1.cleanup"
-    queue_group: "csv-mapping-group"
-    durable_name: "csv-mapping-agent-durable-v5"
+    activity_type: "agents.accounting.map_csv"
     workflow_schema: '{"type": "object", "properties": {"status": {"type": "string"}, "mapped_rows": {"type": "object"}}}'
     system_prompt: |
       You are an expert data analyst parsing raw bank statement CSV headers. Analyze the columns and map them to standard accounting fields. You MUST reply with valid JSON.
@@ -129,11 +139,7 @@ agents:
     model: "gpt-5.4-mini"
     engine: "internal"
     internal_module: "reconcile-expense-agent"
-    agent_type: "accounting.reconcile-expense"
-    subscribe_to: "proof.accounting.cleanup.enrichment"
-    publish_to: "proof.accounting.cleanup.reconcile.expense"
-    queue_group: "reconcile-expense-group"
-    durable_name: "reconcile-expense-agent-durable-v5"
+    activity_type: "agents.accounting.reconcile_expense"
     dependencies:
       database: false
       db_queries: true
@@ -144,11 +150,7 @@ agents:
     model: "gpt-5.4-mini"
     engine: "internal"
     internal_module: "reconcile-revenue-agent"
-    agent_type: "accounting.reconcile-revenue"
-    subscribe_to: "proof.accounting.cleanup.enrichment"
-    publish_to: "proof.accounting.cleanup.reconcile.revenue"
-    queue_group: "reconcile-revenue-group"
-    durable_name: "reconcile-revenue-agent-durable-v5"
+    activity_type: "agents.accounting.reconcile_revenue"
     dependencies:
       database: false
       db_queries: true
@@ -159,11 +161,7 @@ agents:
     model: "gpt-5.4-mini"
     engine: "internal"
     internal_module: "approval-agent"
-    agent_type: "accounting.approval"
-    subscribe_to: "proof.accounting.cleanup.reconcile.>"
-    publish_to: "events.accounting.approved"
-    queue_group: "approval-group"
-    durable_name: "approval-agent-durable-v5"
+    activity_type: "agents.accounting.approval"
     dependencies:
       database: false
       db_queries: false
@@ -174,11 +172,7 @@ agents:
     model: "gpt-5.4-mini"
     engine: "internal"
     internal_module: "stripe-processor-agent"
-    agent_type: "accounting.stripe-processor"
-    subscribe_to: "stripe.>"
-    publish_to: "events.stripe.processed"
-    queue_group: "stripe-processor-group"
-    durable_name: "stripe-processor-agent-durable-v4"
+    activity_type: "agents.payments.stripe_receipt_processor"
     dependencies:
       database: false
       db_queries: true

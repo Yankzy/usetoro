@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestContainsAllSubjects(t *testing.T) {
+func TestSubjectsExactMatch(t *testing.T) {
 	tests := []struct {
 		name     string
 		existing []string
@@ -12,16 +12,28 @@ func TestContainsAllSubjects(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "all required present identically",
+			name:     "exact match identical order",
 			existing: []string{"a", "b", "c"},
 			required: []string{"a", "b", "c"},
 			expected: true,
 		},
 		{
-			name:     "all required present but existing has more",
+			name:     "exact match different order",
+			existing: []string{"c", "a", "b"},
+			required: []string{"a", "b", "c"},
+			expected: true,
+		},
+		{
+			name:     "existing has more",
 			existing: []string{"a", "b", "c", "d"},
 			required: []string{"a", "c"},
-			expected: true,
+			expected: false,
+		},
+		{
+			name:     "required has more",
+			existing: []string{"a", "b"},
+			required: []string{"a", "b", "c"},
+			expected: false,
 		},
 		{
 			name:     "some required missing",
@@ -30,10 +42,10 @@ func TestContainsAllSubjects(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "empty required",
+			name:     "empty required non-empty existing",
 			existing: []string{"a", "b"},
 			required: []string{},
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "empty existing, required missing",
@@ -48,37 +60,13 @@ func TestContainsAllSubjects(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "existing covers required with tail wildcard",
+			name:     "wildcards mismatch",
 			existing: []string{"qbo.>"},
 			required: []string{"qbo.events.*", "qbo.test"},
-			expected: true,
-		},
-		{
-			name:     "existing covers required with single wildcard",
-			existing: []string{"qbo.*.created"},
-			required: []string{"qbo.events.created"},
-			expected: true,
-		},
-		{
-			name:     "existing uses wildcard but does not cover tail",
-			existing: []string{"qbo.*"},
-			required: []string{"qbo.events.created"},
-			expected: false, // Wait, qbo.* only matches ONE token. So qbo.events.created expands to two tokens, so false.
-		},
-		{
-			name:     "existing narrower than required",
-			existing: []string{"qbo.events.*"},
-			required: []string{"qbo.>"},
 			expected: false,
 		},
 		{
-			name:     "required has wildcard, existing has literal (should be false since existing doesn't cover required)",
-			existing: []string{"qbo.events.created"},
-			required: []string{"qbo.events.*"},
-			expected: false,
-		},
-		{
-			name:     "required exactly matches wildcard form of existing",
+			name:     "wildcards exact match",
 			existing: []string{"qbo.events.*"},
 			required: []string{"qbo.events.*"},
 			expected: true,
@@ -87,7 +75,7 @@ func TestContainsAllSubjects(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := containsAllSubjects(tt.existing, tt.required)
+			result := subjectsExactMatch(tt.existing, tt.required)
 			if result != tt.expected {
 				t.Errorf("expected %v, got %v for existing=%v, required=%v", tt.expected, result, tt.existing, tt.required)
 			}

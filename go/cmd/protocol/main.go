@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 
 	"github.com/Yankzy/usetoro/internal/config"
@@ -72,15 +73,102 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	}
 
 	// Ensure required streams exist
+	var validStreamNames []string
 	for _, srvCfg := range cfg.NATS.Services {
 		if srvCfg.StreamName != "" {
-			if err := q.EnsureStream(&nats.StreamConfig{
-				Name:     srvCfg.StreamName,
-				Subjects: srvCfg.JetStream.Subjects,
-			}); err != nil {
-				logger.Warn("Failed to ensure stream", "stream", srvCfg.StreamName, "error", err)
+			validStreamNames = append(validStreamNames, srvCfg.StreamName)
+		}
+		for _, compCfg := range srvCfg.Components {
+			if compCfg.StreamName != "" {
+				validStreamNames = append(validStreamNames, compCfg.StreamName)
 			}
 		}
+	}
+
+	if err := q.CleanupOrphanedStreams(validStreamNames); err != nil {
+		logger.Warn("Failed to cleanup orphaned streams", "error", err)
+	}
+
+	// Iterate streams in a stable order to avoid subject-overlap during migrations.
+	// Specifically: ensure `WORKFLOWS` is updated (removing `events.>`) before adding `WORKFLOW_TRIGGERS`.
+	serviceKeys := make([]string, 0, len(cfg.NATS.Services))
+	for k := range cfg.NATS.Services {
+		serviceKeys = append(serviceKeys, k)
+	}
+	sort.Slice(serviceKeys, func(i, j int) bool {
+		a, b := serviceKeys[i], serviceKeys[j]
+		if a == "workflows" && b != "workflows" {
+			return true
+		}
+		if b == "workflows" && a != "workflows" {
+			return false
+		}
+		if a == "workflow_triggers" && b != "workflow_triggers" {
+			return false
+		}
+		if b == "workflow_triggers" && a != "workflow_triggers" {
+			return true
+		}
+		return a < b
+	})
+
+	for _, svcName := range serviceKeys {
+		srvCfg := cfg.NATS.Services[svcName]
+		// 1. Main Service Stream
+		if srvCfg.StreamName != "" && len(srvCfg.JetStream.Subjects) > 0 {
+			streamCfg := &nats.StreamConfig{
+				Name:        srvCfg.StreamName,
+				Subjects:    srvCfg.JetStream.Subjects,
+				Storage:     nats.FileStorage,
+				MaxAge:      srvCfg.JetStream.MaxAge,
+				Replicas:    srvCfg.JetStream.Replicas,
+				DenyDelete:  srvCfg.JetStream.DenyDelete,
+				DenyPurge:   srvCfg.JetStream.DenyPurge,
+				AllowRollup: srvCfg.JetStream.AllowRollup,
+				AllowDirect: srvCfg.JetStream.AllowDirect,
+			}
+			if streamCfg.Replicas == 0 {
+				streamCfg.Replicas = 1
+			}
+			if streamCfg.Name == "WORKFLOW_TRIGGERS" {
+				// Subjects are reconciled dynamically by the Orchestrator; don't overwrite them here.
+				if err := q.EnsureStreamExists(streamCfg); err != nil {
+					logger.Warn("Failed to ensure stream exists", "service", svcName, "stream", srvCfg.StreamName, "error", err)
+				}
+			} else {
+				if err := q.EnsureStream(streamCfg); err != nil {
+					logger.Warn("Failed to ensure stream", "service", svcName, "stream", srvCfg.StreamName, "error", err)
+				}
+			}
+		}
+
+		// 2. Component Streams
+		for compName, compCfg := range srvCfg.Components {
+			if compCfg.StreamName != "" && len(compCfg.JetStream.Subjects) > 0 {
+				compStreamCfg := &nats.StreamConfig{
+					Name:        compCfg.StreamName,
+					Subjects:    compCfg.JetStream.Subjects,
+					Storage:     nats.FileStorage,
+					MaxAge:      compCfg.JetStream.MaxAge,
+					Replicas:    compCfg.JetStream.Replicas,
+					DenyDelete:  compCfg.JetStream.DenyDelete,
+					DenyPurge:   compCfg.JetStream.DenyPurge,
+					AllowRollup: compCfg.JetStream.AllowRollup,
+					AllowDirect: compCfg.JetStream.AllowDirect,
+				}
+				if compStreamCfg.Replicas == 0 {
+					compStreamCfg.Replicas = 1
+				}
+				if err := q.EnsureStream(compStreamCfg); err != nil {
+					logger.Warn("Failed to ensure component stream", "component", compName, "stream", compCfg.StreamName, "error", err)
+				}
+			}
+		}
+	}
+
+	if err := q.WaitForStreamsReady(validStreamNames); err != nil {
+		logger.Error("Critical failure waiting for JetStream cluster stability", "error", err)
+		return fmt.Errorf("crashing to reboot JetStream cluster stability: %w", err)
 	}
 
 	// 2. PostgreSQL Connection Pool

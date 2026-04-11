@@ -84,16 +84,6 @@ envs_used:
 	read SER_NAME; \
 	$(DOCKER_COMPOSE) exec "$$SER_NAME" env
 
-
-rebuild: fix-permissions
-	@if [ -n "$(RUN_ARGS)" ]; then \
-		$(DOCKER_COMPOSE) up --build -d --force-recreate $(RUN_ARGS); \
-	else \
-		echo "Enter the service name: "; \
-		read SER_NAME; \
-		$(DOCKER_COMPOSE) up --build -d --force-recreate $$SER_NAME; \
-	fi
-
 build: create_networks
 	$(DOCKER_COMPOSE) build $(SERVICES)
 
@@ -201,8 +191,18 @@ rebuild_all:
 	$(MAKE) vndr && $(MAKE) down && $(MAKE) upd && $(MAKE) logs
 
 
+rebuild: fix-permissions
+	@if [ -n "$(RUN_ARGS)" ]; then \
+		$(DOCKER_COMPOSE) up --build -d --force-recreate $(RUN_ARGS); \
+	else \
+		echo "Enter the service name: "; \
+		read SER_NAME; \
+		$(DOCKER_COMPOSE) up --build -d --force-recreate $$SER_NAME; \
+	fi
+
 ingest-messy:
 	curl -v -X POST \
 		-H "Authorization: Bearer $(TOKEN)" \
 		-F "file=@/Users/Yankz/Downloads/Messy Bank Transactions - Generating Messy Bank Transaction Data.csv" \
-		http://localhost:8080/files/upload
+		http://localhost:8080/files/upload/accounting/cleanup
+

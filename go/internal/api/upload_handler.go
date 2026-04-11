@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -61,23 +62,53 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	limitedFile := io.LimitReader(file, maxFileSize+1)
+	data, readErr := io.ReadAll(limitedFile)
+	if readErr != nil {
+		JSONError(w, h.Logger, http.StatusBadRequest, "failed to read file")
+		return
+	}
+	if len(data) > maxFileSize {
+		JSONError(w, h.Logger, http.StatusBadRequest, "file too large (max 20MiB)")
+		return
+	}
 
-	// 3. Parse rows based on extension.
+	ctype := ""
+	if header != nil && header.Header != nil {
+		ctype = header.Header.Get("Content-Type")
+	}
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	h.Logger.Info("📡 [DEBUG] HandleFileIngestion received upload",
+		"filename", header.Filename,
+		"ext", ext,
+		"content_type", ctype,
+		"bytes", len(data),
+	)
+
+	// 3. Parse rows based on extension (with a conservative content-type fallback).
 	name := strings.ToLower(header.Filename)
 	var rows [][]string
 	switch {
 	case strings.HasSuffix(name, ".csv"):
-		rows, err = parseCSV(ctx, limitedFile)
+		rows, err = parseCSV(ctx, bytes.NewReader(data))
 	case strings.HasSuffix(name, ".xlsx"):
-		data, readErr := io.ReadAll(limitedFile)
-		if readErr != nil {
-			JSONError(w, h.Logger, http.StatusBadRequest, "failed to read file")
-			return
-		}
 		rows, err = parseXLSX(ctx, data)
 	default:
-		JSONError(w, h.Logger, http.StatusBadRequest, "unsupported file type — use .csv or .xlsx")
-		return
+		// If a client supplies the wrong filename extension, allow a safe fallback:
+		// - XLSX is a ZIP container ("PK..")
+		// - CSV should be explicitly labeled as csv by the client (Content-Type)
+		if bytes.HasPrefix(data, []byte("PK\x03\x04")) {
+			rows, err = parseXLSX(ctx, data)
+		} else if strings.Contains(strings.ToLower(ctype), "csv") {
+			rows, err = parseCSV(ctx, bytes.NewReader(data))
+			// Heuristic: treat one-column "csv" as likely not a real CSV.
+			// This prevents accidentally ingesting random text/markdown when the client mislabels files.
+			if err == nil && !looksLikeDelimitedTable(rows) {
+				err = fmt.Errorf("content does not look like a delimited table")
+			}
+		} else {
+			JSONError(w, h.Logger, http.StatusBadRequest, fmt.Sprintf("unsupported file type — use .csv or .xlsx (received %q, content-type %q)", header.Filename, ctype))
+			return
+		}
 	}
 
 	if err != nil {
@@ -149,7 +180,7 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 		gateDID,
 		"",
 		uuid.New().String(),
-		core.CFP,
+		core.INFORM,
 		taskDef,
 	)
 	if err != nil {
@@ -162,6 +193,7 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 	// 6. Publish to NATS JetStream topic: e.g., events.accounting.1.cleanup
 	topic := core.BuildEventSubject(domain, core.ComplexityEntry, taskType)
 	if err := h.NATS.Publish(topic, informBytes); err != nil {
+		h.Logger.Error("JetStream publish failed", "topic", topic, "error", err)
 		JSONError(w, h.Logger, http.StatusInternalServerError, "failed to emit event")
 		return
 	}
@@ -174,12 +206,25 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 		"rows_extracted", len(rows),
 	)
 
+	// 7. Success Response
+	// Fetch the workflow blueprint from the Orchestrator (via NATS) so the frontend can render immediately.
+	var blueprint map[string]interface{}
+	if h.NATS != nil {
+		msg, err := h.NATS.Conn().Request("workflow.query.blueprint", []byte(topic), 1*time.Second)
+		if err == nil {
+			json.Unmarshal(msg.Data, &blueprint)
+		} else {
+			h.Logger.Warn("Failed to fetch blueprint for visualizer", "topic", topic, "error", err)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"upload_id": uploadID,
-		"status":    "TRIAGING",
+		"status":    "processing",
 		"topic":     topic,
+		"blueprint": blueprint,
 	})
 }
 
@@ -248,6 +293,16 @@ func (h *Handler) HandleAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─── parsing helpers ──────────────────────────────────────────────────────────
+
+func looksLikeDelimitedTable(rows [][]string) bool {
+	// A "real" table almost always has at least one row with 2+ columns.
+	for _, r := range rows {
+		if len(r) >= 2 {
+			return true
+		}
+	}
+	return false
+}
 
 func parseCSV(ctx context.Context, r io.Reader) ([][]string, error) {
 	cr := csv.NewReader(r)

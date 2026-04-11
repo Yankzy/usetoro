@@ -17,3 +17,33 @@ RETURNING *;
 INSERT INTO toro_core.workflow_history (workflow_id, role, content)
 VALUES (@workflow_id, @role, @content)
 RETURNING *;
+
+-- =========================================================================
+-- Workflow Blueprints (declarative definitions)
+-- =========================================================================
+
+-- name: UpsertWorkflowBlueprint :one
+INSERT INTO toro_core.workflow_blueprints (name, trigger_topic, definition)
+VALUES (@name, @trigger_topic, @definition)
+ON CONFLICT (name) DO UPDATE
+SET trigger_topic = EXCLUDED.trigger_topic,
+    definition    = EXCLUDED.definition,
+    updated_at    = NOW()
+RETURNING *;
+
+-- name: GetWorkflowBlueprints :many
+SELECT *
+FROM toro_core.workflow_blueprints
+ORDER BY name;
+
+-- name: GetBlueprintByName :one
+SELECT *
+FROM toro_core.workflow_blueprints
+WHERE name = $1
+LIMIT 1;
+
+-- name: GetBlueprintByNameOrTriggerTopic :one
+SELECT *
+FROM toro_core.workflow_blueprints
+WHERE name = $1 OR trigger_topic = $1
+LIMIT 1;

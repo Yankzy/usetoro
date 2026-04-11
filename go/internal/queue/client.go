@@ -94,19 +94,10 @@ func (c *Client) EnsureStream(cfg *nats.StreamConfig) error {
 
 	if err == nil {
 		// Stream exists, update if needed
-		// Check if subjects need to be updated
-		if !containsAllSubjects(info.Config.Subjects, cfg.Subjects) {
+		// Check if subjects need to be exactly updated (added or removed)
+		if !subjectsExactMatch(info.Config.Subjects, cfg.Subjects) {
 			updateCfg := info.Config
-			// merge subjects
-			subjectMap := make(map[string]bool)
-			for _, s := range updateCfg.Subjects {
-				subjectMap[s] = true
-			}
-			for _, s := range cfg.Subjects {
-				if !subjectMap[s] {
-					updateCfg.Subjects = append(updateCfg.Subjects, s)
-				}
-			}
+			updateCfg.Subjects = cfg.Subjects
 
 			_, err = c.js.UpdateStream(&updateCfg)
 			if err != nil {
@@ -120,26 +111,93 @@ func (c *Client) EnsureStream(cfg *nats.StreamConfig) error {
 		return fmt.Errorf("failed to check stream status: %w", err)
 	}
 
-	_, err = c.js.AddStream(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to add stream: %w", err)
+	var addErr error
+	for i := 0; i < 5; i++ {
+		_, addErr = c.js.AddStream(cfg)
+		if addErr == nil {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
 	}
 
+	return fmt.Errorf("failed to add stream after retries: %w", addErr)
+}
+
+// EnsureStreamExists creates a stream if it does not exist, but will not reconcile/update its subjects.
+// This is useful for streams whose subjects are managed dynamically at runtime (e.g. by another component).
+func (c *Client) EnsureStreamExists(cfg *nats.StreamConfig) error {
+	_, err := c.js.StreamInfo(cfg.Name)
+	if err == nil {
+		return nil
+	}
+	if err != nats.ErrStreamNotFound {
+		return fmt.Errorf("failed to check stream status: %w", err)
+	}
+
+	var addErr error
+	for i := 0; i < 5; i++ {
+		_, addErr = c.js.AddStream(cfg)
+		if addErr == nil {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	return fmt.Errorf("failed to add stream after retries: %w", addErr)
+}
+
+// CleanupOrphanedStreams deletes any stream in the NATS server that is not listed in validStreamNames.
+// This prevents legacy/renamed streams from causing 'subject overlap' errors on startup.
+func (c *Client) CleanupOrphanedStreams(validStreamNames []string) error {
+	validMap := make(map[string]bool)
+	for _, name := range validStreamNames {
+		validMap[name] = true
+	}
+
+	for streamName := range c.js.StreamNames() {
+		if !validMap[streamName] {
+			if err := c.js.DeleteStream(streamName); err != nil {
+				return fmt.Errorf("failed to delete orphaned stream %q: %w", streamName, err)
+			}
+		}
+	}
 	return nil
 }
 
-// containsAllSubjects checks if all required subjects are present in the stream config.
-// It supports NATS wildcards (* and >) to determine if existing subjects cover the required ones.
-func containsAllSubjects(existing, required []string) bool {
-	for _, req := range required {
-		covered := false
-		for _, ex := range existing {
-			if subjectIsCovered(req, ex) {
-				covered = true
+// WaitForStreamsReady aggressively blocks until the provided streams report as healthy
+// within the JetStream Raft cluster. This prevents local `stream not found` consumer crashes
+// that occur immediately after an `AddStream` if the nodes haven't finished electing.
+func (c *Client) WaitForStreamsReady(streamNames []string) error {
+	for _, streamName := range streamNames {
+		ready := false
+		for i := 0; i < 15; i++ { // Allow up to 30s for clustering to stabilize locally
+			info, err := c.js.StreamInfo(streamName)
+			if err == nil && info != nil && info.Config.Name == streamName {
+				ready = true
 				break
 			}
+			time.Sleep(2 * time.Second)
 		}
-		if !covered {
+		if !ready {
+			return fmt.Errorf("stream %q failed to stabilize its cluster leader in time", streamName)
+		}
+	}
+	return nil
+}
+
+// subjectsExactMatch checks if two arrays of subjects contain the exact same elements (regardless of order).
+func subjectsExactMatch(existing, required []string) bool {
+	if len(existing) != len(required) {
+		return false
+	}
+
+	existingMap := make(map[string]bool)
+	for _, req := range existing {
+		existingMap[req] = true
+	}
+
+	for _, req := range required {
+		if !existingMap[req] {
 			return false
 		}
 	}

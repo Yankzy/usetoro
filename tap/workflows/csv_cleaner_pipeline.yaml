@@ -1,0 +1,38 @@
+name: CSV Cleaner Pipeline
+version: "1.0"
+trigger_topic: events.accounting.*.cleanup
+steps:
+  - id: map_columns
+    activity_type: agents.accounting.map_csv
+    task_queue: tasks.accounting.cleanup.mapping   # Public topic where CFP is broadcast
+    negotiate: true                                # Allow 3rd party bids via PROPOSE
+    timeout: "60s"
+    description: "Takes raw rows, maps CSV headers to canonical struct, filters invalid rows."
+    
+  - id: commit_mapped_columns
+    activity_type: workers.database.insert_rows
+    task_queue: worker.inbox.csv-mapping-worker    # Direct push to a known internal worker
+    negotiate: false
+    timeout: "10s"
+    description: "Inserts the mapped rows into Postgres DB as PENDING."
+
+  - id: run_enrichment
+    activity_type: workers.database.enrich_rows
+    task_queue: worker.inbox.enrichment-worker
+    negotiate: false
+    timeout: "120s"
+    description: "Legacy enrichment step that maps strings to DB entities, outputs ENRICHED events."
+
+  - id: reconcile_revenue
+    activity_type: agents.accounting.reconcile_revenue
+    task_queue: tasks.accounting.cleanup.reconcile.revenue
+    negotiate: true
+    timeout: "60s"
+    description: "Filters positive entries and assigns Customers/Accounts via spatial resolution."
+
+  - id: reconcile_expense
+    activity_type: agents.accounting.reconcile_expense
+    task_queue: tasks.accounting.cleanup.reconcile.expense
+    negotiate: true
+    timeout: "60s"
+    description: "Filters negative entries and assigns Vendors/Accounts via spatial resolution."

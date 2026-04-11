@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -181,33 +182,89 @@ func main() {
 		)
 
 		if err == nil {
-			// Ensure QBO events stream exists
-			streamCfg := &nats.StreamConfig{
-				Name:     "QBO_EVENTS",
-				Subjects: []string{"qbo.>"},
-				Storage:  nats.FileStorage,
-				MaxAge:   72 * time.Hour,
+
+			// Ensure all required streams exist (config-driven)
+			serviceKeys := make([]string, 0, len(cfg.NATS.Services))
+			for k := range cfg.NATS.Services {
+				serviceKeys = append(serviceKeys, k)
 			}
-			if err := queueClient.EnsureStream(streamCfg); err == nil {
-				// Ensure cards stream exists
-				cardsStreamCfg := &nats.StreamConfig{
-					Name:     "cards",
-					Subjects: []string{"cards.>"},
-					Storage:  nats.FileStorage,
-					MaxAge:   72 * time.Hour,
+			sort.Slice(serviceKeys, func(i, j int) bool {
+				a, b := serviceKeys[i], serviceKeys[j]
+				if a == "workflows" && b != "workflows" {
+					return true
 				}
-				if err := queueClient.EnsureStream(cardsStreamCfg); err != nil {
-					logger.Error("Failed to ensure cards stream", "error", err)
+				if b == "workflows" && a != "workflows" {
+					return false
+				}
+				if a == "workflow_triggers" && b != "workflow_triggers" {
+					return false
+				}
+				if b == "workflow_triggers" && a != "workflow_triggers" {
+					return true
+				}
+				return a < b
+			})
+
+			for _, svcName := range serviceKeys {
+				srvCfg := cfg.NATS.Services[svcName]
+				if srvCfg.StreamName != "" {
+					streamCfg := &nats.StreamConfig{
+						Name:        srvCfg.StreamName,
+						Subjects:    srvCfg.JetStream.Subjects,
+						Storage:     nats.FileStorage,
+						MaxAge:      srvCfg.JetStream.MaxAge,
+						Replicas:    srvCfg.JetStream.Replicas,
+						DenyDelete:  srvCfg.JetStream.DenyDelete,
+						DenyPurge:   srvCfg.JetStream.DenyPurge,
+						AllowRollup: srvCfg.JetStream.AllowRollup,
+						AllowDirect: srvCfg.JetStream.AllowDirect,
+					}
+					if streamCfg.Replicas == 0 {
+						streamCfg.Replicas = 1
+					}
+					if streamCfg.Name == "WORKFLOW_TRIGGERS" {
+						if err := queueClient.EnsureStreamExists(streamCfg); err != nil {
+							logger.Warn("Failed to ensure stream exists", "service", svcName, "stream", srvCfg.StreamName, "error", err)
+						}
+					} else {
+						if err := queueClient.EnsureStream(streamCfg); err != nil {
+							logger.Warn("Failed to ensure stream", "service", svcName, "stream", srvCfg.StreamName, "error", err)
+						}
+					}
 				}
 
-				logger.Info("Connected to NATS and JetStream stream ensured")
-				lastErr = nil
-				break
-			} else {
-				lastErr = err
-				logger.Warn("Failed to ensure JetStream stream, retrying...", "error", err)
-				queueClient.Close()
+				for compName, compCfg := range srvCfg.Components {
+					if compCfg.StreamName != "" {
+						compStreamCfg := &nats.StreamConfig{
+							Name:        compCfg.StreamName,
+							Subjects:    compCfg.JetStream.Subjects,
+							Storage:     nats.FileStorage,
+							MaxAge:      compCfg.JetStream.MaxAge,
+							Replicas:    compCfg.JetStream.Replicas,
+							DenyDelete:  compCfg.JetStream.DenyDelete,
+							DenyPurge:   compCfg.JetStream.DenyPurge,
+							AllowRollup: compCfg.JetStream.AllowRollup,
+							AllowDirect: compCfg.JetStream.AllowDirect,
+						}
+						if compStreamCfg.Replicas == 0 {
+							compStreamCfg.Replicas = 1
+						}
+						if err := queueClient.EnsureStream(compStreamCfg); err != nil {
+							logger.Warn("Failed to ensure component stream", "component", compName, "stream", compCfg.StreamName, "error", err)
+						}
+					}
+				}
 			}
+
+			// Hardcode wait for QBO_EVENTS since ws-1 explicitly binds to them.
+			if err := queueClient.WaitForStreamsReady([]string{"QBO_EVENTS"}); err != nil {
+				logger.Error("Critical failure waiting for JetStream cluster stability", "error", err)
+				os.Exit(1)
+			}
+
+			logger.Info("Connected to NATS and JetStream streams ensured")
+			lastErr = nil
+			break
 		} else {
 			lastErr = err
 			logger.Warn("Failed to connect to NATS, retrying...", "error", err)
@@ -234,6 +291,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer qboConsumer.Stop()
+
+	// Create and start Workflow event consumer
+	workflowConsumer := wshandler.NewWorkflowEventConsumer(queueClient, hub, logger, cfg)
+	if err := workflowConsumer.Start(); err != nil {
+		logger.Error("Failed to start workflow event consumer", "error", err)
+		os.Exit(1)
+	}
+	defer workflowConsumer.Stop()
 
 	// Create message handler
 	messageHandler := wshandler.NewMessageHandler(logger, qboConfig)

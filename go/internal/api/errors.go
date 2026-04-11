@@ -14,6 +14,8 @@ type ErrorResponse struct {
 
 // JSONError sends a structured JSON error response.
 func JSONError(w http.ResponseWriter, logger *slog.Logger, status int, msg string) {
+	logger.Error("API returning error response", "status", status, "msg", msg)
+	
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 

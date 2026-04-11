@@ -37,20 +37,26 @@ func NewRuntime(logger *slog.Logger, bus core.EventBus, cfg core.AgentConfig, me
 
 // Start begins the event loop.
 func (r *Runtime) Start() error {
+	// Subscribe to the task queue assigned by the Orchestrator.
+	// If TaskQueue is empty this is a no-op (agent relies on inbox subscription in BaseAgent).
+	if r.Config.TaskQueue == "" {
+		r.Logger.Info("🧠 Agent Runtime: no task queue assigned yet, skipping subscription")
+		return nil
+	}
+
 	var err error
 	r.sub, err = r.Bus.QueueSubscribe(
-		r.Config.SubscribeTo,
+		r.Config.TaskQueue,
 		r.Config.QueueGroup,
 		r.handleTrigger,
 		nats.Durable(r.Config.DID),
 		nats.ManualAck(),
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
-	r.Logger.Info("🧠 Agent Online", "model", r.Config.Model)
+	r.Logger.Info("🧠 Agent Online", "model", r.Config.Model, "task_queue", r.Config.TaskQueue)
 	return nil
 }
 

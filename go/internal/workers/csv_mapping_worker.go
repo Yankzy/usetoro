@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/services/cleanup"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/Yankzy/usetoro/tap/workflows"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
 )
@@ -49,9 +54,9 @@ func (e *CSVMappingWorker) Init(ctx context.Context) error {
 func (e *CSVMappingWorker) Subscriptions() []SubscriptionConfig {
 	return []SubscriptionConfig{
 		{
-			Subject: "proof.accounting.cleanup.columns",
+			Subject: "worker.inbox.csv-mapping-worker",
 			Group:   "csv-mapping-worker-group",
-			Options: []nats.SubOpt{nats.Durable("csv-mapping-worker-durable-v5"), nats.DeliverAll(), nats.AckExplicit()},
+			Options: []nats.SubOpt{nats.Durable("csv-mapping-worker-durable-v6"), nats.DeliverAll(), nats.AckExplicit()},
 		},
 	}
 }
@@ -85,9 +90,10 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 		return nil
 	}
 
-	// Double check this is an INFORM message
-	perf, ok := env["perf"].(string)
-	if !ok || (perf != "INFORM" && perf != "inform") {
+	// Check performative
+	perfStr, ok := env["perf"].(string)
+	perf := core.Performative(perfStr)
+	if !ok || (perf != core.INFORM && perf != core.ACCEPT_PROPOSAL) {
 		e.logger.Warn("csv mapping worker: dropping message, perf mismatch", "perf_val", env["perf"])
 		return nil
 	}
@@ -97,13 +103,26 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 		Type string          `json:"type"`
 		Data json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(bodyBytes, &proof); err != nil {
-		e.logger.Error("csv mapping worker: proof unmarshal error", "error", err)
-		return nil
+
+	// First try interpreting it as a FIPA ACCEPT_PROPOSAL TaskDefinition payload
+	var taskDef struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(bodyBytes, &taskDef); err == nil && len(taskDef.Payload) > 0 {
+		if unmarshalErr := json.Unmarshal(taskDef.Payload, &proof); unmarshalErr != nil {
+			e.logger.Error("csv mapping worker: task payload unmarshal error", "error", unmarshalErr)
+			return nil
+		}
+	} else {
+		// Fallback to direct proof parsing (INFORM)
+		if err := json.Unmarshal(bodyBytes, &proof); err != nil {
+			e.logger.Error("csv mapping worker: proof unmarshal error", "error", err)
+			return nil
+		}
 	}
 
 	// Ensure proof type is proof.api or API_CALL
-	if proof.Type != "API_CALL" && proof.Type != "proof.api" {
+	if proof.Type != "API_CALL" && proof.Type != string(core.ProofAPI) {
 		e.logger.Warn("csv mapping worker: dropping message, type mismatch", "type_val", proof.Type)
 		return nil // not meant for us
 	}
@@ -184,13 +203,39 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 	e.logger.Info("csv mapping worker: fully completed TAP DB inserts. Waiting for Enrichment Agent.")
 
 	js, jsErr := e.nc.JetStream()
-	if jsErr == nil {
-		_, pubErr := js.Publish("proof.accounting.cleanup.inserted", msg.Data)
-		if pubErr != nil {
-			e.logger.Error("csv mapping worker: failed to publish inserted proof", "error", pubErr)
+	if jsErr != nil {
+		e.logger.Error("csv mapping worker: failed to get jetstream context", "error", jsErr)
+		return nil
+	}
+
+	// Check if this was dispatched by Orchestrator with a conversation ID
+	cid, hasCid := env["cid"].(string)
+	if hasCid && cid != "" {
+		replyEnv := map[string]interface{}{
+			"id":   uuid.New().String(),
+			"ts":   time.Now().UTC(),
+			"src":  "did:toro:csv-mapping-worker",
+			"dst":  workflows.OrchestratorDID,
+			"perf": core.INFORM,
+			"cid":  cid,
+			"body": map[string]interface{}{
+				"type": "proof.accounting.cleanup.inserted",
+				"data": msg.Data, // pass through original
+			},
+			"sig": "worker-sig",
+		}
+		replyBytes, _ := json.Marshal(replyEnv)
+
+		if _, pubErr := js.Publish(workflows.OrchestratorInbox, replyBytes); pubErr != nil {
+			e.logger.Error("csv mapping worker: failed to notify orchestrator", "error", pubErr)
+		} else {
+			e.logger.Info("csv mapping worker: sent explicit INFORM back to Orchestrator", "cid", cid)
 		}
 	} else {
-		e.logger.Error("csv mapping worker: failed to get jetstream context", "error", jsErr)
+		// Legacy global broadcast if not part of a guided conversation
+		if _, pubErr := js.Publish("proof.accounting.cleanup.inserted", msg.Data); pubErr != nil {
+			e.logger.Error("csv mapping worker: failed to publish inserted proof", "error", pubErr)
+		}
 	}
 
 	return nil

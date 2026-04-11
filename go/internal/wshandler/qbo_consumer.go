@@ -3,6 +3,7 @@ package wshandler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"github.com/Yankzy/usetoro/internal/config"
@@ -48,13 +49,14 @@ func (c *QBOEventConsumer) Start() error {
 	sub, err := c.client.JetStream().Subscribe(
 		subject,
 		c.handleQBOConnectedEvent,
+		nats.BindStream("QBO_EVENTS"), // Explicitly bind exactly to QBO_EVENTS stream
 		nats.DeliverNew(),
 		nats.AckExplicit(),
 		nats.MaxDeliver(3),
 	)
 
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to subscribe to %s on QBO_EVENTS: %w", subject, err)
 	}
 
 	c.sub = sub

@@ -37,13 +37,20 @@ type AgentConfig struct {
 	Steps          []Step                  `yaml:"steps" mapstructure:"steps"`
 	Dependencies   AgentDependenciesConfig `yaml:"dependencies" mapstructure:"dependencies"`
 
-	// Flattened configuration for natural language alignment
-	AgentType      string `yaml:"agent_type" mapstructure:"agent_type"`
-	PublishTo      string `yaml:"publish_to" mapstructure:"publish_to"`
-	SubscribeTo    string `yaml:"subscribe_to" mapstructure:"subscribe_to"`
-	QueueGroup     string `yaml:"queue_group" mapstructure:"queue_group"`
-	DurableName    string `yaml:"durable_name" mapstructure:"durable_name"`
+	// ActivityType is the semantic capability this agent provides (e.g. agents.accounting.map_csv).
+	// Used by the Workflow Orchestrator to resolve which agent handles a given workflow step.
+	ActivityType string `yaml:"activity_type" mapstructure:"activity_type"`
+
+	// WorkflowSchema is the JSON Schema string used by the Redux engine for state validation.
 	WorkflowSchema string `yaml:"workflow_schema" mapstructure:"workflow_schema"`
+
+	// TaskQueue is the public NATS subject the Orchestrator assigns to this agent's activity_type.
+	// Populated at runtime by the Orchestrator after loading workflow definitions — not set in defaults.yaml.
+	TaskQueue string `yaml:"-" mapstructure:"-"`
+
+	// QueueGroup and DurableName are derived at runtime from the DID. Not set in defaults.yaml.
+	QueueGroup  string `yaml:"-" mapstructure:"-"`
+	DurableName string `yaml:"-" mapstructure:"-"`
 }
 
 type AgentDependenciesConfig struct {

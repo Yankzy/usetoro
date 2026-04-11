@@ -9,13 +9,12 @@ You are an expert Go developer. Your task is to generate a complete, compilable 
 
 Agent Specification
 
-- Agent Name: "shoebox"
-- Package Name: `shoebox`
-- `internal_module` key (must match defaults.yaml): `"shoebox-agent"`
-- NATS subject it listens on: `"proof.accounting.cleanup.columns"`
-- NATS queue group: `"shoebox-group"`
-- Durable consumer name: `"shoebox-durable"`
-- Output NATS subject (what it publishes to): `"proof.accounting.dedup.done"`
+- Agent Name: "[AGENT_NAME]" (e.g. shoebox)
+- Package Name: `[PACKAGE_NAME]`
+- `internal_module` key (must match defaults.yaml): `"[INTERNAL_MODULE_KEY]"`
+- `activity_type` (the semantic activity this agent fulfills): `"[ACTIVITY_TYPE]"` (e.g. `"agents.accounting.map_csv"`)
+- Task Queue (NATS public topic where the Orchestrator broadcasts CFPs): `"[TASK_QUEUE]"`
+- Durable consumer name: `"[DURABLE_NAME]"`
 - Purpose / Business Logic:
   [Describe what the agent does in plain English. e.g. "Reads mapped rows from the cleanup stage, queries the database for existing transactions with the same description+amount+date, and marks duplicates before passing to reconciliation."]
 - Dependencies needed:
@@ -158,12 +157,15 @@ err := a.ExecuteGlobalWorkflow(
     },
     llmCallback,
     func(nextState []byte) error {
-        // Called ONLY after Redux validates the state.
-        // 1. Extract data from nextState
+        // [onComplete]: Called ONLY after Redux validates the final state.
+        // This is a closure used for side effects after the state is persisted.
+
+        // 1. Extract data from the nextState (validated JSON)
         var validatedState map[string]json.RawMessage
         json.Unmarshal(nextState, &validatedState)
 
-        // 2. Publish proof or internal service call
+        // 2. Perform side effects (e.g., Publish a Proof, trigger another service)
+        // Standard pattern: Publish "informed" result/proof to JetStream.
         return nil
     },
 )
@@ -172,7 +174,7 @@ err := a.ExecuteGlobalWorkflow(
 Key behaviors:
 - The circuit breaker retries up to 3 times, feeding `DomainFault`s back to the LLM callback.
 - If all 3 attempts produce faults, the workflow returns an error.
-- The `onComplete` handler only fires after Redux validates the final state.
+- The `onComplete` handler only fires after Redux validates the final state. This ensures that any "proof" published is backed by a valid, persisted database state.
 - JetStream trace events are published automatically to `workflow.trace.<workflowID>`.
 
 8. Messaging Protocol — TAP Envelopes
@@ -180,13 +182,13 @@ Key behaviors:
 All inter-agent messages use `core.Envelope`. Incoming messages are expected to contain a specific `Performative` (verb):
 
 ```go
-// Performatives
+// Performatives (from tap/pkg/core/verbs.go)
 const (
-    CFP     Performative = "cfp"     // Call For Proposal — initiates negotiation
-    PROPOSE Performative = "propose" // Bid/quote response
-    ACCEPT  Performative = "accept"  // Accept a proposal
-    REJECT  Performative = "reject"
-    INFORM  Performative = "inform"  // Deliver result/proof (most common output verb)
+    CFP             Performative = "cfp"             // Call For Proposal — initiates negotiation
+    PROPOSE         Performative = "propose"         // Bid/quote response
+    ACCEPT_PROPOSAL Performative = "accept-proposal" // Accepted bid (The "Deal")
+    REJECT_PROPOSAL Performative = "reject-proposal"
+    INFORM          Performative = "inform"          // Deliver result/proof (most common output verb)
 )
 
 type Envelope struct {
@@ -206,7 +208,7 @@ func NewEnvelope(id, src, dst, cid string, verb Performative, body interface{}) 
 
 9. Proof — Standard Output Payload
 
-When your agent completes work, wrap output in a `core.Proof` and publish it inside an `INFORM` envelope:
+When your agent completes work, wrap output in a `core.Proof` and publish it inside an `INFORM` envelope to the `orchestrator.inbox` subject:
 
 ```go
 type Proof struct {
@@ -235,16 +237,49 @@ if metaErr == nil && meta.NumDelivered > 3 {
 
 11. `defaults.yaml` Entry (include this in your response)
 
+**IMPORTANT:** Agents in `defaults.yaml` define their BRAIN ONLY (DID, model, system prompt, dependencies). They do NOT declare `subscribe_to` or `publish_to` — the Workflow Orchestrator owns topology routing via the `task_queue` field in the pipeline YAML.
+
 ```yaml
 - did: "did:toro:agent:<your_did_suffix>"
   name: "<Human Readable Name>"
   model: "gpt-4o-mini"
   engine: "internal"
   internal_module: "<internal_module_key>"
+  activity_type: "<activity_type>" # e.g. agents.accounting.map_csv
+  system_prompt: |
+    [Your system prompt here]
   dependencies:
     database: true|false
     entity_resolver: true|false
 ```
+
+12. FIPA Handshake (How Agents Interact with the Workflow Orchestrator)
+
+When `negotiate: true` is set on a workflow step, the Orchestrator will broadcast a `CFP` to the public `task_queue` topic. Your agent must:
+
+1. **Listen on the Task Queue**: Subscribe to the public NATS `task_queue` subject with a durable JetStream consumer.
+2. **Send a `PROPOSE`**: Reply with a bid envelope to `core.BuildAgentInbox(env.SenderDID)` (the Orchestrator's inbox).
+3. **Wait for `ACCEPT_PROPOSAL`**: Once the Orchestrator selects the winner, it dispatches the payload via an `ACCEPT_PROPOSAL` envelope directly to your agent's private inbox (`agent.inbox.{YOUR_DID}`).
+4. **Execute and Prove**: Perform computation via `ExecuteGlobalWorkflow`. When the `onComplete` closure fires, publish a `core.Proof` wrapped in an `INFORM` envelope to `orchestrator.inbox`.
+
+```go
+// Pattern for public Task Queue subscription:
+// handler bound via agent.NewBaseAgent() — it fires on incoming CFP AND on incoming ACCEPT_PROPOSAL.
+// Detect performative:
+if env.Performative == core.CFP {
+    // Reply with PROPOSE to orchestrator inbox
+}
+if env.Performative == core.ACCEPT_PROPOSAL {
+    // Execute the task and prove back to orchestrator
+    return a.executeTask(env)
+}
+```
+
+12. Architecture Boundaries (Workers vs Agents)
+
+- **CRITICAL RULE**: Agents **DO NOT** write to Postgres directly (no `db.InsertX` or `db.UpdateX`).
+- Agents are stateless intelligence units. They fetch necessary context, perform LLM computation, validate state via Redux, and use the `onComplete` closure to output a `core.Proof` via an `INFORM` envelope.
+- If you need to write to the database, that is the job of a **Worker**.
 
 ---
 

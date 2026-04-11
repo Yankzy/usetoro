@@ -43,10 +43,11 @@ func (r *mockRow) Scan(_ ...interface{}) error {
 // --- Mock EventBus ---
 
 type mockEventBus struct {
-	mu           sync.Mutex
-	messages     map[string][][]byte
-	publishErr   error
-	subscribeErr error
+	mu                sync.Mutex
+	messages          map[string][][]byte
+	subscribedSubjects []string
+	publishErr        error
+	subscribeErr      error
 }
 
 func newMockBus() *mockEventBus {
@@ -67,10 +68,13 @@ func (b *mockEventBus) RequestWithContext(_ context.Context, _ string, _ []byte)
 	return nil, errors.New("mock: not implemented")
 }
 
-func (b *mockEventBus) QueueSubscribe(_ string, _ string, _ nats.MsgHandler, _ ...nats.SubOpt) (*nats.Subscription, error) {
+func (b *mockEventBus) QueueSubscribe(subj string, _ string, _ nats.MsgHandler, _ ...nats.SubOpt) (*nats.Subscription, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.subscribeErr != nil {
 		return nil, b.subscribeErr
 	}
+	b.subscribedSubjects = append(b.subscribedSubjects, subj)
 	return &nats.Subscription{}, nil
 }
 
@@ -80,6 +84,12 @@ func (b *mockEventBus) published(subject string) [][]byte {
 	return b.messages[subject]
 }
 
+func (b *mockEventBus) subscriptions() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.subscribedSubjects...)
+}
+
 // --- helpers ---
 
 func newTestAgent(bus core.EventBus) *BaseAgent {
@@ -87,9 +97,12 @@ func newTestAgent(bus core.EventBus) *BaseAgent {
 		Logger: slog.Default(),
 		Bus:    bus,
 		Cfg: core.AgentConfig{
-			DID:         "did:toro:test-agent",
-			AgentType:   "test",
-			SubscribeTo: "test-topic",
+			DID:          "did:toro:test-agent",
+			ActivityType: "agents.test.activity",
+			// QueueGroup and DurableName are derived from DID by NewBaseAgent().
+			// In tests we set them manually so we don't need a real KeyPair.
+			QueueGroup:  "did-toro-test-agent-group",
+			DurableName: "did-toro-test-agent-durable",
 		},
 	}
 }
@@ -406,19 +419,27 @@ func TestExecuteGlobalWorkflow_NilOnComplete(t *testing.T) {
 func TestBaseAgent_Start_Success(t *testing.T) {
 	bus := newMockBus()
 	agent := newTestAgent(bus)
-	agent.Cfg.SubscribeTo = "test-topic"
-	agent.Cfg.QueueGroup = "test-group"
-	agent.Cfg.DurableName = "test-durable"
+	// QueueGroup/DurableName are derived from DID in NewBaseAgent();
+	// here they are pre-set in newTestAgent() to avoid needing a real KeyPair.
 
 	err := agent.Start()
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	// Verify registration was published
+	// Verify Almanac registration was published
 	published := bus.published(core.SubjectAlmanacRegister)
 	if len(published) != 1 {
 		t.Errorf("expected 1 published message to %s, got %d", core.SubjectAlmanacRegister, len(published))
+	}
+
+	// Verify the registration payload contains activity_type
+	var reg map[string]interface{}
+	if err := json.Unmarshal(published[0], &reg); err != nil {
+		t.Fatalf("could not unmarshal registration payload: %v", err)
+	}
+	if reg["did"] != "did:toro:test-agent" {
+		t.Errorf("unexpected DID in registration: %v", reg["did"])
 	}
 }
 
@@ -431,7 +452,63 @@ func TestBaseAgent_Start_RegistrationError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "agent test: failed to register with almanac") {
+	// Error format changed: now includes DID not AgentType
+	if !strings.Contains(err.Error(), "failed to register with almanac") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestBaseAgent_Start_TaskQueueSubscription(t *testing.T) {
+	bus := newMockBus()
+	agent := newTestAgent(bus)
+	agent.Cfg.TaskQueue = "tasks.accounting.cleanup.mapping"
+
+	err := agent.Start()
+	if err != nil {
+		t.Fatalf("expected no error with task queue set, got: %v", err)
+	}
+
+	subs := bus.subscriptions()
+	// Expect: 1 inbox sub + 1 task_queue sub = 2
+	if len(subs) != 2 {
+		t.Fatalf("expected 2 subscriptions (inbox + task_queue), got %d: %v", len(subs), subs)
+	}
+
+	inboxFound := false
+	taskQueueFound := false
+	for _, s := range subs {
+		if strings.Contains(s, ".inbox") {
+			inboxFound = true
+		}
+		if s == "tasks.accounting.cleanup.mapping" {
+			taskQueueFound = true
+		}
+	}
+	if !inboxFound {
+		t.Errorf("expected private inbox subscription, got: %v", subs)
+	}
+	if !taskQueueFound {
+		t.Errorf("expected task_queue subscription, got: %v", subs)
+	}
+}
+
+func TestBaseAgent_Start_NoTaskQueue(t *testing.T) {
+	bus := newMockBus()
+	agent := newTestAgent(bus)
+	// TaskQueue intentionally left empty
+
+	err := agent.Start()
+	if err != nil {
+		t.Fatalf("expected no error when TaskQueue is empty, got: %v", err)
+	}
+
+	subs := bus.subscriptions()
+	// Only the private inbox subscription should be present
+	if len(subs) != 1 {
+		t.Fatalf("expected only 1 subscription (inbox), got %d: %v", len(subs), subs)
+	}
+	if !strings.Contains(subs[0], ".inbox") {
+		t.Errorf("expected inbox subscription, got: %v", subs[0])
+	}
+}
+

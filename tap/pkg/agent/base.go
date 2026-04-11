@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,13 +18,13 @@ import (
 )
 
 type BaseAgent struct {
-	Logger      *slog.Logger
-	Bus         core.EventBus
-	Cfg         core.AgentConfig
-	Mem         core.MemoryStore
-	KP          *identity.KeyPair
-	Sub         *nats.Subscription
-	Handler     nats.MsgHandler
+	Logger  *slog.Logger
+	Bus     core.EventBus
+	Cfg     core.AgentConfig
+	Mem     core.MemoryStore
+	KP      *identity.KeyPair
+	Sub     *nats.Subscription
+	Handler nats.MsgHandler
 }
 
 // LLMCallback is a retry-aware callback signature. The Redux engine feeds back DomainFaults
@@ -97,7 +98,7 @@ func (b *BaseAgent) ExecuteGlobalWorkflow(
 			EventID:    fmt.Sprintf("evt_%d", time.Now().UnixNano()),
 			SequenceID: currentSeq,
 			Timestamp:  time.Now(),
-			Type:       b.Cfg.AgentType,
+			Type:       b.Cfg.ActivityType,
 			Actor:      b.Cfg.DID,
 			PatchArray: patchArray,
 		}
@@ -162,6 +163,10 @@ func NewBaseAgent(
 ) *BaseAgent {
 	kp, _ := identity.GenerateKeyPair()
 	cfg.DID = identity.CreateDID(kp.Public)
+	// Derive runtime routing fields from DID so callers don't set them manually.
+	safe := sanitizeDID(cfg.DID)
+	cfg.QueueGroup = safe + "-group"
+	cfg.DurableName = safe + "-durable"
 	return &BaseAgent{
 		Logger:  logger,
 		Bus:     bus,
@@ -172,16 +177,21 @@ func NewBaseAgent(
 	}
 }
 
-func (b *BaseAgent) Start() error {
-	b.Logger.Info("🤖 TAP AI Agent Initializing...", "did", b.Cfg.DID, "type", b.Cfg.AgentType)
+// sanitizeDID converts a DID string into a NATS-safe identifier (no colons).
+func sanitizeDID(did string) string {
+	return strings.ReplaceAll(did, ":", "-")
+}
 
-	// Register with Almanac
+func (b *BaseAgent) Start() error {
+	b.Logger.Info("🤖 TAP AI Agent Initializing...", "did", b.Cfg.DID, "activity_type", b.Cfg.ActivityType)
+
+	// Register with Almanac — advertise DID, inbox, and activity_type capability.
 	inbox := core.BuildAgentInbox(b.Cfg.DID)
 	regPayload := map[string]interface{}{
 		"did":       b.Cfg.DID,
 		"endpoints": []string{inbox},
 		"capabilities": []map[string]interface{}{
-			{"type": b.Cfg.AgentType},
+			{"activity_type": b.Cfg.ActivityType},
 		},
 		"expiry": time.Now().Add(24 * time.Hour).Unix(),
 	}
@@ -189,26 +199,44 @@ func (b *BaseAgent) Start() error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal registration payload: %w", err)
 	}
-
 	if err := b.Bus.Publish(core.SubjectAlmanacRegister, regBytes); err != nil {
-		return fmt.Errorf("agent %s: failed to register with almanac: %w", b.Cfg.AgentType, err)
+		return fmt.Errorf("agent %s: failed to register with almanac: %w", b.Cfg.DID, err)
 	}
 
-	// Subscribe to the Agent's specific Topic
-	sub, err := b.Bus.QueueSubscribe(
-		b.Cfg.SubscribeTo,
-		b.Cfg.QueueGroup,
+	// ── Subscription 1: Private inbox (always active) ──────────────────────────
+	// The Orchestrator dispatches ACCEPT envelopes here for assigned work.
+	safe := sanitizeDID(b.Cfg.DID)
+	inboxSub, err := b.Bus.QueueSubscribe(
+		inbox,
+		safe+"-inbox-group",
 		b.Handler,
-		nats.Durable(b.Cfg.DurableName),
+		nats.Durable(safe+"-inbox"),
 		nats.DeliverAll(),
 		nats.AckExplicit(),
 	)
 	if err != nil {
-		return fmt.Errorf("agent %s: failed to subscribe to topic %s: %w", b.Cfg.AgentType, b.Cfg.SubscribeTo, err)
+		return fmt.Errorf("agent %s: failed to subscribe to inbox %s: %w", b.Cfg.DID, inbox, err)
 	}
-	b.Sub = sub
+	b.Sub = inboxSub
+	b.Logger.Info("👂 Listening on private inbox", "topic", inbox)
 
-	b.Logger.Info("👂 Listening for messages", "topic", b.Cfg.SubscribeTo, "queue", b.Cfg.QueueGroup)
+	// ── Subscription 2: Public Task Queue (when Orchestrator assigns one) ──────
+	// Agents subscribe here to receive CFPs and participate in FIPA bidding.
+	if b.Cfg.TaskQueue != "" {
+		_, err := b.Bus.QueueSubscribe(
+			b.Cfg.TaskQueue,
+			b.Cfg.QueueGroup,
+			b.Handler,
+			nats.Durable(b.Cfg.DurableName),
+			nats.DeliverAll(),
+			nats.AckExplicit(),
+		)
+		if err != nil {
+			return fmt.Errorf("agent %s: failed to subscribe to task queue %s: %w", b.Cfg.DID, b.Cfg.TaskQueue, err)
+		}
+		b.Logger.Info("👂 Listening on task queue", "topic", b.Cfg.TaskQueue)
+	}
+
 	return nil
 }
 

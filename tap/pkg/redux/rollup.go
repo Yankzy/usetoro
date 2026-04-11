@@ -107,12 +107,9 @@ func (w *RollupWorker) processBatch(ctx context.Context, msgs []*nats.Msg) {
 		var wfUUID pgtype.UUID
 		wfUUID.Scan(wfStr)
 
-		wf, err := w.DB.CreateOrGetWorkflow(ctx, database.CreateOrGetWorkflowParams{
-			ID:       wfUUID,
-			EntityID: pgtype.UUID{Valid: false}, // seeded from trace ID; updated upstream when known
-		})
+		wf, err := w.DB.GetWorkflow(ctx, wfUUID)
 		if err != nil {
-			w.Logger.Error("Skipping Rollup: failed to upsert workflow base", "uuid", wfStr, "error", err)
+			w.Logger.Error("Skipping Rollup: failed to locate workflow base", "uuid", wfStr, "error", err)
 			continue
 		}
 

@@ -14,6 +14,9 @@ const (
 
 	// MessageTypeQBOConnected is sent when QBO is successfully connected
 	MessageTypeQBOConnected MessageType = "qbo_connected"
+	
+	// MessageTypeWorkflowStatus is sent for real-time visualizer updates
+	MessageTypeWorkflowStatus MessageType = "workflow_status"
 
 	// MessageTypeError is sent when an error occurs
 	MessageTypeError MessageType = "error"
@@ -71,6 +74,15 @@ func NewQBOConnectedMessage(realmID string) ([]byte, error) {
 			"realm_id": realmID,
 			"status":   "connected",
 		},
+	}
+	return json.Marshal(msg)
+}
+
+// NewWorkflowStatusMessage creates a message for real-time workflow visualization
+func NewWorkflowStatusMessage(data map[string]interface{}) ([]byte, error) {
+	msg := Message{
+		Type: MessageTypeWorkflowStatus,
+		Data: data,
 	}
 	return json.Marshal(msg)
 }

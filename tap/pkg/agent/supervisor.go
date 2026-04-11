@@ -19,11 +19,12 @@ type Supervisor struct {
 	mu     sync.RWMutex
 	agents map[string]core.Runnable
 
-	logger *slog.Logger
-	bus    core.EventBus
-	mem    core.MemoryStore
-	dbPool *pgxpool.Pool
-	er     *ai.EntityResolver
+	logger  *slog.Logger
+	bus     core.EventBus
+	mem     core.MemoryStore
+	dbPool  *pgxpool.Pool
+	er      *ai.EntityResolver
+	Queries *database.Queries
 
 	// Registry of internal compiled agent modules
 	internalRegistry map[string]func(core.Environment) core.Runnable
@@ -38,6 +39,7 @@ func NewSupervisor(logger *slog.Logger, bus core.EventBus, mem core.MemoryStore,
 		bus:              bus,
 		mem:              mem,
 		dbPool:           dbPool,
+		Queries:          database.New(dbPool),
 		er:               er,
 	}
 }

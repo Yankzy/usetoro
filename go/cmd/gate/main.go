@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -92,7 +93,29 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	defer q.Close()
 
 	// Provision all configured NATS JetStream streams globally for the platform
-	for svcName, srvCfg := range cfg.NATS.Services {
+	serviceKeys := make([]string, 0, len(cfg.NATS.Services))
+	for k := range cfg.NATS.Services {
+		serviceKeys = append(serviceKeys, k)
+	}
+	sort.Slice(serviceKeys, func(i, j int) bool {
+		a, b := serviceKeys[i], serviceKeys[j]
+		if a == "workflows" && b != "workflows" {
+			return true
+		}
+		if b == "workflows" && a != "workflows" {
+			return false
+		}
+		if a == "workflow_triggers" && b != "workflow_triggers" {
+			return false
+		}
+		if b == "workflow_triggers" && a != "workflow_triggers" {
+			return true
+		}
+		return a < b
+	})
+
+	for _, svcName := range serviceKeys {
+		srvCfg := cfg.NATS.Services[svcName]
 		// 1. Provision main service stream
 		if srvCfg.StreamName != "" && len(srvCfg.JetStream.Subjects) > 0 {
 			streamCfg := &nats.StreamConfig{
@@ -109,8 +132,15 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 			if streamCfg.Replicas == 0 {
 				streamCfg.Replicas = 1
 			}
-			if err := q.EnsureStream(streamCfg); err != nil {
-				logger.Warn("Failed to ensure configured stream", "service", svcName, "stream", srvCfg.StreamName, "error", err)
+			if streamCfg.Name == "WORKFLOW_TRIGGERS" {
+				// Subjects are reconciled dynamically by the Orchestrator; don't overwrite them here.
+				if err := q.EnsureStreamExists(streamCfg); err != nil {
+					logger.Warn("Failed to ensure stream exists", "service", svcName, "stream", srvCfg.StreamName, "error", err)
+				}
+			} else {
+				if err := q.EnsureStream(streamCfg); err != nil {
+					logger.Warn("Failed to ensure configured stream", "service", svcName, "stream", srvCfg.StreamName, "error", err)
+				}
 			}
 		}
 
@@ -136,6 +166,23 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 				}
 			}
 		}
+	}
+
+	// 2.5 Ensure cluster stream consensus stabilized.
+	var streamsToWait []string
+	for _, srvCfg := range cfg.NATS.Services {
+		if srvCfg.StreamName != "" {
+			streamsToWait = append(streamsToWait, srvCfg.StreamName)
+		}
+		for _, compCfg := range srvCfg.Components {
+			if compCfg.StreamName != "" {
+				streamsToWait = append(streamsToWait, compCfg.StreamName)
+			}
+		}
+	}
+	if err := q.WaitForStreamsReady(streamsToWait); err != nil {
+		logger.Error("Critical failure waiting for JetStream cluster stability", "error", err)
+		return fmt.Errorf("crashing to reboot JetStream cluster stability: %w", err)
 	}
 
 	logger.Info("✅ Connected to NATS JetStream and Ensured configured streams")

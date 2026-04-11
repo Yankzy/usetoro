@@ -23,22 +23,45 @@ It handles inconsistent bank formats — single-amount columns, split debit/cred
 
 ---
 
+## Core Concepts
+
+The CSV Mapping Agent follows the standard **Toro Agent Pattern**, centering around three core components:
+
+### 1. The `Handler` (JetStream Inbox)
+The agent listens on a dedicated JetStream subject (via `BaseAgent.Sub`). The handler includes mandatory **Poison Pill** protection: if a message fails more than 3 times, it is terminated to prevent infinite retry loops.
+
+### 2. The `llmCallback` (Reasoning & Correction)
+This closure is passed to the Redux engine. It is **retry-aware**:
+- It receives a list of `redux.DomainFault`s from previous failed attempts.
+- It uses `agent.Runtime` (via `ExecWithPaging`) to prompt the LLM.
+- It returns a set of JSON Patches (RFC 6902) to be applied to the workflow state.
+- **Fail-Safe**: If Redux rejects the patches (e.g., due to RBAC or Schema violations), this callback is re-invoked with the errors, allowing the LLM to self-correct.
+
+### 3. The `onComplete` Hook (Side Effects)
+This closure is called **only after** Redux has successfully validated and persisted the state transition.
+- **Standard Purpose**: It is the designated place for publishing "informed" results or **Proofs** to JetStream.
+- **Guarantee**: By the time `onComplete` runs, the internal database is updated, and the transition is immutable.
+
+---
+
 ## Redux State Engine Integration
 
-This agent performs deterministic state transitions via the Toro `tap/pkg/redux` engine (via `ExecuteGlobalWorkflow`). To prevent hallucinated LLM data corruption, it enforces strict boundaries.
+This agent performs deterministic state transitions via the Toro `tap/pkg/redux` engine using the `ExecuteGlobalWorkflow` lifecycle.
 
-### Direct Usage
+### The 5-Phase Execution Lifecycle
 
-- **RBAC Policy**: Actively scopes its mutation authority down to exactly `["/status", "/mapped_rows"]`, denying all other JSON paths.
-- **Schema Validation**: Provides a strict JSON schema (`properties: status, mapped_rows`) verified by the Redux Engine at runtime.
-- **Optimistic Concurrency**: Tests `baseState` for existing values (via `op: test`) and pre-appends locking patches to prevent run-condition overlaps.
-- **Fault-Aware Circuit Breaker**: The internal LLM pipeline captures rejected `DomainFaults` and recursively feeds them to the LLM (up to 3 times) for runtime self-correction. 
+1.  **Hydrate**: Fetches the current workflow state and sequence ID from the database.
+2.  **Boot**: Initializes a fresh Redux Store with the agent's specific **RBAC** and **Schema** policies.
+3.  **Reason**: Enters the `llmCallback` loop (up to 3 retries) until valid patches are generated.
+4.  **Trace**: Publishes the validated event to the `workflow.trace.<id>` subject for observability.
+5.  **Finalize**: Invokes `onComplete` to trigger downstream side effects (e.g., publishing a Proof).
 
-### Indirect (Framework) Usage
+### Practical Safeguards
 
-- **Payload Size & Array Bans**: The engine automatically guarantees patches do not exceed size specifications and do not replace nested arrays without precision.
-- **Idempotency**: Execution sequence IDs are tracked safely across DB transactions, preventing redundant `JetStream` redeliveries.
-- **Rollup Compression**: Event arrays are cleanly pushed via JetStream down to the daemon's background `RollupWorker`.
+- **RBAC Policy**: Actively scopes mutation authority down to exactly `["/status", "/mapped_rows"]`.
+- **Schema Validation**: Ensures the resulting state matches expected JSON structures.
+- **Optimistic Concurrency**: Uses `op: test` patches to prevent race conditions during heavy state updates.
+- **Idempotency**: Sequence IDs are tracked to prevent double-processing on JetStream redeliveries.
 
 ---
 

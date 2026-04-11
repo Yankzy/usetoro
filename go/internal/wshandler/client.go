@@ -58,6 +58,9 @@ type Client struct {
 	// Host from handshake request
 	host string
 
+	// Identity
+	entityID string
+
 	// JetStream locking
 	unackedMu       sync.Mutex
 	unackedMessages map[string]*nats.Msg
@@ -70,6 +73,12 @@ type Client struct {
 func NewClient(hub *Hub, conn *websocket.Conn, logger *slog.Logger, messageHandler *MessageHandler, host string, rCtx context.Context) *Client {
 	// DO NOT inherit cancellation from rCtx, as the HTTP context is destroyed instantly after WebSocket upgrade
 	ctx, cancel := context.WithCancel(context.WithoutCancel(rCtx))
+	// Extract entityID from context (set by auth middleware)
+	entityID := "unknown"
+	if eid, ok := rCtx.Value(auth.EntityIDKey).(uuid.UUID); ok {
+		entityID = eid.String()
+	}
+
 	return &Client{
 		hub:             hub,
 		conn:            conn,
@@ -77,6 +86,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, logger *slog.Logger, messageHandl
 		logger:          logger,
 		messageHandler:  messageHandler,
 		host:            host,
+		entityID:        entityID,
 		unackedMessages: make(map[string]*nats.Msg),
 		ctx:             ctx,
 		cancel:          cancel,

@@ -38,6 +38,46 @@ func (q *Queries) CreateOrGetWorkflow(ctx context.Context, arg CreateOrGetWorkfl
 	return i, err
 }
 
+const getBlueprintByName = `-- name: GetBlueprintByName :one
+SELECT name, trigger_topic, definition, created_at, updated_at
+FROM toro_core.workflow_blueprints
+WHERE name = $1
+LIMIT 1
+`
+
+func (q *Queries) GetBlueprintByName(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error) {
+	row := q.db.QueryRow(ctx, getBlueprintByName, name)
+	var i ToroCoreWorkflowBlueprint
+	err := row.Scan(
+		&i.Name,
+		&i.TriggerTopic,
+		&i.Definition,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getBlueprintByNameOrTriggerTopic = `-- name: GetBlueprintByNameOrTriggerTopic :one
+SELECT name, trigger_topic, definition, created_at, updated_at
+FROM toro_core.workflow_blueprints
+WHERE name = $1 OR trigger_topic = $1
+LIMIT 1
+`
+
+func (q *Queries) GetBlueprintByNameOrTriggerTopic(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error) {
+	row := q.db.QueryRow(ctx, getBlueprintByNameOrTriggerTopic, name)
+	var i ToroCoreWorkflowBlueprint
+	err := row.Scan(
+		&i.Name,
+		&i.TriggerTopic,
+		&i.Definition,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getWorkflow = `-- name: GetWorkflow :one
 SELECT id, entity_id, state, sequence_id, status, created_at, updated_at FROM toro_core.workflows WHERE id = $1 LIMIT 1
 `
@@ -55,6 +95,38 @@ func (q *Queries) GetWorkflow(ctx context.Context, id pgtype.UUID) (ToroCoreWork
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getWorkflowBlueprints = `-- name: GetWorkflowBlueprints :many
+SELECT name, trigger_topic, definition, created_at, updated_at
+FROM toro_core.workflow_blueprints
+ORDER BY name
+`
+
+func (q *Queries) GetWorkflowBlueprints(ctx context.Context) ([]ToroCoreWorkflowBlueprint, error) {
+	rows, err := q.db.Query(ctx, getWorkflowBlueprints)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreWorkflowBlueprint
+	for rows.Next() {
+		var i ToroCoreWorkflowBlueprint
+		if err := rows.Scan(
+			&i.Name,
+			&i.TriggerTopic,
+			&i.Definition,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const logWorkflowHistory = `-- name: LogWorkflowHistory :one
@@ -104,6 +176,39 @@ func (q *Queries) UpdateWorkflowState(ctx context.Context, arg UpdateWorkflowSta
 		&i.State,
 		&i.SequenceID,
 		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertWorkflowBlueprint = `-- name: UpsertWorkflowBlueprint :one
+
+INSERT INTO toro_core.workflow_blueprints (name, trigger_topic, definition)
+VALUES ($1, $2, $3)
+ON CONFLICT (name) DO UPDATE
+SET trigger_topic = EXCLUDED.trigger_topic,
+    definition    = EXCLUDED.definition,
+    updated_at    = NOW()
+RETURNING name, trigger_topic, definition, created_at, updated_at
+`
+
+type UpsertWorkflowBlueprintParams struct {
+	Name         string
+	TriggerTopic string
+	Definition   []byte
+}
+
+// =========================================================================
+// Workflow Blueprints (declarative definitions)
+// =========================================================================
+func (q *Queries) UpsertWorkflowBlueprint(ctx context.Context, arg UpsertWorkflowBlueprintParams) (ToroCoreWorkflowBlueprint, error) {
+	row := q.db.QueryRow(ctx, upsertWorkflowBlueprint, arg.Name, arg.TriggerTopic, arg.Definition)
+	var i ToroCoreWorkflowBlueprint
+	err := row.Scan(
+		&i.Name,
+		&i.TriggerTopic,
+		&i.Definition,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

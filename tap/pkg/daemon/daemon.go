@@ -18,8 +18,10 @@ import (
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/tap/agents"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
+	"github.com/Yankzy/usetoro/tap/pkg/lookup"
 	"github.com/Yankzy/usetoro/tap/pkg/memory"
 	"github.com/Yankzy/usetoro/tap/pkg/redux"
+	"github.com/Yankzy/usetoro/tap/workflows"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"golang.org/x/sync/errgroup"
@@ -40,6 +42,13 @@ type ProtocolDaemon struct {
 	NATS           *nats.Conn
 	JS             nats.JetStreamContext
 	EntityResolver *ai.EntityResolver
+
+	// Orchestrator is the singleton Workflow Orchestrator.
+	// It loads pipeline YAMLs, subscribes to trigger topics, and advances WorkflowInstances.
+	Orchestrator *workflows.Orchestrator
+
+	// Almanac is the central registry for actors.
+	Almanac *lookup.Registry
 
 	currentConfig *config.Config
 	v             *viper.Viper
@@ -90,10 +99,34 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 		d.Supervisor.RegisterInternalAgent(name, factory)
 	}
 
-	// 3. Load Initial Agent Configuration into the supervisor
+	// 5. Initialize the Workflow Orchestrator
+	d.Orchestrator = workflows.NewOrchestrator(d.Logger, bus, d.NATS, d.JS, d.Supervisor.Queries)
+
+	// YAML bootstrap: upsert blueprints into the DB.
+	if err := d.Orchestrator.LoadFromDir(ctx, "tap/workflows"); err != nil {
+		d.Logger.Warn("Orchestrator: workflow config load error (non-fatal)", "error", err)
+	}
+
+	// 6. Sync blueprints from DB and reconcile trigger stream subjects.
+	if err := d.Orchestrator.SyncBlueprints(ctx); err != nil {
+		return fmt.Errorf("orchestrator blueprint sync failed: %w", err)
+	}
+
+	// 7. Enrich agent configuration with TaskQueues dynamically parsed from blueprints
+	taskQueues := d.Orchestrator.GetTaskQueues()
+	for i, cfg := range d.currentConfig.Agents {
+		if tq, ok := taskQueues[cfg.ActivityType]; ok {
+			d.currentConfig.Agents[i].TaskQueue = tq
+		}
+	}
+
+	// 8. Load Initial Agent Configuration into the supervisor
 	if err := d.Supervisor.LoadAgents(d.currentConfig.Agents); err != nil {
 		return err
 	}
+
+	// 9. Initialize the Almanac Registry
+	d.Almanac = lookup.NewRegistry(d.Logger, d.NATS)
 
 	// 4. Use ErrGroup to manage concurrent sub-systems
 	// If one dies, they all die (fail fast)
@@ -125,6 +158,24 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 	g.Go(func() error {
 		if err := rollupWorker.Start(ctx); err != nil {
 			d.Logger.Error("Fatal Rollup Initialization failing bounds", "err", err)
+			return err
+		}
+		return nil
+	})
+
+	// Sub-system E: Workflow Orchestrator
+	g.Go(func() error {
+		if err := d.Orchestrator.Start(ctx); err != nil {
+			d.Logger.Error("Orchestrator fatal error", "err", err)
+			return err
+		}
+		return nil
+	})
+
+	// Sub-system F: Almanac Discovery Registry
+	g.Go(func() error {
+		if err := d.Almanac.Start(ctx); err != nil {
+			d.Logger.Error("Almanac fatal error", "err", err)
 			return err
 		}
 		return nil
@@ -209,6 +260,7 @@ func (d *ProtocolDaemon) watchForReload(ctx context.Context) error {
 		}
 	}
 }
+
 // watchWithViper leverages native Viper file watching to reload configurations
 func (d *ProtocolDaemon) watchWithViper(ctx context.Context) error {
 	if d.v == nil {
@@ -218,7 +270,7 @@ func (d *ProtocolDaemon) watchWithViper(ctx context.Context) error {
 
 	d.v.OnConfigChange(func(e fsnotify.Event) {
 		d.Logger.Info("🔄 Config file change detected via Viper", "file", e.Name)
-		
+
 		newCfg, err := config.Unmarshal(d.v)
 		if err != nil {
 			d.Logger.Error("Failed to unmarshal updated configuration", "error", err)
@@ -253,6 +305,15 @@ func (d *ProtocolDaemon) loadConfig() error {
 
 	d.currentConfig = newCfg
 	d.v = v
+
+	if d.Orchestrator != nil {
+		taskQueues := d.Orchestrator.GetTaskQueues()
+		for i, cfg := range d.currentConfig.Agents {
+			if tq, ok := taskQueues[cfg.ActivityType]; ok {
+				d.currentConfig.Agents[i].TaskQueue = tq
+			}
+		}
+	}
 
 	// HotLoad: The Supervisor will diff the new config against running agents
 	// It starts new ones, updates existing ones, and stops removed ones.

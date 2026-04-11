@@ -185,6 +185,14 @@ func sanitizeDID(did string) string {
 func (b *BaseAgent) Start() error {
 	b.Logger.Info("🤖 TAP AI Agent Initializing...", "did", b.Cfg.DID, "activity_type", b.Cfg.ActivityType)
 
+	if b.Cfg.ActivityType != "" && b.Cfg.TaskQueue != "" {
+		normalizedQueue, err := core.NormalizeTaskQueue(b.Cfg.ActivityType, b.Cfg.TaskQueue)
+		if err != nil {
+			return fmt.Errorf("agent %s: invalid task queue for activity %s: %w", b.Cfg.DID, b.Cfg.ActivityType, err)
+		}
+		b.Cfg.TaskQueue = normalizedQueue
+	}
+
 	// Register with Almanac — advertise DID, inbox, and activity_type capability.
 	inbox := core.BuildAgentInbox(b.Cfg.DID)
 	regPayload := map[string]interface{}{

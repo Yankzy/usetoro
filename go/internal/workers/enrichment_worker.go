@@ -89,6 +89,10 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
 		return nil
 	}
+	if !core.IsValidPerformative(env.Performative) {
+		e.logger.Warn("enrichment worker: dropping message, invalid performative", "perf", env.Performative)
+		return nil
+	}
 
 	if env.Performative != core.INFORM {
 		return nil
@@ -146,11 +150,11 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		if err != nil {
 			e.logger.Warn("enrichment worker: db query error during loop", "error", err)
 		}
-		
-		e.logger.Info("enrichment worker loop", 
+
+		e.logger.Info("enrichment worker loop",
 			"session", sessionID,
 			"attempt", retries+1,
-			"expected", expectedCount, 
+			"expected", expectedCount,
 			"found", len(pendingRows),
 		)
 
@@ -466,4 +470,3 @@ func init() {
 		return NewEnrichmentWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.LLMClient)
 	})
 }
-

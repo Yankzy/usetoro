@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -36,6 +37,10 @@ type Envelope struct {
 
 // NewEnvelope helper to create a standard packet
 func NewEnvelope(id, src, dst, cid string, verb Performative, body interface{}) (*Envelope, error) {
+	if !IsValidPerformative(verb) {
+		return nil, fmt.Errorf("invalid performative %q", verb)
+	}
+
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

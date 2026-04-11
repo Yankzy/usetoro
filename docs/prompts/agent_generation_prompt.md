@@ -13,7 +13,7 @@ Agent Specification
 - Package Name: `[PACKAGE_NAME]`
 - `internal_module` key (must match defaults.yaml): `"[INTERNAL_MODULE_KEY]"`
 - `activity_type` (the semantic activity this agent fulfills): `"[ACTIVITY_TYPE]"` (e.g. `"agents.accounting.map_csv"`)
-- Task Queue (NATS public topic where the Orchestrator broadcasts CFPs): `"[TASK_QUEUE]"`
+- Task Queue (optional override; usually auto-derived by Orchestrator): `"[TASK_QUEUE]"`
 - Durable consumer name: `"[DURABLE_NAME]"`
 - Purpose / Business Logic:
   [Describe what the agent does in plain English. e.g. "Reads mapped rows from the cleanup stage, queries the database for existing transactions with the same description+amount+date, and marks duplicates before passing to reconciliation."]
@@ -55,8 +55,8 @@ type Environment struct {
     Bus            EventBus             // NATS abstraction
     Config         AgentConfig          // Parsed from defaults.yaml
     Memory         MemoryStore          // Long-term RAG memory
-    Queries        *database.Queries    // nil if dependencies.db_queries = true
-    DBPool         *pgxpool.Pool        // nil if dependencies.database = true
+    Queries        *database.Queries    // nil if dependencies.db_queries = false
+    DBPool         *pgxpool.Pool        // nil if dependencies.database = false
     EntityResolver *ai.EntityResolver   // nil if dependencies.entity_resolver = false
 }
 ```
@@ -206,6 +206,13 @@ type Envelope struct {
 func NewEnvelope(id, src, dst, cid string, verb Performative, body interface{}) (*Envelope, error)
 ```
 
+Handlers must guard incoming verbs:
+```go
+if !core.IsValidPerformative(env.Performative) {
+    return nil
+}
+```
+
 9. Proof — Standard Output Payload
 
 When your agent completes work, wrap output in a `core.Proof` and publish it inside an `INFORM` envelope to the `orchestrator.inbox` subject:
@@ -220,6 +227,19 @@ type Proof struct {
 }
 
 const ProofAPI ProofType = "proof.api"
+```
+
+Dispatch payload shape from Orchestrator is `core.TaskDefinition` and includes payment-ready fields:
+```go
+type TaskDefinition struct {
+    ID         string
+    Domain     string
+    Complexity core.TaskComplexity // 1|5|10
+    Reward     int64               // micrions
+    Currency   string              // default "TORO"
+    Payload    json.RawMessage
+    ExpiresAt  int64               // unix ts from step timeout
+}
 ```
 
 10. Poison Pill Pattern (Required)
@@ -237,7 +257,7 @@ if metaErr == nil && meta.NumDelivered > 3 {
 
 11. `defaults.yaml` Entry (include this in your response)
 
-**IMPORTANT:** Agents in `defaults.yaml` define their BRAIN ONLY (DID, model, system prompt, dependencies). They do NOT declare `subscribe_to` or `publish_to` — the Workflow Orchestrator owns topology routing via the `task_queue` field in the pipeline YAML.
+**IMPORTANT:** Agents in `defaults.yaml` define their BRAIN ONLY (DID, model, system prompt, dependencies). They do NOT declare `subscribe_to` or `publish_to` — the Workflow Orchestrator owns topology routing via workflow YAML (`activity_type`, `complexity`, optional `task_queue` override).
 
 ```yaml
 - did: "did:toro:agent:<your_did_suffix>"
@@ -250,6 +270,7 @@ if metaErr == nil && meta.NumDelivered > 3 {
     [Your system prompt here]
   dependencies:
     database: true|false
+    db_queries: true|false
     entity_resolver: true|false
 ```
 
@@ -257,10 +278,10 @@ if metaErr == nil && meta.NumDelivered > 3 {
 
 When `negotiate: true` is set on a workflow step, the Orchestrator will broadcast a `CFP` to the public `task_queue` topic. Your agent must:
 
-1. **Listen on the Task Queue**: Subscribe to the public NATS `task_queue` subject with a durable JetStream consumer.
+1. **Listen on the Task Queue**: Subscribe to the public queue assigned by Orchestrator (usually derived from `activity_type` + complexity via `core.BuildTaskSubject`).
 2. **Send a `PROPOSE`**: Reply with a bid envelope to `core.BuildAgentInbox(env.SenderDID)` (the Orchestrator's inbox).
-3. **Wait for `ACCEPT_PROPOSAL`**: Once the Orchestrator selects the winner, it dispatches the payload via an `ACCEPT_PROPOSAL` envelope directly to your agent's private inbox (`agent.inbox.{YOUR_DID}`).
-4. **Execute and Prove**: Perform computation via `ExecuteGlobalWorkflow`. When the `onComplete` closure fires, publish a `core.Proof` wrapped in an `INFORM` envelope to `orchestrator.inbox`.
+3. **Wait for `ACCEPT_PROPOSAL`**: Once the Orchestrator selects the winner, it dispatches the payload via an `ACCEPT_PROPOSAL` envelope directly to your agent's private inbox (`agents.{DID}.inbox`).
+4. **Execute and Prove**: Parse `TaskDefinition` (including `complexity/reward/currency/expires_at`) and perform computation via `ExecuteGlobalWorkflow`. When the `onComplete` closure fires, publish a `core.Proof` wrapped in an `INFORM` envelope to `orchestrator.inbox`.
 
 ```go
 // Pattern for public Task Queue subscription:

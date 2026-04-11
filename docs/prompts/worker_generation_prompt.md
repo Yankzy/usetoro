@@ -11,7 +11,8 @@ Worker Specification
 
 - Worker Name: "[WORKER_NAME]" (e.g. CSVMappingWorker)
 - Package Name: `workers`
-- Worker Inbox Subject (the fixed NATS subject this worker listens on): `"worker.inbox.[WORKER_ID]"`
+- Worker ID (used to derive inbox via `core.BuildWorkerInbox`): `"[WORKER_ID]"`
+- Worker Inbox Subject (derived canonical NATS subject): `"worker.inbox.[WORKER_ID]"`
 - NATS queue group: `"[QUEUE_GROUP]-group"`
 - Durable consumer name: `"[WORKER_ID]-durable"`
 - `activity_type` (must match workflow YAML): `"workers.[DOMAIN].[ACTIVITY]"` (e.g. `"workers.database.insert_rows"`)
@@ -74,10 +75,12 @@ func init() {
 
 4. Handling Orchestrator-Dispatched Envelopes
 
-The Orchestrator sends an `ACCEPT_PROPOSAL` envelope containing the `core.Proof` payload. Your `Handle` must:
+The Orchestrator sends an `ACCEPT_PROPOSAL` envelope containing the `core.Proof` payload. In workflow YAML, worker steps usually use `task_queue: [WORKER_ID]`, and orchestrator resolves it to `worker.inbox.[WORKER_ID]` using `core.BuildWorkerInbox`. Your `Handle` must:
 1. Parse the TAP envelope.
-2. Execute DB mutations.
-3. Return `nil` on success (Manager will `Ack()`) or `error` for transient failures (Manager will `Nak()`).
+2. Validate `env.Performative` with `core.IsValidPerformative`.
+3. Parse the dispatched `TaskDefinition` and retain `complexity/reward/currency/expires_at` for audit/payment readiness.
+4. Execute DB mutations.
+5. Return `nil` on success (Manager will `Ack()`) or `error` for transient failures (Manager will `Nak()`).
 
 ```go
 func (w *[WORKER_NAME]) Handle(ctx context.Context, msg *nats.Msg) error {
@@ -85,16 +88,25 @@ func (w *[WORKER_NAME]) Handle(ctx context.Context, msg *nats.Msg) error {
     if err := json.Unmarshal(msg.Data, &env); err != nil {
         return nil // malformed — term silently
     }
+    if !core.IsValidPerformative(env.Performative) {
+        return nil // invalid protocol verb
+    }
     if env.Performative != core.ACCEPT_PROPOSAL {
         return nil // not for us
     }
 
-    var proof core.Proof
-    if err := json.Unmarshal(env.Body, &proof); err != nil {
+    var task core.TaskDefinition
+    if err := json.Unmarshal(env.Body, &task); err != nil {
         return nil
     }
 
-    // Process proof.Data and write to PostgreSQL
+    // Optional: log/payment trace fields
+    _ = task.Complexity
+    _ = task.Reward
+    _ = task.Currency
+    _ = task.ExpiresAt
+
+    // Process task.Payload (often a proof) and write to PostgreSQL
 
     return nil
 }

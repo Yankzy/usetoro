@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -18,6 +19,47 @@ const (
 	ComplexityJunior TaskComplexity = 5  // Moderate
 	ComplexitySenior TaskComplexity = 10 // Expert
 )
+
+const (
+	// DefaultTaskCurrency is attached to dispatched tasks so payment can be activated without changing protocol shape.
+	DefaultTaskCurrency = "micrion"
+
+	// Suggested rewards (micrions) by complexity tier.
+	RewardEntryMicrions  int64 = 1_000_000
+	RewardJuniorMicrions int64 = 5_000_000
+	RewardSeniorMicrions int64 = 10_000_000
+)
+
+// NormalizeTaskComplexity returns a valid complexity value, defaulting zero to entry level.
+func NormalizeTaskComplexity(complexity TaskComplexity) (TaskComplexity, error) {
+	if complexity == 0 {
+		return ComplexityEntry, nil
+	}
+	switch complexity {
+	case ComplexityEntry, ComplexityJunior, ComplexitySenior:
+		return complexity, nil
+	default:
+		return 0, fmt.Errorf("invalid task complexity %d (allowed: %d, %d, %d)", complexity, ComplexityEntry, ComplexityJunior, ComplexitySenior)
+	}
+}
+
+// SuggestedRewardMicrions returns a baseline reward for a validated complexity tier.
+func SuggestedRewardMicrions(complexity TaskComplexity) (int64, error) {
+	normalized, err := NormalizeTaskComplexity(complexity)
+	if err != nil {
+		return 0, err
+	}
+	switch normalized {
+	case ComplexityEntry:
+		return RewardEntryMicrions, nil
+	case ComplexityJunior:
+		return RewardJuniorMicrions, nil
+	case ComplexitySenior:
+		return RewardSeniorMicrions, nil
+	default:
+		return 0, fmt.Errorf("unsupported complexity tier %d", normalized)
+	}
+}
 
 // TaskDefinition is the generic "Unit of Work" broadcast to the network.
 type TaskDefinition struct {

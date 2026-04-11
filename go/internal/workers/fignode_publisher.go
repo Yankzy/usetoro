@@ -75,6 +75,10 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
 		return nil
 	}
+	if !core.IsValidPerformative(env.Performative) {
+		w.logger.Warn("fignode publisher worker: dropping message, invalid performative", "perf", env.Performative)
+		return nil
+	}
 
 	if env.Performative != core.INFORM {
 		return nil
@@ -180,9 +184,15 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 			if r.PredictedVendorID.Valid {
 				if vendorRec, vErr := w.db.GetVendorByID(ctx, r.PredictedVendorID); vErr == nil {
 					vTax, _ := fignode.EnsureVendorContext(ctx, w.db, w.llm, vendorRec)
-					if vTax.Industry != "" { industry = vTax.Industry }
-					if vTax.IndustryIcon != "" { industryIcon = vTax.IndustryIcon }
-					if vTax.VendorDescription != "" { entityDesc = vTax.VendorDescription }
+					if vTax.Industry != "" {
+						industry = vTax.Industry
+					}
+					if vTax.IndustryIcon != "" {
+						industryIcon = vTax.IndustryIcon
+					}
+					if vTax.VendorDescription != "" {
+						entityDesc = vTax.VendorDescription
+					}
 				}
 			}
 		} else {
@@ -190,9 +200,15 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 			if r.PredictedCustomerID.Valid {
 				if customerRec, cErr := w.db.GetCustomerByID(ctx, r.PredictedCustomerID); cErr == nil {
 					cTax, _ := fignode.EnsureCustomerContext(ctx, w.db, w.llm, customerRec)
-					if cTax.Industry != "" { industry = cTax.Industry }
-					if cTax.IndustryIcon != "" { industryIcon = cTax.IndustryIcon }
-					if cTax.CustomerDescription != "" { entityDesc = cTax.CustomerDescription }
+					if cTax.Industry != "" {
+						industry = cTax.Industry
+					}
+					if cTax.IndustryIcon != "" {
+						industryIcon = cTax.IndustryIcon
+					}
+					if cTax.CustomerDescription != "" {
+						entityDesc = cTax.CustomerDescription
+					}
 				}
 			}
 		}
@@ -251,4 +267,3 @@ func init() {
 		return NewFignodePublisherWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.LLMClient)
 	})
 }
-

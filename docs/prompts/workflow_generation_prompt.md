@@ -29,9 +29,17 @@ Framework Contracts You MUST Follow
 
 The Workflow Orchestrator owns all step routing. Agents and Workers do NOT hardcode upstream or downstream topics.
 
-- `task_queue`: the public NATS topic where the Orchestrator broadcasts a `CFP` for that step.
+- `complexity` is required for agent steps and must be one of: `1` (entry), `5` (junior), `10` (senior).
+- `task_queue` routing:
+  - Agents: optional. If omitted, orchestrator derives route from `activity_type` + `complexity` using `core.BuildTaskSubject(...)` (via `core.BuildTaskSubjectFromActivity`).
+  - Workers: required as worker id (e.g. `csv-mapping-worker`) and orchestrator resolves it via `core.BuildWorkerInbox(worker_id)`.
+- Message verbs are protocolized:
+  - `negotiate: true` path uses `CFP` → `PROPOSE` → `ACCEPT_PROPOSAL`.
+  - Step completion is returned as `INFORM` to `orchestrator.inbox`.
+- Payment readiness:
+  - `complexity` determines baseline reward policy in dispatched `TaskDefinition` (`reward`, `currency`, `expires_at` are filled by orchestrator).
 - `negotiate: true` → the Orchestrator uses FIPA bidding. The winning agent receives the payload via their private inbox.
-- `negotiate: false` → the Orchestrator dispatches directly to the provided `task_queue`. This allows reaching internal workers using a static inbox (e.g., `worker.inbox.csv-mapping-worker`).
+- `negotiate: false` → the Orchestrator dispatches directly to the provided `task_queue`.
 - `timeout` → a wall-clock limit after which the Orchestrator marks the step FAILED and retries or compensates.
 
 3. YAML Structure
@@ -46,7 +54,8 @@ trigger_topic: "nats.topic.that.starts.it"
 steps:
   - id: step_id
     activity_type: agents.accounting.map_csv     # use underscores for activity names
-    task_queue: public.topic.for.this.activity   # or worker.inbox.worker-id for direct dispatch
+    complexity: 1                                # 1|5|10
+    # task_queue optional for agents (derived if omitted)
     negotiate: true                              # true = FIPA bidding; false = direct dispatch
     timeout: "60s"                               # timeout
     description: "What this step does"

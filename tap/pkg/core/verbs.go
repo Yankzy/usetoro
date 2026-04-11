@@ -19,3 +19,21 @@ const (
 	REFUSE  Performative = "refuse"  // I cannot/will not do it
 	FAILURE Performative = "failure" // Something went wrong
 )
+
+var validPerformatives = map[Performative]struct{}{
+	CFP:             {},
+	PROPOSE:         {},
+	ACCEPT_PROPOSAL: {},
+	REJECT_PROPOSAL: {},
+	INFORM:          {},
+	QUERY_REF:       {},
+	REQUEST:         {},
+	REFUSE:          {},
+	FAILURE:         {},
+}
+
+// IsValidPerformative reports whether p is one of the protocol-defined verbs.
+func IsValidPerformative(p Performative) bool {
+	_, ok := validPerformatives[p]
+	return ok
+}

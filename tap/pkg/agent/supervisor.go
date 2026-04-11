@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	
+
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
@@ -62,6 +62,20 @@ func (s *Supervisor) LoadAgents(configs []core.AgentConfig) error {
 	defer s.mu.Unlock()
 
 	for _, cfg := range configs {
+		if cfg.ActivityType != "" {
+			normalizedQueue, err := core.NormalizeTaskQueue(cfg.ActivityType, cfg.TaskQueue)
+			if err != nil {
+				s.logger.Warn("Invalid task queue configuration, skipping agent",
+					"did", cfg.DID,
+					"activity_type", cfg.ActivityType,
+					"task_queue", cfg.TaskQueue,
+					"error", err,
+				)
+				continue
+			}
+			cfg.TaskQueue = normalizedQueue
+		}
+
 		if existing, exists := s.agents[cfg.DID]; exists {
 			s.logger.Info("♻️ Reloading Agent", "did", cfg.DID)
 			if err := existing.Stop(); err != nil {
@@ -86,7 +100,7 @@ func (s *Supervisor) LoadAgents(configs []core.AgentConfig) error {
 				Config: cfg,
 				Memory: s.mem,
 			}
-			
+
 			if cfg.Dependencies.Database {
 				env.DBPool = s.dbPool
 			}

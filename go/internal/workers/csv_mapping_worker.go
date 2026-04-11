@@ -93,7 +93,11 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 	// Check performative
 	perfStr, ok := env["perf"].(string)
 	perf := core.Performative(perfStr)
-	if !ok || (perf != core.INFORM && perf != core.ACCEPT_PROPOSAL) {
+	if !ok || !core.IsValidPerformative(perf) {
+		e.logger.Warn("csv mapping worker: dropping message, invalid performative", "perf_val", env["perf"])
+		return nil
+	}
+	if perf != core.INFORM && perf != core.ACCEPT_PROPOSAL {
 		e.logger.Warn("csv mapping worker: dropping message, perf mismatch", "perf_val", env["perf"])
 		return nil
 	}

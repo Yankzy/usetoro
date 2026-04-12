@@ -2,102 +2,43 @@
 
 ## Purpose
 
-The **CSV Mapping Agent** is the first stage in the Toro CSV bank statement processing workflow. When a user uploads a raw bank statement CSV, this agent uses an LLM to analyse the raw column headers and map them to standardised accounting fields (`Date`, `Description`, `Amount`, `Vendor`, `Customer`).
+The CSV Mapping Agent is the first agent step in the CSV cleaner workflow. It takes raw CSV rows, asks the LLM to infer column mapping, normalizes rows into a canonical shape, and writes the result into workflow state via Redux.
 
-It handles inconsistent bank formats — single-amount columns, split debit/credit columns, varying sign conventions — and produces a structured row mapping that downstream agents (`reconcile_expense`, `reconcile_revenue`) can operate on directly.
+It supports:
+- single `amount` column or split `debit`/`credit` columns
+- optional `vendor` and `customer` columns
+- sign-convention inference (`is_expense_positive`)
 
----
-
-## Config (`defaults.yaml`)
+## Config (`go/internal/config/defaults.yaml`)
 
 ```yaml
-- did: "did:toro:agent:csv_mapping_1"
-  name: "CSV Mapping Agent"
+- name: "CSV Mapping Agent"
   model: "gpt-5.4-mini"
   engine: "internal"
   internal_module: "csv-mapping-agent"
+  activity_type: "agents.accounting.map_csv"
+  workflow_schema: '{"type":"object","properties":{"status":{"type":"string"},"mapped_rows":{"type":"object"}}}'
   dependencies:
-    database: true
+    database: false
+    db_queries: true
     entity_resolver: false
 ```
 
----
+At runtime, the agent subscribes to:
+- private inbox: `agents.<did>.inbox`
+- derived task queue for its activity type: `tasks.accounting.1.map_csv`
 
-## Core Concepts
+## Runtime Flow
 
-The CSV Mapping Agent follows the standard **Toro Agent Pattern**, centering around three core components:
+1. The handler accepts only `CFP` envelopes. Non-`CFP` messages are logged and ignored.
+2. It sends a `PROPOSE` reply (`price: 1`, `eta: "10s"`) to `core.BuildAgentInbox(env.SenderDID)`.
+3. It immediately executes the task (no separate wait for `ACCEPT_PROPOSAL`).
+4. It runs `ExecuteGlobalWorkflow(...)` with Redux RBAC limited to `["/status", "/mapped_rows"]`.
+5. After Redux validation succeeds, it publishes an `INFORM` proof to `orchestrator.inbox`.
 
-### 1. The `Handler` (JetStream Inbox)
-The agent listens on a dedicated JetStream subject (via `BaseAgent.Sub`). The handler includes mandatory **Poison Pill** protection: if a message fails more than 3 times, it is terminated to prevent infinite retry loops.
+## Payload Contract
 
-### 2. The `llmCallback` (Reasoning & Correction)
-This closure is passed to the Redux engine. It is **retry-aware**:
-- It receives a list of `redux.DomainFault`s from previous failed attempts.
-- It uses `agent.Runtime` (via `ExecWithPaging`) to prompt the LLM.
-- It returns a set of JSON Patches (RFC 6902) to be applied to the workflow state.
-- **Fail-Safe**: If Redux rejects the patches (e.g., due to RBAC or Schema violations), this callback is re-invoked with the errors, allowing the LLM to self-correct.
-
-### 3. The `onComplete` Hook (Side Effects)
-This closure is called **only after** Redux has successfully validated and persisted the state transition.
-- **Standard Purpose**: It is the designated place for publishing "informed" results or **Proofs** to JetStream.
-- **Guarantee**: By the time `onComplete` runs, the internal database is updated, and the transition is immutable.
-
----
-
-## Redux State Engine Integration
-
-This agent performs deterministic state transitions via the Toro `tap/pkg/redux` engine using the `ExecuteGlobalWorkflow` lifecycle.
-
-### The 5-Phase Execution Lifecycle
-
-1.  **Hydrate**: Fetches the current workflow state and sequence ID from the database.
-2.  **Boot**: Initializes a fresh Redux Store with the agent's specific **RBAC** and **Schema** policies.
-3.  **Reason**: Enters the `llmCallback` loop (up to 3 retries) until valid patches are generated.
-4.  **Trace**: Publishes the validated event to the `workflow.trace.<id>` subject for observability.
-5.  **Finalize**: Invokes `onComplete` to trigger downstream side effects (e.g., publishing a Proof).
-
-### Practical Safeguards
-
-- **RBAC Policy**: Actively scopes mutation authority down to exactly `["/status", "/mapped_rows"]`.
-- **Schema Validation**: Ensures the resulting state matches expected JSON structures.
-- **Optimistic Concurrency**: Uses `op: test` patches to prevent race conditions during heavy state updates.
-- **Idempotency**: Sequence IDs are tracked to prevent double-processing on JetStream redeliveries.
-
----
-
-## Message Flow
-
-```
-[User Upload]
-     │
-     ▼
-events.accounting.1.csv_mapping     ← Listens here (JetStream, queue group: csv-mapping-group)
-     │
-     ▼
-handleCFP()                         ← Parses TAP Envelope, expects Performative: CFP
-     │
-     ├─► Publishes PROPOSE to sender inbox (price, eta)
-     │
-     └─► executeTask()
-              │
-              ▼
-         mapRowsUsingLLM()          ← GPT-4o-mini analyses raw CSV rows
-              │
-              ▼
-         parseRows()                ← Converts LLM mapping → []RawRow
-              │
-              ▼
-         ExecuteGlobalWorkflow()    ← RFC6902 patch: sets /status + /mapped_rows on DB workflow
-              │
-              ▼
-proof.accounting.csv_mapping.columns    ← Publishes TAP Envelope (INFORM) with Proof payload
-```
-
----
-
-## Input Payload
-
-The agent expects a `core.TaskDefinition` body containing a `csvMappingTaskPayload`:
+The task body is a `core.TaskDefinition` whose `payload` matches:
 
 ```json
 {
@@ -110,37 +51,70 @@ The agent expects a `core.TaskDefinition` body containing a `csvMappingTaskPaylo
 }
 ```
 
----
+Compatibility fallback:
+- if `session_id` is empty, the agent falls back to `upload_id` from the same payload
+
+Important identity semantics:
+- `task.id` = workflow instance UUID (used for Redux trace + proof `task_id`)
+- `payload.session_id` = business upload/session context copied into mapped rows
+
+## Redux Mutations
+
+The LLM callback creates RFC6902 patches:
+- optional optimistic concurrency test on `/status` when present:
+  `{"op":"test","path":"/status","value":<current>}`
+- set status:
+  `{"op":"add","path":"/status","value":"COLUMNS_MAPPED"}`
+- write mapped rows:
+  `{"op":"add","path":"/mapped_rows","value":{...}}`
+
+## Row Normalization Rules (`parseRows`)
+
+- starts at row index `1` (skips first row)
+- removes `*` artifacts and trims whitespace from extracted fields
+- if split amounts are configured, `debit` is preferred; otherwise `credit`
+- includes a row only when both `description` and `amount` are non-empty
+- output is keyed as `row_<index>` in a map, not an array
+
+## Prompting Behavior (`buildUserPrompt`)
+
+- combines `Cfg.SystemPrompt` + generated user prompt
+- includes up to 20 rows with at least 2 non-empty columns
+- instructs the LLM to return strict JSON with a confidence score
+- `extractJSONToMapping` tolerates markdown-wrapped responses by slicing the first `{...}` block
 
 ## Output Proof
 
-Published to `proof.accounting.csv_mapping.columns` as a `core.Envelope` (`INFORM`) containing a `core.Proof`:
+The validated result is sent as an `INFORM` envelope to `orchestrator.inbox`.  
+Envelope body is a `core.Proof` where:
+- `task_id` = workflow instance UUID (`task.id`)
+- `type` = `proof.api`
+- `data` = validated `/mapped_rows` object
+
+Example `proof` body:
 
 ```json
 {
-  "task_id": "<session_id>",
+  "task_id": "9ec1f778-41c7-4be4-9fd5-5fcf0878892f",
   "type": "proof.api",
-  "data": [
-    { "SessionID": "...", "RealmID": "...", "Date": "2024-01-15", "Description": "AMZN DIGITAL", "Amount": "-9.99" }
-  ]
+  "ts": 1714527600,
+  "data": {
+    "row_1": {
+      "SessionID": "upload_123",
+      "RealmID": "realm_abc",
+      "Date": "2024-01-15",
+      "Description": "AMZN DIGITAL",
+      "Amount": "-9.99",
+      "Vendor": "",
+      "Customer": ""
+    }
+  },
+  "sig": "<ed25519-signature>"
 }
 ```
 
----
+## Error Handling
 
-## Key Types
-
-| Type | Description |
-|---|---|
-| `CSVMappingAgent` | Main struct embedding `*agent.BaseAgent` + `*agent.Runtime` + `*database.Queries` |
-| `LLMColumnMapping` | JSON struct the LLM must return — column indices and sign convention |
-| `csvMappingTaskPayload` | The input expected inside the `TaskDefinition.Payload` |
-| `RawRow` | Normalised output row (one per CSV data row) |
-
----
-
-## Poison Pill & Error Handling
-
-- Messages delivered **more than 3 times** are terminated (`msg.Term()`) to avoid infinite retry loops.
-- Transient errors → `msg.Nak()` (redelivered by JetStream).
-- `"insufficient funds"` errors → message is logged to `stalled_messages` table and terminated.
+- poison pill protection: deliveries `> 3` are terminated with `msg.Term()`
+- transient failures return `msg.Nak()` for retry
+- `"insufficient funds"` is treated as stalled-paywall: logs into `stalled_messages` then `msg.Term()`

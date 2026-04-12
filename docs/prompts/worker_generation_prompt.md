@@ -5,33 +5,25 @@ Copy the block below and fill in the `[PLACEHOLDERS]` before sending it to an LL
 ---
 
 ````
-You are an expert Go developer. Your task is to generate a complete, compilable Go source file for a new internal Worker in the application.
+You are an expert Go developer. Generate a complete, compilable Go worker file under `go/internal/workers/`.
 
 Worker Specification
 
-- Worker Name: "[WORKER_NAME]" (e.g. CSVMappingWorker)
-- Package Name: `workers`
-- Worker ID (used to derive inbox via `core.BuildWorkerInbox`): `"[WORKER_ID]"`
-- Worker Inbox Subject (derived canonical NATS subject): `"worker.inbox.[WORKER_ID]"`
-- NATS queue group: `"[QUEUE_GROUP]-group"`
-- Durable consumer name: `"[WORKER_ID]-durable"`
-- `activity_type` (must match workflow YAML): `"workers.[DOMAIN].[ACTIVITY]"` (e.g. `"workers.database.insert_rows"`)
+- Worker Type Name: `[WORKER_TYPE_NAME]` (e.g. `CSVMappingWorker`)
+- File Name: `[FILE_NAME].go`
 - Purpose / Business Logic:
-  [Describe what the worker does in plain English.]
-
----
+  [Describe what this worker does and what side effects it owns.]
+- Primary input source:
+  `[ORCHESTRATOR_ENVELOPE | PROOF_EVENT | CDC_EVENT | CUSTOM_JSON]`
+- If orchestrator-driven, expected performative(s): `[accept-proposal|inform|both]`
+- Subscription source config key(s):
+  [e.g. `cfg.Workers.CSVMapping`, `cfg.Workers.CSVMappingActivityType`, `cfg.Workers.CSVMappingGroup`]
+- Dependencies needed from `workers.Dependencies`:
+  [List only what is required: `Store.Queries`, `Queue`, `Logger`, `Config`, `EntityResolver`, `LLMClient`, etc.]
 
 Framework Contracts You MUST Follow
 
-12. Architecture Boundaries (Workers vs Agents)
-
-- **CRITICAL RULE**: Workers DO NOT make LLM calls. They consume NATS `ACCEPT_PROPOSAL` envelopes dispatched by the **Workflow Orchestrator**, execute DB (`pgx`) updates to persist the proven state, and return. They are PASSIVE — the Orchestrator advances the pipeline based on the worker's success/failure.
-- Workers do NOT publish results to other topics to trigger the next step. The Orchestrator drives all state transitions.
-- If you need to make LLM calls or perform AI intelligence, that is the job of an **Agent**.
-
-3. Worker Interface
-
-Every worker MUST implement the `Worker` interface. The `Subscriptions()` method must use the canonical `worker.inbox.[WORKER_ID]` subject:
+1. Implement the worker interface exactly
 
 ```go
 type SubscriptionConfig struct {
@@ -45,14 +37,46 @@ type Worker interface {
     Subscriptions() []SubscriptionConfig
     Handle(ctx context.Context, msg *nats.Msg) error
 }
+```
 
-func (w *[WORKER_NAME]) Subscriptions() []SubscriptionConfig {
+2. Register with `RegisterFactory` in `init()`
+
+```go
+func init() {
+    RegisterFactory(func(deps Dependencies) (Worker, error) {
+        return New[WORKER_TYPE_NAME](/* required deps only */)
+    })
+}
+```
+
+3. Subscription pattern must match current manager conventions
+
+- Use config-driven subject(s).
+- If subject is empty and activity-type derivation is appropriate, use `core.BuildWorkerInboxFromActivity(activityType)`.
+- Derive defaults with existing helpers:
+  - `groupFromSubject(subject)`
+  - `durableFromSubject(subject)`
+
+Canonical `Subscriptions()` pattern:
+
+```go
+func (w *[WORKER_TYPE_NAME]) Subscriptions() []SubscriptionConfig {
+    subject := w.cfg.Workers.[SUBJECT_KEY]
+    if subject == "" {
+        // optional derivation path when your worker supports it
+    }
+
+    group := w.cfg.Workers.[GROUP_KEY]
+    if group == "" {
+        group = groupFromSubject(subject)
+    }
+
     return []SubscriptionConfig{
         {
-            Subject: "worker.inbox.[WORKER_ID]",
-            Group:   "[WORKER_ID]-group",
+            Subject: subject,
+            Group:   group,
             Options: []nats.SubOpt{
-                nats.Durable("[WORKER_ID]-durable"),
+                nats.Durable(durableFromSubject(subject)),
                 nats.DeliverAll(),
                 nats.AckExplicit(),
             },
@@ -61,58 +85,136 @@ func (w *[WORKER_NAME]) Subscriptions() []SubscriptionConfig {
 }
 ```
 
-3. Registration Boilerplate
+4. Handle semantics (critical)
 
-Each worker must self-register in its `init()` function:
+`Manager` controls ACK/NAK behavior:
+- `Handle(...) == nil` => manager `Ack()`
+- `Handle(...) != nil` => manager `Nak()`
 
-```go
-func init() {
-    RegisterFactory(func(deps Dependencies) (Worker, error) {
-        return New[WORKER_NAME](deps.Store.Queries, deps.Queue, deps.Logger)
-    })
-}
-```
+Therefore:
+- return `nil` for ignorable messages (wrong type, malformed non-retryable, unsupported performative)
+- return `error` only for transient/retryable failures
+- if poison pill after repeated delivery, call `msg.Term()` and return `nil`
 
-4. Handling Orchestrator-Dispatched Envelopes
-
-The Orchestrator sends an `ACCEPT_PROPOSAL` envelope containing the `core.Proof` payload. In workflow YAML, worker steps usually use `task_queue: [WORKER_ID]`, and orchestrator resolves it to `worker.inbox.[WORKER_ID]` using `core.BuildWorkerInbox`. Your `Handle` must:
-1. Parse the TAP envelope.
-2. Validate `env.Performative` with `core.IsValidPerformative`.
-3. Parse the dispatched `TaskDefinition` and retain `complexity/reward/currency/expires_at` for audit/payment readiness.
-4. Execute DB mutations.
-5. Return `nil` on success (Manager will `Ack()`) or `error` for transient failures (Manager will `Nak()`).
+Poison-pill guard pattern:
 
 ```go
-func (w *[WORKER_NAME]) Handle(ctx context.Context, msg *nats.Msg) error {
-    var env core.Envelope
-    if err := json.Unmarshal(msg.Data, &env); err != nil {
-        return nil // malformed — term silently
-    }
-    if !core.IsValidPerformative(env.Performative) {
-        return nil // invalid protocol verb
-    }
-    if env.Performative != core.ACCEPT_PROPOSAL {
-        return nil // not for us
-    }
-
-    var task core.TaskDefinition
-    if err := json.Unmarshal(env.Body, &task); err != nil {
-        return nil
-    }
-
-    // Optional: log/payment trace fields
-    _ = task.Complexity
-    _ = task.Reward
-    _ = task.Currency
-    _ = task.ExpiresAt
-
-    // Process task.Payload (often a proof) and write to PostgreSQL
-
+meta, metaErr := msg.Metadata()
+if metaErr == nil && meta.NumDelivered > 3 {
+    w.logger.Error("poison pill exceeded retries", "subject", msg.Subject)
+    msg.Term()
     return nil
 }
 ```
 
+5. Envelope handling for orchestrator-driven workers
+
+When subject carries TAP envelopes:
+- unmarshal `core.Envelope`
+- validate `core.IsValidPerformative(env.Performative)`
+- parse `env.Body` as either:
+  - `core.TaskDefinition` (common for `ACCEPT_PROPOSAL` dispatch)
+  - `core.Proof` (common for `INFORM` chains)
+
+`TaskDefinition` shape:
+
+```go
+type TaskDefinition struct {
+    ID         string
+    Domain     string
+    Complexity core.TaskComplexity
+    Reward     int64
+    Currency   string
+    Payload    json.RawMessage
+    ExpiresAt  int64
+}
+```
+
+Notes:
+- `Payload` often contains proof-like data from prior step.
+- Reward/currency fields may be zero/empty depending on orchestrator phase.
+
+6. Completion signaling (when this worker is a workflow step)
+
+If this worker is expected to advance orchestrator flow, publish an `INFORM` envelope to `workflows.OrchestratorInbox` and preserve the incoming `cid`.
+
+Typical reply envelope:
+- `src`: worker DID-like identifier string
+- `dst`: `workflows.OrchestratorDID`
+- `perf`: `inform`
+- `cid`: incoming conversation id
+- `body`: a compact proof payload
+
+7. One-shot Learning Example (from `go/internal/workers/csv_mapping_worker.go`)
+
+Use this as a style anchor. Keep the same resilient parsing/fallback posture.
+
+```go
+type CSVMappingWorker struct {
+    db     *database.Queries
+    nc     *nats.Conn
+    logger *slog.Logger
+    cfg    *config.Config
+}
+
+func (w *CSVMappingWorker) Subscriptions() []SubscriptionConfig {
+    activityType := w.cfg.Workers.CSVMappingActivityType
+    subject := w.cfg.Workers.CSVMapping
+    if subject == "" {
+        subject, _ = core.BuildWorkerInboxFromActivity(activityType)
+    }
+    group := w.cfg.Workers.CSVMappingGroup
+    if group == "" {
+        group = groupFromSubject(subject)
+    }
+    return []SubscriptionConfig{{
+        Subject: subject,
+        Group:   group,
+        Options: []nats.SubOpt{nats.Durable(durableFromSubject(subject)), nats.DeliverAll(), nats.AckExplicit()},
+    }}
+}
+
+func (w *CSVMappingWorker) Handle(ctx context.Context, msg *nats.Msg) error {
+    // parse envelope-like payload
+    // accept both INFORM and ACCEPT_PROPOSAL paths
+    // parse TaskDefinition.Payload first, then fallback to direct Proof body
+    // write DB side effects
+    // if cid exists, publish INFORM back to workflows.OrchestratorInbox
+    // otherwise optional legacy broadcast path
+    return nil
+}
+```
+
+Critical behaviors to copy from this one-shot:
+- Robustly handle envelope variants (`INFORM` proof vs `ACCEPT_PROPOSAL` task payload wrapping proof-like data).
+- Use `ExtractRows(...)` style normalization when payload can be map-or-array.
+- Keep poison-pill termination local (`msg.Term()` + return `nil`).
+- Return transient DB/API failures as `error` so manager can `Nak()`.
+
+8. Architecture boundaries
+
+- Workers own deterministic side effects (DB writes, sync calls, enrichment pipelines, fanout).
+- Workers may use injected AI helpers (`LLMClient`, `EntityResolver`, `CoAMapper`) when required by business logic.
+- Do not use TAP `agent.Runtime` inside workers.
+
+Quality Bar
+
+- Must compile and match existing `go/internal/workers` style.
+- No placeholder tokens left in code.
+- No pseudocode or TODO stubs.
+- Use only dependencies listed in the factory constructor.
+
 What to Return
 
-Return only the Go source file for the new worker. Do not return anything else.
+Return only the Go source file content for the worker.
+Return nothing else.
 ````
+
+Placeholder Values
+
+```env
+WORKER_TYPE_NAME=""
+FILE_NAME=""
+SUBJECT_KEY=""
+GROUP_KEY=""
+```

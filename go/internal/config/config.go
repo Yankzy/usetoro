@@ -93,6 +93,7 @@ type WorkerSubjects struct {
 	CSVMappingActivityType string   `mapstructure:"csv_mapping_activity_type"`
 	CSVMappingGroup        string   `mapstructure:"csv_mapping_group"`
 	Enrichment             string   `mapstructure:"enrichment"`
+	EnrichmentActivityType string   `mapstructure:"enrichment_activity_type"`
 	EnrichmentGroup        string   `mapstructure:"enrichment_group"`
 	Fignode                string   `mapstructure:"fignode"`
 	FignodeGroup           string   `mapstructure:"fignode_group"`

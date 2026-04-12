@@ -185,7 +185,8 @@ worker_subjects:
   # Leave subjects empty to derive from activity type; override here if needed.
   csv_mapping: ""
   csv_mapping_group: ""
-  enrichment: "proof.accounting.cleanup.inserted"
+  enrichment_activity_type: "workers.database.enrich_rows"
+  enrichment: ""
   enrichment_group: ""
   transaction: "ledger.shadow_erp_proposed_transactions.*"
   transaction_group: ""

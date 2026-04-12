@@ -328,3 +328,49 @@ AV-01/AV-02 (trade-offs)
 ```
 
 Start with **AV-03** — the schema is the foundation. Every other composability enhancement is blocked until `WorkflowStep` can express a graph.
+
+
+---
+
+**Plan: Decouple & Harden Orchestrator/Almanac**
+
+**Summary**
+- Enable DAG workflows with stateful orchestration, nested conversation IDs, and explicit task-queue source of truth.
+- Harden discovery via JetStream registration + DLQ, and add DLQs for orchestrator triggers/inbox to prevent poison-message stalls.
+
+**Key Changes**
+- Workflow DAG & State (core)
+  - Extend `tap/workflows/workflow_schema.go` with `depends_on`, `on_success`, `on_failure`, `sub_workflow`, schema version.
+  - Migrate blueprints (e.g., `tap/workflows/csv_cleaner_pipeline.yaml`) to DAG fields; add migrator that infers linear `depends_on`.
+  - Orchestrator state (`InstanceState`): add `completed_steps`, `variables`, `last_proof`.
+  - Replace linear i+1 advancement with dependency-satisfied graph walk (fan-out/fan-in, success/failure branches, sub-workflow dispatch).
+  - Build next payloads from merged `variables`; persist step outputs keyed by step ID.
+  - ConversationID: `root[/child]/step`; update builders/parsers and sub-workflow resume logic.
+
+- Task-Queue Source of Truth (trade-off resolution)
+  - Make task queues explicit in agent config (`go/internal/config/defaults.yaml`); remove `GetTaskQueues` mutation from `daemon.go`.
+  - Validate and warn on workflow vs config queue mismatches during transition.
+
+- Almanac Durability + DLQ
+  - Publish registrations via `js.Publish` with retry/backoff in `tap/pkg/lookup/almanac_helpers.go`.
+  - Consume via durable, manual-ack JS subscription in `tap/pkg/lookup/almanac_server.go`; `MaxDeliver` + backoff; on terminal failure publish to `almanac.register.dlq`.
+  - Add DLQ subject to ALMANAC stream (or small ALMANAC_DLQ stream) with error metadata (reason, attempts, timestamp, payload).
+
+- Orchestrator DLQs
+  - Add DLQ subjects `workflow.dlq.trigger` and `workflow.dlq.inbox` to WORKFLOWS stream (or dedicated WORKFLOWS_DLQ).
+  - Trigger/inbox consumers: set `MaxDeliver` (e.g., 5) with backoff schedule; on terminal errors or exceeded deliveries, republish original message + error metadata to the appropriate DLQ, then `Term()`.
+  - Keep success path and existing logging intact; add structured logs and counters for retries/DLQ emits.
+
+- Docs & Ops
+  - Update `docs/Composability.md` with new schema, ConversationID, task-queue policy, DAG behavior, and DLQ/JS requirements.
+  - Add concise code comments where behavior is non-obvious.
+
+**Tests**
+- Unit: graph advancement (fan-out/fan-in), branch handling, sub-workflow dispatch, ConversationID parse/build, state accumulation, queue mismatch warning, Almanac retry/DLQ decision, orchestrator DLQ decision logic.
+- Integration (NATS/JetStream harness): durable Almanac registration survives restart; poisoned registration lands in DLQ; trigger/inbox poison messages land in DLQ after retries; healthy messages process and ack; branched workflow completes with merged variables.
+- Migration: legacy linear blueprint loads and produces equivalent execution order under DAG schema.
+
+**Assumptions**
+- Reusing existing streams for DLQ subjects is acceptable; if ops prefers isolation, create separate DLQ streams but keep subjects as named.
+- Backoff example (1s, 5s, 30s, 2m, 5m) and `MaxDeliver=5` are acceptable defaults; adjust per SLOs.
+- Agents can consume payloads built from merged per-step outputs (JSON) without additional schema enforcement for now.

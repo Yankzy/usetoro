@@ -1,97 +1,49 @@
- TAP Agent Generation Prompt
+TAP Agent Generation Prompt
 
 Copy the block below and fill in the `[PLACEHOLDERS]` before sending it to an LLM.
 
 ---
 
 ````
-You are an expert Go developer. Your task is to generate a complete, compilable Go source file for a new internal TAP agent.
+You are an expert Go developer. Generate a complete, compilable `agent.go` file for a new internal TAP agent, plus a matching `defaults.yaml` snippet.
 
 Agent Specification
 
-- Agent Name: "[AGENT_NAME]" (e.g. shoebox)
-- Package Name: `[PACKAGE_NAME]`
-- `internal_module` key (must match defaults.yaml): `"[INTERNAL_MODULE_KEY]"`
-- `activity_type` (the semantic activity this agent fulfills): `"[ACTIVITY_TYPE]"` (e.g. `"agents.accounting.map_csv"`)
-- Task Queue (optional override; usually auto-derived by Orchestrator): `"[TASK_QUEUE]"`
-- Durable consumer name: `"[DURABLE_NAME]"`
+- Agent Display Name: "[AGENT_DISPLAY_NAME]"
+- Package Name: `[PACKAGE_NAME]` (directory: `tap/agents/[PACKAGE_NAME]/`)
+- `internal_module` key: `"[INTERNAL_MODULE_KEY]"`
+- `activity_type`: `"[ACTIVITY_TYPE]"` (must start with `agents.`)
 - Purpose / Business Logic:
-  [Describe what the agent does in plain English. e.g. "Reads mapped rows from the cleanup stage, queries the database for existing transactions with the same description+amount+date, and marks duplicates before passing to reconciliation."]
-- Dependencies needed:
-  - `database: true` / `false`
-  - `entity_resolver: true` / `false`
-
----
+  [Describe exact behavior and side effects.]
+- Input Envelope Shape:
+  [Describe what arrives in `env.Body` and expected performative(s).]
+- Output Proof Shape:
+  [Describe what to publish in `core.Proof.Data` and when.]
+- Uses Redux (`ExecuteGlobalWorkflow`): `[YES|NO]`
+- If Redux=YES, allowed state paths for this agent DID:
+  `["/status", "/...optional_paths..."]`
+- Dependencies required in `defaults.yaml`:
+  - `database: true|false`
+  - `db_queries: true|false`
+  - `entity_resolver: true|false`
+- System Prompt:
+  [Provide a concrete system prompt, or "none" if not needed.]
 
 Framework Contracts You MUST Follow
 
-1. Registration (`init()`)
-
-Every agent MUST register itself in `init()` using:
+1. Registration + Constructor
 
 ```go
 import "github.com/Yankzy/usetoro/tap/agents"
 
 func init() {
-    agents.Register("<internal_module_key>", NewAgent)
+    agents.Register("[INTERNAL_MODULE_KEY]", NewAgent)
 }
-```
 
-2. Constructor Signature
-
-The constructor MUST match exactly:
-
-```go
 func NewAgent(env core.Environment) core.Runnable
 ```
 
-3. The `core.Environment` Struct (your only constructor parameter)
-
-```go
-// package: github.com/Yankzy/usetoro/tap/pkg/core
-
-type Environment struct {
-    Logger         *slog.Logger
-    Bus            EventBus             // NATS abstraction
-    Config         AgentConfig          // Parsed from defaults.yaml
-    Memory         MemoryStore          // Long-term RAG memory
-    Queries        *database.Queries    // nil if dependencies.db_queries = false
-    DBPool         *pgxpool.Pool        // nil if dependencies.database = false
-    EntityResolver *ai.EntityResolver   // nil if dependencies.entity_resolver = false
-}
-```
-
-4. Interfaces
-
-```go
-// EventBus — publish and subscribe over NATS JetStream
-type EventBus interface {
-    Publish(subject string, data []byte) error
-    RequestWithContext(ctx context.Context, subject string, data []byte) (*nats.Msg, error)
-    QueueSubscribe(subj, queue string, cb nats.MsgHandler, opts ...nats.SubOpt) (*nats.Subscription, error)
-}
-
-// MemoryStore — optional long-term memory
-type MemoryStore interface {
-    Recall(ctx context.Context, realmID, query string) (string, error)
-    Learn(ctx context.Context, realmID, trigger, instruction string) error
-}
-
-// Runnable — what the supervisor manages
-type Runnable interface {
-    Start() error
-    Stop() error
-}
-```
-
-5. `BaseAgent` — Use This, Don't Reimplement It
-
-Embed `*agent.BaseAgent` in your struct. It handles:
-- Almanac registration (DID discovery)
-- JetStream queue subscription with durable consumer
-- Ed25519 keypair generation (`b.KP`)
-
-Instantiate it with:
+2. Use `agent.BaseAgent` (do not hand-roll subscription wiring)
 
 ```go
 // package: github.com/Yankzy/usetoro/tap/pkg/agent
@@ -104,93 +56,65 @@ func NewBaseAgent(
 ) *BaseAgent
 ```
 
-`BaseAgent` fields available inside your agent:
-```go
-b.Logger      *slog.Logger
-b.Bus         core.EventBus
-b.Cfg         core.AgentConfig    // b.Cfg.DID is your agent's DID
-b.Mem         core.MemoryStore
-b.KP          *identity.KeyPair   // for signing envelopes/proofs
-b.Sub         *nats.Subscription
-```
+Important runtime behavior:
+- `BaseAgent` derives DID, queue group, durable name, and canonical task queue routing from `activity_type`.
+- Do NOT hardcode queue group/durable names inside the agent.
+- Public task queue routing is orchestrator-owned.
 
-6. Agent Runtime — Reasoning & ExecWithPaging
-
-Standard agents should use `agent.Runtime` for LLM interaction. This provides `ExecWithPaging` which supports structural document fetching and tool calling.
+3. Constructor Environment + Dependencies
 
 ```go
-// In your NewAgent constructor:
-a.rt = agent.NewRuntime(env.Logger, env.Bus, env.Config, env.Memory)
-
-// Usage:
-resp, err := a.rt.ExecWithPaging(ctx, prompt, nil, nil)
-```
-
-7. Redux Integration — `ExecuteGlobalWorkflow`
-
-If your agent uses an LLM to generate state mutations, you MUST run those patches through the Redux engine via `ExecuteGlobalWorkflow`. This provides RBAC, schema validation, array bans, payload limits, and a circuit-breaker retry loop.
-
-```go
-// LLMCallback receives faults from previous Redux rejections so the LLM can self-correct.
-type LLMCallback func(previousErrors []redux.DomainFault, currentSeq uint64, baseState []byte) ([]json.RawMessage, error)
-
-// WorkflowConfig holds per-invocation Redux tuning.
-type WorkflowConfig struct {
-    SchemaString string           // JSON Schema for post-patch drift validation
-    RBAC         redux.RBACPolicy // Actor path-authorization boundaries
-    InitialState []byte           // Base JSON state (nil defaults to "{}")
+// package: github.com/Yankzy/usetoro/tap/pkg/core
+type Environment struct {
+    Logger         *slog.Logger
+    Bus            EventBus
+    Config         AgentConfig
+    Memory         MemoryStore
+    Queries        *database.Queries
+    DBPool         *pgxpool.Pool
+    EntityResolver *ai.EntityResolver
 }
-
-// Usage:
-// workflowID is a pgtype.UUID
-err := a.ExecuteGlobalWorkflow(
-    ctx,
-    a.Queries,
-    workflowID,
-    agent.WorkflowConfig{
-        SchemaString: `{"type": "object", "properties": {"status": {"type": "string"}}}`,
-        RBAC: redux.RBACPolicy{
-            AllowedPrefixes: map[string][]string{
-                a.Cfg.DID: {"/status", "/mapped_rows"},
-            },
-        },
-    },
-    llmCallback,
-    func(nextState []byte) error {
-        // [onComplete]: Called ONLY after Redux validates the final state.
-        // This is a closure used for side effects after the state is persisted.
-
-        // 1. Extract data from the nextState (validated JSON)
-        var validatedState map[string]json.RawMessage
-        json.Unmarshal(nextState, &validatedState)
-
-        // 2. Perform side effects (e.g., Publish a Proof, trigger another service)
-        // Standard pattern: Publish "informed" result/proof to JetStream.
-        return nil
-    },
-)
 ```
 
-Key behaviors:
-- The circuit breaker retries up to 3 times, feeding `DomainFault`s back to the LLM callback.
-- If all 3 attempts produce faults, the workflow returns an error.
-- The `onComplete` handler only fires after Redux validates the final state. This ensures that any "proof" published is backed by a valid, persisted database state.
-- JetStream trace events are published automatically to `workflow.trace.<workflowID>`.
+Dependency rules:
+- If you use `env.Queries`, require `db_queries: true`.
+- If you use `env.DBPool`, require `database: true`.
+- If you use `env.EntityResolver`, require `entity_resolver: true`.
 
-8. Messaging Protocol — TAP Envelopes
+4. Handler Rules (Ack/Nak/Term)
 
-All inter-agent messages use `core.Envelope`. Incoming messages are expected to contain a specific `Performative` (verb):
+Your handler must:
+- implement poison-pill guard (`msg.Metadata().NumDelivered > 3` -> `msg.Term()`)
+- unmarshal `core.Envelope`
+- validate performative using `core.IsValidPerformative`
+- ignore unsupported performatives by returning `nil`
+- return `error` only for transient failures
+
+Suggested poison-pill guard:
 
 ```go
-// Performatives (from tap/pkg/core/verbs.go)
-const (
-    CFP             Performative = "cfp"             // Call For Proposal — initiates negotiation
-    PROPOSE         Performative = "propose"         // Bid/quote response
-    ACCEPT_PROPOSAL Performative = "accept-proposal" // Accepted bid (The "Deal")
-    REJECT_PROPOSAL Performative = "reject-proposal"
-    INFORM          Performative = "inform"          // Deliver result/proof (most common output verb)
-)
+meta, metaErr := msg.Metadata()
+if metaErr == nil && meta.NumDelivered > 3 {
+    a.Logger.Error("Poison pill detected, terminating message", "subject", msg.Subject)
+    msg.Term()
+    return
+}
+```
 
+5. Orchestrator Handshake Compatibility
+
+Current orchestrator behavior may not always send a follow-up `ACCEPT_PROPOSAL` for negotiated steps yet.
+
+For `CFP` flows, implement this pattern:
+- parse CFP
+- send `PROPOSE` to `core.BuildAgentInbox(env.SenderDID)`
+- execute from the same CFP envelope immediately
+
+Also support `ACCEPT_PROPOSAL` by routing it to the same execute path for forward compatibility.
+
+6. TAP Envelope + Proof Contracts
+
+```go
 type Envelope struct {
     ID             string          `json:"id"`
     Timestamp      time.Time       `json:"ts"`
@@ -202,22 +126,6 @@ type Envelope struct {
     Signature      string          `json:"sig"`
 }
 
-// Helper
-func NewEnvelope(id, src, dst, cid string, verb Performative, body interface{}) (*Envelope, error)
-```
-
-Handlers must guard incoming verbs:
-```go
-if !core.IsValidPerformative(env.Performative) {
-    return nil
-}
-```
-
-9. Proof — Standard Output Payload
-
-When your agent completes work, wrap output in a `core.Proof` and publish it inside an `INFORM` envelope to the `orchestrator.inbox` subject:
-
-```go
 type Proof struct {
     TaskID    string          `json:"task_id"`
     Type      ProofType       `json:"type"`
@@ -225,107 +133,166 @@ type Proof struct {
     Data      json.RawMessage `json:"data"`
     Signature string          `json:"sig"`
 }
-
-const ProofAPI ProofType = "proof.api"
 ```
 
-Dispatch payload shape from Orchestrator is `core.TaskDefinition` and includes payment-ready fields:
+Completion convention:
+- publish `core.Envelope{perf: inform, cid: original conversation id, body: core.Proof}` to `workflows.OrchestratorInbox` (`"orchestrator.inbox"`).
+
+7. TaskDefinition Shape (Orchestrator dispatch body)
+
 ```go
 type TaskDefinition struct {
     ID         string
     Domain     string
-    Complexity core.TaskComplexity // 1|5|10
-    Reward     int64               // micrions
-    Currency   string              // default "TORO"
+    Complexity core.TaskComplexity
+    Reward     int64
+    Currency   string
     Payload    json.RawMessage
-    ExpiresAt  int64               // unix ts from step timeout
+    ExpiresAt  int64
 }
 ```
 
-10. Poison Pill Pattern (Required)
+Notes:
+- `task.ID` is the workflow instance UUID.
+- Some payment-related fields may be zero/empty depending on orchestrator phase.
 
-Every message handler MUST include this guard:
+8. Redux Path (only if `Uses Redux = YES`)
+
+Use `a.ExecuteGlobalWorkflow(...)` with:
+- `workflowID` parsed from `task.ID` into `pgtype.UUID`
+- `agent.WorkflowConfig` with `SchemaString` + strict RBAC allowed prefixes
+- retry-aware LLM callback signature:
 
 ```go
-meta, metaErr := msg.Metadata()
-if metaErr == nil && meta.NumDelivered > 3 {
-    a.Logger.Error("Poison pill detected", "subject", msg.Subject)
-    msg.Term()
-    return
-}
+func(previousFaults []redux.DomainFault, currentSeq uint64, baseState []byte) ([]json.RawMessage, error)
 ```
 
-11. `defaults.yaml` Entry (include this in your response)
+`onComplete` semantics (important):
+- called only after Redux reduction succeeds and trace publish succeeds
+- trace topic: `workflow.trace.<workflowID>`
+- use `onComplete` for side effects like publishing proof envelopes
+- do not claim DB rollup persistence happened synchronously in `onComplete`
 
-**IMPORTANT:** Agents in `defaults.yaml` define their BRAIN ONLY (DID, model, system prompt, dependencies). They do NOT declare `subscribe_to` or `publish_to` — the Workflow Orchestrator owns topology routing via workflow YAML (`activity_type`, `complexity`, optional `task_queue` override).
+9. One-shot Learning Example (from `tap/agents/csv_mapping/agent.go`)
 
-```yaml
-- did: "did:toro:agent:<your_did_suffix>"
-  name: "<Human Readable Name>"
-  model: "gpt-4o-mini"
-  engine: "internal"
-  internal_module: "<internal_module_key>"
-  activity_type: "<activity_type>" # e.g. agents.accounting.map_csv
-  system_prompt: |
-    [Your system prompt here]
-  dependencies:
-    database: true|false
-    db_queries: true|false
-    entity_resolver: true|false
-```
-
-12. FIPA Handshake (How Agents Interact with the Workflow Orchestrator)
-
-When `negotiate: true` is set on a workflow step, the Orchestrator will broadcast a `CFP` to the public `task_queue` topic. Your agent must:
-
-1. **Listen on the Task Queue**: Subscribe to the public queue assigned by Orchestrator (usually derived from `activity_type` + complexity via `core.BuildTaskSubject`).
-2. **Send a `PROPOSE`**: Reply with a bid envelope to `core.BuildAgentInbox(env.SenderDID)` (the Orchestrator's inbox).
-3. **Wait for `ACCEPT_PROPOSAL`**: Once the Orchestrator selects the winner, it dispatches the payload via an `ACCEPT_PROPOSAL` envelope directly to your agent's private inbox (`agents.{DID}.inbox`).
-4. **Execute and Prove**: Parse `TaskDefinition` (including `complexity/reward/currency/expires_at`) and perform computation via `ExecuteGlobalWorkflow`. When the `onComplete` closure fires, publish a `core.Proof` wrapped in an `INFORM` envelope to `orchestrator.inbox`.
+Use this as a style anchor. Mirror the flow and structure, then swap in your own domain types.
 
 ```go
-// Pattern for public Task Queue subscription:
-// handler bound via agent.NewBaseAgent() — it fires on incoming CFP AND on incoming ACCEPT_PROPOSAL.
-// Detect performative:
-if env.Performative == core.CFP {
-    // Reply with PROPOSE to orchestrator inbox
+type CSVMappingAgent struct {
+    *agent.BaseAgent
+    rt      *agent.Runtime
+    queries *database.Queries
 }
-if env.Performative == core.ACCEPT_PROPOSAL {
-    // Execute the task and prove back to orchestrator
+
+func init() {
+    agents.Register("csv-mapping-agent", NewAgent)
+}
+
+func NewAgent(env core.Environment) core.Runnable {
+    var a CSVMappingAgent
+    a.rt = agent.NewRuntime(env.Logger, env.Bus, env.Config, env.Memory)
+    a.queries = env.Queries
+
+    handler := func(msg *nats.Msg) {
+        // poison-pill guard
+        // a.handleCFP(msg)
+        // ack on nil error, nak on transient
+    }
+
+    a.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, env.Memory, handler)
+    return &a
+}
+
+func (a *CSVMappingAgent) handleCFP(msg *nats.Msg) error {
+    var env core.Envelope
+    _ = json.Unmarshal(msg.Data, &env)
+    if env.Performative != core.CFP {
+        return nil
+    }
+
+    // send PROPOSE back to sender inbox
+    proposal := map[string]interface{}{"price": 1, "eta": "10s"}
+    replyEnv, _ := core.NewEnvelope(uuid.New().String(), a.Cfg.DID, env.SenderDID, env.ConversationID, core.PROPOSE, proposal)
+    replyEnv.Signature = a.KP.Sign(replyEnv.Body)
+    replyBytes, _ := json.Marshal(replyEnv)
+    if err := a.Bus.Publish(core.BuildAgentInbox(env.SenderDID), replyBytes); err != nil {
+        return err
+    }
+
+    // current negotiated-path compatibility: execute immediately from CFP
     return a.executeTask(env)
 }
+
+func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
+    // parse TaskDefinition, build Redux llmCallback + onComplete
+    // onComplete publishes INFORM(core.Proof) to workflows.OrchestratorInbox
+    return a.ExecuteGlobalWorkflow(...)
+}
 ```
 
-12. Architecture Boundaries (Workers vs Agents)
+Critical behaviors to copy from this one-shot:
+- `CFP` -> `PROPOSE` -> execute immediately.
+- Redux callback applies constrained RFC6902 patches.
+- `onComplete` extracts validated state and publishes proof to `orchestrator.inbox`.
+- clear distinction between workflow ID (`task.ID`) and business/session IDs in payload.
 
-- **CRITICAL RULE**: Agents **DO NOT** write to Postgres directly (no `db.InsertX` or `db.UpdateX`).
-- Agents are stateless intelligence units. They fetch necessary context, perform LLM computation, validate state via Redux, and use the `onComplete` closure to output a `core.Proof` via an `INFORM` envelope.
-- If you need to write to the database, that is the job of a **Worker**.
+10. `defaults.yaml` Snippet Rules
 
----
+Generate a matching snippet for `go/internal/config/defaults.yaml`.
+Include:
+- `name`, `model`, `engine: internal`, `internal_module`, `activity_type`
+- `system_prompt` when relevant
+- `dependencies` including `db_queries`
+- `workflow_schema` when Redux is used
 
-Standard Imports
+Do NOT include:
+- `task_queue`
+- queue group
+- durable name
 
-```go
-import (
-    "context"
-    "encoding/json"
+Template:
 
-    "github.com/google/uuid"
-    "github.com/nats-io/nats.go"
-
-    "github.com/Yankzy/usetoro/tap/agents"          // for agents.Register()
-    "github.com/Yankzy/usetoro/tap/pkg/agent"         // for agent.BaseAgent, agent.NewBaseAgent
-    "github.com/Yankzy/usetoro/tap/pkg/core"          // for core.Environment, core.Envelope, core.Proof etc.
-    "github.com/Yankzy/usetoro/tap/pkg/redux"         // for redux.RBACPolicy, redux.DomainFault
-    "github.com/jackc/pgx/v5/pgtype"                  // for workflowID (pgtype.UUID)
-    "github.com/Yankzy/usetoro/internal/database"     // only if database dependency = true
-)
+```yaml
+- did: "did:toro:agent:[DID_SUFFIX]"
+  name: "[AGENT_DISPLAY_NAME]"
+  model: "gpt-5.4-mini"
+  engine: "internal"
+  internal_module: "[INTERNAL_MODULE_KEY]"
+  activity_type: "[ACTIVITY_TYPE]"
+  workflow_schema: '[OPTIONAL_JSON_SCHEMA_STRING_IF_REDUX]'
+  system_prompt: |
+    [SYSTEM_PROMPT]
+  dependencies:
+    database: [true|false]
+    db_queries: [true|false]
+    entity_resolver: [true|false]
 ```
 
----
+Quality Bar
+
+- Must compile without placeholder tokens.
+- Use exact signatures from this prompt.
+- No pseudocode or TODO stubs.
+- Include all necessary imports only.
+- Keep logic deterministic and production-safe.
 
 What to Return
 
-Return only the Go source file (`agent.go`) for the new agent package, plus the YAML snippet for `defaults.yaml`. Do not return anything else.
+Return exactly two blocks:
+1. `agent.go` source
+2. `defaults.yaml` snippet
+
+Return nothing else.
 ````
+
+Placeholder Values
+
+```env
+AGENT_DISPLAY_NAME=""
+PACKAGE_NAME=""
+INTERNAL_MODULE_KEY=""
+ACTIVITY_TYPE=""
+DID_SUFFIX=""
+OPTIONAL_JSON_SCHEMA_STRING_IF_REDUX=""
+SYSTEM_PROMPT=""
+```

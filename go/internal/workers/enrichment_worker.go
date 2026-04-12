@@ -2,7 +2,9 @@ package workers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -21,6 +23,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/services/cleanup"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/redux"
+	"github.com/Yankzy/usetoro/tap/workflows"
 )
 
 var cleanDescRegex = regexp.MustCompile(`(?i)[0-9]+|\b(?:ID|REF|POS)\b|[^a-zA-Z\s]`)
@@ -36,6 +39,11 @@ var fixHashRegex = regexp.MustCompile(`([^#\s]+)#\s*([^#\s]+)`)
 func FormatHashTags(raw string) string {
 	return fixHashRegex.ReplaceAllString(raw, "$1 #$2")
 }
+
+const (
+	enrichmentLegacyProofSubject = "proof.accounting.cleanup.enrichment"
+	enrichmentWorkerDID          = "did:toro:worker:enrichment-worker"
+)
 
 // EnrichmentWorker acts as a purely deterministic data processing worker
 // avoiding AI-based agent scaffolding.
@@ -74,10 +82,21 @@ func (e *EnrichmentWorker) Subscriptions() []SubscriptionConfig {
 		e.logger.Error("enrichment worker: missing config")
 		return nil
 	}
+
+	activityType := e.cfg.Workers.EnrichmentActivityType
+	if activityType == "" {
+		e.logger.Error("enrichment worker: no activity_type configured")
+		return nil
+	}
+
 	subject := e.cfg.Workers.Enrichment
 	if subject == "" {
-		e.logger.Error("enrichment worker: enrichment subject not configured")
-		return nil
+		derived, err := core.BuildWorkerInboxFromActivity(activityType)
+		if err != nil {
+			e.logger.Error("enrichment worker: failed to derive inbox", "activity_type", activityType, "error", err)
+			return nil
+		}
+		subject = derived
 	}
 	group := e.cfg.Workers.EnrichmentGroup
 	if group == "" {
@@ -104,6 +123,7 @@ func (e *EnrichmentWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg) error {
 	var env core.Envelope
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
+		e.logger.Warn("enrichment worker: dropping malformed envelope", "error", err)
 		return nil
 	}
 	if !core.IsValidPerformative(env.Performative) {
@@ -111,22 +131,27 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		return nil
 	}
 
-	if env.Performative != core.INFORM {
+	if env.Performative != core.INFORM && env.Performative != core.ACCEPT_PROPOSAL {
 		return nil
 	}
 
-	var proof core.Proof
-	if err := json.Unmarshal(env.Body, &proof); err != nil {
-		return nil
+	bodyBytes := env.Body
+	if env.Performative == core.ACCEPT_PROPOSAL {
+		var taskDef core.TaskDefinition
+		if err := json.Unmarshal(env.Body, &taskDef); err != nil {
+			e.logger.Warn("enrichment worker: dropping malformed task definition", "error", err)
+			return nil
+		}
+		if len(taskDef.Payload) == 0 {
+			e.logger.Warn("enrichment worker: dropping message with empty task payload")
+			return nil
+		}
+		bodyBytes = taskDef.Payload
 	}
 
-	if proof.Type != core.ProofAPI {
-		return nil
-	}
-
-	rows, err := ExtractRows(proof.Data)
+	rows, err := e.extractRowsPayload(bodyBytes, 0)
 	if err != nil {
-		e.logger.Error("enrichment worker: failed to extract rows", "error", err)
+		e.logger.Warn("enrichment worker: failed to extract rows payload", "error", err)
 		return nil
 	}
 
@@ -134,12 +159,12 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		return nil
 	}
 
-	sessionID, _ := rows[0]["SessionID"].(string)
+	sessionID := rowString(rows[0], "SessionID", "session_id")
 	if sessionID == "" {
 		e.logger.Warn("enrichment worker: missing SessionID in first row")
 		return nil
 	}
-	realmID, _ := rows[0]["RealmID"].(string)
+	realmID := rowString(rows[0], "RealmID", "realm_id")
 
 	var pgSessionID pgtype.UUID
 	if err := pgSessionID.Scan(sessionID); err != nil || !pgSessionID.Valid {
@@ -150,10 +175,12 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	meta, metaErr := msg.Metadata()
 	if metaErr == nil && meta.NumDelivered > 3 {
 		e.logger.Error("enrichment worker: poison pill message exceeded max retries", "session", sessionID)
-		e.db.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
+		if statusErr := e.db.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
 			ID:     pgSessionID,
 			Status: "ERROR",
-		})
+		}); statusErr != nil {
+			e.logger.Warn("enrichment worker: failed to set ERROR status for poison pill", "session", sessionID, "error", statusErr)
+		}
 		msg.Term()
 		return nil
 	}
@@ -162,9 +189,11 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 
 	var pendingRows []database.GetPendingSessionRowsRow
 	expectedCount := len(rows)
+	var lastQueryErr error
 	for retries := 0; retries < 15; retries++ {
 		pendingRows, err = e.db.GetPendingSessionRows(ctx, pgSessionID)
 		if err != nil {
+			lastQueryErr = err
 			e.logger.Warn("enrichment worker: db query error during loop", "error", err)
 		}
 
@@ -178,18 +207,27 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		if err == nil && len(pendingRows) >= expectedCount {
 			break
 		}
-		time.Sleep(1 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
 	}
 
 	if len(pendingRows) == 0 {
 		e.logger.Error("enrichment worker: rows never appeared in DB, aborting.", "session", sessionID)
-		return fmt.Errorf("timeout waiting for DB rows")
+		if lastQueryErr != nil {
+			return fmt.Errorf("failed to fetch pending rows: %w", lastQueryErr)
+		}
+		return errors.New("timeout waiting for DB rows")
 	}
 
-	e.db.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
+	if err := e.db.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
 		ID:     pgSessionID,
 		Status: "ENRICHING",
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to update session status to ENRICHING: %w", err)
+	}
 
 	type Cluster struct {
 		Head  *cleanup.EnrichedRow
@@ -351,14 +389,16 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	// Persist the unified structured DB data
 	for _, ptr := range allRows {
 		if dbErr := e.persistEnrichedRow(ctx, *ptr); dbErr != nil {
-			e.logger.Error("enrichment worker: persist row failed", "err", dbErr)
+			return fmt.Errorf("failed to persist enriched row %s: %w", ptr.ID, dbErr)
 		}
 	}
 
-	e.db.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
+	if err := e.db.UpdateCleanupSessionStatus(ctx, database.UpdateCleanupSessionStatusParams{
 		ID:     pgSessionID,
 		Status: "ENRICHED",
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to update session status to ENRICHED: %w", err)
+	}
 	e.logger.Info("✅ semantic enrichment complete!", "session", sessionID)
 
 	if err := e.broadcastEnrichmentProof(ctx, sessionID, env.ConversationID); err != nil {
@@ -368,18 +408,141 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	return nil
 }
 
+func rowString(row map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := row[key]
+		if !ok {
+			continue
+		}
+		if s, ok := raw.(string); ok {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
+}
+
+func (e *EnrichmentWorker) extractRowsPayload(data []byte, depth int) ([]map[string]interface{}, error) {
+	if len(data) == 0 {
+		return nil, errors.New("empty payload")
+	}
+	if depth > 8 {
+		return nil, errors.New("payload nesting too deep")
+	}
+
+	if rows, err := ExtractRows(data); err == nil && len(rows) > 0 {
+		return rows, nil
+	}
+
+	var proof core.Proof
+	if err := json.Unmarshal(data, &proof); err == nil && len(proof.Data) > 0 {
+		if rows, innerErr := e.extractRowsPayload(proof.Data, depth+1); innerErr == nil && len(rows) > 0 {
+			return rows, nil
+		}
+	}
+
+	var taskDef core.TaskDefinition
+	if err := json.Unmarshal(data, &taskDef); err == nil && len(taskDef.Payload) > 0 {
+		if rows, innerErr := e.extractRowsPayload(taskDef.Payload, depth+1); innerErr == nil && len(rows) > 0 {
+			return rows, nil
+		}
+	}
+
+	var env core.Envelope
+	if err := json.Unmarshal(data, &env); err == nil && core.IsValidPerformative(env.Performative) && len(env.Body) > 0 {
+		if rows, innerErr := e.extractRowsPayload(env.Body, depth+1); innerErr == nil && len(rows) > 0 {
+			return rows, nil
+		}
+	}
+
+	var payloadWithData struct {
+		Type string          `json:"type"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(data, &payloadWithData); err == nil && len(payloadWithData.Data) > 0 {
+		if rows, innerErr := e.extractRowsPayload(payloadWithData.Data, depth+1); innerErr == nil && len(rows) > 0 {
+			return rows, nil
+		}
+
+		var dataString string
+		if err := json.Unmarshal(payloadWithData.Data, &dataString); err == nil {
+			if rows, innerErr := e.extractRowsFromString(dataString, depth+1); innerErr == nil && len(rows) > 0 {
+				return rows, nil
+			}
+		}
+	}
+
+	var payloadString string
+	if err := json.Unmarshal(data, &payloadString); err == nil {
+		if rows, innerErr := e.extractRowsFromString(payloadString, depth+1); innerErr == nil && len(rows) > 0 {
+			return rows, nil
+		}
+	}
+
+	return nil, errors.New("no rows payload found")
+}
+
+func (e *EnrichmentWorker) extractRowsFromString(payload string, depth int) ([]map[string]interface{}, error) {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return nil, errors.New("empty string payload")
+	}
+
+	if decoded, err := decodeBase64Payload(payload); err == nil && len(decoded) > 0 {
+		if rows, innerErr := e.extractRowsPayload(decoded, depth+1); innerErr == nil && len(rows) > 0 {
+			return rows, nil
+		}
+	}
+
+	if json.Valid([]byte(payload)) {
+		if rows, innerErr := e.extractRowsPayload([]byte(payload), depth+1); innerErr == nil && len(rows) > 0 {
+			return rows, nil
+		}
+	}
+
+	return nil, errors.New("string payload not decodable")
+}
+
+func decodeBase64Payload(payload string) ([]byte, error) {
+	encodings := []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	}
+	for _, enc := range encodings {
+		decoded, err := enc.DecodeString(payload)
+		if err == nil {
+			return decoded, nil
+		}
+	}
+	return nil, errors.New("payload is not valid base64")
+}
+
 func (e *EnrichmentWorker) broadcastEnrichmentProof(ctx context.Context, sessionID, cid string) error {
+	resultData, _ := json.Marshal(map[string]string{
+		"status":     "enriched",
+		"session_id": sessionID,
+	})
 	proof := core.Proof{
 		TaskID:    sessionID,
 		Type:      core.ProofAPI,
-		Data:      []byte(`{"status":"enriched"}`),
+		Data:      resultData,
 		Timestamp: time.Now().Unix(),
 	}
 
-	proofEnv, _ := core.NewEnvelope(uuid.New().String(), "did:toro:worker:enrichment", "did:toro:hive", cid, core.INFORM, proof)
+	dst := "did:toro:hive"
+	targetTopic := enrichmentLegacyProofSubject
+	if cid != "" {
+		dst = workflows.OrchestratorDID
+		targetTopic = workflows.OrchestratorInbox
+	}
+
+	proofEnv, err := core.NewEnvelope(uuid.New().String(), enrichmentWorkerDID, dst, cid, core.INFORM, proof)
+	if err != nil {
+		return err
+	}
 
 	finalBytes, _ := json.Marshal(proofEnv)
-	targetTopic := "proof.accounting.cleanup.enrichment"
 	js, err := e.nc.JetStream()
 	if err != nil {
 		return err

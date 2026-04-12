@@ -5,63 +5,130 @@ Copy the block below and fill in the `[PLACEHOLDERS]` before sending it to an LL
 ---
 
 ````
-You are an expert system architect. Your task is to generate a declarative Workflow Definition YAML file representing a NATS-based pipeline, orchestrating Agents and Workers.
+You are an expert systems architect. Generate a valid workflow YAML for the TAP Orchestrator.
 
 Workflow Specification
 
-- Pipeline Name: "[PIPELINE_NAME]"
+- Workflow Name: "[WORKFLOW_NAME]"
 - Trigger Topic: "[TRIGGER_TOPIC]"
 - Description:
-  [Describe what the pipeline does. e.g., "Fetches external HR data, normalizes it, and syncs to a 3rd party."]
-- Steps:
-  [List the actors involved and their actions. e.g., "1. Normalization Agent reads trigger and proves normalized struct. 2. DB Worker inserts rows. 3. Sync Agent hits external API."]
+  [Describe the workflow purpose in 1-3 sentences.]
+- Desired Steps:
+  [List the ordered business steps in plain English.]
 
----
+Current Schema You MUST Follow (`tap/workflows/workflow_schema.go`)
 
-Framework Contracts You MUST Follow
+Top-level fields:
+- `name` (string)
+- `version` (string)
+- `description` (string, optional)
+- `trigger_topic` (string)
+- `steps` (array)
 
-1. Architecture Boundaries
+Each step fields:
+- `id` (string)
+- `activity_type` (string)
+- `task_queue` (string, optional)
+- `negotiate` (bool)
+- `timeout` (string duration, e.g. `"60s"`)
+- `description` (string, optional)
 
-- **Agents** (`activity_type: agents.*`): Perform intelligence/computation via LLM. They DO NOT write to databases.
-- **Workers** (`activity_type: workers.*`): Perform extra work before or after agent and make database mutations. They DO NOT make LLM calls.
+Important: do NOT include `complexity` (it is not part of the current workflow step schema).
 
-2. Routing Model (Temporal-FIPA Hybrid)
+Routing Rules
 
-The Workflow Orchestrator owns all step routing. Agents and Workers do NOT hardcode upstream or downstream topics.
+1. Activity type prefixes
+- Agent steps: `activity_type` starts with `agents.`
+- Worker steps: `activity_type` starts with `workers.`
 
-- `complexity` is required for agent steps and must be one of: `1` (entry), `5` (junior), `10` (senior).
-- `task_queue` routing:
-  - Agents: optional. If omitted, orchestrator derives route from `activity_type` + `complexity` using `core.BuildTaskSubject(...)` (via `core.BuildTaskSubjectFromActivity`).
-  - Workers: required as worker id (e.g. `csv-mapping-worker`) and orchestrator resolves it via `core.BuildWorkerInbox(worker_id)`.
-- Message verbs are protocolized:
-  - `negotiate: true` path uses `CFP` → `PROPOSE` → `ACCEPT_PROPOSAL`.
-  - Step completion is returned as `INFORM` to `orchestrator.inbox`.
-- Payment readiness:
-  - `complexity` determines baseline reward policy in dispatched `TaskDefinition` (`reward`, `currency`, `expires_at` are filled by orchestrator).
-- `negotiate: true` → the Orchestrator uses FIPA bidding. The winning agent receives the payload via their private inbox.
-- `negotiate: false` → the Orchestrator dispatches directly to the provided `task_queue`.
-- `timeout` → a wall-clock limit after which the Orchestrator marks the step FAILED and retries or compensates.
+2. Queue resolution behavior
+- Agents:
+  - Prefer omitting `task_queue`.
+  - Queue is canonically derived from activity type as `tasks.<domain>.1.<task>`.
+- Workers:
+  - You may omit `task_queue` and let it derive from activity type as `worker.inbox.<domain>.<task>`.
+  - Or set `task_queue` to a worker id (e.g. `csv-mapping-worker`) and it becomes `worker.inbox.csv-mapping-worker`.
+  - Full `worker.inbox.*` values are also valid.
 
-3. YAML Structure
+3. Negotiate behavior
+- `negotiate: true` -> orchestrator dispatches `CFP` to queue.
+- `negotiate: false` -> orchestrator dispatches `ACCEPT_PROPOSAL` directly to resolved queue.
 
-Your output MUST be a strict YAML document conforming to this schema:
+4. Completion expectation
+- Step actors should return `INFORM` envelopes to `orchestrator.inbox` with the same conversation id.
+- Orchestrator advances sequencing from those inbox messages.
+
+Generation Constraints (LLM-Friendly)
+
+- Use `version: "1.0"` unless specified otherwise.
+- Step IDs must be short snake_case and unique.
+- Keep timeouts realistic (`10s`, `60s`, `120s`, etc.).
+- Ensure step order is executable (outputs from earlier steps can feed later steps).
+- Avoid comments unless essential.
+- Output must be strict YAML only.
+
+One-shot Learning Example (from `tap/workflows/csv_cleaner_pipeline.yaml`)
+
+The current repo example has this sequence:
+- `map_columns` (agent, negotiate true)
+- `commit_mapped_columns` (worker, direct)
+- `run_enrichment` (worker, direct)
+- `reconcile_revenue` (agent, negotiate true)
+- `reconcile_expense` (agent, negotiate true)
+
+Legacy note from that file:
+- it includes `complexity` keys on some agent steps
+- for newly generated workflows, omit `complexity` in final output to match the current schema contract
+
+Reference Shape (modernized from that one-shot)
 
 ```yaml
-name: "Name of the Workflow"
+name: "CSV Cleaner Pipeline"
 version: "1.0"
-description: "High level description"
-trigger_topic: "nats.topic.that.starts.it"
+description: "Maps raw CSV rows, persists them, enriches, then reconciles."
+trigger_topic: "events.accounting.*.cleanup"
 steps:
-  - id: step_id
-    activity_type: agents.accounting.map_csv     # use underscores for activity names
-    complexity: 1                                # 1|5|10
-    # task_queue optional for agents (derived if omitted)
-    negotiate: true                              # true = FIPA bidding; false = direct dispatch
-    timeout: "60s"                               # timeout
-    description: "What this step does"
+  - id: map_columns
+    activity_type: agents.accounting.map_csv
+    negotiate: true
+    timeout: "60s"
+    description: "Map raw CSV columns into canonical row objects."
+
+  - id: commit_mapped_columns
+    activity_type: workers.database.insert_rows
+    task_queue: csv-mapping-worker
+    negotiate: false
+    timeout: "10s"
+    description: "Insert mapped rows into Postgres as PENDING."
+
+  - id: run_enrichment
+    activity_type: workers.database.enrich_rows
+    negotiate: false
+    timeout: "120s"
+    description: "Enrich pending rows with deterministic + AI-assisted matching."
+
+  - id: reconcile_revenue
+    activity_type: agents.accounting.reconcile_revenue
+    negotiate: true
+    timeout: "60s"
+    description: "Process positive rows and assign customer/account signals."
+
+  - id: reconcile_expense
+    activity_type: agents.accounting.reconcile_expense
+    negotiate: true
+    timeout: "60s"
+    description: "Process negative rows and assign vendor/account signals."
 ```
 
 What to Return
 
-Return only the YAML source. Do not return any Markdown wrapping or explanations.
+Return only the YAML source.
+Do not return Markdown fences or explanations.
 ````
+
+Placeholder Values
+
+```env
+WORKFLOW_NAME=""
+TRIGGER_TOPIC=""
+```

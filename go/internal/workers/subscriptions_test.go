@@ -80,6 +80,26 @@ func TestEnrichmentSubscriptions(t *testing.T) {
 	}
 }
 
+func TestEnrichmentSubscriptions_Derived(t *testing.T) {
+	cfg := loadCfg(t)
+	w := &EnrichmentWorker{cfg: cfg, logger: testLogger()}
+
+	subs := w.Subscriptions()
+	if len(subs) != 1 {
+		t.Fatalf("expected 1 subscription, got %d", len(subs))
+	}
+
+	expectedSubject, _ := core.BuildWorkerInboxFromActivity(cfg.Workers.EnrichmentActivityType)
+	if subs[0].Subject != expectedSubject {
+		t.Fatalf("subject mismatch: got %s want %s", subs[0].Subject, expectedSubject)
+	}
+
+	expectedGroup := deriveGroup(expectedSubject)
+	if subs[0].Group != expectedGroup {
+		t.Fatalf("group mismatch: got %s want %s", subs[0].Group, expectedGroup)
+	}
+}
+
 func TestTransactionSubscriptions(t *testing.T) {
 	cfg := loadCfg(t)
 	cfg.Workers.Transaction = "ledger.custom.*"

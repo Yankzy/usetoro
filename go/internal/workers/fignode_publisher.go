@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
 
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/services/fignode"
@@ -23,6 +24,7 @@ type FignodePublisherWorker struct {
 	nc     *nats.Conn
 	logger *slog.Logger
 	llm    *ai.LLMClient
+	cfg    *config.Config
 }
 
 func NewFignodePublisherWorker(
@@ -30,12 +32,14 @@ func NewFignodePublisherWorker(
 	nc *nats.Conn,
 	logger *slog.Logger,
 	llm *ai.LLMClient,
+	cfg *config.Config,
 ) (*FignodePublisherWorker, error) {
 	return &FignodePublisherWorker{
 		db:     db,
 		nc:     nc,
 		logger: logger,
 		llm:    llm,
+		cfg:    cfg,
 	}, nil
 }
 
@@ -52,11 +56,24 @@ func (w *FignodePublisherWorker) Init(ctx context.Context) error {
 }
 
 func (w *FignodePublisherWorker) Subscriptions() []SubscriptionConfig {
+	if w.cfg == nil {
+		w.logger.Error("fignode worker: missing config")
+		return nil
+	}
+	subject := w.cfg.Workers.Fignode
+	if subject == "" {
+		w.logger.Error("fignode worker: subject not configured")
+		return nil
+	}
+	group := w.cfg.Workers.FignodeGroup
+	if group == "" {
+		group = groupFromSubject(subject)
+	}
 	return []SubscriptionConfig{
 		{
-			Subject: "proof.accounting.cleanup.reconcile.>",
-			Group:   "fignode-publisher-group",
-			Options: []nats.SubOpt{nats.Durable("fignode-publisher-durable-v2"), nats.DeliverAll(), nats.AckExplicit()},
+			Subject: subject,
+			Group:   group,
+			Options: []nats.SubOpt{nats.Durable(durableFromSubject(subject)), nats.DeliverAll(), nats.AckExplicit()},
 		},
 	}
 }
@@ -264,6 +281,6 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		return NewFignodePublisherWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.LLMClient)
+		return NewFignodePublisherWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.LLMClient, deps.Config)
 	})
 }

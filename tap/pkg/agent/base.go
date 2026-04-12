@@ -161,7 +161,15 @@ func NewBaseAgent(
 	mem core.MemoryStore,
 	handler nats.MsgHandler,
 ) *BaseAgent {
-	kp, _ := identity.GenerateKeyPair()
+	// ActivityType is the seed for the deterministic DID — it MUST be set so the
+	// agent's identity (and NATS durable consumer name) is stable across restarts.
+	if cfg.ActivityType == "" {
+		panic("NewBaseAgent: cfg.ActivityType must be set; it is used as the DID seed")
+	}
+	kp, err := identity.KeyPairFromSeed(cfg.ActivityType)
+	if err != nil {
+		panic("NewBaseAgent: KeyPairFromSeed failed: " + err.Error())
+	}
 	cfg.DID = identity.CreateDID(kp.Public)
 	// Derive runtime routing fields from DID so callers don't set them manually.
 	safe := sanitizeDID(cfg.DID)
@@ -185,7 +193,7 @@ func sanitizeDID(did string) string {
 func (b *BaseAgent) Start() error {
 	b.Logger.Info("🤖 TAP AI Agent Initializing...", "did", b.Cfg.DID, "activity_type", b.Cfg.ActivityType)
 
-	if b.Cfg.ActivityType != "" && b.Cfg.TaskQueue != "" {
+	if b.Cfg.ActivityType != "" {
 		normalizedQueue, err := core.NormalizeTaskQueue(b.Cfg.ActivityType, b.Cfg.TaskQueue)
 		if err != nil {
 			return fmt.Errorf("agent %s: invalid task queue for activity %s: %w", b.Cfg.DID, b.Cfg.ActivityType, err)

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Yankzy/usetoro/internal/cdc"
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/nats-io/nats.go"
@@ -39,10 +40,11 @@ type VectorSyncWorker struct {
 	js           nats.JetStreamContext
 
 	itemChan chan vectorBatchItem
+	cfg      *config.Config
 }
 
 // NewVectorSyncWorker creates a new vector sync worker
-func NewVectorSyncWorker(logger *slog.Logger, s *store.Store, vc *vector.PineconeClient, e *vector.Embedder, nc *nats.Conn) (*VectorSyncWorker, error) {
+func NewVectorSyncWorker(logger *slog.Logger, s *store.Store, vc *vector.PineconeClient, e *vector.Embedder, nc *nats.Conn, cfg *config.Config) (*VectorSyncWorker, error) {
 	js, err := nc.JetStream()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
@@ -56,6 +58,7 @@ func NewVectorSyncWorker(logger *slog.Logger, s *store.Store, vc *vector.Pinecon
 		nc:           nc,
 		js:           js,
 		itemChan:     make(chan vectorBatchItem, 1000),
+		cfg:          cfg,
 	}, nil
 }
 
@@ -70,19 +73,26 @@ func (w *VectorSyncWorker) Init(ctx context.Context) error {
 }
 
 func (w *VectorSyncWorker) Subscriptions() []SubscriptionConfig {
-	subjects := []string{
-		"ledger.accounts.*",
-		"ledger.vendors.*",
-		"ledger.customers.*",
+	if w.cfg == nil {
+		w.logger.Error("vector worker: missing config")
+		return nil
+	}
+	subjects := w.cfg.Workers.Vector
+	if len(subjects) == 0 {
+		w.logger.Error("vector worker: subjects not configured")
+		return nil
 	}
 
 	var configs []SubscriptionConfig
 	for _, subject := range subjects {
-		queueGroup := "toro-pinecone-v2-" + strings.ReplaceAll(strings.ReplaceAll(subject, ".*", ""), ".", "-")
+		queueGroup := groupFromSubject(subject)
+		if w.cfg.Workers.VectorGroupPrefix != "" {
+			queueGroup = w.cfg.Workers.VectorGroupPrefix + "-" + strings.TrimSuffix(groupFromSubject(subject), "-group")
+		}
 		configs = append(configs, SubscriptionConfig{
 			Subject: subject,
 			Group:   queueGroup,
-			Options: []nats.SubOpt{nats.ManualAck(), nats.AckWait(5 * time.Minute), nats.MaxDeliver(5), nats.BindStream("LEDGER"), nats.DeliverNew()},
+			Options: []nats.SubOpt{nats.Durable(durableFromSubject(subject)), nats.ManualAck(), nats.AckWait(5 * time.Minute), nats.MaxDeliver(5), nats.BindStream("LEDGER"), nats.DeliverNew()},
 		})
 	}
 	return configs
@@ -275,7 +285,6 @@ func init() {
 		if deps.Pinecone == nil || deps.Embedder == nil {
 			return nil, nil
 		}
-		return NewVectorSyncWorker(deps.Logger, deps.Store, deps.Pinecone, deps.Embedder, deps.Queue)
+		return NewVectorSyncWorker(deps.Logger, deps.Store, deps.Pinecone, deps.Embedder, deps.Queue, deps.Config)
 	})
 }
-

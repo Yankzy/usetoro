@@ -212,7 +212,7 @@ TAP defines standardized message types:
 Each agent has a **DID** derived from its Ed25519 public key:
 
 ```go
-kp, _ := identity.GenerateKeyPair()
+kp, _ := identity.KeyPairFromSeed("seed")
 did := identity.CreateDID(kp.Public)
 // => "did:toro:a1b2c3d4e5f6..."
 ```
@@ -310,7 +310,7 @@ Let's build a simple agent that listens for accounting tasks and processes them.
 ### Step 1: Generate Identity
 
 ```go
-kp, _ := identity.GenerateKeyPair()
+kp, _ := identity.KeyPairFromSeed("seed")
 did := identity.CreateDID(kp.Public)
 log.Printf("Agent DID: %s", did)
 ```
@@ -403,7 +403,7 @@ Ed25519-based identity management:
 
 ```go
 // Generate new identity
-kp, _ := identity.GenerateKeyPair()
+kp, _ := identity.KeyPairFromSeed("seed")
 
 // Create DID from public key
 did := identity.CreateDID(kp.Public)

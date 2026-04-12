@@ -140,6 +140,7 @@ agents:
     engine: "internal"
     internal_module: "reconcile-expense-agent"
     activity_type: "agents.accounting.reconcile_expense"
+    output_subject: "proof.accounting.cleanup.reconcile.expense"
     dependencies:
       database: false
       db_queries: true
@@ -151,6 +152,7 @@ agents:
     engine: "internal"
     internal_module: "reconcile-revenue-agent"
     activity_type: "agents.accounting.reconcile_revenue"
+    output_subject: "proof.accounting.cleanup.reconcile.revenue"
     dependencies:
       database: false
       db_queries: true
@@ -177,3 +179,22 @@ agents:
       database: false
       db_queries: true
       entity_resolver: false
+
+worker_subjects:
+  csv_mapping_activity_type: "workers.database.insert_rows"
+  # Leave subjects empty to derive from activity type; override here if needed.
+  csv_mapping: ""
+  csv_mapping_group: ""
+  enrichment: "proof.accounting.cleanup.inserted"
+  enrichment_group: ""
+  transaction: "ledger.shadow_erp_proposed_transactions.*"
+  transaction_group: ""
+  fignode: "proof.accounting.cleanup.reconcile.>"
+  fignode_group: ""
+  attachable: "ledger.shadow_erp_attachables.insert"
+  attachable_group: ""
+  vector:
+    - "ledger.accounts.*"
+    - "ledger.vendors.*"
+    - "ledger.customers.*"
+  vector_group_prefix: "toro-pinecone-v2"

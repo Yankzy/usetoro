@@ -206,3 +206,5 @@ ingest-messy:
 		-F "file=@/Users/Yankz/Downloads/Messy Bank Transactions - Generating Messy Bank Transaction Data.csv" \
 		http://localhost:8080/files/upload/accounting/cleanup
 
+nats_consumers:
+	./container/scripts/list-nats-consumers.sh 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Yankzy/usetoro/internal/cdc"
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/nats-io/nats.go"
 )
@@ -19,9 +20,10 @@ type AttachableWorker struct {
 	nc                *nats.Conn
 	js                nats.JetStreamContext
 	attachableService *accounting.AttachableService
+	cfg               *config.Config
 }
 
-func NewAttachableWorker(logger *slog.Logger, nc *nats.Conn, attachableService *accounting.AttachableService) (*AttachableWorker, error) {
+func NewAttachableWorker(logger *slog.Logger, nc *nats.Conn, attachableService *accounting.AttachableService, cfg *config.Config) (*AttachableWorker, error) {
 	js, err := nc.JetStream()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
@@ -32,6 +34,7 @@ func NewAttachableWorker(logger *slog.Logger, nc *nats.Conn, attachableService *
 		nc:                nc,
 		js:                js,
 		attachableService: attachableService,
+		cfg:               cfg,
 	}, nil
 }
 
@@ -40,11 +43,24 @@ func (w *AttachableWorker) Init(ctx context.Context) error {
 }
 
 func (w *AttachableWorker) Subscriptions() []SubscriptionConfig {
+	if w.cfg == nil {
+		w.logger.Error("attachable worker: missing config")
+		return nil
+	}
+	subject := w.cfg.Workers.Attachable
+	if subject == "" {
+		w.logger.Error("attachable worker: subject not configured")
+		return nil
+	}
+	group := w.cfg.Workers.AttachableGroup
+	if group == "" {
+		group = groupFromSubject(subject)
+	}
 	return []SubscriptionConfig{
 		{
-			Subject: "ledger.shadow_erp_attachables.insert",
-			Group:   "toro-attachable-workers",
-			Options: []nats.SubOpt{nats.ManualAck(), nats.BindStream("LEDGER")},
+			Subject: subject,
+			Group:   group,
+			Options: []nats.SubOpt{nats.Durable(durableFromSubject(subject)), nats.ManualAck(), nats.BindStream("LEDGER")},
 		},
 	}
 }
@@ -123,7 +139,6 @@ func (w *AttachableWorker) handleEvent(ctx context.Context, msg *nats.Msg) {
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		return NewAttachableWorker(deps.Logger, deps.Queue, deps.AttachService)
+		return NewAttachableWorker(deps.Logger, deps.Queue, deps.AttachService, deps.Config)
 	})
 }
-

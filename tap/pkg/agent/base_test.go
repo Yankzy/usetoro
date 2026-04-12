@@ -43,11 +43,11 @@ func (r *mockRow) Scan(_ ...interface{}) error {
 // --- Mock EventBus ---
 
 type mockEventBus struct {
-	mu                sync.Mutex
-	messages          map[string][][]byte
+	mu                 sync.Mutex
+	messages           map[string][][]byte
 	subscribedSubjects []string
-	publishErr        error
-	subscribeErr      error
+	publishErr         error
+	subscribeErr       error
 }
 
 func newMockBus() *mockEventBus {
@@ -458,12 +458,16 @@ func TestBaseAgent_Start_RegistrationError(t *testing.T) {
 	}
 }
 
-func TestBaseAgent_Start_TaskQueueSubscription(t *testing.T) {
+func TestBaseAgent_Start_TaskQueueSubscription_DerivedFromActivity(t *testing.T) {
 	bus := newMockBus()
 	agent := newTestAgent(bus)
-	agent.Cfg.TaskQueue = "tasks.accounting.cleanup.mapping"
+	agent.Cfg.TaskQueue = "tasks.accounting.cleanup.mapping" // ignored for agents; queue is derived
+	expectedQueue, err := core.BuildTaskSubjectFromActivity(agent.Cfg.ActivityType, core.ComplexityEntry)
+	if err != nil {
+		t.Fatalf("failed to derive expected queue: %v", err)
+	}
 
-	err := agent.Start()
+	err = agent.Start()
 	if err != nil {
 		t.Fatalf("expected no error with task queue set, got: %v", err)
 	}
@@ -480,7 +484,7 @@ func TestBaseAgent_Start_TaskQueueSubscription(t *testing.T) {
 		if strings.Contains(s, ".inbox") {
 			inboxFound = true
 		}
-		if s == "tasks.accounting.cleanup.mapping" {
+		if s == expectedQueue {
 			taskQueueFound = true
 		}
 	}
@@ -492,23 +496,86 @@ func TestBaseAgent_Start_TaskQueueSubscription(t *testing.T) {
 	}
 }
 
-func TestBaseAgent_Start_NoTaskQueue(t *testing.T) {
+func TestBaseAgent_Start_NoTaskQueue_StillDerivesFromActivity(t *testing.T) {
 	bus := newMockBus()
 	agent := newTestAgent(bus)
 	// TaskQueue intentionally left empty
+	expectedQueue, err := core.BuildTaskSubjectFromActivity(agent.Cfg.ActivityType, core.ComplexityEntry)
+	if err != nil {
+		t.Fatalf("failed to derive expected queue: %v", err)
+	}
 
-	err := agent.Start()
+	err = agent.Start()
 	if err != nil {
 		t.Fatalf("expected no error when TaskQueue is empty, got: %v", err)
 	}
 
 	subs := bus.subscriptions()
-	// Only the private inbox subscription should be present
+	// Agent queue is derived from activity_type, so we expect inbox + derived task queue.
+	if len(subs) != 2 {
+		t.Fatalf("expected 2 subscriptions (inbox + derived task queue), got %d: %v", len(subs), subs)
+	}
+
+	inboxFound := false
+	taskQueueFound := false
+	for _, s := range subs {
+		if strings.Contains(s, ".inbox") {
+			inboxFound = true
+		}
+		if s == expectedQueue {
+			taskQueueFound = true
+		}
+	}
+	if !inboxFound {
+		t.Errorf("expected inbox subscription, got: %v", subs)
+	}
+	if !taskQueueFound {
+		t.Errorf("expected derived task_queue subscription, got: %v", subs)
+	}
+}
+
+func TestBaseAgent_Start_EmptyActivityType_NoDerivedTaskQueue(t *testing.T) {
+	bus := newMockBus()
+	agent := newTestAgent(bus)
+	agent.Cfg.ActivityType = ""
+	agent.Cfg.TaskQueue = ""
+
+	err := agent.Start()
+	if err != nil {
+		t.Fatalf("expected no error when activity type is empty, got: %v", err)
+	}
+
+	subs := bus.subscriptions()
 	if len(subs) != 1 {
-		t.Fatalf("expected only 1 subscription (inbox), got %d: %v", len(subs), subs)
+		t.Fatalf("expected only inbox subscription, got %d: %v", len(subs), subs)
 	}
 	if !strings.Contains(subs[0], ".inbox") {
 		t.Errorf("expected inbox subscription, got: %v", subs[0])
 	}
 }
 
+func TestBaseAgent_Start_WorkerActivityType_NormalizesQueue(t *testing.T) {
+	bus := newMockBus()
+	agent := newTestAgent(bus)
+	agent.Cfg.ActivityType = "workers.database.insert_rows"
+	expectedQueue, err := core.BuildWorkerInboxFromActivity(agent.Cfg.ActivityType)
+	if err != nil {
+		t.Fatalf("failed to derive expected worker queue: %v", err)
+	}
+
+	err = agent.Start()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	subs := bus.subscriptions()
+	hasQueue := false
+	for _, s := range subs {
+		if s == expectedQueue {
+			hasQueue = true
+		}
+	}
+	if !hasQueue {
+		t.Fatalf("expected worker queue subscription %s, got %v", expectedQueue, subs)
+	}
+}

@@ -56,7 +56,8 @@ type Config struct {
 	NatsERPEventSubject string     `mapstructure:"nats_erp_event_subject"`
 
 	// Agents Config
-	Agents []core.AgentConfig `mapstructure:"agents"`
+	Agents  []core.AgentConfig `mapstructure:"agents"`
+	Workers WorkerSubjects     `mapstructure:"worker_subjects"`
 }
 
 type NATSConfig struct {
@@ -84,6 +85,23 @@ type JetStreamConfig struct {
 	DenyPurge   bool          `mapstructure:"deny_purge"`
 	AllowRollup bool          `mapstructure:"allow_rollup"`
 	AllowDirect bool          `mapstructure:"allow_direct"`
+}
+
+// WorkerSubjects centralizes subscription subjects for background workers.
+type WorkerSubjects struct {
+	CSVMapping             string   `mapstructure:"csv_mapping"`
+	CSVMappingActivityType string   `mapstructure:"csv_mapping_activity_type"`
+	CSVMappingGroup        string   `mapstructure:"csv_mapping_group"`
+	Enrichment             string   `mapstructure:"enrichment"`
+	EnrichmentGroup        string   `mapstructure:"enrichment_group"`
+	Fignode                string   `mapstructure:"fignode"`
+	FignodeGroup           string   `mapstructure:"fignode_group"`
+	Transaction            string   `mapstructure:"transaction"`
+	TransactionGroup       string   `mapstructure:"transaction_group"`
+	Attachable             string   `mapstructure:"attachable"`
+	AttachableGroup        string   `mapstructure:"attachable_group"`
+	Vector                 []string `mapstructure:"vector"`
+	VectorGroupPrefix      string   `mapstructure:"vector_group_prefix"`
 }
 
 // loadEnvFile reads a simple .env file and sets environment variables if they are not already set.

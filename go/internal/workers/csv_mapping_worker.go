@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/services/cleanup"
@@ -27,6 +28,7 @@ type CSVMappingWorker struct {
 	nc             *nats.Conn
 	dedup          *cleanup.Deduplicator
 	logger         *slog.Logger
+	cfg            *config.Config
 }
 
 // NewCSVMappingWorker creates a new worker for csv mapping ingestion and enrichment.
@@ -36,6 +38,7 @@ func NewCSVMappingWorker(
 	coaMapper *ai.CoAMapper,
 	nc *nats.Conn,
 	logger *slog.Logger,
+	cfg *config.Config,
 ) (*CSVMappingWorker, error) {
 	return &CSVMappingWorker{
 		db:             db,
@@ -44,6 +47,7 @@ func NewCSVMappingWorker(
 		nc:             nc,
 		dedup:          cleanup.NewDeduplicator(),
 		logger:         logger,
+		cfg:            cfg,
 	}, nil
 }
 
@@ -52,11 +56,37 @@ func (e *CSVMappingWorker) Init(ctx context.Context) error {
 }
 
 func (e *CSVMappingWorker) Subscriptions() []SubscriptionConfig {
+	if e.cfg == nil {
+		e.logger.Error("csv mapping worker: missing config, cannot derive subject")
+		return nil
+	}
+
+	activityType := e.cfg.Workers.CSVMappingActivityType
+	if activityType == "" {
+		e.logger.Error("csv mapping worker: no activity_type configured")
+		return nil
+	}
+
+	subject := e.cfg.Workers.CSVMapping
+	if subject == "" {
+		if derived, err := core.BuildWorkerInboxFromActivity(activityType); err == nil {
+			subject = derived
+		} else {
+			e.logger.Error("csv mapping worker: failed to derive inbox", "activity_type", activityType, "error", err)
+			return nil
+		}
+	}
+
+	group := e.cfg.Workers.CSVMappingGroup
+	if group == "" {
+		group = groupFromSubject(subject)
+	}
+
 	return []SubscriptionConfig{
 		{
-			Subject: "worker.inbox.csv-mapping-worker",
-			Group:   "csv-mapping-worker-group",
-			Options: []nats.SubOpt{nats.Durable("csv-mapping-worker-durable-v6"), nats.DeliverAll(), nats.AckExplicit()},
+			Subject: subject,
+			Group:   group,
+			Options: []nats.SubOpt{nats.Durable(durableFromSubject(subject)), nats.DeliverAll(), nats.AckExplicit()},
 		},
 	}
 }
@@ -247,6 +277,6 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		return NewCSVMappingWorker(deps.Store.Queries, deps.EntityResolver, deps.CoAMapper, deps.Queue, deps.Logger)
+		return NewCSVMappingWorker(deps.Store.Queries, deps.EntityResolver, deps.CoAMapper, deps.Queue, deps.Logger, deps.Config)
 	})
 }

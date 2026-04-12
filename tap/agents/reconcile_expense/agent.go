@@ -60,7 +60,6 @@ func NewAgent(env core.Environment) core.Runnable {
 	return &a
 }
 
-
 func (e *ExpenseReconciliationAgent) handleEnrichmentProof(ctx context.Context, msg *nats.Msg) error {
 	var env core.Envelope
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
@@ -120,20 +119,20 @@ func (e *ExpenseReconciliationAgent) handleEnrichmentProof(ctx context.Context, 
 	sem := make(chan struct{}, 5)
 
 	type updatedRow struct {
-		id                  pgtype.UUID
-		vendorID            pgtype.UUID
-		vendorName          pgtype.Text
-		customerID          pgtype.UUID
-		customerName        pgtype.Text
-		accountID           pgtype.UUID
-		accountName         pgtype.Text
-		score               pgtype.Numeric
-		reasoning           pgtype.Text
-		duplicateOf         pgtype.UUID
-		isRecurring         bool
-		split               []byte
-        merchantName        pgtype.Text
-        plaidCategory       pgtype.Text
+		id            pgtype.UUID
+		vendorID      pgtype.UUID
+		vendorName    pgtype.Text
+		customerID    pgtype.UUID
+		customerName  pgtype.Text
+		accountID     pgtype.UUID
+		accountName   pgtype.Text
+		score         pgtype.Numeric
+		reasoning     pgtype.Text
+		duplicateOf   pgtype.UUID
+		isRecurring   bool
+		split         []byte
+		merchantName  pgtype.Text
+		plaidCategory pgtype.Text
 	}
 
 	ch := make(chan updatedRow, len(expenseRows))
@@ -170,7 +169,7 @@ func (e *ExpenseReconciliationAgent) handleEnrichmentProof(ctx context.Context, 
 					if aErr == nil && aMatch != nil {
 						_ = aID.Scan(aMatch.ID)
 						aName = pgtype.Text{String: aMatch.Name, Valid: true}
-						reasoning = pgtype.Text{String: fmt.Sprintf("Matched historical '%s' mappings to '%s' with %.0f%% spatial confidence", vMatch.Name, aMatch.Name, aMatch.Score * 100), Valid: true}
+						reasoning = pgtype.Text{String: fmt.Sprintf("Matched historical '%s' mappings to '%s' with %.0f%% spatial confidence", vMatch.Name, aMatch.Name, aMatch.Score*100), Valid: true}
 						conf += aMatch.Score
 					}
 					conf = conf / 2.0
@@ -182,20 +181,20 @@ func (e *ExpenseReconciliationAgent) handleEnrichmentProof(ctx context.Context, 
 
 			// Pass through deduplication flags set by Enrichment Agent
 			ch <- updatedRow{
-				id:                  row.ID,
-				vendorID:            vID,
-				vendorName:          vName,
-				customerID:          row.PredictedCustomerID,
-				customerName:        pgtype.Text{String: row.PredictedCustomerName, Valid: row.PredictedCustomerName != ""},
-				accountID:           aID,
-				accountName:         aName,
-				score:               confScore,
-				reasoning:           reasoning,
-				duplicateOf:         row.DuplicateOf,
-				isRecurring:         row.IsRecurring,
-				split:               row.SplitSuggestion,
-				merchantName:        row.MerchantName,
-				plaidCategory:       row.PlaidCategory,
+				id:            row.ID,
+				vendorID:      vID,
+				vendorName:    vName,
+				customerID:    row.PredictedCustomerID,
+				customerName:  pgtype.Text{String: row.PredictedCustomerName, Valid: row.PredictedCustomerName != ""},
+				accountID:     aID,
+				accountName:   aName,
+				score:         confScore,
+				reasoning:     reasoning,
+				duplicateOf:   row.DuplicateOf,
+				isRecurring:   row.IsRecurring,
+				split:         row.SplitSuggestion,
+				merchantName:  row.MerchantName,
+				plaidCategory: row.PlaidCategory,
 			}
 			return nil
 		})
@@ -230,10 +229,14 @@ func (e *ExpenseReconciliationAgent) handleEnrichmentProof(ctx context.Context, 
 
 	e.Logger.Info("✅ expense reconciliation complete!", "session", sessionID)
 
+	if e.Cfg.OutputSubject == "" {
+		return fmt.Errorf("expense reconcile: output_subject is not configured")
+	}
+
 	proofEnv, _ := core.NewEnvelope(uuid.New().String(), e.Cfg.DID, "did:toro:hive", env.ConversationID, core.INFORM, proof)
 	proofEnv.Signature = e.KP.Sign(proofEnv.Body)
 	finalBytes, _ := json.Marshal(proofEnv)
-	return e.Bus.Publish("proof.accounting.cleanup.reconcile.expense", finalBytes)
+	return e.Bus.Publish(e.Cfg.OutputSubject, finalBytes)
 }
 
 func parseDirtyAmount(amt string) float64 {

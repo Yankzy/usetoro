@@ -44,6 +44,10 @@ type AgentConfig struct {
 	// WorkflowSchema is the JSON Schema string used by the Redux engine for state validation.
 	WorkflowSchema string `yaml:"workflow_schema" mapstructure:"workflow_schema"`
 
+	// OutputSubject is an optional publish target for agent-specific result events.
+	// Useful for internal agents that emit proofs to downstream workers.
+	OutputSubject string `yaml:"output_subject,omitempty" mapstructure:"output_subject"`
+
 	// TaskQueue is the public NATS subject the Orchestrator assigns to this agent's activity_type.
 	// Populated at runtime by the Orchestrator after loading workflow definitions — not set in defaults.yaml.
 	TaskQueue string `yaml:"-" mapstructure:"-"`
@@ -54,8 +58,8 @@ type AgentConfig struct {
 }
 
 type AgentDependenciesConfig struct {
-	Database       bool `yaml:"database" mapstructure:"database"`           // populates env.DBPool (*pgxpool.Pool)
-	DBQueries      bool `yaml:"db_queries" mapstructure:"db_queries"`       // populates env.DB (*database.Queries)
+	Database       bool `yaml:"database" mapstructure:"database"`     // populates env.DBPool (*pgxpool.Pool)
+	DBQueries      bool `yaml:"db_queries" mapstructure:"db_queries"` // populates env.DB (*database.Queries)
 	EntityResolver bool `yaml:"entity_resolver" mapstructure:"entity_resolver"`
 }
 

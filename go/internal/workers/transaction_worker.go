@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Yankzy/usetoro/internal/cdc"
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
@@ -31,6 +32,7 @@ type TransactionWorker struct {
 	coaMapper      *ai.CoAMapper
 	ruleEngine     *accounting.RuleEngineService
 	factory        erp.ProviderFactory
+	cfg            *config.Config
 }
 
 func NewTransactionWorker(
@@ -42,6 +44,7 @@ func NewTransactionWorker(
 	coa *ai.CoAMapper,
 	ruleEngine *accounting.RuleEngineService,
 	factory erp.ProviderFactory,
+	cfg *config.Config,
 ) (*TransactionWorker, error) {
 	js, err := nc.JetStream()
 	if err != nil {
@@ -58,6 +61,7 @@ func NewTransactionWorker(
 		coaMapper:      coa,
 		ruleEngine:     ruleEngine,
 		factory:        factory,
+		cfg:            cfg,
 	}, nil
 }
 
@@ -66,11 +70,24 @@ func (w *TransactionWorker) Init(ctx context.Context) error {
 }
 
 func (w *TransactionWorker) Subscriptions() []SubscriptionConfig {
+	if w.cfg == nil {
+		w.logger.Error("transaction worker: missing config")
+		return nil
+	}
+	subject := w.cfg.Workers.Transaction
+	if subject == "" {
+		w.logger.Error("transaction worker: transaction subject not configured")
+		return nil
+	}
+	group := w.cfg.Workers.TransactionGroup
+	if group == "" {
+		group = groupFromSubject(subject)
+	}
 	return []SubscriptionConfig{
 		{
-			Subject: "ledger.shadow_erp_proposed_transactions.*",
-			Group:   "toro-tx-workers",
-			Options: []nats.SubOpt{nats.ManualAck(), nats.BindStream("LEDGER")},
+			Subject: subject,
+			Group:   group,
+			Options: []nats.SubOpt{nats.Durable(durableFromSubject(subject)), nats.ManualAck(), nats.BindStream("LEDGER")},
 		},
 	}
 }
@@ -251,7 +268,6 @@ func (w *TransactionWorker) markError(ctx context.Context, txID pgtype.UUID, err
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		return NewTransactionWorker(deps.Logger, deps.Queue, deps.DBPool, deps.Store.Queries, deps.EntityResolver, deps.CoAMapper, deps.RuleEngine, deps.ProviderFactory)
+		return NewTransactionWorker(deps.Logger, deps.Queue, deps.DBPool, deps.Store.Queries, deps.EntityResolver, deps.CoAMapper, deps.RuleEngine, deps.ProviderFactory, deps.Config)
 	})
 }
-

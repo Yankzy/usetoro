@@ -21,7 +21,7 @@ type OCRResult struct {
 
 func BillingAgent() {
 	// 1. Identity & Connection
-	kp, _ := identity.GenerateKeyPair()
+	kp, _ := identity.KeyPairFromSeed("agents.billing")
 	did := identity.CreateDID(kp.Public)
 	log.Printf("💰 Billing Agent Online. DID: %s", did)
 

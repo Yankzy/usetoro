@@ -11,14 +11,12 @@ steps:
     
   - id: commit_mapped_columns
     activity_type: workers.database.insert_rows
-    task_queue: csv-mapping-worker
     negotiate: false
     timeout: "10s"
     description: "Inserts the mapped rows into Postgres DB as PENDING."
 
   - id: run_enrichment
     activity_type: workers.database.enrich_rows
-    task_queue: enrichment-worker
     negotiate: false
     timeout: "120s"
     description: "Legacy enrichment step that maps strings to DB entities, outputs ENRICHED events."

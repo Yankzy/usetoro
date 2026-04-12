@@ -15,7 +15,7 @@ import (
 
 func TruckerAgent() {
 	// 1. Setup Identity
-	kp, _ := identity.GenerateKeyPair()
+	kp, _ := identity.KeyPairFromSeed("agents.trucker")
 	did := identity.CreateDID(kp.Public)
 	log.Printf("🚚 Trucker Agent Online. DID: %s", did)
 

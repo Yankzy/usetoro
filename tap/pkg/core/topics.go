@@ -35,6 +35,15 @@ func BuildAlmanacSubject(domain string, complexity TaskComplexity, taskType stri
 }
 
 // --- Agent Routing ---
+// BuildWorkerInboxFromActivity derives a worker inbox subject from an activity type.
+// Example activity_type: workers.database.insert_rows -> worker.inbox.database.insert_rows
+func BuildWorkerInboxFromActivity(activityType string) (string, error) {
+	parts := strings.Split(activityType, ".")
+	if len(parts) < 2 || parts[0] != PrefixWorkerActivities {
+		return "", fmt.Errorf("invalid worker activity_type %q", activityType)
+	}
+	return fmt.Sprintf("%s.inbox.%s", PrefixWorkers, strings.Join(parts[1:], ".")), nil
+}
 
 // BuildAgentInbox constructs the direct address for a specific Agent.
 // Format: agents.did.inbox
@@ -73,19 +82,21 @@ func NormalizeTaskQueue(activityType, queue string) (string, error) {
 func NormalizeTaskQueueWithComplexity(activityType, queue string, complexity TaskComplexity) (string, error) {
 	switch {
 	case strings.HasPrefix(activityType, PrefixAgents+"."):
-		if queue != "" {
-			return queue, nil
-		}
+		// For agents we always derive the canonical task subject so complexity-based
+		// routing and payments remain consistent, even if a custom queue was provided.
 		return BuildTaskSubjectFromActivity(activityType, complexity)
 	case strings.HasPrefix(activityType, PrefixWorkerActivities+"."): // workers.*
+		// Derive inbox from activity type when not explicitly provided to standardize routing.
 		if queue == "" {
-			return "", fmt.Errorf("worker activity_type %q requires task queue", activityType)
+			return BuildWorkerInboxFromActivity(activityType)
 		}
+		// Accept explicit inbox subjects or raw worker IDs.
 		if strings.HasPrefix(queue, PrefixWorkers+".inbox.") {
 			return queue, nil
 		}
+		// Allow dotted worker IDs (map to inbox)
 		if strings.Contains(queue, ".") {
-			return "", fmt.Errorf("invalid worker task queue %q", queue)
+			return fmt.Sprintf("%s.%s", PrefixWorkers+".inbox", queue), nil
 		}
 		return BuildWorkerInbox(queue), nil
 	default:

@@ -14,7 +14,7 @@ import (
 
 func SwipeValidatorAgent() {
 	// 1. Setup Identity
-	kp, _ := identity.GenerateKeyPair()
+	kp, _ := identity.KeyPairFromSeed("agents.swipe_validator")
 	did := identity.CreateDID(kp.Public)
 	log.Printf("🤖 Swipe Generator started. DID: %s", did)
 

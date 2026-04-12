@@ -6,26 +6,10 @@ import (
 	"testing"
 )
 
-func TestGenerateKeyPair(t *testing.T) {
-	kp, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair failed: %v", err)
-	}
-	if kp == nil {
-		t.Fatal("GenerateKeyPair returned nil KeyPair")
-	}
-	if len(kp.Public) != ed25519.PublicKeySize {
-		t.Errorf("Expected public key size %d, got %d", ed25519.PublicKeySize, len(kp.Public))
-	}
-	if len(kp.Private) != ed25519.PrivateKeySize {
-		t.Errorf("Expected private key size %d, got %d", ed25519.PrivateKeySize, len(kp.Private))
-	}
-}
-
 func TestSignAndVerify(t *testing.T) {
-	kp, err := GenerateKeyPair()
+	kp, err := KeyPairFromSeed("agents.test.sign_verify")
 	if err != nil {
-		t.Fatalf("GenerateKeyPair failed: %v", err)
+		t.Fatalf("KeyPairFromSeed failed: %v", err)
 	}
 
 	data := []byte("hello world")
@@ -65,8 +49,8 @@ func TestSignAndVerify(t *testing.T) {
 }
 
 func TestVerifyErrors(t *testing.T) {
-	// Generate a valid keypair for reference
-	kp, _ := GenerateKeyPair()
+	// Derive a valid keypair for reference
+	kp, _ := KeyPairFromSeed("agents.test.verify_errors")
 	data := []byte("test")
 	sig := kp.Sign(data)
 
@@ -104,4 +88,58 @@ func TestVerifyErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKeyPairFromSeed(t *testing.T) {
+	t.Run("Deterministic: same seed always yields same DID", func(t *testing.T) {
+		kp1, err1 := KeyPairFromSeed("agents.accounting.map_csv")
+		kp2, err2 := KeyPairFromSeed("agents.accounting.map_csv")
+		if err1 != nil || err2 != nil {
+			t.Fatalf("KeyPairFromSeed failed: %v / %v", err1, err2)
+		}
+		if hex.EncodeToString(kp1.Public) != hex.EncodeToString(kp2.Public) {
+			t.Error("Same seed produced different public keys")
+		}
+	})
+
+	t.Run("Unique: different seeds produce different keys", func(t *testing.T) {
+		kp1, _ := KeyPairFromSeed("agents.accounting.map_csv")
+		kp2, _ := KeyPairFromSeed("agents.accounting.reconcile_expense")
+		if hex.EncodeToString(kp1.Public) == hex.EncodeToString(kp2.Public) {
+			t.Error("Different seeds produced identical public keys")
+		}
+	})
+
+	t.Run("Error on empty seed", func(t *testing.T) {
+		_, err := KeyPairFromSeed("")
+		if err == nil {
+			t.Error("Expected error for empty seed, got nil")
+		}
+	})
+
+	t.Run("Valid key sizes", func(t *testing.T) {
+		kp, err := KeyPairFromSeed("agents.payments.stripe_receipt_processor")
+		if err != nil {
+			t.Fatalf("KeyPairFromSeed failed: %v", err)
+		}
+		if len(kp.Public) != ed25519.PublicKeySize {
+			t.Errorf("Expected public key size %d, got %d", ed25519.PublicKeySize, len(kp.Public))
+		}
+		if len(kp.Private) != ed25519.PrivateKeySize {
+			t.Errorf("Expected private key size %d, got %d", ed25519.PrivateKeySize, len(kp.Private))
+		}
+	})
+
+	t.Run("Sign and verify with seeded keypair", func(t *testing.T) {
+		kp, _ := KeyPairFromSeed("agents.accounting.approval")
+		data := []byte("proof payload")
+		sig := kp.Sign(data)
+		valid, err := Verify(hex.EncodeToString(kp.Public), data, sig)
+		if err != nil {
+			t.Fatalf("Verify failed: %v", err)
+		}
+		if !valid {
+			t.Error("Verify returned false for valid seeded signature")
+		}
+	})
 }

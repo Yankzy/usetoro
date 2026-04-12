@@ -52,11 +52,12 @@ func (w *ERPEventWorker) Init(ctx context.Context) error {
 }
 
 func (w *ERPEventWorker) Subscriptions() []SubscriptionConfig {
+	group := groupFromSubject(w.cfg.NatsERPEventSubject)
 	return []SubscriptionConfig{
 		{
 			Subject: w.cfg.NatsERPEventSubject,
-			Group:   "toro-erp-event-workers",
-			Options: []nats.SubOpt{nats.ManualAck(), nats.BindStream("TORO_ERP_EVENTS")},
+			Group:   group,
+			Options: []nats.SubOpt{nats.Durable(durableFromSubject(w.cfg.NatsERPEventSubject)), nats.ManualAck(), nats.BindStream("TORO_ERP_EVENTS")},
 		},
 	}
 }
@@ -155,4 +156,3 @@ func init() {
 		return NewERPEventWorker(deps.Logger, deps.Config, deps.Queue, deps.ProviderFactory, deps.FetchEntityFn)
 	})
 }
-

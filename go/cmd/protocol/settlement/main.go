@@ -119,11 +119,11 @@ func loadOracleKeyPair() *identity.KeyPair {
 		priv := ed25519.PrivateKey(privBytes)
 		return &identity.KeyPair{Public: priv.Public().(ed25519.PublicKey), Private: priv}
 	}
-	kp, err := identity.GenerateKeyPair()
+	kp, err := identity.KeyPairFromSeed("settlement.oracle")
 	if err != nil {
 		log.Fatalf("❌ Failed to generate oracle keypair: %v", err)
 	}
-	log.Printf("⚠️  ORACLE_PRIVATE_KEY_HEX unset — ephemeral oracle DID: %s", identity.CreateDID(kp.Public))
+	log.Printf("⚠️  ORACLE_PRIVATE_KEY_HEX unset — oracle DID: %s", identity.CreateDID(kp.Public))
 	return kp
 }
 

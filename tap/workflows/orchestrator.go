@@ -640,23 +640,28 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 	o.publishStatus(instanceID.String(), entityID, "started", def.Steps[0].ID, "", def)
 
 	// Dispatch the first step
-	return o.dispatchStep(ctx, def, def.Steps[0], instanceID.String(), triggerPayload)
+	return o.dispatchStep(ctx, def.Steps[0], instanceID.String(), triggerPayload)
 }
 
 // dispatchStep sends work to the actor responsible for the given step.
 // If negotiate=true: broadcast a CFP to the public task_queue.
 // If negotiate=false: send an ACCEPT directly to the internal worker/agent inbox.
-func (o *Orchestrator) dispatchStep(ctx context.Context, def WorkflowDef, step WorkflowStep, instanceID string, payload []byte) error {
-	o.logger.Info("Orchestrator: dispatching step",
-		"step_id", step.ID,
-		"activity_type", step.ActivityType,
-		"negotiate", step.Negotiate,
-		"task_queue", step.TaskQueue,
-	)
-
+func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, instanceID string, payload []byte) error {
 	convID := instanceID + "." + step.ID
 
 	if step.Negotiate {
+		queue, err := core.NormalizeTaskQueue(step.ActivityType, step.TaskQueue)
+		if err != nil {
+			return fmt.Errorf("orchestrator: invalid task queue for step %q: %w", step.ID, err)
+		}
+
+		o.logger.Info("Orchestrator: dispatching step",
+			"step_id", step.ID,
+			"activity_type", step.ActivityType,
+			"negotiate", step.Negotiate,
+			"task_queue", queue,
+		)
+
 		// ── FIPA path: broadcast CFP to the public task_queue ─────────────────
 		// 3rd-party agents (Firecracker) and internal agents listening on this
 		// topic can all reply with PROPOSE to the orchestrator inbox.
@@ -677,19 +682,26 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, def WorkflowDef, step W
 			return fmt.Errorf("orchestrator: failed to build CFP: %w", err)
 		}
 		cfpBytes, _ := json.Marshal(cfp)
-		if err := o.bus.Publish(step.TaskQueue, cfpBytes); err != nil {
-			return fmt.Errorf("orchestrator: failed to publish CFP to %s: %w", step.TaskQueue, err)
+		if err := o.bus.Publish(queue, cfpBytes); err != nil {
+			return fmt.Errorf("orchestrator: failed to publish CFP to %s: %w", queue, err)
 		}
-		o.logger.Info("Orchestrator: CFP broadcast", "task_queue", step.TaskQueue, "conv_id", convID)
+		o.logger.Info("Orchestrator: CFP broadcast", "task_queue", queue, "conv_id", convID)
 
 	} else {
 		// ── Direct path: dispatch to a specific actor ─────────────────────────
-		// If task_queue is defined, we use it directly as the inbox (for Workers).
+		// If task_queue is defined (or derivable for workers), we use it directly as the inbox.
 		// Otherwise, query Almanac at dispatch time for a live actor that advertises
 		// the step's activity_type capability.
 		var inbox string
 
-		if step.TaskQueue != "" {
+		if strings.HasPrefix(step.ActivityType, core.PrefixWorkerActivities+".") {
+			normalized, err := core.NormalizeTaskQueue(step.ActivityType, step.TaskQueue)
+			if err != nil {
+				return fmt.Errorf("orchestrator: invalid worker queue for step %q: %w", step.ID, err)
+			}
+			inbox = normalized
+			o.logger.Debug("Orchestrator: using worker inbox for dispatch", "inbox", inbox)
+		} else if step.TaskQueue != "" {
 			inbox = step.TaskQueue
 			o.logger.Debug("Orchestrator: using direct queue for dispatch", "inbox", inbox)
 		} else {
@@ -703,6 +715,13 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, def WorkflowDef, step W
 				"inbox", inbox,
 			)
 		}
+
+		o.logger.Info("Orchestrator: dispatching step",
+			"step_id", step.ID,
+			"activity_type", step.ActivityType,
+			"negotiate", step.Negotiate,
+			"task_queue", inbox,
+		)
 
 		taskDef := core.TaskDefinition{
 			ID:      instanceID,
@@ -843,7 +862,7 @@ func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
 
 			// The payload for the next step is often the Proof from the previous step.
 			// In FIPA, the INFORM body contains the Proof.
-			if err := o.dispatchStep(ctx, wfDef, *nextStep, instanceIDStr, env.Body); err != nil {
+			if err := o.dispatchStep(ctx, *nextStep, instanceIDStr, env.Body); err != nil {
 				o.logger.Error("Orchestrator: failed to dispatch next step", "error", err)
 				msg.Nak()
 				return
@@ -906,8 +925,12 @@ func (o *Orchestrator) GetTaskQueues() map[string]string {
 	for _, wf := range o.blueprints {
 		for _, step := range wf.Steps {
 			// Only map task queues for steps that require NATS negotiation.
-			if step.Negotiate && step.ActivityType != "" && step.TaskQueue != "" {
-				mapping[step.ActivityType] = step.TaskQueue
+			if step.Negotiate && step.ActivityType != "" {
+				queue, err := core.NormalizeTaskQueue(step.ActivityType, step.TaskQueue)
+				if err != nil || queue == "" {
+					continue
+				}
+				mapping[step.ActivityType] = queue
 			}
 		}
 	}

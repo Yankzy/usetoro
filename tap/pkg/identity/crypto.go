@@ -2,7 +2,7 @@ package identity
 
 import (
 	"crypto/ed25519"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,13 +16,18 @@ type KeyPair struct {
 	Private ed25519.PrivateKey
 }
 
-// GenerateKeyPair creates a fresh identity
-func GenerateKeyPair() (*KeyPair, error) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
+
+// KeyPairFromSeed derives a deterministic Ed25519 key pair from an arbitrary
+// string seed (e.g. an agent's ActivityType). The seed is SHA-256 hashed to
+// produce a stable 32-byte Ed25519 seed, so the same input always yields the
+// same DID — surviving restarts without accumulating orphaned NATS consumers.
+func KeyPairFromSeed(seed string) (*KeyPair, error) {
+	if seed == "" {
+		return nil, fmt.Errorf("seed must not be empty")
 	}
-	return &KeyPair{Public: pub, Private: priv}, nil
+	hashed := sha256.Sum256([]byte(seed))
+	priv := ed25519.NewKeyFromSeed(hashed[:])
+	return &KeyPair{Public: priv.Public().(ed25519.PublicKey), Private: priv}, nil
 }
 
 // Sign signs a raw byte slice (usually the canonicalized Envelope)

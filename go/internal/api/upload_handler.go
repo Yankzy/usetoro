@@ -171,7 +171,7 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 		Payload:    payloadBytes,
 	}
 
-	kp, _ := identity.GenerateKeyPair()
+	kp, _ := identity.KeyPairFromSeed("gateway")
 	gateDID := identity.CreateDID(kp.Public)
 
 	// Use INFORM performative because the gateway is just announcing a fact, not asking for bids yet.
@@ -198,7 +198,7 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.Logger.Info("HandleFileIngestion delegated to Triage Agent",
+	h.Logger.Info("HandleFileIngestion published to NATS",
 		"upload_id", uploadID,
 		"domain", domain,
 		"task_type", taskType,

@@ -15,6 +15,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/services/cleanup"
@@ -44,6 +45,7 @@ type EnrichmentWorker struct {
 	nc     *nats.Conn
 	logger *slog.Logger
 	llm    *ai.LLMClient
+	cfg    *config.Config
 }
 
 func NewEnrichmentWorker(
@@ -51,6 +53,7 @@ func NewEnrichmentWorker(
 	nc *nats.Conn,
 	logger *slog.Logger,
 	llm *ai.LLMClient,
+	cfg *config.Config,
 ) (*EnrichmentWorker, error) {
 	return &EnrichmentWorker{
 		db:     db,
@@ -58,6 +61,7 @@ func NewEnrichmentWorker(
 		dedup:  cleanup.NewDeduplicator(),
 		logger: logger,
 		llm:    llm,
+		cfg:    cfg,
 	}, nil
 }
 
@@ -66,11 +70,24 @@ func (e *EnrichmentWorker) Init(ctx context.Context) error {
 }
 
 func (e *EnrichmentWorker) Subscriptions() []SubscriptionConfig {
+	if e.cfg == nil {
+		e.logger.Error("enrichment worker: missing config")
+		return nil
+	}
+	subject := e.cfg.Workers.Enrichment
+	if subject == "" {
+		e.logger.Error("enrichment worker: enrichment subject not configured")
+		return nil
+	}
+	group := e.cfg.Workers.EnrichmentGroup
+	if group == "" {
+		group = groupFromSubject(subject)
+	}
 	return []SubscriptionConfig{
 		{
-			Subject: "proof.accounting.cleanup.inserted",
-			Group:   "enrichment-group",
-			Options: []nats.SubOpt{nats.Durable("enrichment-inserted-durable-v5"), nats.DeliverAll(), nats.AckExplicit()},
+			Subject: subject,
+			Group:   group,
+			Options: []nats.SubOpt{nats.Durable(durableFromSubject(subject)), nats.DeliverAll(), nats.AckExplicit()},
 		},
 	}
 }
@@ -467,6 +484,6 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		return NewEnrichmentWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.LLMClient)
+		return NewEnrichmentWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.LLMClient, deps.Config)
 	})
 }

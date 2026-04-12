@@ -24,7 +24,7 @@ type OCROutput struct {
 
 func OCRAgent() {
 	// 1. Setup Identity
-	kp, _ := identity.GenerateKeyPair()
+	kp, _ := identity.KeyPairFromSeed("agents.ocr")
 	did := identity.CreateDID(kp.Public)
 	log.Printf("👁️ OCR Agent Online. DID: %s", did)
 

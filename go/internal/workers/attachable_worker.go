@@ -47,12 +47,13 @@ func (w *AttachableWorker) Subscriptions() []SubscriptionConfig {
 		w.logger.Error("attachable worker: missing config")
 		return nil
 	}
-	subject := w.cfg.Workers.Attachable
+	_, workerCfg := w.cfg.Workers.GetForWorker(w)
+	subject := workerCfg.Subject
 	if subject == "" {
 		w.logger.Error("attachable worker: subject not configured")
 		return nil
 	}
-	group := w.cfg.Workers.AttachableGroup
+	group := workerCfg.Group
 	if group == "" {
 		group = groupFromSubject(subject)
 	}

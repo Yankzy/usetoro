@@ -8,6 +8,15 @@ steps:
     negotiate: true                                # Allow 3rd party bids via PROPOSE
     timeout: "60s"
     description: "Takes raw rows, maps CSV headers to canonical struct, filters invalid rows."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" },
+          "mapped_rows": { "type": "object" }
+        },
+        "required": ["status", "mapped_rows"]
+      }
     
   - id: commit_mapped_columns
     activity_type: workers.database.insert_rows

@@ -61,13 +61,14 @@ func (e *CSVMappingWorker) Subscriptions() []SubscriptionConfig {
 		return nil
 	}
 
-	activityType := e.cfg.Workers.CSVMappingActivityType
+	_, workerCfg := e.cfg.Workers.GetForWorker(e)
+	activityType := workerCfg.ActivityType
 	if activityType == "" {
 		e.logger.Error("csv mapping worker: no activity_type configured")
 		return nil
 	}
 
-	subject := e.cfg.Workers.CSVMapping
+	subject := workerCfg.Subject
 	if subject == "" {
 		if derived, err := core.BuildWorkerInboxFromActivity(activityType); err == nil {
 			subject = derived
@@ -77,7 +78,7 @@ func (e *CSVMappingWorker) Subscriptions() []SubscriptionConfig {
 		}
 	}
 
-	group := e.cfg.Workers.CSVMappingGroup
+	group := workerCfg.Group
 	if group == "" {
 		group = groupFromSubject(subject)
 	}

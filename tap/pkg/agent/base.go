@@ -21,7 +21,6 @@ type BaseAgent struct {
 	Logger  *slog.Logger
 	Bus     core.EventBus
 	Cfg     core.AgentConfig
-	Mem     core.MemoryStore
 	KP      *identity.KeyPair
 	Sub     *nats.Subscription
 	Handler nats.MsgHandler
@@ -158,7 +157,6 @@ func NewBaseAgent(
 	logger *slog.Logger,
 	bus core.EventBus,
 	cfg core.AgentConfig,
-	mem core.MemoryStore,
 	handler nats.MsgHandler,
 ) *BaseAgent {
 	// ActivityType is the seed for the deterministic DID — it MUST be set so the
@@ -179,7 +177,6 @@ func NewBaseAgent(
 		Logger:  logger,
 		Bus:     bus,
 		Cfg:     cfg,
-		Mem:     mem,
 		KP:      kp,
 		Handler: handler,
 	}

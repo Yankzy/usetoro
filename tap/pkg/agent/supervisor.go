@@ -113,8 +113,7 @@ func (s *Supervisor) LoadAgents(configs []core.AgentConfig) error {
 
 			agentInstance = factory(env)
 		} else {
-			// Declarative Runtime
-			agentInstance = NewRuntime(s.logger, s.bus, cfg, s.mem)
+			agentInstance = NewRuntime(s.logger, s.bus, cfg)
 		}
 
 		// Start the Agent (Non-blocking)

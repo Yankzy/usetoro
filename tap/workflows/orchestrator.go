@@ -666,9 +666,10 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 		// 3rd-party agents (Firecracker) and internal agents listening on this
 		// topic can all reply with PROPOSE to the orchestrator inbox.
 		taskDef := core.TaskDefinition{
-			ID:      instanceID,
-			Domain:  step.ActivityType,
-			Payload: payload,
+			ID:             instanceID,
+			Domain:         step.ActivityType,
+			Payload:        payload,
+			WorkflowSchema: step.WorkflowSchema,
 		}
 		cfp, err := core.NewEnvelope(
 			uuid.New().String(),
@@ -724,9 +725,10 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 		)
 
 		taskDef := core.TaskDefinition{
-			ID:      instanceID,
-			Domain:  step.ActivityType,
-			Payload: payload,
+			ID:             instanceID,
+			Domain:         step.ActivityType,
+			Payload:        payload,
+			WorkflowSchema: step.WorkflowSchema,
 		}
 		accept, err := core.NewEnvelope(
 			uuid.New().String(),

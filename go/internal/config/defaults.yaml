@@ -112,7 +112,6 @@ agents:
     engine: "internal"
     internal_module: "csv-mapping-agent"
     activity_type: "agents.accounting.map_csv"
-    workflow_schema: '{"type": "object", "properties": {"status": {"type": "string"}, "mapped_rows": {"type": "object"}}}'
     system_prompt: |
       You are an expert data analyst parsing raw bank statement CSV headers. Analyze the columns and map them to standard accounting fields. You MUST reply with valid JSON.
       The JSON must strictly conform to this schema and ONLY contain these fields:
@@ -180,22 +179,62 @@ agents:
       db_queries: true
       entity_resolver: false
 
-worker_subjects:
-  csv_mapping_activity_type: "workers.database.insert_rows"
-  # Leave subjects empty to derive from activity type; override here if needed.
-  csv_mapping: ""
-  csv_mapping_group: ""
-  enrichment_activity_type: "workers.database.enrich_rows"
-  enrichment: ""
-  enrichment_group: ""
-  transaction: "ledger.shadow_erp_proposed_transactions.*"
-  transaction_group: ""
-  fignode: "proof.accounting.cleanup.reconcile.>"
-  fignode_group: ""
-  attachable: "ledger.shadow_erp_attachables.insert"
-  attachable_group: ""
-  vector:
-    - "ledger.accounts.*"
-    - "ledger.vendors.*"
-    - "ledger.customers.*"
-  vector_group_prefix: "toro-pinecone-v2"
+  - did: "did:toro:agent:intent_extractor"
+    name: "Intent Extractor Agent"
+    model: "gpt-5.4-mini"
+    engine: "internal"
+    internal_module: "intent-extractor-agent"
+    activity_type: "agents.intent.classify"
+    output_subject: "proof.intent.classify"
+    system_prompt: |
+      You are the Intent Extractor Agent. Analyze incoming SMS, MMS, or text and classify the intent using ONLY the labels defined in the schema below. Extract numerical entities where applicable. Respond ONLY in valid JSON matching the exact schema provided — no markdown, no explanation, no extra fields.
+    dependencies:
+      database: false
+      db_queries: false
+      entity_resolver: false
+
+  - did: "did:toro:agent:ocr_agent"
+    name: "OCR_Agent"
+    model: "gpt-5.4-mini"
+    engine: "internal"
+    internal_module: "ocr_agent"
+    activity_type: "agents.ocr"
+    system_prompt: |
+      You are an OCR agent that analyzes incoming MMS images, receipts, and other documents, and extracts structured context from them.
+    dependencies:
+      database: false
+      db_queries: true
+      entity_resolver: false
+
+workers:
+  csv_mapping:
+    activity_type: "workers.database.insert_rows"
+    # Leave subject empty to derive from activity type; override here if needed.
+    subject: ""
+    group: ""
+  enrichment:
+    activity_type: "workers.database.enrich_rows"
+    subject: ""
+    group: ""
+  erp_event:
+    subject: "toro.erp.events.*"
+    group: ""
+  transaction:
+    subject: "ledger.shadow_erp_proposed_transactions.*"
+    group: ""
+  fignode_publisher:
+    subject: "proof.accounting.cleanup.reconcile.>"
+    group: ""
+  attachable:
+    subject: "ledger.shadow_erp_attachables.insert"
+    group: ""
+  webhooks:
+    activity_type: "workers.webhooks.execute"
+    subject: ""
+    group: ""
+  vector_sync:
+    subjects:
+      - "ledger.accounts.*"
+      - "ledger.vendors.*"
+      - "ledger.customers.*"
+    group_prefix: "toro-pinecone-v2"

@@ -74,12 +74,13 @@ func (w *TransactionWorker) Subscriptions() []SubscriptionConfig {
 		w.logger.Error("transaction worker: missing config")
 		return nil
 	}
-	subject := w.cfg.Workers.Transaction
+	_, workerCfg := w.cfg.Workers.GetForWorker(w)
+	subject := workerCfg.Subject
 	if subject == "" {
 		w.logger.Error("transaction worker: transaction subject not configured")
 		return nil
 	}
-	group := w.cfg.Workers.TransactionGroup
+	group := workerCfg.Group
 	if group == "" {
 		group = groupFromSubject(subject)
 	}

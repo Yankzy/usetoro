@@ -288,11 +288,11 @@ Return nothing else.
 Placeholder Values
 
 ```env
-AGENT_DISPLAY_NAME=""
-PACKAGE_NAME=""
-INTERNAL_MODULE_KEY=""
-ACTIVITY_TYPE=""
-DID_SUFFIX=""
+AGENT_DISPLAY_NAME="OCR_Agent"
+PACKAGE_NAME="ocr_agent"
+INTERNAL_MODULE_KEY="ocr_agent"
+ACTIVITY_TYPE="ocr"
+DID_SUFFIX="ocr_agent"
 OPTIONAL_JSON_SCHEMA_STRING_IF_REDUX=""
-SYSTEM_PROMPT=""
+SYSTEM_PROMPT="You are an OCR agent that analyzes incoming MMS images, receipts, and other documents, and extracts structured context from them."
 ```

@@ -56,6 +56,9 @@ type CSVMappingAgent struct {
 	queries *database.Queries
 }
 
+// defaultMappingSchema preserves legacy behaviour when no workflow-scoped schema is provided.
+const defaultMappingSchema = `{"type": "object", "properties": {"status": {"type": "string"}, "mapped_rows": {"type": "object"}}}`
+
 const AgentName = "csv-mapping-agent"
 
 func init() {
@@ -64,7 +67,7 @@ func init() {
 
 func NewAgent(env core.Environment) core.Runnable {
 	var a CSVMappingAgent
-	a.rt = agent.NewRuntime(env.Logger, env.Bus, env.Config, env.Memory)
+	a.rt = agent.NewRuntime(env.Logger, env.Bus, env.Config)
 	a.queries = env.Queries
 
 	handler := func(msg *nats.Msg) {
@@ -96,7 +99,7 @@ func NewAgent(env core.Environment) core.Runnable {
 		msg.Ack()
 	}
 
-	a.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, env.Memory, handler)
+	a.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, handler)
 	return &a
 }
 
@@ -169,8 +172,16 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 	_ = workflowID.Scan(task.ID)
 
 	// Redux configuration: schema + RBAC boundaries for this agent
+	schema := task.WorkflowSchema
+	if strings.TrimSpace(schema) == "" {
+		schema = a.Cfg.WorkflowSchema
+	}
+	if strings.TrimSpace(schema) == "" {
+		schema = defaultMappingSchema
+	}
+
 	wfCfg := agent.WorkflowConfig{
-		SchemaString: a.Cfg.WorkflowSchema,
+		SchemaString: schema,
 		RBAC: redux.RBACPolicy{
 			AllowedPrefixes: map[string][]string{
 				a.Cfg.DID: {"/status", "/mapped_rows"},

@@ -61,5 +61,9 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	mux.HandleFunc("GET /v1/system/actors", h.HandleListActors)
 	mux.HandleFunc("GET /v1/workflows/{id}", h.HandleGetWorkflowStatus)
 
+	// Marketing Lead Forms
+	// eg: https://prime-legible-turkey.ngrok-free.app/api/forms/susanaai.com
+	mux.HandleFunc("POST /forms/{website}", h.HandleCaptureForm)
+
 	return mux
 }

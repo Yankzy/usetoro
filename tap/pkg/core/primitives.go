@@ -63,9 +63,10 @@ func SuggestedRewardMicrions(complexity TaskComplexity) (int64, error) {
 
 // TaskDefinition is the generic "Unit of Work" broadcast to the network.
 type TaskDefinition struct {
-	ID         string         `json:"id"`
-	Domain     string         `json:"domain"`     // e.g., "accounting", "logistics"
-	Complexity TaskComplexity `json:"complexity"` // Used for NATS routing permissions
+	ID             string         `json:"id"`
+	Domain         string         `json:"domain"`     // e.g., "accounting", "logistics"
+	Complexity     TaskComplexity `json:"complexity"` // Used for NATS routing permissions
+	WorkflowSchema string         `json:"workflow_schema,omitempty"`
 
 	// The Incentive
 	Reward   int64  `json:"reward"`   // Amount in micrions

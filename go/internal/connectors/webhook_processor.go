@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/nats-io/nats.go"
 )
 
@@ -116,9 +117,12 @@ func (w *Worker) processQBOWebhook(msg *nats.Msg) {
 		}
 
 		// 3. Publish to NATS JetStream
-		//    The NatsERPEventSubject comes from config, defaulting to toro.erp.events.*
-		//    We'll publish specifically to .cdc
-		subject := strings.Replace(w.manager.cfg.NatsERPEventSubject, "*", "cdc", 1)
+		//    We'll publish specifically to .cdc under the ERP event worker subject.
+		subjectTemplate := w.manager.cfg.Workers.Get(config.WorkerKeyFromTypeName("ERPEventWorker")).Subject
+		if subjectTemplate == "" {
+			subjectTemplate = "toro.erp.events.*"
+		}
+		subject := strings.Replace(subjectTemplate, "*", "cdc", 1)
 		if !strings.Contains(subject, "cdc") { // Fallback if subject isn't a wildcard
 			subject = subject + ".cdc"
 		}

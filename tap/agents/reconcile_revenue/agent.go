@@ -56,7 +56,7 @@ func NewAgent(env core.Environment) core.Runnable {
 		msg.Ack()
 	}
 
-	e.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, env.Memory, handler)
+	e.BaseAgent = agent.NewBaseAgent(env.Logger, env.Bus, env.Config, handler)
 	return &e
 }
 

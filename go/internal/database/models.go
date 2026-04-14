@@ -85,6 +85,14 @@ type FignodeStagingTransaction struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+type MarketingLeadForm struct {
+	ID        pgtype.UUID
+	Website   string
+	FormData  []byte
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type ShadowErpAccount struct {
 	ID                            pgtype.UUID
 	ErpID                         string

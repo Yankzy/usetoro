@@ -52,12 +52,25 @@ func (w *ERPEventWorker) Init(ctx context.Context) error {
 }
 
 func (w *ERPEventWorker) Subscriptions() []SubscriptionConfig {
-	group := groupFromSubject(w.cfg.NatsERPEventSubject)
+	if w.cfg == nil {
+		w.logger.Error("erp event worker: missing config")
+		return nil
+	}
+	_, workerCfg := w.cfg.Workers.GetForWorker(w)
+	subject := workerCfg.Subject
+	if subject == "" {
+		w.logger.Error("erp event worker: subject not configured")
+		return nil
+	}
+	group := workerCfg.Group
+	if group == "" {
+		group = groupFromSubject(subject)
+	}
 	return []SubscriptionConfig{
 		{
-			Subject: w.cfg.NatsERPEventSubject,
+			Subject: subject,
 			Group:   group,
-			Options: []nats.SubOpt{nats.Durable(durableFromSubject(w.cfg.NatsERPEventSubject)), nats.ManualAck(), nats.BindStream("TORO_ERP_EVENTS")},
+			Options: []nats.SubOpt{nats.Durable(durableFromSubject(subject)), nats.ManualAck(), nats.BindStream("TORO_ERP_EVENTS")},
 		},
 	}
 }

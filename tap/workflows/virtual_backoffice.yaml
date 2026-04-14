@@ -1,0 +1,21 @@
+name: Virtual Backoffice Roofing
+version: "1.0"
+trigger_topic: ingress.twilio.sms
+description: "Routing inbound SMS for the roofing virtual back-office."
+steps:
+  - id: classify_intent
+    activity_type: agents.intent.classify
+    negotiate: true
+    timeout: "60s"
+    description: "Classify inbound SMS into roofing intents and extract entities."
+    workflow_schema: |
+      {
+        "phone_number": "<original phone number, string>",
+        "classified_intent": "<one of: EMERGENCY | QUOTE_REQUEST | ADMIN_COMMAND_OMW | ADMIN_COMMAND_DONE | ADMIN_COMMAND_INVOICE | POSITIVE_FEEDBACK | UNKNOWN>",
+        "extracted_entities": {
+          "sqft": <integer or null>,
+          "amount": <float or null>,
+          "target_user": "<string or null>"
+        },
+        "confidence_score": <float 0.0–1.0>
+      }

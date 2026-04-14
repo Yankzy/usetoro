@@ -53,3 +53,5 @@ container/postgres/db_data
 # .idea/
 # .vscode/
 .aider*
+**/.go/
+**/vendor/

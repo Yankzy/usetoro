@@ -60,12 +60,13 @@ func (w *FignodePublisherWorker) Subscriptions() []SubscriptionConfig {
 		w.logger.Error("fignode worker: missing config")
 		return nil
 	}
-	subject := w.cfg.Workers.Fignode
+	_, workerCfg := w.cfg.Workers.GetForWorker(w)
+	subject := workerCfg.Subject
 	if subject == "" {
 		w.logger.Error("fignode worker: subject not configured")
 		return nil
 	}
-	group := w.cfg.Workers.FignodeGroup
+	group := workerCfg.Group
 	if group == "" {
 		group = groupFromSubject(subject)
 	}

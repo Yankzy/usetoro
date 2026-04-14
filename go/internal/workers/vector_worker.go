@@ -77,7 +77,8 @@ func (w *VectorSyncWorker) Subscriptions() []SubscriptionConfig {
 		w.logger.Error("vector worker: missing config")
 		return nil
 	}
-	subjects := w.cfg.Workers.Vector
+	_, workerCfg := w.cfg.Workers.GetForWorker(w)
+	subjects := workerCfg.Subjects
 	if len(subjects) == 0 {
 		w.logger.Error("vector worker: subjects not configured")
 		return nil
@@ -86,8 +87,8 @@ func (w *VectorSyncWorker) Subscriptions() []SubscriptionConfig {
 	var configs []SubscriptionConfig
 	for _, subject := range subjects {
 		queueGroup := groupFromSubject(subject)
-		if w.cfg.Workers.VectorGroupPrefix != "" {
-			queueGroup = w.cfg.Workers.VectorGroupPrefix + "-" + strings.TrimSuffix(groupFromSubject(subject), "-group")
+		if workerCfg.GroupPrefix != "" {
+			queueGroup = workerCfg.GroupPrefix + "-" + strings.TrimSuffix(groupFromSubject(subject), "-group")
 		}
 		configs = append(configs, SubscriptionConfig{
 			Subject: subject,

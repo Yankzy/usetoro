@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/spf13/viper"
@@ -52,12 +54,11 @@ type Config struct {
 	EncryptionKey       []byte `mapstructure:"-"`
 
 	// NATS Config
-	NATS                NATSConfig `mapstructure:"nats"`
-	NatsERPEventSubject string     `mapstructure:"nats_erp_event_subject"`
+	NATS NATSConfig `mapstructure:"nats"`
 
 	// Agents Config
 	Agents  []core.AgentConfig `mapstructure:"agents"`
-	Workers WorkerSubjects     `mapstructure:"worker_subjects"`
+	Workers WorkerSubjects     `mapstructure:"workers"`
 }
 
 type NATSConfig struct {
@@ -87,22 +88,64 @@ type JetStreamConfig struct {
 	AllowDirect bool          `mapstructure:"allow_direct"`
 }
 
-// WorkerSubjects centralizes subscription subjects for background workers.
-type WorkerSubjects struct {
-	CSVMapping             string   `mapstructure:"csv_mapping"`
-	CSVMappingActivityType string   `mapstructure:"csv_mapping_activity_type"`
-	CSVMappingGroup        string   `mapstructure:"csv_mapping_group"`
-	Enrichment             string   `mapstructure:"enrichment"`
-	EnrichmentActivityType string   `mapstructure:"enrichment_activity_type"`
-	EnrichmentGroup        string   `mapstructure:"enrichment_group"`
-	Fignode                string   `mapstructure:"fignode"`
-	FignodeGroup           string   `mapstructure:"fignode_group"`
-	Transaction            string   `mapstructure:"transaction"`
-	TransactionGroup       string   `mapstructure:"transaction_group"`
-	Attachable             string   `mapstructure:"attachable"`
-	AttachableGroup        string   `mapstructure:"attachable_group"`
-	Vector                 []string `mapstructure:"vector"`
-	VectorGroupPrefix      string   `mapstructure:"vector_group_prefix"`
+// WorkerSubjects stores per-worker subscription settings keyed by worker name.
+type WorkerSubjects map[string]WorkerSubjectConfig
+
+type WorkerSubjectConfig struct {
+	ActivityType string   `mapstructure:"activity_type"`
+	Subject      string   `mapstructure:"subject"`
+	Subjects     []string `mapstructure:"subjects"`
+	Group        string   `mapstructure:"group"`
+	GroupPrefix  string   `mapstructure:"group_prefix"`
+}
+
+func (w WorkerSubjects) Get(workerName string) WorkerSubjectConfig {
+	if w == nil {
+		return WorkerSubjectConfig{}
+	}
+	return w[workerName]
+}
+
+func (w WorkerSubjects) GetForWorker(worker any) (string, WorkerSubjectConfig) {
+	workerName := WorkerKeyFromType(worker)
+	return workerName, w.Get(workerName)
+}
+
+func WorkerKeyFromType(worker any) string {
+	if worker == nil {
+		return ""
+	}
+	t := reflect.TypeOf(worker)
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	return WorkerKeyFromTypeName(t.Name())
+}
+
+func WorkerKeyFromTypeName(typeName string) string {
+	snake := camelToSnake(strings.TrimSpace(typeName))
+	return strings.TrimSuffix(snake, "_worker")
+}
+
+func camelToSnake(in string) string {
+	if in == "" {
+		return ""
+	}
+	runes := []rune(in)
+	out := make([]rune, 0, len(runes)+8)
+
+	for i, r := range runes {
+		if i > 0 && unicode.IsUpper(r) {
+			prev := runes[i-1]
+			nextIsLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+			if unicode.IsLower(prev) || unicode.IsDigit(prev) || (unicode.IsUpper(prev) && nextIsLower) {
+				out = append(out, '_')
+			}
+		}
+		out = append(out, unicode.ToLower(r))
+	}
+
+	return string(out)
 }
 
 // loadEnvFile reads a simple .env file and sets environment variables if they are not already set.
@@ -174,7 +217,7 @@ func Load() (*Config, *viper.Viper, error) {
 	_ = v.BindEnv("embedding_dimensions", "EMBEDDING_DIMENSIONS")
 	_ = v.BindEnv("ai_threshold", "AI_THRESHOLD")
 	_ = v.BindEnv("encryption_key", "ENCRYPTION_KEY")
-	_ = v.BindEnv("nats_erp_event_subject", "NATS_ERP_EVENT_SUBJECT")
+	_ = v.BindEnv("workers.erp_event.subject", "NATS_ERP_EVENT_SUBJECT")
 
 	// Set defaults corresponding to the old getEnv fallbacks
 	v.SetDefault("port", "8080")
@@ -192,7 +235,7 @@ func Load() (*Config, *viper.Viper, error) {
 	v.SetDefault("embedding_model", "text-embedding-3-large")
 	v.SetDefault("embedding_dimensions", 3072)
 	v.SetDefault("ai_threshold", 0.75)
-	v.SetDefault("nats_erp_event_subject", "toro.erp.events.*")
+	v.SetDefault("workers.erp_event.subject", "toro.erp.events.*")
 
 	// 3. Actually read the file from disk
 	if err := v.ReadInConfig(); err != nil {

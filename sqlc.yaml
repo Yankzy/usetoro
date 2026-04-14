@@ -8,6 +8,7 @@ sql:
         package: "database"
         out: "go/internal/database"
         sql_package: "pgx/v5"
+        emit_interface: true
   - schema: "sql/schema"
     queries: "sql/queries/agent_memory.sql"
     engine: "postgresql"

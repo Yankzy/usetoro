@@ -75,7 +75,7 @@ type Handler struct {
 
 	// Cleanup Mode dependencies
 	DBPool        *pgxpool.Pool
-	DB            *database.Queries
+	DB            database.Querier
 	NATS          *queue.Client
 	Exporter      Exporter
 	WalletManager *micrion.WalletManager
@@ -97,7 +97,7 @@ func NewHandler(
 	transactionService *accounting.TransactionService,
 	entityService *accounting.EntityService,
 	dbPool *pgxpool.Pool,
-	cleanupDB *database.Queries,
+	cleanupDB database.Querier,
 	cleanupNATS *queue.Client,
 	cleanupExporter Exporter,
 	wm *micrion.WalletManager,

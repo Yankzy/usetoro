@@ -8,11 +8,11 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/nats-io/nats.go"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
-	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 // Runtime represents a single, autonomous agent instance.
@@ -20,17 +20,15 @@ type Runtime struct {
 	Config core.AgentConfig
 	Logger *slog.Logger
 	Bus    core.EventBus
-	Memory core.MemoryStore
 	sub    *nats.Subscription
 }
 
 // NewRuntime initializes the agent.
-func NewRuntime(logger *slog.Logger, bus core.EventBus, cfg core.AgentConfig, mem core.MemoryStore) *Runtime {
+func NewRuntime(logger *slog.Logger, bus core.EventBus, cfg core.AgentConfig) *Runtime {
 	return &Runtime{
 		Config: cfg,
 		Logger: logger.With("did", cfg.DID),
 		Bus:    bus,
-		Memory: mem,
 		sub:    nil,
 	}
 }
@@ -96,24 +94,8 @@ func (r *Runtime) handleTrigger(msg *nats.Msg) {
 	defer cancel()
 
 	input := string(msg.Data)
-	realmID := msg.Header.Get("Toro-Realm-ID")
-
-	memoryContext := ""
-	if r.Memory != nil && realmID != "" {
-		mem, err := r.Memory.Recall(ctx, realmID, input)
-		if err == nil && mem != "" {
-			memoryContext = mem
-			r.Logger.Info("🧠 Memory Injected", "rules", memoryContext)
-		} else if err != nil {
-			r.Logger.Warn("Memory recall warning", "error", err)
-		}
-	}
 
 	fullPrompt := input
-	if memoryContext != "" {
-		fullPrompt = fmt.Sprintf("USER INPUT: %s\n\n[IMPORTANT CONTEXT RULES]:\n%s", input, memoryContext)
-	}
-
 	if r.Config.SystemPrompt != "" {
 		fullPrompt = fmt.Sprintf("SYSTEM: %s\n\n%s", r.Config.SystemPrompt, fullPrompt)
 	}
@@ -171,6 +153,7 @@ func (r *Runtime) ExecWithPaging(ctx context.Context, prompt string, pages []Pag
 	pageCount := 0
 
 	for attempt := 0; attempt < 10; attempt++ {
+		// TODO: Change to Response API for OpenAI tracing and logs
 		resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 			Model:    shared.ChatModel(r.Config.Model),
 			Messages: messages,
@@ -187,6 +170,7 @@ func (r *Runtime) ExecWithPaging(ctx context.Context, prompt string, pages []Pag
 		// Format output response structurally
 		messages = append(messages, msg.ToParam())
 
+		// If the model returns content without tool calls, it's a terminal response.
 		if len(msg.ToolCalls) == 0 {
 			if msg.Content != "" {
 				// Base case completion structurally verified

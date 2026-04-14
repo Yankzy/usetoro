@@ -11,9 +11,10 @@ According to MIT, 95% of enterprise GenAI pilots deliver zero P&L impact. Gartne
 
 ### Backend Platform (Toro)
 - **Core Microservices**: Go handles the "Gate" (stateless HTTP ingress -> NATS), "Protocol" (State Machine/Logic), "Sync" (Background workers/limiters), and "Realtime" (WebSockets) operations.
-- **The Vault**: NATS JetStream persists events and acts as the immutable task queue.
-- **Data & Intelligence**: PostgreSQL with the `pgx` driver is the relational source-of-truth. Python (Flask/Workers) operates the "Refinery" for OCR, heavy Pandas analytics, and orchestration.
-- **Toro Agent Protocol (TAP)**: A custom NATS-based framework for decentralized, autonomous AI agents to negotiate tasks, execute contracts, and submit cryptographic proofs.
+- **Workflow Engine & Orchestrator**: A declarative orchestration layer using YAML blueprints (`tap/workflows`) to define multi-step execution graphs. A central Go Orchestrator manages the `WorkflowInstance` state-machine lifecycle.
+- **The Vault**: NATS JetStream persists events and acts as the immutable task queue. Uses a **Stateless Dispatcher Pattern** with dynamic trigger subject reconciliation.
+- **Data & Intelligence**: PostgreSQL with the `pgx` driver is the relational source-of-truth. Python (Flask/Workers) operates the "Refinery" for OCR and heavy analytics.
+- **Toro Agent Protocol (TAP)**: A rigorous implementation of the **FIPA Actor Model** (CFP, PROPOSE, ACCEPT, INFORM). Standardizes decentralized agent negotiation, cryptographic proof submission, and automated contract execution.
 
 ### Desktop Client (Fignode Pro)
 - **Framework**: Wails (Go) and React 18 (TypeScript), enabling native desktop performance with shared web components (Tailwind CSS v4, Radix UI).
@@ -31,28 +32,28 @@ According to MIT, 95% of enterprise GenAI pilots deliver zero P&L impact. Gartne
 
 ### Core Platform Infrastructure
 - **Ingestion & Messaging**: Webhook ingestion buffers push to NATS for isolated execution.
-- **Workers Registry and Dispatcher Pattern**: We deployed a highly efficient, centralized Dispatcher (`manager.go`) that dynamically provisions, multiplexes, and monitors `Init()`, `Subscriptions()`, and `Handle()` lifecycles across all listeners (`VectorSyncWorker`, `CSVMappingWorker`, `TransactionWorker`, etc.). This drives idle worker memory usage down to $O(1)$ and provides instant, synchronized context cancellation across the node.
-- **Zero-Data-Loss NATS Pipeline**: NATS JetStream consumers implemented across agents (`CSVMappingAgent`) and workers (`EnrichmentWorker`). Messages require explicit acknowledgements and use poison-pill logic (`msg.Term()`) to lock durability.
-- **Redux Engine**: An in-memory state compilation mechanism. It acts as a pure reducer, applying RFC 6902 JSON Patches sequentially over NATS. It enforces JSON Schema validation and optimistic concurrency (`test` operator) to prevent race conditions. Every Redux patch generated dynamically deducts a Micrion inference toll preventing LLM generation spam loops.
-- **Micrion Tolling Architecture**: Configured a 1,616 Micrion toll gating infrastructure operations. A Micrion ($\mu C$) is a prepaid, tokenized unit of compute (1 $\mu C$ = $0.000001 USD). NATS writes, Redux state sequences, PostgreSQL transactions, and Almanac interactions are metered universally across the ecosystem.
-- **Bi-directional Synchronization**: Change Data Capture (CDC) pipeline syncing Intuit payloads to Toro and reverse-syncing reviewed categorizations to QBO SaaS.
+- **Universal Ingestion (WebhooksWorker)**: A deterministic worker enabling atomic HTTP side-effects and ingestion of arbitrary JSON/Form payloads from external platforms into the TAP internal bus.
+- **Orchestration & Dispatcher Pattern**: We deployed a highly efficient, centralized Manager (`manager.go`) and Orchestrator. The Orchestrator dynamically provisions and monitors `Init()`, `Subscriptions()`, and `Handle()` lifecycles across all listeners. This drives idle worker memory usage down to $O(1)$ and provides instant, synchronized context cancellation across the node.
+- **Zero-Data-Loss NATS Pipeline**: NATS JetStream consumers implemented across all agents and workers. Messages require explicit acknowledgements and use poison-pill logic (`msg.Term()`) to guarantee state machine durability.
+- **Redux Engine**: An in-memory state compilation mechanism. It acts as a pure reducer, applying RFC 6902 JSON Patches sequentially over NATS. It enforces JSON Schema validation and optimistic concurrency (`test` operator) to prevent race conditions. Every Redux patch generated dynamically deducts a Micrion inference toll.
+- **Micrion Tolling Architecture**: Configured a 1,616 Micrion toll gating infrastructure operations. A Micrion ($\mu C$) is a prepaid, tokenized unit of compute (1 $\mu C$ = $0.000001 USD). NATS writes, Redux state sequences, and PostgreSQL transactions are metered universally across the ecosystem.
+- **Real-time Status & UX Hydration**: A dedicated NATS-based channel (`workflow.status.*`) broadcasts state-machine transitions (started, step_completed, finished) to the Gate for real-time WebSocket broadcasting to frontend clients.
 - **API Capabilities**: GraphQL schema mapped for tenants, users, cleanup-sessions, transactions, and vendors. GraphQL resolvers structure `RawAmount` typings.
 - **Fignode Service**: Go service (`cmd/fignode`) handling accounting classification, UX states (badges, streaks, leaderboards), and email SMTP. 
-- **Determinism & The Rule Engine (`rule_engine.go`)**: AI is magical, but enterprise accounting demands absolute predictability. The Rule Engine is our hard-coded safety net. It instantly compiles thousands of user-defined "If this, then that" accounting rules into memory. Before an AI even looks at a transaction, lightning-fast keyword mapping instantly filters out 99% of irrelevant rules. When a rule does trigger, it generates a simple, human-readable audit trail (*"Categorized as Office Supplies because the vendor is Staples and amount > $100"*), completely eliminating the AI "black box" problem.
+- **Determinism & The Rule Engine**: Implemented a performant keyword-based mapping system that compiles user-defined accounting rules into memory for instant, zero-LLM classification of Irrelevant transactions.
 - **The Autonomous Daemon (`daemon.go`)**: This is the mission control keeping the AI workforce alive and stable. Instead of fragile scripts that silently fail, the Daemon enforces strict "fail-fast" survival rules—if any critical component crashes, it safely shuts down the entire node rather than leaving zombie processes corrupting the ledger. It also handles "hot reloads", meaning we can upgrade AI agents or change system settings on the fly without dropping a single active customer connection. Finally, a built-in 5-second grace period ensures that if the server is forced to restart, any active Stripe payments or OpenAI thoughts are cleanly saved to the database first, mathematically guaranteeing zero data loss.
 
 ### Autonomous AI Ecosystem (Agent SDK)
-- **Autonomous Agent Substrate (Meta Layer)**: Introduced a closed-loop coordination layer inside the TAP ecosystem (`tap/pkg`). This infrastructure governs trust, rules, boundaries, and financial incentives without human intervention. Featuring a Neo4j-backed Identity Graph to map inter-agent relationships dynamically with APOC, a Redis-cached Reputation Engine applying non-linear time decay to evaluate reliability, an execution Constraint Engine, gating untrusted activity prior to proposals, and built-in Incentive (escrow) and Dispute Resolution mechanisms, it transforms disconnected agents into an integrated, self-regulating digital workforce.
-- **Agent Lifecycle & Registry**: Deployed a structured `tap/pkg/agent` framework separating configuration, runtime, and supervision. Implemented a centralized Component Registry (`tap/agents/registry.go`) explicitly mapping module strings to constructors, decoupling the `ProtocolDaemon` framework from explicit business logic.
+- **Domain-Agnostic Agent Substrate**: Introduced a vertical-agnostic SDK for LLM-driven reasoning. Agents (e.g., `IntentExtractorAgent`) are now fully decoupled from static Go primitives. They utilize task-scoped JSON schemas and YAML-scoped system prompts, allowing the same agent code to pivot between diverse industries (FinTech, Logistics, Ride-Hailing) without re-compilation.
+- **Agent Lifecycle & Registry**: Deployed a structured `tap/pkg/agent` framework separating configuration, runtime, and supervision. Implemented a centralized Component Registry mapping module strings to constructors, decoupling the Protocol framework from explicit business logic.
 - **Event-Driven AI Ecosystem**: The entire architecture operates strictly on event-driven mechanics over NATS JetStream, abstracted into three structural tiers:
-  - **Agents**: Event-driven LLM routines (`CSVMappingAgent`). They maintain persistent JetStream push-subscriptions to wake up, evaluate context, and emit Redux state changes.
-  - **Workers**: Event-driven deterministic pipelines (`EnrichmentWorker`). They strictly react to downstream JetStream subjects (e.g., responding to `csv_mapping.inserted`) to execute guaranteed data mutations without LLM inference.
-  - **Tools**: Synchronous Go functions. Tools are the *only* components that bypass JetStream networking. They are executed directly in-memory by an Agent's LLM runtime during a reasoning loop.
-- **The Supervisor Loop (Algorithm 2)**: Completely decoupled the LLM reasoning loop from the deterministic Redux state engine. The Supervisor intrinsically intercepts state mutations, enforcing strict `/_sys` mutation overrides (Entropy Filtration) prior to ledger evaluation.
-- **Context Paging**: Embedded an OS-level virtual memory construct (`Runtime.ExecWithPaging()`) wrapping the OpenAI loop. It automatically generates out-of-band ephemeral pointer maps replacing raw document token-bloat with lightweight `local_ref` integers. The Go Kernel intercepts these integers via a deterministic `PAGE_IN` Tool Interception, seamlessly fulfilling text chunks, tracking a hard `maxPages=3` circuit breaker, and instantly Garbage Collecting the bulky payload array upon function termination. 
-- **Deterministic Hallucination Boundaries**: To prevent the AI from confusing parallel numeric representations (such as dates vs string identifiers) during zero-shot extraction, explicit JSON structural requirements (`amount_col_idx: <int>, debit_col_idx: <null if not split>`) are strictly enforced within the core agent configurations `(tap/agents/csv_mapping/agent.go)`, blocking the native LLM output schema from silently swallowing missing struct bindings internally which leads to corrupted `fignode.staging_transactions` deduplication grouping.
-- **Almanac**: Decentralized agent directory (`cmd/protocol/almanac-server`) over NATS. Operates as an internal cluster map allowing agents to locate network peers structurally.
-- **Semantic Vector DB Matching**: Pinecone Vector DB integration resolving similarity matching for vendors against QBO accounts. 
+  - **Agents**: Event-driven LLM routines. They maintain persistent JetStream push-subscriptions (enabled by deterministic DIDs) to wake up, evaluate context, and emit proofs.
+  - **Workers**: Deterministic background pipelines. They strictly react to downstream JetStream subjects to execute guaranteed data mutations without LLM inference.
+  - **Tools**: Synchronous Go functions executed directly in-memory by an Agent's LLM runtime during a reasoning loop.
+- **The Supervisor Loop**: Decoupled the LLM reasoning loop from the deterministic Redux state engine. The Supervisor intrinsically intercepts state mutations, enforcing strict `/_sys` mutation overrides (Entropy Filtration) prior to ledger evaluation.
+- **Context Paging (`ExecWithPaging`)**: Embedded an OS-level virtual memory construct wrapping the OpenAI loop. It automatically generates ephemeral pointer maps, replacing raw document token-bloat with lightweight `local_ref` integers. The Go Kernel intercepts these integers via a deterministic `PAGE_IN` tool-calling interception, fulfilling text chunks and tracking a hard `maxPages` circuit breaker.
+- **Almanac Discovery**: Decentralized agent directory over NATS. Operates as an internal cluster map allowing the Orchestrator to locate network peers by capability at runtime.
+- **Semantic Vector DB Matching**: Pinecone Vector DB integration resolving similarity matching for entities against established schemas. 
 
 ### Desktop Implementations (Fignode Pro)
 - **Desktop Shell & Security**: Application packaged. The authentication/RBAC flow is comprehensive, storing JWTs securely in SQLite.
@@ -91,7 +92,8 @@ According to MIT, 95% of enterprise GenAI pilots deliver zero P&L impact. Gartne
 - **Advanced Error UIs**: Refining Wails bindings to render elegant offline, network timeout, or ledger discrepancy failures to the user.
 
 ### 3. QA & Infrastructure
-- **Comprehensive E2E Test Suite**: There are currently minor unit tests in the Go backend, but rigorous CI end-to-end integration mapping (React Mobile Action -> Go Gate -> NATS Bus -> Agent -> DB) is absent.
+- **Composability Audit**: Conducted a formal architectural review of the Event-Driven Control Plane. Identified and mapped the transition path from linear execution to infinite DAG-based workflows and hierarchical conversation tracking.
+- **Comprehensive E2E Test Suite**: Initiated the development of integration rails mapping the full TAP envelope lifecycle (Ingestion -> Bus -> Orchestrator -> Agent -> Proof -> DB).
 - **Automated Deployment CI/CD**: Establishing Apple TestFlight, Google Play, and DMG/AppImage distribution paths across GitHub Actions.
 
 ---
@@ -101,5 +103,3 @@ According to MIT, 95% of enterprise GenAI pilots deliver zero P&L impact. Gartne
 Toro is not an AI wrapper; it is a fundamental correction to enterprise AI architecture. By combining an event-sourced Go Kernel with strict Micrion tolling and a decentralized Agentic Protocol, we have mitigated the high-IO bottlenecks and hallucination risks that paralyze legacy accounting software. 
 
 The Fignode clients prove that we can seamlessly bridge mathematically rigorous backend state with visually stunning, real-time human oversight. 
-
-The primary architectural risk has been cleared. The $2M  pre-seed round is the final fuel needed to interlock the APIs, finalize enterprise-grade encryption, and launch the definitive infrastructure where the digital workforce will live, act, and be taxed.

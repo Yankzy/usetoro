@@ -83,13 +83,14 @@ func (e *EnrichmentWorker) Subscriptions() []SubscriptionConfig {
 		return nil
 	}
 
-	activityType := e.cfg.Workers.EnrichmentActivityType
+	_, workerCfg := e.cfg.Workers.GetForWorker(e)
+	activityType := workerCfg.ActivityType
 	if activityType == "" {
 		e.logger.Error("enrichment worker: no activity_type configured")
 		return nil
 	}
 
-	subject := e.cfg.Workers.Enrichment
+	subject := workerCfg.Subject
 	if subject == "" {
 		derived, err := core.BuildWorkerInboxFromActivity(activityType)
 		if err != nil {
@@ -98,7 +99,7 @@ func (e *EnrichmentWorker) Subscriptions() []SubscriptionConfig {
 		}
 		subject = derived
 	}
-	group := e.cfg.Workers.EnrichmentGroup
+	group := workerCfg.Group
 	if group == "" {
 		group = groupFromSubject(subject)
 	}

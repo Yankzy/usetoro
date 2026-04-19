@@ -104,11 +104,10 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 
 	var proof core.Proof
 	if err := json.Unmarshal(env.Body, &proof); err != nil {
-		return nil
-	}
-
-	if proof.Type != core.ProofAPI {
-		return nil
+		// Try to see if it's already a wrapped proof (e.g. from ACCEPT_PROPOSAL fallback)
+		if innerErr := core.UnmarshalTaskPayload(env.Body, &proof); innerErr != nil {
+			return nil
+		}
 	}
 
 	sessionID := proof.TaskID

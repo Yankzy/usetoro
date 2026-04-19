@@ -22,7 +22,7 @@ import (
 type LLMColumnMapping struct {
 	DateColIdx        int     `json:"date_col_idx"`
 	DescriptionColIdx int     `json:"description_col_idx"`
-	AmountColIdx      int     `json:"amount_col_idx"`
+	AmountColIdx      *int    `json:"amount_col_idx"`
 	IsSplitAmount     bool    `json:"is_split_amount"`
 	DebitColIdx       *int    `json:"debit_col_idx"`
 	CreditColIdx      *int    `json:"credit_col_idx"`
@@ -31,10 +31,13 @@ type LLMColumnMapping struct {
 	CustomColIdx      *int    `json:"custom_col_idx"`
 	IsExpensePositive bool    `json:"is_expense_positive"`
 	ConfidenceScore   float64 `json:"confidence_score"`
+	IsAmbiguous       bool    `json:"is_ambiguous"`
+	AmbiguityReason   string  `json:"ambiguity_reason"`
+	PolaritySign      string  `json:"polarity_sign"`
 	Reasoning         string  `json:"reasoning"`
 }
 
-type csvMappingTaskPayload struct {
+type CSVMappingTaskPayload struct {
 	SessionID string     `json:"session_id"`
 	RealmID   string     `json:"realm_id"`
 	Rows      [][]string `json:"rows"`
@@ -52,8 +55,8 @@ type RawRow struct {
 
 type CSVMappingAgent struct {
 	*agent.BaseAgent
-	rt      *agent.Runtime
-	queries *database.Queries
+	RT      *agent.Runtime
+	Queries *database.Queries
 }
 
 // defaultMappingSchema preserves legacy behaviour when no workflow-scoped schema is provided.
@@ -67,8 +70,8 @@ func init() {
 
 func NewAgent(env core.Environment) core.Runnable {
 	var a CSVMappingAgent
-	a.rt = agent.NewRuntime(env.Logger, env.Bus, env.Config)
-	a.queries = env.Queries
+	a.RT = agent.NewRuntime(env.Logger, env.Bus, env.Config)
+	a.Queries = env.Queries
 
 	handler := func(msg *nats.Msg) {
 		a.Logger.Info("📡 [DEBUG] csv-mapping-agent received JetStream message", "topic", msg.Subject, "data_length", len(msg.Data))
@@ -81,9 +84,9 @@ func NewAgent(env core.Environment) core.Runnable {
 		}
 
 		if err := a.handleCFP(msg); err != nil {
-			a.Logger.Error("Transient error processing message, nacking", "error", err)
+			a.Logger.Error("Transient error processing message, replying with FAILURE", "error", err)
 			if strings.Contains(err.Error(), "insufficient funds") {
-				_, _ = a.queries.LogStalledMessage(context.Background(), database.LogStalledMessageParams{
+				_, _ = a.Queries.LogStalledMessage(context.Background(), database.LogStalledMessageParams{
 					AgentDid:        env.Config.DID,
 					OriginalSubject: msg.Subject,
 					Payload:         msg.Data,
@@ -92,7 +95,14 @@ func NewAgent(env core.Environment) core.Runnable {
 				msg.Term()
 				return
 			}
-			msg.Nak()
+			
+			// Parse original envelope again to reply gracefully
+			var origEnv core.Envelope
+			if envErr := json.Unmarshal(msg.Data, &origEnv); envErr == nil {
+				a.ReplyFailure(msg, origEnv, err)
+			} else {
+				msg.Nak()
+			}
 			return
 		}
 
@@ -146,15 +156,24 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 	var task core.TaskDefinition
 	json.Unmarshal(cfpEnv.Body, &task)
 
-	var payload csvMappingTaskPayload
-	_ = json.Unmarshal(task.Payload, &payload)
+	var payload CSVMappingTaskPayload
+	if err := core.UnmarshalTaskPayload(task.Payload, &payload); err != nil {
+		a.Logger.Error("Failed to parse task payload", "error", err)
+	}
+
+	a.Logger.Info("🧠 [DEBUG] csv_mapping executeTask started", 
+		"session_id", payload.SessionID,
+		"realm_id", payload.RealmID,
+		"input_rows", len(payload.Rows),
+	)
 
 	// Fallback for generic file ingestion path which uses upload_id instead of session_id
 	if payload.SessionID == "" {
 		var rawMap map[string]interface{}
-		_ = json.Unmarshal(task.Payload, &rawMap)
+		_ = core.UnmarshalTaskPayload(task.Payload, &rawMap)
 		if uid, ok := rawMap["upload_id"].(string); ok {
 			payload.SessionID = uid
+			a.Logger.Info("🧠 [DEBUG] csv_mapping fell back to upload_id as session_id", "id", uid)
 		}
 	}
 
@@ -184,7 +203,7 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		SchemaString: schema,
 		RBAC: redux.RBACPolicy{
 			AllowedPrefixes: map[string][]string{
-				a.Cfg.DID: {"/status", "/mapped_rows"},
+				a.Cfg.DID: {"/status", "/mapped_rows", "/is_ambiguous", "/ambiguity_reason", "/polarity_sign"},
 			},
 		},
 	}
@@ -205,18 +224,28 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 			patches = append(patches, []byte(fmt.Sprintf(`{"op": "test", "path": "/status", "value": %s}`, string(b))))
 		}
 
-		mapping, err := a.mapRowsUsingLLM(context.Background(), payload.Rows)
+		mapping, err := a.MapRowsUsingLLM(context.Background(), payload.Rows)
 		if err != nil {
 			return nil, err
 		}
 
-		finalRows := parseRows(payload, mapping)
+		a.Logger.Info("🧠 [DEBUG] LLM Mapping Result", 
+			"is_ambiguous", mapping.IsAmbiguous,
+			"polarity_sign", mapping.PolaritySign,
+			"reasoning", mapping.Reasoning,
+		)
+
+		finalRows := ParseRows(payload, mapping)
 		finalRowsJSON, _ := json.Marshal(finalRows)
 
 		patch1 := `{"op": "add", "path": "/status", "value": "COLUMNS_MAPPED"}`
 		patch2 := fmt.Sprintf(`{"op": "add", "path": "/mapped_rows", "value": %s}`, string(finalRowsJSON))
+		patch3 := fmt.Sprintf(`{"op": "add", "path": "/is_ambiguous", "value": %t}`, mapping.IsAmbiguous)
+		escapedReason := strings.ReplaceAll(mapping.AmbiguityReason, `"`, `\"`)
+		patch4 := fmt.Sprintf(`{"op": "add", "path": "/ambiguity_reason", "value": "%s"}`, escapedReason)
+		patch5 := fmt.Sprintf(`{"op": "add", "path": "/polarity_sign", "value": "%s"}`, mapping.PolaritySign)
 
-		patches = append(patches, []byte(patch1), []byte(patch2))
+		patches = append(patches, []byte(patch1), []byte(patch2), []byte(patch3), []byte(patch4), []byte(patch5))
 
 		return patches, nil
 	}
@@ -234,7 +263,7 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		proof := core.Proof{
 			TaskID:    task.ID,
 			Type:      core.ProofAPI,
-			Data:      validatedState["mapped_rows"],
+			Data:      json.RawMessage(nextState),
 			Timestamp: time.Now().Unix(),
 		}
 		proof.Signature = a.KP.Sign(proof.Data)
@@ -255,17 +284,16 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		return nil
 	}
 
-	return a.ExecuteGlobalWorkflow(
+	return a.ExecuteLocalWorkflow(
 		context.Background(),
-		a.queries,
-		workflowID,
+		task.ID,
 		wfCfg,
 		llmCallback,
 		onComplete,
 	)
 }
 
-func parseRows(payload csvMappingTaskPayload, mapping *LLMColumnMapping) map[string]RawRow {
+func ParseRows(payload CSVMappingTaskPayload, mapping *LLMColumnMapping) map[string]RawRow {
 	finalRows := make(map[string]RawRow)
 	for i := 1; i < len(payload.Rows); i++ {
 		rec := payload.Rows[i]
@@ -278,7 +306,10 @@ func parseRows(payload csvMappingTaskPayload, mapping *LLMColumnMapping) map[str
 			RealmID:     payload.RealmID,
 			Date:        cleanArtifacts(fieldAt(rec, mapping.DateColIdx)),
 			Description: cleanArtifacts(fieldAt(rec, mapping.DescriptionColIdx)),
-			Amount:      cleanArtifacts(fieldAt(rec, mapping.AmountColIdx)),
+		}
+
+		if mapping.AmountColIdx != nil {
+			row.Amount = cleanArtifacts(fieldAt(rec, *mapping.AmountColIdx))
 		}
 
 		if mapping.VendorColIdx != nil {
@@ -306,21 +337,18 @@ func parseRows(payload csvMappingTaskPayload, mapping *LLMColumnMapping) map[str
 	return finalRows
 }
 
-func (a *CSVMappingAgent) mapRowsUsingLLM(ctx context.Context, rows [][]string) (*LLMColumnMapping, error) {
-	prompt := buildUserPrompt(rows)
+func (a *CSVMappingAgent) MapRowsUsingLLM(ctx context.Context, rows [][]string) (*LLMColumnMapping, error) {
+	prompt := BuildUserPrompt(rows)
 
-	systemInstruction := a.Cfg.SystemPrompt
-	fullPrompt := fmt.Sprintf("%s\n\n%s", systemInstruction, prompt)
-
-	respText, err := a.rt.ExecWithPaging(ctx, fullPrompt, nil, nil)
+	respText, err := a.RT.ExecWithPaging(ctx, prompt, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	return extractJSONToMapping(respText)
+	return ExtractJSONToMapping(respText)
 }
 
-func extractJSONToMapping(respText string) (*LLMColumnMapping, error) {
+func ExtractJSONToMapping(respText string) (*LLMColumnMapping, error) {
 	firstIdx := strings.Index(respText, "{")
 	lastIdx := strings.LastIndex(respText, "}")
 	if firstIdx != -1 && lastIdx != -1 && lastIdx > firstIdx {
@@ -344,12 +372,23 @@ func cleanArtifacts(val string) string {
 	return strings.TrimSpace(cleaned)
 }
 
-func buildUserPrompt(rows [][]string) string {
+func BuildUserPrompt(rows [][]string) string {
 	var sb strings.Builder
-	sb.WriteString("Analyze the following sample rows from a bank statement CSV and determine the 0-based column indices for Date, Description, Amount, Customer, and Vendor (if distinct from description).\n\n")
-	sb.WriteString("Also determine if the amounts are split into separate Debit/Credit columns instead of a single Amount column. If so, set is_split_amount to true and provide those indices instead of amount_col_idx.\n\n")
-	sb.WriteString("Crucially, determine the sign convention (is_expense_positive). Look at obvious expenses (like 'AMZN', 'AWS', 'Starbucks', 'Uber'). If their amount is a positive number, set `is_expense_positive` to true. If their amount is negative (e.g. -45.00), set it to false.\n\n")
-	sb.WriteString("You MUST assign a `confidence_score` (0 to 1) representing how certain you are of this mapping. If you mainly see header rows and cannot find clear transaction rows to determine the sign convention, return a low confidence score.\n\n")
+	sb.WriteString("Analyze the following sample rows from a bank statement CSV and determine the 0-based column indices for Date, Description, Amount, Customer, and Vendor.\n\n")
+	sb.WriteString("SPLIT AMOUNTS: If the statement uses separate Debit and Credit columns, you MUST:\n")
+	sb.WriteString("1. Set `is_split_amount` to true.\n")
+	sb.WriteString("2. Provide the exact indices for `debit_col_idx` and `credit_col_idx`.\n")
+	sb.WriteString("3. Set `amount_col_idx` to null (or -1 if strictly required by the schema, but null is preferred).\n\n")
+	sb.WriteString("NULL HANDLING: For any optional field (debit, credit, vendor, customer, custom) that is NOT present, you MUST set its index to `null` in the JSON response. Do NOT use 0 as a placeholder for null.\n\n")
+	sb.WriteString("AMBIGUITY (Polarity): The data is AMBIGUOUS if the numeric columns lack clear indicators (minus signs, brackets, or separate Debit/Credit columns). This happens even if a 'Category' or 'Type' column exists.\n")
+	sb.WriteString("1. Mark `is_ambiguous: true` if there is only a single 'Amount' column with NO minus signs '-' and NO parentheses '()'.\n")
+	sb.WriteString("2. Typical inflows (Refunds, Deposits, Zelle from, Tax Ref) and typical outflows (Uber, Starbucks, Rent, Fees) appear with the same sign/direction.\n")
+	sb.WriteString("CRITICAL: Ignore 'Category', 'Status', or 'Account' columns when determining structural ambiguity. If the numbers themselves are all positive without a separate 'Type' signifier, it is AMBIGUOUS.\n")
+	sb.WriteString("If this occurs, set `is_ambiguous` to true and explain it in `ambiguity_reason` (e.g., 'structural ambiguity: all amounts are positive without polarity indicators').\n\n")
+	sb.WriteString("POLARITY SIGN: Determine how expenses/outflows are indicated. Set `polarity_sign` to one of:\n")
+	sb.WriteString("- `minus`: Expenses have a negative sign (e.g., -10.00).\n")
+	sb.WriteString("- `brackets`: Expenses are in parentheses (e.g., (10.00)).\n")
+	sb.WriteString("- `none`: There are no indicators (all numbers are positive).\n\n")
 	sb.WriteString("Sample Data (Up to 20 valid rows):\n")
 
 	var validRows int

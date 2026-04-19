@@ -37,14 +37,16 @@ type FignodeLeaderboardSnapshot struct {
 }
 
 type FignodeStagingSession struct {
-	ID        pgtype.UUID
-	RealmID   pgtype.Text
-	CreatedBy pgtype.UUID
-	FileName  pgtype.Text
-	RowCount  int32
-	Status    string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	ID              pgtype.UUID
+	RealmID         pgtype.Text
+	CreatedBy       pgtype.UUID
+	FileName        pgtype.Text
+	RowCount        int32
+	IsAmbiguous     bool
+	AmbiguityReason pgtype.Text
+	Status          string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type FignodeStagingTransaction struct {

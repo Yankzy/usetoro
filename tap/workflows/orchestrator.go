@@ -2,7 +2,9 @@ package workflows
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Yankzy/usetoro/internal/database"
@@ -39,7 +43,20 @@ const (
 
 	// WorkflowTriggerDeliverGroup is the queue group used for horizontal scaling across orchestrator instances.
 	WorkflowTriggerDeliverGroup = "orchestrator-trigger-group"
+
+	// DLQ subjects for poisoned messages.
+	WorkflowTriggerDLQSubject = "workflow.dlq.trigger"
+	WorkflowInboxDLQSubject   = "workflow.dlq.inbox"
+	WorkflowResumeSubject     = "workflow.resume"
+	WorkflowResumeDurable     = "orchestrator-resume-durable"
+	WorkflowResumeGroup       = "orchestrator-resume-group"
+	WorkflowAmbiguousSubject  = "workflow.events.ambiguous"
+
+	// Redelivery limits before emitting to DLQ.
+	orchestratorDeliverLimit = 5
 )
+
+var errMessageDeadLettered = errors.New("message already dead lettered")
 
 // Orchestrator is the singleton Workflow Orchestrator service.
 // It loads WorkflowDef blueprints at boot, subscribes to trigger topics, and advances
@@ -61,9 +78,18 @@ type Orchestrator struct {
 
 // InstanceState represents the internal state stored in the DB JSONB field.
 type InstanceState struct {
-	WorkflowDef   string                 `json:"workflow_def"`
-	CurrentStepID string                 `json:"current_step_id"`
-	Variables     map[string]interface{} `json:"variables"`
+	WorkflowDef      string                     `json:"workflow_def"`
+	CurrentStepID    string                     `json:"current_step_id"`
+	InstancePath     []string                   `json:"instance_path"`
+	ActiveSteps      map[string]bool            `json:"active_steps"`
+	CompletedSteps   map[string]bool            `json:"completed_steps"`
+	Variables        map[string]json.RawMessage `json:"variables"`
+	LastProof        json.RawMessage            `json:"last_proof"`
+	ParentStepID     string                     `json:"parent_step_id,omitempty"`
+	Suspended        bool                       `json:"suspended"`
+	SuspensionStep   string                     `json:"suspension_step,omitempty"`
+	SuspensionReason string                     `json:"suspension_reason,omitempty"`
+	SuspensionRoute  int                        `json:"suspension_route,omitempty"`
 }
 
 // NewOrchestrator initialises the central orchestrator system.
@@ -146,6 +172,11 @@ func (o *Orchestrator) LoadFromDir(ctx context.Context, dirPath string) error {
 			o.logger.Error("Orchestrator: failed to parse workflow file", "file", entry.Name(), "error", err)
 			continue
 		}
+		var mutated bool
+		wfDef, mutated = normalizeWorkflowDef(wfDef)
+		if mutated {
+			o.logger.Info("Orchestrator: normalized workflow graph", "file", entry.Name())
+		}
 
 		defBytes, err := json.Marshal(wfDef)
 		if err != nil {
@@ -190,6 +221,18 @@ func (o *Orchestrator) SyncBlueprints(ctx context.Context) error {
 		}
 		if def.TriggerTopic == "" {
 			def.TriggerTopic = row.TriggerTopic
+		}
+		var mutated bool
+		def, mutated = normalizeWorkflowDef(def)
+		if mutated {
+			defBytes, _ := json.Marshal(def)
+			if _, err := o.queries.UpsertWorkflowBlueprint(ctx, database.UpsertWorkflowBlueprintParams{
+				Name:         def.Name,
+				TriggerTopic: def.TriggerTopic,
+				Definition:   defBytes,
+			}); err != nil {
+				o.logger.Error("Orchestrator: failed to persist normalized blueprint", "name", def.Name, "error", err)
+			}
 		}
 		next = append(next, def)
 
@@ -308,7 +351,7 @@ func (o *Orchestrator) ensureOrchestratorTriggerConsumer() error {
 		DeliverGroup:   WorkflowTriggerDeliverGroup,
 		AckPolicy:      nats.AckExplicitPolicy,
 		AckWait:        2 * time.Minute,
-		MaxDeliver:     10,
+		MaxDeliver:     orchestratorDeliverLimit,
 		MaxAckPending:  2048,
 		DeliverPolicy:  nats.DeliverAllPolicy,
 		ReplayPolicy:   nats.ReplayInstantPolicy,
@@ -338,6 +381,23 @@ func (o *Orchestrator) ensureOrchestratorTriggerConsumer() error {
 	return nil
 }
 
+func (o *Orchestrator) startResumeSubscription(ctx context.Context) error {
+	sub, err := o.bus.QueueSubscribe(
+		WorkflowResumeSubject,
+		WorkflowResumeGroup,
+		o.handleWorkflowResume,
+		nats.Durable(WorkflowResumeDurable),
+		nats.DeliverAll(),
+		nats.AckExplicit(),
+	)
+	if err != nil {
+		return fmt.Errorf("orchestrator: failed to subscribe to resume subject: %w", err)
+	}
+	o.subs = append(o.subs, sub)
+	o.logger.Info("Orchestrator: listening for resume signals", "subject", WorkflowResumeSubject)
+	return nil
+}
+
 func (o *Orchestrator) handleUnifiedTrigger(ctx context.Context, msg *nats.Msg) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -362,6 +422,9 @@ func (o *Orchestrator) handleUnifiedTrigger(ctx context.Context, msg *nats.Msg) 
 	}
 
 	if err := o.handleTrigger(ctx, def, msg); err != nil {
+		if errors.Is(err, errMessageDeadLettered) {
+			return
+		}
 		o.logger.Error("Orchestrator: trigger handler error", "workflow", def.Name, "subject", subject, "error", err)
 		msg.Nak()
 		return
@@ -538,6 +601,10 @@ func (o *Orchestrator) Start(ctx context.Context) error {
 		return fmt.Errorf("orchestrator: failed to start unified trigger subscription: %w", err)
 	}
 
+	if err := o.startResumeSubscription(ctx); err != nil {
+		return fmt.Errorf("orchestrator: failed to subscribe to resume topic: %w", err)
+	}
+
 	// ── Blueprint Query Listener ──────────────────────────────────────────────
 	// Allows the API Gateway to fetch the full graph (steps) for a workflow.
 	blueprintSub, err := o.bus.QueueSubscribe(
@@ -569,10 +636,14 @@ func (o *Orchestrator) Start(ctx context.Context) error {
 }
 
 // handleTrigger fires when a workflow's trigger_topic receives a message.
-// It creates a fresh WorkflowInstance and dispatches the first step.
+// It creates a fresh WorkflowInstance and schedules the entry steps.
 func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *nats.Msg) error {
 	if len(def.Steps) == 0 {
 		return fmt.Errorf("workflow %q has no steps", def.Name)
+	}
+
+	if o.maybeDeadLetter(msg, WorkflowTriggerDLQSubject, "trigger exceeded max deliveries") {
+		return errMessageDeadLettered
 	}
 
 	instanceID := uuid.New()
@@ -581,17 +652,13 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 		"instance_id", instanceID.String(),
 	)
 
-	// --- Phase 1: Extract entity_id from the trigger envelope ---
-	// The trigger message is a FIPA Envelope wrapping a TaskDefinition.
-	// The TaskDefinition.Payload contains the original upload payload with entity_id.
 	var entityID pgtype.UUID
-	var triggerPayload []byte = msg.Data // fallback if not wrapped
-
+	var triggerPayload []byte = msg.Data
 	var triggerEnv core.Envelope
 	if err := json.Unmarshal(msg.Data, &triggerEnv); err == nil {
 		var taskDef core.TaskDefinition
 		if err := json.Unmarshal(triggerEnv.Body, &taskDef); err == nil {
-			triggerPayload = taskDef.Payload // Extract inner payload for the first Step
+			triggerPayload = taskDef.Payload
 			var innerPayload map[string]interface{}
 			if err := json.Unmarshal(taskDef.Payload, &innerPayload); err == nil {
 				if eid, ok := innerPayload["entity_id"].(string); ok {
@@ -608,13 +675,14 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 		return fmt.Errorf("orchestrator: trigger payload missing required entity_id")
 	}
 
-	// --- Phase 2: Persist initial state to DB ---
-	initialState := map[string]interface{}{
-		"workflow_def":    def.Name,
-		"current_step_id": def.Steps[0].ID,
-		"variables":       make(map[string]interface{}),
+	state := InstanceState{
+		WorkflowDef:    def.Name,
+		CurrentStepID:  def.Steps[0].ID,
+		InstancePath:   []string{instanceID.String()},
+		ActiveSteps:    make(map[string]bool),
+		CompletedSteps: make(map[string]bool),
+		Variables:      make(map[string]json.RawMessage),
 	}
-	stateBytes, _ := json.Marshal(initialState)
 
 	arg := database.CreateOrGetWorkflowParams{
 		ID:       pgtype.UUID{Bytes: instanceID, Valid: true},
@@ -625,8 +693,8 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 		return fmt.Errorf("orchestrator: failed to create workflow row: %w", err)
 	}
 
-	// Update with initial state and status
-	_, err = o.queries.UpdateWorkflowState(ctx, database.UpdateWorkflowStateParams{
+	stateBytes, _ := json.Marshal(state)
+	wf, err = o.queries.UpdateWorkflowState(ctx, database.UpdateWorkflowStateParams{
 		ID:         wf.ID,
 		State:      stateBytes,
 		SequenceID: 0,
@@ -635,22 +703,43 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 		return fmt.Errorf("orchestrator: failed to update initial state: %w", err)
 	}
 
+	ready, err := o.scheduleReadySteps(ctx, def, &state, wf.EntityID, triggerPayload)
+	if err != nil {
+		return fmt.Errorf("orchestrator: failed to dispatch initial steps: %w", err)
+	}
+	stateBytes, _ = json.Marshal(state)
+	wf, err = o.persistWorkflowState(ctx, wf, state)
+	if err != nil {
+		return fmt.Errorf("orchestrator: failed to persist state after scheduling: %w", err)
+	}
+
+	activeIDs := stepIDsFromList(ready)
+	if len(activeIDs) == 0 {
+		activeIDs = []string{def.Steps[0].ID}
+	}
+
 	o.logger.Info("Orchestrator: instance persisted", "id", instanceID.String())
+	o.publishStatus(instanceID.String(), entityID, "started", strings.Join(activeIDs, ","), "", def, activeIDs)
 
-	o.publishStatus(instanceID.String(), entityID, "started", def.Steps[0].ID, "", def)
-
-	// Dispatch the first step
-	return o.dispatchStep(ctx, def.Steps[0], instanceID.String(), triggerPayload)
+	return nil
 }
 
-// dispatchStep sends work to the actor responsible for the given step.
-// If negotiate=true: broadcast a CFP to the public task_queue.
-// If negotiate=false: send an ACCEPT directly to the internal worker/agent inbox.
-func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, instanceID string, payload []byte) error {
-	convID := instanceID + "." + step.ID
+func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, instancePath []string, payload []byte) error {
+	cid := buildConversationID(instancePath, step.ID)
+
+	o.logger.Info("🚀 [DEBUG] Orchestrator dispatching step",
+		"activity", step.ActivityType,
+		"cid", cid,
+		// "payload", string(payload),
+	)
+	if len(instancePath) == 0 {
+		return fmt.Errorf("orchestrator: missing instance path for step %q", step.ID)
+	}
+	instanceID := instancePath[len(instancePath)-1]
+	convID := buildConversationID(instancePath, step.ID)
 
 	if step.Negotiate {
-		queue, err := core.NormalizeTaskQueue(step.ActivityType, step.TaskQueue)
+		queue, err := core.NormalizeTaskQueueWithComplexity(step.ActivityType, step.TaskQueue, step.Complexity)
 		if err != nil {
 			return fmt.Errorf("orchestrator: invalid task queue for step %q: %w", step.ID, err)
 		}
@@ -660,15 +749,17 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 			"activity_type", step.ActivityType,
 			"negotiate", step.Negotiate,
 			"task_queue", queue,
+			"payload", string(payload),
 		)
 
 		// ── FIPA path: broadcast CFP to the public task_queue ─────────────────
 		// 3rd-party agents (Firecracker) and internal agents listening on this
 		// topic can all reply with PROPOSE to the orchestrator inbox.
 		taskDef := core.TaskDefinition{
-			ID:      instanceID,
-			Domain:  step.ActivityType,
-			Payload: payload,
+			ID:         instanceID,
+			Domain:     step.ActivityType,
+			Payload:    payload,
+			Complexity: step.Complexity,
 		}
 		cfp, err := core.NewEnvelope(
 			uuid.New().String(),
@@ -695,14 +786,18 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 		var inbox string
 
 		if strings.HasPrefix(step.ActivityType, core.PrefixWorkerActivities+".") {
-			normalized, err := core.NormalizeTaskQueue(step.ActivityType, step.TaskQueue)
+			normalized, err := core.NormalizeTaskQueueWithComplexity(step.ActivityType, step.TaskQueue, step.Complexity)
 			if err != nil {
 				return fmt.Errorf("orchestrator: invalid worker queue for step %q: %w", step.ID, err)
 			}
 			inbox = normalized
 			o.logger.Debug("Orchestrator: using worker inbox for dispatch", "inbox", inbox)
 		} else if step.TaskQueue != "" {
-			inbox = step.TaskQueue
+			normalized, err := core.NormalizeTaskQueueWithComplexity(step.ActivityType, step.TaskQueue, step.Complexity)
+			if err != nil {
+				return fmt.Errorf("orchestrator: invalid task queue override for step %q: %w", step.ID, err)
+			}
+			inbox = normalized
 			o.logger.Debug("Orchestrator: using direct queue for dispatch", "inbox", inbox)
 		} else {
 			discoveredInbox, err := o.resolveActorByCapability(ctx, step.ActivityType)
@@ -724,9 +819,10 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 		)
 
 		taskDef := core.TaskDefinition{
-			ID:      instanceID,
-			Domain:  step.ActivityType,
-			Payload: payload,
+			ID:         instanceID,
+			Domain:     step.ActivityType,
+			Payload:    payload,
+			Complexity: step.Complexity,
 		}
 		accept, err := core.NewEnvelope(
 			uuid.New().String(),
@@ -750,13 +846,82 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 	return nil
 }
 
+func (o *Orchestrator) spawnSubWorkflow(ctx context.Context, step WorkflowStep, parentState *InstanceState, entityID pgtype.UUID, payload []byte) error {
+	if step.SubWorkflow == "" {
+		return fmt.Errorf("orchestrator: sub-workflow step %q missing sub_workflow reference", step.ID)
+	}
+
+	childDef, err := o.resolveBlueprintByName(ctx, step.SubWorkflow)
+	if err != nil {
+		return fmt.Errorf("orchestrator: failed to resolve sub-workflow %q: %w", step.SubWorkflow, err)
+	}
+
+	childInstanceID := uuid.New()
+	childPath := append(append([]string(nil), parentState.InstancePath...), childInstanceID.String())
+	childState := InstanceState{
+		WorkflowDef:    childDef.Name,
+		CurrentStepID:  "",
+		InstancePath:   childPath,
+		ActiveSteps:    make(map[string]bool),
+		CompletedSteps: make(map[string]bool),
+		Variables:      make(map[string]json.RawMessage),
+		ParentStepID:   step.ID,
+	}
+	if len(childDef.Steps) > 0 {
+		childState.CurrentStepID = childDef.Steps[0].ID
+	}
+
+	arg := database.CreateOrGetWorkflowParams{
+		ID:       pgtype.UUID{Bytes: childInstanceID, Valid: true},
+		EntityID: entityID,
+	}
+
+	childWf, err := o.queries.CreateOrGetWorkflow(ctx, arg)
+	if err != nil {
+		return fmt.Errorf("orchestrator: failed to create sub-workflow row: %w", err)
+	}
+
+	stateBytes, _ := json.Marshal(childState)
+	childWf, err = o.queries.UpdateWorkflowState(ctx, database.UpdateWorkflowStateParams{
+		ID:         childWf.ID,
+		State:      stateBytes,
+		SequenceID: 0,
+	})
+	if err != nil {
+		return fmt.Errorf("orchestrator: failed to persist sub-workflow state: %w", err)
+	}
+
+	ready, err := o.scheduleReadySteps(ctx, childDef, &childState, childWf.EntityID, payload)
+	if err != nil {
+		return fmt.Errorf("orchestrator: failed to dispatch sub-workflow %q: %w", childDef.Name, err)
+	}
+
+	if _, err := o.persistWorkflowState(ctx, childWf, childState); err != nil {
+		return fmt.Errorf("orchestrator: failed to persist sub-workflow active steps: %w", err)
+	}
+
+	activeIDs := stepIDsFromList(ready)
+	o.publishStatus(childInstanceID.String(), childWf.EntityID, "started", strings.Join(activeIDs, ","), "", childDef, activeIDs)
+	o.logger.Info("Orchestrator: sub-workflow launched",
+		"parent_step", step.ID,
+		"child_workflow", childDef.Name,
+		"child_instance", childInstanceID.String(),
+	)
+	return nil
+}
+
 // handleIncoming processes messages arriving at the OrchestratorInbox:
 // - PROPOSE   → log bid; in the future, select best proposal and send ACCEPT
-// - INFORM    → step completed; advance to next step
+// - INFORM    → step completed; advance to DAG-friendly successors
 func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
+
+	// o.logger.Info("🚀 [DEBUG] Orchestrator received message on inbox",
+	// 	"payload", string(msg.Data),
+	// )
 	var env core.Envelope
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
 		o.logger.Error("Orchestrator: malformed envelope on inbox", "error", err)
+		o.emitDeadLetter(msg, WorkflowInboxDLQSubject, "malformed envelope", nil)
 		msg.Term()
 		return
 	}
@@ -774,33 +939,43 @@ func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
 		msg.Ack()
 
 	case core.INFORM:
-		// An agent has completed its step and delivered a Proof.
-		o.logger.Info("Orchestrator: received INFORM (step complete)",
+		o.logger.Info("📡 [DEBUG] Orchestrator received INFORM proof",
 			"from", env.SenderDID,
-			"conv_id", env.ConversationID,
+			"cid", env.ConversationID,
+			"data_length", len(env.Body),
 		)
-
-		// 1. Unmarshal ConversationID (instanceID.stepID)
-		parts := strings.Split(env.ConversationID, ".")
-		if len(parts) < 2 {
-			o.logger.Error("Orchestrator: malformed conversation ID", "id", env.ConversationID)
+		instancePath, stepID, err := parseConversationID(env.ConversationID)
+		if err != nil {
+			o.logger.Error("Orchestrator: malformed conversation ID", "cid", env.ConversationID, "error", err)
+			if o.maybeDeadLetter(msg, WorkflowInboxDLQSubject, "malformed conversation ID") {
+				return
+			}
 			msg.Term()
 			return
 		}
-		instanceIDStr := parts[0]
-		stepID := parts[1]
 
+		if len(instancePath) == 0 {
+			o.logger.Error("Orchestrator: empty instance path in conversation ID", "cid", env.ConversationID)
+			msg.Term()
+			return
+		}
+		instanceIDStr := instancePath[len(instancePath)-1]
 		instanceID, err := uuid.Parse(instanceIDStr)
 		if err != nil {
 			o.logger.Error("Orchestrator: invalid instance ID", "id", instanceIDStr, "error", err)
+			if o.maybeDeadLetter(msg, WorkflowInboxDLQSubject, "invalid instance ID") {
+				return
+			}
 			msg.Term()
 			return
 		}
 
-		// 2. Fetch current state from DB
 		wf, err := o.queries.GetWorkflow(ctx, pgtype.UUID{Bytes: instanceID, Valid: true})
 		if err != nil {
 			o.logger.Error("Orchestrator: failed to fetch workflow", "id", instanceIDStr, "error", err)
+			if o.maybeDeadLetter(msg, WorkflowInboxDLQSubject, "workflow not found") {
+				return
+			}
 			msg.Nak()
 			return
 		}
@@ -808,66 +983,119 @@ func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
 		var state InstanceState
 		if err := json.Unmarshal(wf.State, &state); err != nil {
 			o.logger.Error("Orchestrator: failed to unmarshal state", "id", instanceIDStr, "error", err)
+			o.emitDeadLetter(msg, WorkflowInboxDLQSubject, "state unmarshal failure", nil)
 			msg.Term()
 			return
 		}
+		ensureInstanceState(&state, instancePath)
 
-		if state.CurrentStepID != stepID {
-			o.logger.Warn("Orchestrator: out-of-order proof received", "expected", state.CurrentStepID, "got", stepID)
-			msg.Ack() // Drop it, it's stale
+		if !state.ActiveSteps[stepID] {
+			if state.CompletedSteps[stepID] {
+				o.logger.Debug("Orchestrator: ignoring duplicate proof", "step", stepID, "instance", instanceIDStr)
+				msg.Ack()
+				return
+			}
+			o.logger.Warn("Orchestrator: proof for inactive step", "step", stepID, "instance", instanceIDStr)
+			msg.Ack()
 			return
 		}
 
-		// 3. Resolve the WorkflowDef blueprint (DB-backed).
 		wfDef, err := o.resolveBlueprintByName(ctx, state.WorkflowDef)
 		if err != nil {
 			o.logger.Error("Orchestrator: workflow definition not found", "name", state.WorkflowDef, "error", err)
+			o.emitDeadLetter(msg, WorkflowInboxDLQSubject, "blueprint missing", nil)
 			msg.Term()
 			return
 		}
 
-		var nextStep *WorkflowStep
-		for i, s := range wfDef.Steps {
-			if s.ID == stepID {
-				if i+1 < len(wfDef.Steps) {
-					nextStep = &wfDef.Steps[i+1]
-				}
-				break
-			}
-		}
-
-		// 4. Update state and dispatch
-		if nextStep == nil {
-			// Workflow finished!
-			o.logger.Info("🏁 Orchestrator: workflow completed", "instance_id", instanceIDStr)
-			state.CurrentStepID = "COMPLETED"
-			stateBytes, _ := json.Marshal(state)
-			o.queries.UpdateWorkflowState(ctx, database.UpdateWorkflowStateParams{
-				ID:         wf.ID,
-				State:      stateBytes,
-				SequenceID: wf.SequenceID + 1,
-			})
-			o.publishStatus(instanceIDStr, wf.EntityID, "completed", "COMPLETED", env.SenderDID, wfDef)
-		} else {
-			o.logger.Info("Orchestrator: advancing step", "from", stepID, "to", nextStep.ID)
-			state.CurrentStepID = nextStep.ID
-			stateBytes, _ := json.Marshal(state)
-			o.queries.UpdateWorkflowState(ctx, database.UpdateWorkflowStateParams{
-				ID:         wf.ID,
-				State:      stateBytes,
-				SequenceID: wf.SequenceID + 1,
-			})
-
-			o.publishStatus(instanceIDStr, wf.EntityID, "running", nextStep.ID, "", wfDef)
-
-			// The payload for the next step is often the Proof from the previous step.
-			// In FIPA, the INFORM body contains the Proof.
-			if err := o.dispatchStep(ctx, *nextStep, instanceIDStr, env.Body); err != nil {
-				o.logger.Error("Orchestrator: failed to dispatch next step", "error", err)
-				msg.Nak()
+		if err := o.handleStepCompletion(ctx, wf, &state, wfDef, stepID, env.Body, env.SenderDID); err != nil {
+			o.logger.Error("Orchestrator: failed to advance workflow", "instance", instanceIDStr, "error", err)
+			if o.maybeDeadLetter(msg, WorkflowInboxDLQSubject, "dispatch failure") {
 				return
 			}
+			msg.Nak()
+			return
 		}
+		msg.Ack()
+
+	case core.FAILURE:
+		instancePath, stepID, err := parseConversationID(env.ConversationID)
+		if err != nil {
+			o.logger.Error("Orchestrator: malformed conversation ID in FAILURE", "cid", env.ConversationID, "error", err)
+			if o.maybeDeadLetter(msg, WorkflowInboxDLQSubject, "malformed conversation ID") {
+				return
+			}
+			msg.Term()
+			return
+		}
+
+		if len(instancePath) == 0 {
+			o.logger.Error("Orchestrator: empty instance path in conversation ID", "cid", env.ConversationID)
+			msg.Term()
+			return
+		}
+		instanceIDStr := instancePath[len(instancePath)-1]
+		instanceID, err := uuid.Parse(instanceIDStr)
+		if err != nil {
+			o.logger.Error("Orchestrator: invalid instance ID", "id", instanceIDStr, "error", err)
+			msg.Term()
+			return
+		}
+
+		wf, err := o.queries.GetWorkflow(ctx, pgtype.UUID{Bytes: instanceID, Valid: true})
+		if err != nil {
+			o.logger.Error("Orchestrator: failed to fetch workflow for FAILURE", "id", instanceIDStr, "error", err)
+			msg.Nak()
+			return
+		}
+
+		var state InstanceState
+		if err := json.Unmarshal(wf.State, &state); err != nil {
+			o.logger.Error("Orchestrator: failed to unmarshal state for FAILURE", "id", instanceIDStr, "error", err)
+			msg.Term()
+			return
+		}
+		ensureInstanceState(&state, instancePath)
+
+		if !state.ActiveSteps[stepID] {
+			o.logger.Debug("Orchestrator: ignoring FAILURE for inactive step", "step", stepID, "instance", instanceIDStr)
+			msg.Ack()
+			return
+		}
+
+		// Resolve blueprint to get full context for the status message
+		wfDef, err := o.resolveBlueprintByName(ctx, state.WorkflowDef)
+		if err != nil {
+			o.logger.Error("Orchestrator: blueprint missing for FAILURE case", "blueprint", state.WorkflowDef, "error", err)
+			msg.Term()
+			return
+		}
+
+		// Log and suspend the workflow
+		o.logger.Error("Orchestrator: received FAILURE for step", "step", stepID, "instance", instanceIDStr, "body", string(env.Body))
+
+		state.Suspended = true
+		state.SuspensionStep = stepID
+		state.SuspensionRoute = -1 // Arbitrary indicator for failure route
+
+		// Attempt to extract the error string gracefully
+		var payloadMap map[string]string
+		failMsg := string(env.Body)
+		if err := json.Unmarshal(env.Body, &payloadMap); err == nil && payloadMap["error"] != "" {
+			failMsg = payloadMap["error"]
+		}
+		state.SuspensionReason = fmt.Sprintf("Agent failure in step '%s': %s", stepID, failMsg)
+
+		// Persist the suspended state
+		_, err = o.persistWorkflowState(ctx, wf, state)
+		if err != nil {
+			o.logger.Error("Orchestrator: failed to persist suspended state", "error", err)
+			msg.Nak()
+			return
+		}
+
+		// Broadcast suspension to external observers (UI, notifications)
+		o.publishStatus(instanceIDStr, wf.EntityID, "suspended", stepID, env.SenderDID, wfDef, nil)
 
 		msg.Ack()
 
@@ -877,13 +1105,213 @@ func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
 	}
 }
 
+// handleWorkflowResume processes manual resume instructions that override a suspended route.
+func (o *Orchestrator) handleWorkflowResume(msg *nats.Msg) {
+	var req WorkflowResumeRequest
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		o.logger.Error("Orchestrator: malformed resume payload", "error", err)
+		msg.Term()
+		return
+	}
+
+	if req.InstanceID == "" {
+		o.logger.Warn("Orchestrator: resume payload missing instance_id")
+		msg.Term()
+		return
+	}
+
+	instanceID, err := uuid.Parse(req.InstanceID)
+	if err != nil {
+		o.logger.Error("Orchestrator: invalid instance ID in resume", "id", req.InstanceID, "error", err)
+		msg.Term()
+		return
+	}
+
+	ctx := context.Background()
+	wf, err := o.queries.GetWorkflow(ctx, pgtype.UUID{Bytes: instanceID, Valid: true})
+	if err != nil {
+		o.logger.Error("Orchestrator: resume target not found", "id", req.InstanceID, "error", err)
+		msg.Nak()
+		return
+	}
+
+	var state InstanceState
+	if err := json.Unmarshal(wf.State, &state); err != nil {
+		o.logger.Error("Orchestrator: failed to unmarshal state during resume", "id", req.InstanceID, "error", err)
+		msg.Term()
+		return
+	}
+	ensureInstanceState(&state, state.InstancePath)
+
+	if !state.Suspended {
+		o.logger.Info("Orchestrator: ignore resume request, instance not suspended", "id", req.InstanceID)
+		msg.Ack()
+		return
+	}
+
+	stepID := req.StepID
+	if stepID == "" {
+		stepID = state.SuspensionStep
+	}
+	if stepID == "" {
+		o.logger.Error("Orchestrator: resume request missing step_id", "id", req.InstanceID)
+		msg.Term()
+		return
+	}
+
+	payload := req.Payload
+	if len(payload) == 0 {
+		existing, ok := state.Variables[stepID]
+		if !ok {
+			existing = []byte("{}")
+		}
+		payload, _ = sjson.SetBytes(existing, "route", req.Route)
+	}
+	state.Variables[stepID] = payload
+	state.Suspended = false
+	state.SuspensionStep = ""
+	state.SuspensionReason = ""
+	state.SuspensionRoute = 0
+
+	wfDef, err := o.resolveBlueprintByName(ctx, state.WorkflowDef)
+	if err != nil {
+		o.logger.Error("Orchestrator: resume target blueprint missing", "blueprint", state.WorkflowDef, "error", err)
+		msg.Term()
+		return
+	}
+
+	if _, err := o.persistWorkflowState(ctx, wf, state); err != nil {
+		o.logger.Error("Orchestrator: failed to persist state after resume", "id", req.InstanceID, "error", err)
+		msg.Nak()
+		return
+	}
+
+	ready, err := o.scheduleReadySteps(ctx, wfDef, &state, wf.EntityID, payload)
+	if err != nil {
+		o.logger.Error("Orchestrator: resume scheduling failed", "id", req.InstanceID, "error", err)
+		msg.Nak()
+		return
+	}
+
+	if _, err := o.persistWorkflowState(ctx, wf, state); err != nil {
+		o.logger.Error("Orchestrator: failed to persist resumed state", "id", req.InstanceID, "error", err)
+		msg.Nak()
+		return
+	}
+
+	nextIDs := []string{}
+	if len(ready) > 0 {
+		nextIDs = stepIDsFromList(ready)
+	}
+	o.publishStatus(req.InstanceID, wf.EntityID, "running", state.CurrentStepID, "", wfDef, nextIDs)
+	msg.Ack()
+}
+
+func (o *Orchestrator) handleStepCompletion(ctx context.Context, wf database.ToroCoreWorkflow, state *InstanceState, wfDef WorkflowDef, stepID string, proof []byte, assignedDID string) error {
+	if len(state.InstancePath) == 0 {
+		return fmt.Errorf("orchestrator: missing instance path for step %q", stepID)
+	}
+	instanceIDStr := state.InstancePath[len(state.InstancePath)-1]
+
+	delete(state.ActiveSteps, stepID)
+	state.CompletedSteps[stepID] = true
+	proofCopy := append(json.RawMessage(nil), proof...)
+	state.Variables[stepID] = proofCopy
+	state.LastProof = proofCopy
+	state.CurrentStepID = stepID
+
+	if _, err := o.persistWorkflowState(ctx, wf, *state); err != nil {
+		return err
+	}
+
+	if len(state.CompletedSteps) == len(wfDef.Steps) {
+		state.CurrentStepID = "COMPLETED"
+		if _, err := o.persistWorkflowState(ctx, wf, *state); err != nil {
+			return err
+		}
+		o.publishStatus(instanceIDStr, wf.EntityID, "completed", "COMPLETED", assignedDID, wfDef, nil)
+		if state.ParentStepID != "" && len(state.InstancePath) > 1 {
+			parentPath := state.InstancePath[:len(state.InstancePath)-1]
+			if err := o.completeParentStep(ctx, parentPath, state.ParentStepID, proofCopy); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	step, ok := findStepByID(wfDef, stepID)
+	if !ok {
+		return fmt.Errorf("orchestrator: blueprint step %q missing", stepID)
+	}
+
+	if suspended, route, reason := o.maybeSuspendInstance(step, state, proofCopy); suspended {
+		if _, err := o.persistWorkflowState(ctx, wf, *state); err != nil {
+			return err
+		}
+		o.publishStatus(instanceIDStr, wf.EntityID, "suspended", stepID, assignedDID, wfDef, nil)
+		if err := o.publishAmbiguityEvent(instanceIDStr, wf.EntityID, wfDef, step, route, reason, proofCopy); err != nil {
+			o.logger.Error("Orchestrator: failed to publish ambiguity event", "error", err, "instance", instanceIDStr)
+		}
+		return nil
+	}
+
+	ready, err := o.scheduleReadySteps(ctx, wfDef, state, wf.EntityID, proofCopy)
+	if err != nil {
+		return err
+	}
+	if len(ready) > 0 {
+		if _, err := o.persistWorkflowState(ctx, wf, *state); err != nil {
+			return err
+		}
+		nextIDs := stepIDsFromList(ready)
+		o.publishStatus(instanceIDStr, wf.EntityID, "running", strings.Join(nextIDs, ","), assignedDID, wfDef, nextIDs)
+	}
+	return nil
+}
+
+func (o *Orchestrator) completeParentStep(ctx context.Context, parentPath []string, parentStepID string, proof []byte) error {
+	if len(parentPath) == 0 {
+		return fmt.Errorf("orchestrator: missing parent path for step %q", parentStepID)
+	}
+	parentID := parentPath[len(parentPath)-1]
+	parentUUID, err := uuid.Parse(parentID)
+	if err != nil {
+		return fmt.Errorf("orchestrator: invalid parent instance ID %q: %w", parentID, err)
+	}
+	parentWf, err := o.queries.GetWorkflow(ctx, pgtype.UUID{Bytes: parentUUID, Valid: true})
+	if err != nil {
+		return fmt.Errorf("orchestrator: failed to fetch parent workflow %q: %w", parentID, err)
+	}
+
+	var parentState InstanceState
+	if err := json.Unmarshal(parentWf.State, &parentState); err != nil {
+		return fmt.Errorf("orchestrator: failed to unmarshal parent state %q: %w", parentID, err)
+	}
+	ensureInstanceState(&parentState, parentPath)
+
+	if !parentState.ActiveSteps[parentStepID] {
+		if parentState.CompletedSteps[parentStepID] {
+			return nil
+		}
+		o.logger.Warn("Orchestrator: parent step not active for completion", "step", parentStepID, "instance", parentID)
+		return nil
+	}
+
+	wfDef, err := o.resolveBlueprintByName(ctx, parentState.WorkflowDef)
+	if err != nil {
+		return fmt.Errorf("orchestrator: parent workflow definition %q missing: %w", parentState.WorkflowDef, err)
+	}
+
+	return o.handleStepCompletion(ctx, parentWf, &parentState, wfDef, parentStepID, proof, "")
+}
+
 // sanitize converts a workflow name into a NATS-safe durable consumer name.
 func sanitize(s string) string {
 	r := strings.NewReplacer(" ", "-", ".", "-", ":", "-", "/", "-")
 	return strings.ToLower(r.Replace(s))
 }
 
-func (o *Orchestrator) publishStatus(instanceID string, entityID pgtype.UUID, status, stepID, assignedDID string, blueprint WorkflowDef) {
+func (o *Orchestrator) publishStatus(instanceID string, entityID pgtype.UUID, status, stepID, assignedDID string, blueprint WorkflowDef, activeSteps []string) {
 	evt := map[string]interface{}{
 		"instance_id":     instanceID,
 		"entity_id":       uuid.UUID(entityID.Bytes).String(),
@@ -891,6 +1319,7 @@ func (o *Orchestrator) publishStatus(instanceID string, entityID pgtype.UUID, st
 		"current_step_id": stepID,
 		"assigned_did":    assignedDID,
 		"blueprint":       blueprint,
+		"active_steps":    activeSteps,
 		"timestamp":       time.Now().UTC().Format(time.RFC3339),
 	}
 	data, _ := json.Marshal(evt)
@@ -898,6 +1327,374 @@ func (o *Orchestrator) publishStatus(instanceID string, entityID pgtype.UUID, st
 	if err := o.bus.Publish(subject, data); err != nil {
 		o.logger.Error("Orchestrator: failed to publish status event", "error", err)
 	}
+}
+
+func (o *Orchestrator) publishAmbiguityEvent(instanceID string, entityID pgtype.UUID, blueprint WorkflowDef, step WorkflowStep, route int, reason string, proof json.RawMessage) error {
+	entity := ""
+	if entityID.Valid {
+		entity = uuid.UUID(entityID.Bytes).String()
+	}
+	evt := map[string]interface{}{
+		"instance_id":       instanceID,
+		"entity_id":         entity,
+		"status":            "ambiguous",
+		"step_id":           step.ID,
+		"route":             route,
+		"suspension_reason": reason,
+		"blueprint":         blueprint,
+	}
+	if len(proof) > 0 {
+		var parsed interface{}
+		if err := json.Unmarshal(proof, &parsed); err == nil {
+			evt["proof"] = parsed
+		} else {
+			evt["proof"] = string(proof)
+		}
+	}
+	if session := findSessionIDInProof(proof); session != "" {
+		evt["session_id"] = session
+	}
+	data, _ := json.Marshal(evt)
+	return o.bus.Publish(WorkflowAmbiguousSubject, data)
+}
+
+func findSessionIDInProof(proof json.RawMessage) string {
+	if len(proof) == 0 {
+		return ""
+	}
+	var payload interface{}
+	if err := json.Unmarshal(proof, &payload); err != nil {
+		return ""
+	}
+	return searchForSessionID(payload)
+}
+
+func searchForSessionID(value interface{}) string {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for _, key := range []string{"session_id", "SessionID"} {
+			if raw, ok := typed[key]; ok {
+				if str, ok := raw.(string); ok && str != "" {
+					return str
+				}
+			}
+		}
+		for _, child := range typed {
+			if result := searchForSessionID(child); result != "" {
+				return result
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if result := searchForSessionID(item); result != "" {
+				return result
+			}
+		}
+	}
+	return ""
+}
+
+func stepIDsFromList(steps []WorkflowStep) []string {
+	ids := make([]string, 0, len(steps))
+	for _, step := range steps {
+		ids = append(ids, step.ID)
+	}
+	return ids
+}
+
+func ensureInstanceState(state *InstanceState, path []string) {
+	if state.ActiveSteps == nil {
+		state.ActiveSteps = make(map[string]bool)
+	}
+	if state.CompletedSteps == nil {
+		state.CompletedSteps = make(map[string]bool)
+	}
+	if state.Variables == nil {
+		state.Variables = make(map[string]json.RawMessage)
+	}
+	if len(state.InstancePath) == 0 && len(path) > 0 {
+		state.InstancePath = append([]string(nil), path...)
+	}
+}
+
+func (o *Orchestrator) scheduleReadySteps(ctx context.Context, def WorkflowDef, state *InstanceState, entityID pgtype.UUID, fallback []byte) ([]WorkflowStep, error) {
+	if state.Suspended {
+		return nil, nil
+	}
+	ready := readySteps(def, *state)
+	if len(ready) == 0 {
+		return nil, nil
+	}
+	for _, step := range ready {
+		payload := buildStepPayload(step, *state, fallback)
+		var err error
+		if step.SubWorkflow != "" {
+			err = o.spawnSubWorkflow(ctx, step, state, entityID, payload)
+		} else {
+			err = o.dispatchStep(ctx, step, state.InstancePath, payload)
+		}
+		if err != nil {
+			return nil, err
+		}
+		state.ActiveSteps[step.ID] = true
+	}
+	return ready, nil
+}
+
+func readySteps(def WorkflowDef, state InstanceState) []WorkflowStep {
+	var ready []WorkflowStep
+	for _, step := range def.Steps {
+		if state.CompletedSteps[step.ID] || state.ActiveSteps[step.ID] {
+			continue
+		}
+		missing := 0
+		for _, dep := range step.DependsOn {
+			if !state.CompletedSteps[dep] {
+				missing++
+			}
+		}
+		if missing == 0 && routeConditionMatches(step, state) {
+			ready = append(ready, step)
+		}
+	}
+	return ready
+}
+
+func routeConditionMatches(step WorkflowStep, state InstanceState) bool {
+	if step.RouteCondition == nil || len(step.RouteCondition.Values) == 0 {
+		return true
+	}
+
+	cond := step.RouteCondition
+	target := cond.StepID
+	if target == "" {
+		if len(step.DependsOn) == 0 {
+			return false
+		}
+		target = step.DependsOn[0]
+	}
+
+	raw, ok := state.Variables[target]
+	if !ok {
+		return false
+	}
+	route, ok := extractRouteValue(raw)
+	if !ok {
+		return false
+	}
+	for _, value := range cond.Values {
+		if value == route {
+			return true
+		}
+	}
+	return false
+}
+
+func extractRouteValue(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	val := gjson.ParseBytes(raw)
+	if val.IsArray() {
+		arr := val.Array()
+		if len(arr) > 0 {
+			first := arr[0]
+			if route := first.Get("route"); route.Exists() {
+				return int(route.Int()), true
+			}
+		}
+	}
+	if route := val.Get("route"); route.Exists() {
+		return int(route.Int()), true
+	}
+	return 0, false
+}
+
+func buildStepPayload(step WorkflowStep, state InstanceState, fallback []byte) []byte {
+	var payload []byte
+	if len(step.DependsOn) == 0 {
+		if len(fallback) > 0 {
+			payload = fallback
+		} else if len(state.LastProof) > 0 {
+			payload = state.LastProof
+		} else {
+			payload = []byte("{}")
+		}
+	} else {
+		bundle := make(map[string]json.RawMessage)
+		for _, dep := range step.DependsOn {
+			if raw, ok := state.Variables[dep]; ok {
+				bundle[dep] = raw
+			}
+		}
+		if len(bundle) == 0 {
+			if len(state.LastProof) > 0 {
+				payload = state.LastProof
+			} else if len(fallback) > 0 {
+				payload = fallback
+			} else {
+				payload = []byte("{}")
+			}
+		} else {
+			merged := map[string]map[string]json.RawMessage{"dependencies": bundle}
+			mergedBytes, _ := json.Marshal(merged)
+			payload = mergedBytes
+		}
+	}
+	raw := wrapPayloadWithConfig(step, payload)
+	proof := core.Proof{
+		Type:      core.ProofAPI,
+		Data:      raw,
+		Timestamp: time.Now().Unix(),
+	}
+	res, _ := json.Marshal(proof)
+	return res
+}
+
+func wrapPayloadWithConfig(step WorkflowStep, payload []byte) []byte {
+	if len(step.Config) == 0 {
+		return payload
+	}
+	configBytes, _ := json.Marshal(step.Config)
+	wrapper := map[string]json.RawMessage{
+		"config": json.RawMessage(configBytes),
+		"input":  json.RawMessage(payload),
+	}
+	final, err := json.Marshal(wrapper)
+	if err != nil {
+		return payload
+	}
+	return final
+}
+
+func (o *Orchestrator) maybeSuspendInstance(step WorkflowStep, state *InstanceState, proof json.RawMessage) (bool, int, string) {
+	if len(step.SuspendRoutes) == 0 {
+		return false, 0, ""
+	}
+	route, ok := extractRouteValue(proof)
+	if !ok {
+		return false, 0, ""
+	}
+	for _, candidate := range step.SuspendRoutes {
+		if route == candidate {
+			state.Suspended = true
+			state.SuspensionStep = step.ID
+			state.SuspensionRoute = route
+			reason := ""
+			if step.SuspensionReasonPath != "" {
+				if extracted := gjson.GetBytes(proof, step.SuspensionReasonPath).String(); extracted != "" {
+					state.SuspensionReason = extracted
+					reason = extracted
+				}
+			}
+			return true, route, reason
+		}
+	}
+	return false, 0, ""
+}
+
+func findStepByID(def WorkflowDef, stepID string) (WorkflowStep, bool) {
+	for _, step := range def.Steps {
+		if step.ID == stepID {
+			return step, true
+		}
+	}
+	return WorkflowStep{}, false
+}
+
+func (o *Orchestrator) persistWorkflowState(ctx context.Context, wf database.ToroCoreWorkflow, state InstanceState) (database.ToroCoreWorkflow, error) {
+	stateBytes, _ := json.Marshal(state)
+	return o.queries.UpdateWorkflowState(ctx, database.UpdateWorkflowStateParams{
+		ID:         wf.ID,
+		State:      stateBytes,
+		SequenceID: wf.SequenceID + 1,
+	})
+}
+
+func parseConversationID(convID string) ([]string, string, error) {
+	parts := strings.Split(convID, "/")
+	if len(parts) < 2 {
+		return nil, "", fmt.Errorf("invalid conversation id %q", convID)
+	}
+	path := append([]string(nil), parts[:len(parts)-1]...)
+	return path, parts[len(parts)-1], nil
+}
+
+func buildConversationID(path []string, stepID string) string {
+	if len(path) == 0 {
+		return stepID
+	}
+	return fmt.Sprintf("%s/%s", strings.Join(path, "/"), stepID)
+}
+
+// WorkflowResumeRequest defines the payload for manual resume messages.
+type WorkflowResumeRequest struct {
+	InstanceID string          `json:"instance_id"`
+	StepID     string          `json:"step_id,omitempty"`
+	Route      int             `json:"route"`
+	Payload    json.RawMessage `json:"payload,omitempty"`
+	Reason     string          `json:"reason,omitempty"`
+}
+
+func (o *Orchestrator) maybeDeadLetter(msg *nats.Msg, dlqSubject, reason string) bool {
+	md, err := msg.Metadata()
+	if err != nil || md == nil {
+		return false
+	}
+	if md.NumDelivered < orchestratorDeliverLimit {
+		return false
+	}
+	o.emitDeadLetter(msg, dlqSubject, reason, md)
+	return true
+}
+
+func (o *Orchestrator) emitDeadLetter(msg *nats.Msg, dlqSubject, reason string, md *nats.MsgMetadata) {
+	payload := map[string]interface{}{
+		"subject":   msg.Subject,
+		"reason":    reason,
+		"data":      base64.StdEncoding.EncodeToString(msg.Data),
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+	if md != nil {
+		payload["metadata"] = map[string]interface{}{
+			"stream":            md.Stream,
+			"consumer":          md.Consumer,
+			"stream_sequence":   md.Sequence.Stream,
+			"consumer_sequence": md.Sequence.Consumer,
+			"num_delivered":     md.NumDelivered,
+			"timestamp":         md.Timestamp,
+		}
+	}
+	encoded, _ := json.Marshal(payload)
+	if err := o.bus.Publish(dlqSubject, encoded); err != nil {
+		o.logger.Error("Orchestrator: failed to publish to DLQ", "subject", dlqSubject, "error", err)
+	}
+	if err := msg.Term(); err != nil {
+		o.logger.Error("Orchestrator: failed to terminate message after DLQ", "error", err)
+	}
+}
+
+func normalizeWorkflowDef(def WorkflowDef) (WorkflowDef, bool) {
+	mutated := false
+	for i := range def.Steps {
+		step := &def.Steps[i]
+		if step.Complexity == 0 {
+			step.Complexity = core.ComplexityEntry
+			mutated = true
+		}
+		if step.ID == "" {
+			step.ID = fmt.Sprintf("step-%d", i)
+			mutated = true
+		}
+		if len(step.DependsOn) == 0 && i > 0 {
+			prev := def.Steps[i-1].ID
+			if prev != "" {
+				step.DependsOn = []string{prev}
+				mutated = true
+			}
+		}
+	}
+	return def, mutated
 }
 
 // handleBlueprintQuery responds with the full WorkflowDef for a specific workflow name or trigger topic.
@@ -918,24 +1715,5 @@ func (o *Orchestrator) handleBlueprintQuery(msg *nats.Msg) {
 }
 
 // GetTaskQueues returns a mapping from ActivityType to the public TaskQueue defined in loaded workflows.
-func (o *Orchestrator) GetTaskQueues() map[string]string {
-	mapping := make(map[string]string)
-	o.blueprintMu.RLock()
-	defer o.blueprintMu.RUnlock()
-	for _, wf := range o.blueprints {
-		for _, step := range wf.Steps {
-			// Only map task queues for steps that require NATS negotiation.
-			if step.Negotiate && step.ActivityType != "" {
-				queue, err := core.NormalizeTaskQueue(step.ActivityType, step.TaskQueue)
-				if err != nil || queue == "" {
-					continue
-				}
-				mapping[step.ActivityType] = queue
-			}
-		}
-	}
-	return mapping
-}
-
 // keepaliveTick returns a timer string — utility for future heartbeat loop.
 func keepaliveTick() string { return time.Now().Format(time.RFC3339) }

@@ -154,22 +154,60 @@ func (m *Manager) LoadFromRegistry(deps Dependencies) error {
 
 // ExtractRows is a helper to extract a slice of maps from a json.RawMessage,
 // supporting both JSON Arrays and JSON Objects (where values are extracted).
+// It recursively searches through known wrapper fields like "data", "input", and "dependencies".
 func ExtractRows(data []byte) ([]map[string]interface{}, error) {
-	// 1. Try as Array
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty data")
+	}
+
+	// 1. Try as direct JSON Array (standard rows format)
 	var slice []map[string]interface{}
-	if err := json.Unmarshal(data, &slice); err == nil {
+	if err := json.Unmarshal(data, &slice); err == nil && len(slice) > 0 {
 		return slice, nil
 	}
 
-	// 2. Try as Map
-	var m map[string]map[string]interface{}
-	if err := json.Unmarshal(data, &m); err == nil {
-		rows := make([]map[string]interface{}, 0, len(m))
-		for _, v := range m {
-			rows = append(rows, v)
+	// 2. Try as a standardized Object format
+	var generic map[string]json.RawMessage
+	if err := json.Unmarshal(data, &generic); err == nil {
+		// Priority 1: Check for 'mapped_rows', 'body', 'data', or 'rows' (the standard formats)
+		for _, key := range []string{"mapped_rows", "body", "data", "rows", "payload", "input"} {
+			if nextData, ok := generic[key]; ok && len(nextData) > 0 {
+				if rows, err := ExtractRows(nextData); err == nil && len(rows) > 0 {
+					return rows, nil
+				}
+			}
 		}
-		return rows, nil
+
+		// Priority 2: Check inside 'dependencies' (handled by Orchestrator merge)
+		if depsRaw, ok := generic["dependencies"]; ok && len(depsRaw) > 0 {
+			var deps map[string]json.RawMessage
+			if err := json.Unmarshal(depsRaw, &deps); err == nil {
+				for _, depData := range deps {
+					if rows, err := ExtractRows(depData); err == nil && len(rows) > 0 {
+						return rows, nil
+					}
+				}
+			}
+		}
+
+		// Priority 3: Check if the top-level itself is a map of rows (e.g. { "row_1": {...} })
+		// Heuristic: Must NOT be a FIPA control object (no id, perf, src keys)
+		if _, hasPerf := generic["perf"]; !hasPerf {
+			var rowMap map[string]map[string]interface{}
+			if err := json.Unmarshal(data, &rowMap); err == nil && len(rowMap) > 0 {
+				rows := make([]map[string]interface{}, 0, len(rowMap))
+				for _, v := range rowMap {
+					if len(v) > 0 {
+						rows = append(rows, v)
+					}
+				}
+				if len(rows) > 0 {
+					return rows, nil
+				}
+			}
+		}
 	}
 
-	return nil, fmt.Errorf("data is neither a JSON array nor a JSON object")
+	return nil, fmt.Errorf("data does not match standard row formats (array or mapped_rows)")
 }
+

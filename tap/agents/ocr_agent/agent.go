@@ -72,8 +72,15 @@ func NewAgent(env core.Environment) core.Runnable {
 		}
 
 		if err := a.handleCFP(msg); err != nil {
-			a.Logger.Error("Transient error processing message, nacking", "error", err)
-			msg.Nak()
+			a.Logger.Error("Transient error processing message, replying with FAILURE", "error", err)
+			
+			// Parse original envelope again to reply gracefully
+			var origEnv core.Envelope
+			if envErr := json.Unmarshal(msg.Data, &origEnv); envErr == nil {
+				a.ReplyFailure(msg, origEnv, err)
+			} else {
+				msg.Nak()
+			}
 			return
 		}
 
@@ -132,7 +139,7 @@ func (a *OCRAgent) executeTask(env core.Envelope) error {
 	}
 
 	var payload OCRTaskPayload
-	if err := json.Unmarshal(task.Payload, &payload); err != nil {
+	if err := core.UnmarshalTaskPayload(task.Payload, &payload); err != nil {
 		return fmt.Errorf("failed to parse task payload: %w", err)
 	}
 
@@ -219,10 +226,9 @@ func (a *OCRAgent) executeTask(env core.Envelope) error {
 		return nil
 	}
 
-	return a.ExecuteGlobalWorkflow(
+	return a.ExecuteLocalWorkflow(
 		context.Background(),
-		a.queries,
-		workflowID,
+		task.ID,
 		wfCfg,
 		llmCallback,
 		onComplete,

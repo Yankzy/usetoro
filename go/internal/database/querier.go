@@ -28,7 +28,7 @@ type Querier interface {
 	// =========================================================================
 	// Cleanup Mode Queries (now stored in fignode schema)
 	// =========================================================================
-	CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (FignodeStagingSession, error)
+	CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (CreateCleanupSessionRow, error)
 	CreateEmployeeProfile(ctx context.Context, arg CreateEmployeeProfileParams) error
 	// =========================================================================
 	// Auth: Employee Registration & Login
@@ -71,7 +71,7 @@ type Querier interface {
 	GetBlueprintByName(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
 	GetBlueprintByNameOrTriggerTopic(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
 	GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanupRowRow, error)
-	GetCleanupSession(ctx context.Context, id pgtype.UUID) (FignodeStagingSession, error)
+	GetCleanupSession(ctx context.Context, id pgtype.UUID) (GetCleanupSessionRow, error)
 	GetCompanyInfo(ctx context.Context, realmID string) (ShadowErpCompanyInfo, error)
 	GetConditionsByRuleGroups(ctx context.Context, ruleGroupIds []int32) ([]ShadowErpRuleCondition, error)
 	GetConnectionWithWebhookTimes(ctx context.Context, arg GetConnectionWithWebhookTimesParams) (GetConnectionWithWebhookTimesRow, error)
@@ -157,11 +157,12 @@ type Querier interface {
 	InsertSkip(ctx context.Context, id pgtype.UUID) error
 	// Returns sessions for a realm (when realm_id is provided) OR sessions created by a user
 	// (when realm_id is NULL). Exactly one of the two filters will be non-null per call.
-	ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]FignodeStagingSession, error)
+	ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]ListCleanupSessionsRow, error)
 	LogBulkBurn(ctx context.Context, arg LogBulkBurnParams) (ToroCoreWalletTransaction, error)
 	LogPurchase(ctx context.Context, arg LogPurchaseParams) (ToroCoreWalletTransaction, error)
 	LogStalledMessage(ctx context.Context, arg LogStalledMessageParams) (ToroCoreStalledMessage, error)
 	LogWorkflowHistory(ctx context.Context, arg LogWorkflowHistoryParams) (ToroCoreWorkflowHistory, error)
+	MarkCleanupSessionAmbiguous(ctx context.Context, arg MarkCleanupSessionAmbiguousParams) error
 	MarkRowPosted(ctx context.Context, arg MarkRowPostedParams) error
 	OverrideCleanupRow(ctx context.Context, arg OverrideCleanupRowParams) (OverrideCleanupRowRow, error)
 	// =========================================================================

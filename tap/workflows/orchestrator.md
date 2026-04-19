@@ -163,7 +163,25 @@ Envelope {
 }
 ```
 
+Before `dispatchStep` is called the orchestrator runs `scheduleReadySteps`, which invokes `readySteps` to ensure all the `WorkflowStep.DependsOn` entries are marked complete, any defined `route_condition` matches the stored `state.Variables` outputs, and the instance is not suspended. `buildStepPayload` merges each dependency proof into a `{"dependencies": {...}}` map (falling back to the initial trigger payload or `InstanceState.LastProof` for entry nodes) and wraps it with any `config` block, so fan-out/fan-in graphs naturally deliver all upstream results without additional schema enforcement—downstream actors simply read from the `dependencies` map produced for the step.
+
 ---
+
+### Switch Routing & Suspension
+
+Steps can attach a `config` block that is forwarded to the `workers.switch` worker. The worker evaluates the configured rules against the incoming dependency payload and emits proofs that contain a `route` integer plus the upstream data. Downstream steps declare a `route_condition` to only run when the upstream route matches their expected value. Any switch step that declares `suspend_routes` moves the workflow into a suspended state instead of advancing; the orchestrator emits `workflow.events.suspended` and stops scheduling until a `workflow.resume` message overrides the route payload (typically once a manual-review automation resolves the ambiguity).
+
+Route steps can also write richer metadata (e.g., `ambiguity_reason`) which the orchestrator copies into `InstanceState.SuspensionReason` when the suspension triggers. While suspended, the workflow holds the route-proof inside `state.Variables[stepID]`; a resume request either provides an updated payload or uses the stored values to continue, clearing `Suspended` and `SuspensionRoute` before rerunning `scheduleReadySteps`.
+
+---
+
+### Sub-Workflows
+
+When a step declares `sub_workflow`, the Orchestrator **does not dispatch to an agent**. Instead it spins up a child workflow instance for the referenced blueprint, appending the new instance ID to the parent's `instance_path` and storing the current step ID as `parent_step_id`. The child is bootstrapped internally (no NATS trigger message) and inherits the parent's payload via `buildStepPayload`.
+
+Child conversation IDs encode the extended path (`root/child/step`) so the inbox parser can deduce both the executing instance and the ancestor stack. When the child reaches completion the orchestrator automatically marks the parent `sub_workflow` step as completed, merges the child's final proof into the parent's `variables`, and advances any downstream dependencies.
+
+The hierarchical `instance_path` embedded in the conversation ID is also used for resume/DLQ logic: `handleIncoming` slices the path before the trailing step ID, uses the final UUID as the current instance, and keeps the ancestors in memory so parents can react when nested runs finish (e.g., to merge proofs or clear suspensions).
 
 ## 8. Proof Correlation — The ConversationID Contract
 
@@ -172,11 +190,12 @@ This is the key mechanism that allows one shared inbox to serve all active workf
 ### At dispatch time
 
 ```go
-convID := instanceID + "." + step.ID
-// e.g. "550e8400-e29b-41d4-a716-446655440000.map_columns"
+convID := buildConversationID(instancePath, step.ID)
+// e.g. "550e8400-e29b-41d4-a716-446655440000/map_columns"
+// Nested: "root-id/child-id/flatten_rows"
 ```
 
-This compound key is embedded in the FIPA `ConversationID` (`cid`) field of every outbound envelope.
+`buildConversationID` joins the stored `instance_path` by `/`, so nested workflows automatically emit conversation IDs that encode the full ancestry. The resulting string is embedded in the FIPA `ConversationID` (`cid`) field of every outbound envelope.
 
 ### Agents/Workers echo it back
 
@@ -185,9 +204,10 @@ Every agent and worker **must** copy the `ConversationID` verbatim from the task
 ### At receipt (handleIncoming)
 
 ```go
-parts       := strings.Split(env.ConversationID, ".")
-instanceID  := parts[0]   // → UUID → DB lookup
-stepID      := parts[1]   // → validates against state.CurrentStepID
+parts := strings.Split(env.ConversationID, "/")
+instancePath := parts[:len(parts)-1]
+stepID := parts[len(parts)-1]
+instanceID := instancePath[len(instancePath)-1] // UUID → DB lookup
 ```
 
 With `instanceID` the Orchestrator fetches `InstanceState` from Postgres, which contains:
@@ -204,9 +224,17 @@ If `stepID != state.CurrentStepID` the message is Ack'd and discarded (stale).
 
 ```json
 {
-  "workflow_def":    "CSV Cleaner Pipeline",
-  "current_step_id": "map_columns",
-  "variables":       {}
+  "workflow_def":     "CSV Cleaner Pipeline",
+  "current_step_id":  "map_columns",
+  "instance_path":    ["550e8400-e29b-41d4-a716-446655440000"],
+  "active_steps":     {"map_columns": true},
+  "completed_steps":  {},
+  "variables":        {},
+  "last_proof":       null,
+  "suspended":        false,
+  "suspension_step":  null,
+  "suspension_route": 0,
+  "suspension_reason": ""
 }
 ```
 
@@ -220,7 +248,9 @@ If `stepID != state.CurrentStepID` the message is Ack'd and discarded (stale).
 | INFORM step ID mismatch | Ack + discard (stale/duplicate) |
 | DB / dispatch error | Nak (message redelivered by NATS) |
 
-The **payload passed to each next step is the raw `env.Body`** of the INFORM proof from the previous step. Agents/workers control data forwarding implicitly through what they put in their proof body.
+`InstanceState.ActiveSteps` tracks in-flight steps, `CompletedSteps` is the guard for `readySteps`, and `Suspended` plus the suspension metadata drive the manual resume path.
+
+The **payload passed to each next step is constructed by `buildStepPayload`**: it merges proofs from every `WorkflowStep.DependsOn` entry into a `dependencies` map, uses the trigger payload or `InstanceState.LastProof` when no dependencies exist, and stores the latest proof in `state.Variables[stepID]` for fan-in consumers. Because each proof is retained under its step ID, downstream actors simply read the `dependencies` map without requiring new schema enforcement from the orchestrator.
 
 ---
 
@@ -266,6 +296,8 @@ On every state transition, `publishStatus` fires an event on:
 ```
 workflow.events.<status>
 ```
+
+Additionally, whenever a switch step triggers `suspend_routes` (e.g., the `ambiguity_gate` hits route `1`), the orchestrator emits `workflow.events.ambiguous`. That event carries the `step_id`, `route`, `proof`, and the `suspension_reason`, so websocket consumers can drop an alert into the client room before the workflow resumes.
 
 Where `<status>` is one of `started`, `running`, `completed`.
 

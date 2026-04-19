@@ -62,6 +62,7 @@ nats:
         subjects:
           - almanac.register
           - almanac.query
+          - almanac.register.dlq
 
     ledger:
       stream_name: LEDGER
@@ -96,6 +97,9 @@ nats:
           - worker.inbox.>
           - workflow.events.>
           - workflow.query.>
+          - workflow.dlq.trigger
+          - workflow.dlq.inbox
+          - workflow.resume
 
     workflow_triggers:
       stream_name: WORKFLOW_TRIGGERS
@@ -112,22 +116,35 @@ agents:
     engine: "internal"
     internal_module: "csv-mapping-agent"
     activity_type: "agents.accounting.map_csv"
+    task_queue: "tasks.accounting.1.map_csv"
     system_prompt: |
       You are an expert data analyst parsing raw bank statement CSV headers. Analyze the columns and map them to standard accounting fields. You MUST reply with valid JSON.
-      The JSON must strictly conform to this schema and ONLY contain these fields:
+      The JSON must strictly conform to this schema:
       {
         "date_col_idx": <int>,
         "description_col_idx": <int>,
-        "amount_col_idx": <int>,
-        "is_split_amount": <false unless there are clearly SEPARATE debit and credit columns>,
-        "debit_col_idx": <null if not split>,
-        "credit_col_idx": <null if not split>,
-        "vendor_col_idx": <null if no explicit vendor column>,
-        "customer_col_idx": <null if no customer column>,
+        "amount_col_idx": <int or null>,
+        "is_split_amount": <bool>,
+        "debit_col_idx": <int or null>,
+        "credit_col_idx": <int or null>,
+        "vendor_col_idx": <int or null>,
+        "customer_col_idx": <int or null>,
+        "custom_col_idx": <int or null>,
         "is_expense_positive": <bool>,
-        "confidence_score": <float 0 to 1>
+        "confidence_score": <float 0 to 1>,
+        "is_ambiguous": <bool>,
+        "ambiguity_reason": <string or null>,
+        "reasoning": <string explaining the mapping choices>
       }
-      Crucially, ensure description_col_idx corresponds to the memo/description column, not the date column! Use proper null types in JSON, never use 0 to represent absence!
+
+      SPLIT AMOUNTS: If the statement uses separate Debit and Credit columns, set is_split_amount to true, provide debit_col_idx and credit_col_idx, and set amount_col_idx to null.
+      NULL HANDLING: For any optional field that is NOT present, you MUST set its index to null. Do NOT use 0 as a placeholder.
+
+      AMBIGUITY (Polarity): The data is ambiguous if you cannot definitively determine the cash direction (Inflow vs Outflow). This happens when there is only a single 'Amount' column with NO polarity indicators (no signs '-' or parentheses '()'). If this occurs, set is_ambiguous to true and provide an ambiguity_reason using precise language (e.g., 'cannot distinguish Cash Inflow from Outflow').
+
+      Use precise accounting language: refer to cash flow directions as "Cash Inflow" and "Cash Outflow", never as "Income" or "Expense". Flag ambiguity if inflow vs outflow cannot be distinguished.
+
+      Crucially, determine the sign convention (is_expense_positive). Look at obvious outflows (like 'AMZN', 'AWS', 'Starbucks', 'Uber', or rent/tax payments). If these outflows are represented by positive numbers, set is_expense_positive to true. If they are negative, set it to false.
     dependencies:
       database: false
       db_queries: true
@@ -139,6 +156,7 @@ agents:
     engine: "internal"
     internal_module: "reconcile-expense-agent"
     activity_type: "agents.accounting.reconcile_expense"
+    task_queue: "tasks.accounting.1.reconcile_expense"
     output_subject: "proof.accounting.cleanup.reconcile.expense"
     dependencies:
       database: false
@@ -151,6 +169,7 @@ agents:
     engine: "internal"
     internal_module: "reconcile-revenue-agent"
     activity_type: "agents.accounting.reconcile_revenue"
+    task_queue: "tasks.accounting.1.reconcile_revenue"
     output_subject: "proof.accounting.cleanup.reconcile.revenue"
     dependencies:
       database: false
@@ -163,6 +182,7 @@ agents:
     engine: "internal"
     internal_module: "approval-agent"
     activity_type: "agents.accounting.approval"
+    task_queue: "tasks.accounting.1.approval"
     dependencies:
       database: false
       db_queries: false
@@ -174,6 +194,7 @@ agents:
     engine: "internal"
     internal_module: "stripe-processor-agent"
     activity_type: "agents.payments.stripe_receipt_processor"
+    task_queue: "tasks.payments.1.stripe_receipt_processor"
     dependencies:
       database: false
       db_queries: true
@@ -186,6 +207,7 @@ agents:
     internal_module: "intent-extractor-agent"
     activity_type: "agents.intent.classify"
     output_subject: "proof.intent.classify"
+    task_queue: "tasks.intent.1.classify"
     system_prompt: |
       You are the Intent Extractor Agent. Analyze incoming SMS, MMS, or text and classify the intent using ONLY the labels defined in the schema below. Extract numerical entities where applicable. Respond ONLY in valid JSON matching the exact schema provided — no markdown, no explanation, no extra fields.
     dependencies:
@@ -227,6 +249,10 @@ workers:
     group: ""
   attachable:
     subject: "ledger.shadow_erp_attachables.insert"
+    group: ""
+  switch_worker_service:
+    activity_type: "workers.switch"
+    subject: ""
     group: ""
   webhooks:
     activity_type: "workers.webhooks.execute"

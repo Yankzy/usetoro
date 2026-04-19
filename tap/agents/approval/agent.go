@@ -39,8 +39,14 @@ func NewAgent(env core.Environment) core.Runnable {
 		}
 
 		if err := a.handleApproval(context.Background(), msg); err != nil {
-			a.Logger.Error("Transient error processing message, nacking", "error", err)
-			msg.Nak()
+			a.Logger.Error("Transient error processing message, replying with FAILURE", "error", err)
+
+			var origEnv core.Envelope
+			if envErr := json.Unmarshal(msg.Data, &origEnv); envErr == nil {
+				a.ReplyFailure(msg, origEnv, err)
+			} else {
+				msg.Nak()
+			}
 			return
 		}
 

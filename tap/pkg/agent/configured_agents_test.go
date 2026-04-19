@@ -90,8 +90,8 @@ func TestConfiguredInternalAgents_RegisteredAndDerivedRouting(t *testing.T) {
 			t.Fatalf("agent %s requires output_subject in defaults.yaml", agentCfg.InternalModule)
 		}
 
-		if agentCfg.TaskQueue != "" {
-			t.Fatalf("agent %s should not define task_queue in defaults.yaml", agentCfg.InternalModule)
+		if agentCfg.TaskQueue == "" {
+			t.Fatalf("agent %s must define task_queue in defaults.yaml", agentCfg.InternalModule)
 		}
 
 		factory, ok := registry[agentCfg.InternalModule]
@@ -102,6 +102,9 @@ func TestConfiguredInternalAgents_RegisteredAndDerivedRouting(t *testing.T) {
 		expectedQueue, err := core.BuildTaskSubjectFromActivity(agentCfg.ActivityType, core.ComplexityEntry)
 		if err != nil {
 			t.Fatalf("invalid activity_type for module %s: %v", agentCfg.InternalModule, err)
+		}
+		if agentCfg.TaskQueue != expectedQueue {
+			t.Fatalf("agent %s task_queue mismatch: got %s want %s", agentCfg.InternalModule, agentCfg.TaskQueue, expectedQueue)
 		}
 
 		before := len(bus.subscriptions())

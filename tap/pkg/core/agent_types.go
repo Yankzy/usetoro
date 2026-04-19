@@ -49,8 +49,8 @@ type AgentConfig struct {
 	OutputSubject string `yaml:"output_subject,omitempty" mapstructure:"output_subject"`
 
 	// TaskQueue is the public NATS subject the Orchestrator assigns to this agent's activity_type.
-	// Populated at runtime by the Orchestrator after loading workflow definitions — not set in defaults.yaml.
-	TaskQueue string `yaml:"-" mapstructure:"-"`
+	// When provided in defaults.yaml it becomes the explicit queue for the capability.
+	TaskQueue string `yaml:"task_queue" mapstructure:"task_queue"`
 
 	// QueueGroup and DurableName are derived at runtime from the DID. Not set in defaults.yaml.
 	QueueGroup  string `yaml:"-" mapstructure:"-"`

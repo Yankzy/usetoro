@@ -365,6 +365,11 @@ Start with **AV-03** — the schema is the foundation. Every other composability
   - Update `docs/Composability.md` with new schema, ConversationID, task-queue policy, DAG behavior, and DLQ/JS requirements.
   - Add concise code comments where behavior is non-obvious.
 
+- Sub-Workflow Lifecycle
+  - Steps that declare `sub_workflow` now bootstrap their own child workflow instances via the same blueprint registry instead of routing to an agent.
+  - The orchestrator stores a `parent_step_id` on the child state, and conversation IDs are emitted as `root/child/.../step`, allowing the inbox parser to identify both the executing instance and its ancestor stack.
+  - When a child workflow reaches completion the orchestrator automatically marks the parent step as completed, merges the child's last proof into the parent's `variables`, and resumes the parent's dependencies without extra plumbing.
+
 **Tests**
 - Unit: graph advancement (fan-out/fan-in), branch handling, sub-workflow dispatch, ConversationID parse/build, state accumulation, queue mismatch warning, Almanac retry/DLQ decision, orchestrator DLQ decision logic.
 - Integration (NATS/JetStream harness): durable Almanac registration survives restart; poisoned registration lands in DLQ; trigger/inbox poison messages land in DLQ after retries; healthy messages process and ack; branched workflow completes with merged variables.
@@ -373,4 +378,16 @@ Start with **AV-03** — the schema is the foundation. Every other composability
 **Assumptions**
 - Reusing existing streams for DLQ subjects is acceptable; if ops prefers isolation, create separate DLQ streams but keep subjects as named.
 - Backoff example (1s, 5s, 30s, 2m, 5m) and `MaxDeliver=5` are acceptable defaults; adjust per SLOs.
+
+## Implementation Status
+
+**Implemented**
+- `tap/workflows/csv_cleaner_pipeline.yaml` has been migrated to DAG semantics: every step now records its `depends_on`, the `ambiguity_gate` uses the shared `workers.switch` worker to signal ambiguous rows, and the `commit_mapped_columns` path is gated by the route value so the workflow naturally suspends whenever `IsAmbiguous` is true.
+- The orchestrator already evaluates `depends_on`, honors `route_condition`/`suspend_routes`, and builds payloads from accumulated `dependencies` so the CSV pipeline runs through the new composable paths without changing the core control plane.
+- Local `go build ./go/cmd/protocol` and `go test ./tap/workflows` both pass, confirming the codebase compiles and the orchestrator helpers continue to satisfy the new pipeline layout.
+
+**Remaining**
+- Normalize the remaining workflows (and any new ones) so they declare explicit dependencies rather than relying on ordinal order; this is crucial to show the DAG story consistently to operators.
+- Finish the rest of the plan’s scope: jetstream-backed Almanac registration + DLQ, orchestrator DLQs/backoff management, and the “task queue source of truth” migration (config vs. workflow definitions).
+- Expand the test suite to cover generic DAG behaviors (fan-in/fan-out, success/failure branches, suspended routes) and to guard the new DLQ/registration paths once they are implemented.
 - Agents can consume payloads built from merged per-step outputs (JSON) without additional schema enforcement for now.

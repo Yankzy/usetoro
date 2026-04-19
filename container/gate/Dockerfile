@@ -7,7 +7,10 @@ COPY go/go.mod go/go.sum ./
 COPY tap /tap
 
 # Copy source code and vendor
-COPY go/ .
+COPY go/vendor ./vendor
+COPY go/internal ./internal
+COPY go/graph ./graph
+COPY go/cmd/gate ./cmd/gate
 
 # Build the API server
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /gate ./cmd/gate/main.go

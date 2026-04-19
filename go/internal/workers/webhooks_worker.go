@@ -136,28 +136,17 @@ func (w *WebhooksWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	var whData WebhookData
 	var foundData bool
 
-	// Parse TaskDefinition for ACCEPT_PROPOSAL
-	var taskDef core.TaskDefinition
-	if err := json.Unmarshal(bodyBytes, &taskDef); err == nil && len(taskDef.Payload) > 0 {
-		if unmarshalErr := json.Unmarshal(taskDef.Payload, &whData); unmarshalErr == nil {
+	// Standardized Extraction Pattern
+	if env["perf"] == string(core.ACCEPT_PROPOSAL) {
+		var taskDef core.TaskDefinition
+		if err := json.Unmarshal(bodyBytes, &taskDef); err == nil && len(taskDef.Payload) > 0 {
+			if err := core.UnmarshalTaskPayload(taskDef.Payload, &whData); err == nil {
+				foundData = true
+			}
+		}
+	} else if env["perf"] == string(core.INFORM) {
+		if err := core.UnmarshalTaskPayload(bodyBytes, &whData); err == nil {
 			foundData = true
-		}
-	}
-
-	// Fallback to direct proof parsing (INFORM)
-	if !foundData {
-		var proof struct {
-			Data json.RawMessage `json:"data"`
-		}
-		if err := json.Unmarshal(bodyBytes, &proof); err == nil && len(proof.Data) > 0 {
-			if unmarshalErr := json.Unmarshal(proof.Data, &whData); unmarshalErr == nil {
-				foundData = true
-			}
-		} else {
-			// Fallback: Body is the exact webhook config payload
-			if err := json.Unmarshal(bodyBytes, &whData); err == nil {
-				foundData = true
-			}
 		}
 	}
 

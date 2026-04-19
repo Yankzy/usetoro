@@ -207,17 +207,63 @@ func mapDatabaseAccountToModel(a *database.ShadowErpAccount) *model.Account {
 
 func mapSessionToModel(s database.FignodeStagingSession) *model.FignodeSession {
 	out := &model.FignodeSession{
-		ID:        uuid.UUID(s.ID.Bytes).String(),
-		RowCount:  int32(s.RowCount),
-		Status:    s.Status,
-		CreatedAt: s.CreatedAt.Time,
-		UpdatedAt: s.UpdatedAt.Time,
+		ID:              uuid.UUID(s.ID.Bytes).String(),
+		RowCount:        int32(s.RowCount),
+		IsAmbiguous:     s.IsAmbiguous,
+		Status:          s.Status,
+		CreatedAt:       s.CreatedAt.Time,
+		UpdatedAt:       s.UpdatedAt.Time,
 	}
 	if s.RealmID.Valid {
 		out.RealmID = &s.RealmID.String
 	}
 	if s.FileName.Valid {
 		out.FileName = &s.FileName.String
+	}
+	if s.AmbiguityReason.Valid {
+		out.AmbiguityReason = &s.AmbiguityReason.String
+	}
+	return out
+}
+
+func mapListCleanupSessionsRowToModel(s database.ListCleanupSessionsRow) *model.FignodeSession {
+	out := &model.FignodeSession{
+		ID:              uuid.UUID(s.ID.Bytes).String(),
+		RowCount:        int32(s.RowCount),
+		IsAmbiguous:     s.IsAmbiguous,
+		Status:          s.Status,
+		CreatedAt:       s.CreatedAt.Time,
+		UpdatedAt:       s.UpdatedAt.Time,
+	}
+	if s.RealmID.Valid {
+		out.RealmID = &s.RealmID.String
+	}
+	if s.FileName.Valid {
+		out.FileName = &s.FileName.String
+	}
+	if s.AmbiguityReason.Valid {
+		out.AmbiguityReason = &s.AmbiguityReason.String
+	}
+	return out
+}
+
+func mapGetCleanupSessionRowToModel(s database.GetCleanupSessionRow) *model.FignodeSession {
+	out := &model.FignodeSession{
+		ID:              uuid.UUID(s.ID.Bytes).String(),
+		RowCount:        int32(s.RowCount),
+		IsAmbiguous:     s.IsAmbiguous,
+		Status:          s.Status,
+		CreatedAt:       s.CreatedAt.Time,
+		UpdatedAt:       s.UpdatedAt.Time,
+	}
+	if s.RealmID.Valid {
+		out.RealmID = &s.RealmID.String
+	}
+	if s.FileName.Valid {
+		out.FileName = &s.FileName.String
+	}
+	if s.AmbiguityReason.Valid {
+		out.AmbiguityReason = &s.AmbiguityReason.String
 	}
 	return out
 }
@@ -925,7 +971,7 @@ func (r *queryResolver) cleanupSessionsHelper(ctx context.Context, realmID *stri
 	}
 	out := make([]*model.FignodeSession, 0, len(rows))
 	for _, s := range rows {
-		out = append(out, mapSessionToModel(s))
+		out = append(out, mapListCleanupSessionsRowToModel(s))
 	}
 	return out, nil
 }

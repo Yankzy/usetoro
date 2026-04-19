@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -207,4 +208,42 @@ type CredentialProof struct {
 	ProofPurpose       string    `json:"proofPurpose"`       // e.g., "assertionMethod"
 	VerificationMethod string    `json:"verificationMethod"` // The key used for signing
 	SignatureValue     string    `json:"signatureValue"`     // The base64-encoded signature
+}
+
+// --- 5. Protocol Helpers ---
+
+// UnmarshalTaskPayload is a protocol-aware unmarshaler that handles both
+// raw JSON payloads and payloads wrapped in FIPA 'Proof' envelopes.
+func UnmarshalTaskPayload(payload []byte, target interface{}) error {
+	if len(payload) == 0 {
+		return fmt.Errorf("empty payload")
+	}
+
+	// 1. Try to unmarshal as FIPA Proof
+	var proof Proof
+	if err := json.Unmarshal(payload, &proof); err == nil && len(proof.Data) > 0 && proof.Type != "" {
+		return json.Unmarshal(proof.Data, target)
+	}
+
+	// 2. Fallback to direct unmarshal for backward compatibility
+	return json.Unmarshal(payload, target)
+}
+
+// RowString is a resilient helper to extract a string value from a row map,
+// checking multiple keys and trimming the result.
+func RowString(row map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := row[key]
+		if !ok {
+			continue
+		}
+		if s, ok := raw.(string); ok {
+			return strings.TrimSpace(s)
+		}
+		// Handle non-string types gracefully by converting to string
+		if raw != nil {
+			return strings.TrimSpace(fmt.Sprintf("%v", raw))
+		}
+	}
+	return ""
 }

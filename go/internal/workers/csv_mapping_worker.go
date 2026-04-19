@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -101,6 +102,49 @@ func (e *CSVMappingWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	return nil
 }
 
+func extractString(raw interface{}) string {
+	if raw == nil {
+		return ""
+	}
+	if str, ok := raw.(string); ok {
+		return strings.TrimSpace(str)
+	}
+	return strings.TrimSpace(fmt.Sprintf("%v", raw))
+}
+
+func searchStringValue(value interface{}, keys ...string) string {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for _, key := range keys {
+			if raw, ok := typed[key]; ok {
+				if str := extractString(raw); str != "" {
+					return str
+				}
+			}
+		}
+		for _, child := range typed {
+			if str := searchStringValue(child, keys...); str != "" {
+				return str
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if str := searchStringValue(item, keys...); str != "" {
+				return str
+			}
+		}
+	}
+	return ""
+}
+
+func findSessionIDFromProof(data []byte) string {
+	var payload interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ""
+	}
+	return searchStringValue(payload, "session_id", "SessionID", "entity_id", "upload_id")
+}
+
 // RawRow matches the struct output by the TAP Cleanup Agent
 type RawRow struct {
 	SessionID   string `json:"SessionID"`
@@ -115,6 +159,7 @@ type RawRow struct {
 // handleProof processes the finalized mapping output from the AI TAP Agent.
 func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error {
 	// 1. Unmarshal TAP Envelope
+	e.logger.Info("📡 [DEBUG] csv_mapping_worker received message", "data_len", len(msg.Data), "subject", msg.Subject)
 	var env map[string]interface{}
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
 		e.logger.Error("csv mapping worker: bad proof envelope", "error", err)
@@ -134,37 +179,26 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 	}
 
 	bodyBytes, _ := json.Marshal(env["body"])
-	var proof struct {
-		Type string          `json:"type"`
-		Data json.RawMessage `json:"data"`
-	}
+	var rows []map[string]interface{}
+	var err error
 
-	// First try interpreting it as a FIPA ACCEPT_PROPOSAL TaskDefinition payload
-	var taskDef struct {
-		Payload json.RawMessage `json:"payload"`
-	}
-	if err := json.Unmarshal(bodyBytes, &taskDef); err == nil && len(taskDef.Payload) > 0 {
-		if unmarshalErr := json.Unmarshal(taskDef.Payload, &proof); unmarshalErr != nil {
-			e.logger.Error("csv mapping worker: task payload unmarshal error", "error", unmarshalErr)
-			return nil
-		}
-	} else {
-		// Fallback to direct proof parsing (INFORM)
-		if err := json.Unmarshal(bodyBytes, &proof); err != nil {
-			e.logger.Error("csv mapping worker: proof unmarshal error", "error", err)
-			return nil
+	// 1. Try extracting rows from the body directly (handles switch worker outputs and raw dependency maps)
+	rows, err = ExtractRows(bodyBytes)
+	if err != nil || len(rows) == 0 {
+		// 2. Fallback: try interpreting as a traditional Proof (INFORM) or TaskDefinition (ACCEPT_PROPOSAL)
+		var proof core.Proof
+		if err := json.Unmarshal(bodyBytes, &proof); err == nil && len(proof.Data) > 0 {
+			rows, _ = ExtractRows(proof.Data)
+		} else {
+			var taskDef core.TaskDefinition
+			if err := json.Unmarshal(bodyBytes, &taskDef); err == nil && len(taskDef.Payload) > 0 {
+				rows, _ = ExtractRows(taskDef.Payload)
+			}
 		}
 	}
 
-	// Ensure proof type is proof.api or API_CALL
-	if proof.Type != "API_CALL" && proof.Type != string(core.ProofAPI) {
-		e.logger.Warn("csv mapping worker: dropping message, type mismatch", "type_val", proof.Type)
-		return nil // not meant for us
-	}
-
-	rows, err := ExtractRows(proof.Data)
-	if err != nil {
-		e.logger.Error("csv mapping worker: failed to extract rows", "error", err)
+	if len(rows) == 0 {
+		e.logger.Error("csv mapping worker: failed to extract rows from any part of the envelope", "body", string(bodyBytes))
 		return nil
 	}
 
@@ -174,13 +208,19 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 	}
 
 	// Get session/realm from the first row
-	sessionID, _ := rows[0]["SessionID"].(string)
-	realmID, _ := rows[0]["RealmID"].(string)
+	sessionID := core.RowString(rows[0], "SessionID", "session_id")
+	realmID := core.RowString(rows[0], "RealmID", "realm_id")
 
 	if sessionID == "" {
-		e.logger.Warn("csv mapping worker: missing sessionID in rows")
-		return nil
+		if fallback := searchForSessionID(rows[0]); fallback != "" {
+			sessionID = fallback
+		} else {
+			e.logger.Warn("csv mapping worker: missing sessionID in rows", "rows_count", len(rows), "first_row_keys", getMapKeys(rows[0]))
+			return nil
+		}
 	}
+
+	e.logger.Info("📡 [DEBUG] csv_mapping_worker extracted metadata", "session_id", sessionID, "realm_id", realmID)
 
 	var pgSessionID pgtype.UUID
 	pgSessionID.Scan(sessionID)
@@ -255,7 +295,7 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 			"cid":  cid,
 			"body": map[string]interface{}{
 				"type": "proof.accounting.cleanup.inserted",
-				"data": msg.Data, // pass through original
+				"data": json.RawMessage(bodyBytes), // pass through actual mapping data
 			},
 			"sig": "worker-sig",
 		}
@@ -280,4 +320,47 @@ func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
 		return NewCSVMappingWorker(deps.Store.Queries, deps.EntityResolver, deps.CoAMapper, deps.Queue, deps.Logger, deps.Config)
 	})
+}
+
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func extractStringValue(raw interface{}) string {
+	if raw == nil {
+		return ""
+	}
+	if str, ok := raw.(string); ok {
+		return strings.TrimSpace(str)
+	}
+	return strings.TrimSpace(fmt.Sprintf("%v", raw))
+}
+
+func searchForSessionID(value interface{}) string {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for _, key := range []string{"session_id", "SessionID"} {
+			if raw, ok := typed[key]; ok {
+				if str := extractStringValue(raw); str != "" {
+					return str
+				}
+			}
+		}
+		for _, child := range typed {
+			if result := searchForSessionID(child); result != "" {
+				return result
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if result := searchForSessionID(item); result != "" {
+				return result
+			}
+		}
+	}
+	return ""
 }

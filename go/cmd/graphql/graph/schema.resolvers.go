@@ -1140,7 +1140,7 @@ func (r *queryResolver) FignodeSessions(ctx context.Context, realmID *string) ([
 	}
 	out := make([]*model.FignodeSession, 0, len(rows))
 	for _, s := range rows {
-		out = append(out, mapSessionToModel(s))
+		out = append(out, mapListCleanupSessionsRowToModel(s))
 	}
 	return out, nil
 }
@@ -1158,7 +1158,7 @@ func (r *queryResolver) FignodeSession(ctx context.Context, sessionID string) (*
 		return nil, fmt.Errorf("session not found")
 	}
 
-	return mapSessionToModel(session), nil
+	return mapGetCleanupSessionRowToModel(session), nil
 }
 
 // FignodeBatch is the resolver for the fignodeBatch field.

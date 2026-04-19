@@ -139,15 +139,9 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	bodyBytes := env.Body
 	if env.Performative == core.ACCEPT_PROPOSAL {
 		var taskDef core.TaskDefinition
-		if err := json.Unmarshal(env.Body, &taskDef); err != nil {
-			e.logger.Warn("enrichment worker: dropping malformed task definition", "error", err)
-			return nil
+		if err := json.Unmarshal(env.Body, &taskDef); err == nil && len(taskDef.Payload) > 0 {
+			bodyBytes = taskDef.Payload
 		}
-		if len(taskDef.Payload) == 0 {
-			e.logger.Warn("enrichment worker: dropping message with empty task payload")
-			return nil
-		}
-		bodyBytes = taskDef.Payload
 	}
 
 	rows, err := e.extractRowsPayload(bodyBytes, 0)
@@ -160,12 +154,12 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		return nil
 	}
 
-	sessionID := rowString(rows[0], "SessionID", "session_id")
+	sessionID := core.RowString(rows[0], "SessionID", "session_id")
 	if sessionID == "" {
 		e.logger.Warn("enrichment worker: missing SessionID in first row")
 		return nil
 	}
-	realmID := rowString(rows[0], "RealmID", "realm_id")
+	realmID := core.RowString(rows[0], "RealmID", "realm_id")
 
 	var pgSessionID pgtype.UUID
 	if err := pgSessionID.Scan(sessionID); err != nil || !pgSessionID.Valid {
@@ -409,74 +403,24 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	return nil
 }
 
-func rowString(row map[string]interface{}, keys ...string) string {
-	for _, key := range keys {
-		raw, ok := row[key]
-		if !ok {
-			continue
-		}
-		if s, ok := raw.(string); ok {
-			return strings.TrimSpace(s)
-		}
-	}
-	return ""
-}
 
 func (e *EnrichmentWorker) extractRowsPayload(data []byte, depth int) ([]map[string]interface{}, error) {
 	if len(data) == 0 {
 		return nil, errors.New("empty payload")
 	}
-	if depth > 8 {
+	if depth > 5 {
 		return nil, errors.New("payload nesting too deep")
 	}
 
+	// Use the enhanced recursive ExtractRows from manager.go
 	if rows, err := ExtractRows(data); err == nil && len(rows) > 0 {
 		return rows, nil
 	}
 
-	var proof core.Proof
-	if err := json.Unmarshal(data, &proof); err == nil && len(proof.Data) > 0 {
-		if rows, innerErr := e.extractRowsPayload(proof.Data, depth+1); innerErr == nil && len(rows) > 0 {
-			return rows, nil
-		}
-	}
-
-	var taskDef core.TaskDefinition
-	if err := json.Unmarshal(data, &taskDef); err == nil && len(taskDef.Payload) > 0 {
-		if rows, innerErr := e.extractRowsPayload(taskDef.Payload, depth+1); innerErr == nil && len(rows) > 0 {
-			return rows, nil
-		}
-	}
-
-	var env core.Envelope
-	if err := json.Unmarshal(data, &env); err == nil && core.IsValidPerformative(env.Performative) && len(env.Body) > 0 {
-		if rows, innerErr := e.extractRowsPayload(env.Body, depth+1); innerErr == nil && len(rows) > 0 {
-			return rows, nil
-		}
-	}
-
-	var payloadWithData struct {
-		Type string          `json:"type"`
-		Data json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(data, &payloadWithData); err == nil && len(payloadWithData.Data) > 0 {
-		if rows, innerErr := e.extractRowsPayload(payloadWithData.Data, depth+1); innerErr == nil && len(rows) > 0 {
-			return rows, nil
-		}
-
-		var dataString string
-		if err := json.Unmarshal(payloadWithData.Data, &dataString); err == nil {
-			if rows, innerErr := e.extractRowsFromString(dataString, depth+1); innerErr == nil && len(rows) > 0 {
-				return rows, nil
-			}
-		}
-	}
-
+	// If it fails, it might be a nested string (base64 or escaped JSON)
 	var payloadString string
 	if err := json.Unmarshal(data, &payloadString); err == nil {
-		if rows, innerErr := e.extractRowsFromString(payloadString, depth+1); innerErr == nil && len(rows) > 0 {
-			return rows, nil
-		}
+		return e.extractRowsFromString(payloadString, depth+1)
 	}
 
 	return nil, errors.New("no rows payload found")

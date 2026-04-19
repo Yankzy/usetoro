@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
 
@@ -206,7 +207,7 @@ func (b *BaseAgent) Start() error {
 		"capabilities": []map[string]interface{}{
 			{"activity_type": b.Cfg.ActivityType},
 		},
-		"expiry": time.Now().Add(24 * time.Hour).Unix(),
+		"expiry": time.Now().Add(24 * time.Hour),
 	}
 	regBytes, err := json.Marshal(regPayload)
 	if err != nil {
@@ -257,5 +258,121 @@ func (b *BaseAgent) Stop() error {
 	if b.Sub != nil {
 		return nil
 	}
+	return nil
+}
+
+// ReplyFailure constructs and sends a standard FIPA FAILURE envelope to the original sender
+// preventing standard Jetstream Nacks from stalling sequences into infinite loops.
+func (b *BaseAgent) ReplyFailure(msg *nats.Msg, reqEnv core.Envelope, err error) error {
+	b.Logger.Error("Operation failed, replying with FAILURE FIPA envelope", "error", err)
+
+	payload := map[string]string{"error": err.Error()}
+
+	replyEnv, envErr := core.NewEnvelope(
+		uuid.New().String(),
+		b.Cfg.DID,
+		reqEnv.SenderDID,
+		reqEnv.ConversationID,
+		core.FAILURE,
+		payload,
+	)
+	if envErr != nil {
+		return fmt.Errorf("failed to create failure envelope: %w", envErr)
+	}
+
+	replyEnv.Signature = b.KP.Sign(replyEnv.Body)
+	replyBytes, _ := json.Marshal(replyEnv)
+
+	targetTopic := core.BuildAgentInbox(reqEnv.SenderDID)
+	if pubErr := b.Bus.Publish(targetTopic, replyBytes); pubErr != nil {
+		return fmt.Errorf("failed to publish failure envelope: %w", pubErr)
+	}
+
+	return msg.Ack()
+}
+
+// ExecuteLocalWorkflow executes heavily validated Redux schema evaluation steps 
+// entirely statelessly without forcing queries/commits against global workflow IDs.
+func (b *BaseAgent) ExecuteLocalWorkflow(
+	ctx context.Context,
+	taskID string,
+	wfCfg WorkflowConfig,
+	llmCallback LLMCallback,
+	onComplete func(nextState []byte) error,
+) error {
+	// ----- Phase 1: Initialize Local State -----
+	b.Logger.Info("🔄 [REDUX] Phase 1: Initializing local Redux workspace seamlessly")
+	
+	var currentSeq uint64 = 0
+	baseState := wfCfg.InitialState
+	if len(baseState) == 0 {
+		baseState = []byte("{}")
+	}
+
+	// ----- Phase 2: Boot Redux Store with full middleware stack -----
+	b.Logger.Info("🏗️ [REDUX] Phase 2: Initializing local Redux Store with schema + RBAC policies")
+	cfg := redux.DefaultConfig()
+	cfg.SchemaString = wfCfg.SchemaString
+	cfg.RBAC = wfCfg.RBAC
+
+	store, storeErr := redux.NewStore(cfg)
+	if storeErr != nil {
+		return fmt.Errorf("failed to initialize local redux store: %w", storeErr)
+	}
+
+	// ----- Phase 3: Circuit-breaker LLM retry loop -----
+	const maxRetries = 3
+	var faults []redux.DomainFault
+	var finalState []byte
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		b.Logger.Info("🧠 [REDUX] Phase 3: Executing LLM callback locally", "attempt", attempt+1, "previous_faults", len(faults))
+
+		patchArray, llmErr := llmCallback(faults, currentSeq, baseState)
+		if llmErr != nil {
+			return fmt.Errorf("llm callback failed (attempt %d): %w", attempt+1, llmErr)
+		}
+
+		event := redux.RFC6902Event{
+			EventID:    fmt.Sprintf("evt_%d", time.Now().UnixNano()),
+			SequenceID: currentSeq,
+			Timestamp:  time.Now(),
+			Type:       b.Cfg.ActivityType,
+			Actor:      b.Cfg.DID,
+			PatchArray: patchArray,
+		}
+
+		nextState, nextSeq, reduceFaults, reduceErr := store.Reduce(ctx, baseState, currentSeq, []redux.RFC6902Event{event})
+		if reduceErr != nil {
+			return fmt.Errorf("redux local store.Reduce fatal error: %w", reduceErr)
+		}
+
+		if len(reduceFaults) > 0 {
+			b.Logger.Warn("⚠️ [REDUX] DomainFaults detected, feeding back to LLM", "faults", len(reduceFaults), "attempt", attempt+1)
+			for _, f := range reduceFaults {
+				b.Logger.Warn("- Fault reason", "event_id", f.EventID, "error", f.Error)
+			}
+			faults = reduceFaults
+			continue
+		}
+
+		faults = nil
+		finalState = nextState
+		currentSeq = nextSeq
+		break
+	}
+
+	if len(faults) > 0 {
+		return fmt.Errorf("redux circuit breaker tripped after %d retries: %d unresolved faults", maxRetries, len(faults))
+	}
+
+	// ----- Phase 4: Invoke onComplete with validated state -----
+	if onComplete != nil {
+		b.Logger.Info("✅ [REDUX] Phase 4: Invoking onComplete handler with validated local state")
+		if err := onComplete(finalState); err != nil {
+			return fmt.Errorf("onComplete handler failed: %w", err)
+		}
+	}
+
 	return nil
 }

@@ -109,6 +109,8 @@ type FignodeSession {
   realmId: String     # null when QBO is not connected (Excel-only mode)
   fileName: String
   rowCount: Int!
+  isAmbiguous: Boolean!
+  ambiguityReason: String
   status: String!
   createdAt: Time!
   updatedAt: Time!

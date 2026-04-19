@@ -5,17 +5,17 @@
 -- name: CreateCleanupSession :one
 INSERT INTO fignode.staging_sessions (realm_id, created_by, file_name, row_count, status)
 VALUES (sqlc.narg('realm_id'), $1, $2, $3, 'PENDING')
-RETURNING id, realm_id, created_by, file_name, row_count, status, created_at, updated_at;
+RETURNING id, realm_id, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at;
 
 -- name: GetCleanupSession :one
-SELECT id, realm_id, created_by, file_name, row_count, status, created_at, updated_at
+SELECT id, realm_id, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
 FROM fignode.staging_sessions
 WHERE id = $1;
 
 -- name: ListCleanupSessions :many
 -- Returns sessions for a realm (when realm_id is provided) OR sessions created by a user
 -- (when realm_id is NULL). Exactly one of the two filters will be non-null per call.
-SELECT id, realm_id, created_by, file_name, row_count, status, created_at, updated_at
+SELECT id, realm_id, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
 FROM fignode.staging_sessions
 WHERE (sqlc.narg('realm_id')::TEXT IS NULL OR realm_id = sqlc.narg('realm_id')::TEXT)
   AND (sqlc.narg('created_by')::UUID IS NULL OR created_by = sqlc.narg('created_by')::UUID)
@@ -24,6 +24,11 @@ ORDER BY created_at DESC;
 -- name: UpdateCleanupSessionStatus :exec
 UPDATE fignode.staging_sessions
 SET status = $2, updated_at = NOW()
+WHERE id = $1;
+
+-- name: MarkCleanupSessionAmbiguous :exec
+UPDATE fignode.staging_sessions
+SET is_ambiguous = $2, ambiguity_reason = $3, updated_at = NOW()
 WHERE id = $1;
 
 -- name: UpdateCleanupSessionRowCount :exec

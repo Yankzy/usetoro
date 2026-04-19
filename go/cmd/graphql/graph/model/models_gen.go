@@ -82,13 +82,15 @@ type FignodePostResult struct {
 }
 
 type FignodeSession struct {
-	ID        string    `json:"id"`
-	RealmID   *string   `json:"realmId,omitempty"`
-	FileName  *string   `json:"fileName,omitempty"`
-	RowCount  int32     `json:"rowCount"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID              string    `json:"id"`
+	RealmID         *string   `json:"realmId,omitempty"`
+	FileName        *string   `json:"fileName,omitempty"`
+	RowCount        int32     `json:"rowCount"`
+	IsAmbiguous     bool      `json:"isAmbiguous"`
+	AmbiguityReason *string   `json:"ambiguityReason,omitempty"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 type FignodeStagingRow struct {

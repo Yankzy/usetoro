@@ -1,0 +1,58 @@
+# Version Control
+.git
+.gitignore
+
+# Go binaries and files
+bin/
+auth-service
+protocol
+ws-service
+go/gate
+go/sync
+go/protocol
+go/fignode
+go/ws
+go/graphql
+go/cdc-worker
+go/agents-runner
+go/almanac-check
+go/api.test
+go/settlement
+go/test-almanac
+go/test3
+go/test6
+go/usetoro
+**/dist/
+**/*.test
+**/*.out
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+
+# Caches
+.go_cache/
+go/.go_cache/
+.agent/
+.agents/
+.aider/
+.artifacts/
+.cursor/
+.logs/
+
+# Python
+**/node_modules/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+
+# Local data
+container/postgres/db_data/
+nats_1_data/
+nats_2_data/
+nats_3_data/
+redis_data/
+neo4j_data/
+dump.rdb
+consumer_output.log

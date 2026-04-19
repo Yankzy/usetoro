@@ -293,7 +293,7 @@ func main() {
 	defer qboConsumer.Stop()
 
 	// Create and start Workflow event consumer
-	workflowConsumer := wshandler.NewWorkflowEventConsumer(queueClient, hub, logger, cfg)
+	workflowConsumer := wshandler.NewWorkflowEventConsumer(queueClient, hub, logger, cfg, queries)
 	if err := workflowConsumer.Start(); err != nil {
 		logger.Error("Failed to start workflow event consumer", "error", err)
 		os.Exit(1)

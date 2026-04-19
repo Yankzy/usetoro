@@ -115,7 +115,7 @@ const createCleanupSession = `-- name: CreateCleanupSession :one
 
 INSERT INTO fignode.staging_sessions (realm_id, created_by, file_name, row_count, status)
 VALUES ($4, $1, $2, $3, 'PENDING')
-RETURNING id, realm_id, created_by, file_name, row_count, status, created_at, updated_at
+RETURNING id, realm_id, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
 `
 
 type CreateCleanupSessionParams struct {
@@ -125,17 +125,30 @@ type CreateCleanupSessionParams struct {
 	RealmID   pgtype.Text
 }
 
+type CreateCleanupSessionRow struct {
+	ID              pgtype.UUID
+	RealmID         pgtype.Text
+	CreatedBy       pgtype.UUID
+	FileName        pgtype.Text
+	RowCount        int32
+	Status          string
+	IsAmbiguous     bool
+	AmbiguityReason pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 // =========================================================================
 // Cleanup Mode Queries (now stored in fignode schema)
 // =========================================================================
-func (q *Queries) CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (FignodeStagingSession, error) {
+func (q *Queries) CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (CreateCleanupSessionRow, error) {
 	row := q.db.QueryRow(ctx, createCleanupSession,
 		arg.CreatedBy,
 		arg.FileName,
 		arg.RowCount,
 		arg.RealmID,
 	)
-	var i FignodeStagingSession
+	var i CreateCleanupSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.RealmID,
@@ -143,6 +156,8 @@ func (q *Queries) CreateCleanupSession(ctx context.Context, arg CreateCleanupSes
 		&i.FileName,
 		&i.RowCount,
 		&i.Status,
+		&i.IsAmbiguous,
+		&i.AmbiguityReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -328,14 +343,27 @@ func (q *Queries) GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanup
 }
 
 const getCleanupSession = `-- name: GetCleanupSession :one
-SELECT id, realm_id, created_by, file_name, row_count, status, created_at, updated_at
+SELECT id, realm_id, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
 FROM fignode.staging_sessions
 WHERE id = $1
 `
 
-func (q *Queries) GetCleanupSession(ctx context.Context, id pgtype.UUID) (FignodeStagingSession, error) {
+type GetCleanupSessionRow struct {
+	ID              pgtype.UUID
+	RealmID         pgtype.Text
+	CreatedBy       pgtype.UUID
+	FileName        pgtype.Text
+	RowCount        int32
+	Status          string
+	IsAmbiguous     bool
+	AmbiguityReason pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) GetCleanupSession(ctx context.Context, id pgtype.UUID) (GetCleanupSessionRow, error) {
 	row := q.db.QueryRow(ctx, getCleanupSession, id)
-	var i FignodeStagingSession
+	var i GetCleanupSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.RealmID,
@@ -343,6 +371,8 @@ func (q *Queries) GetCleanupSession(ctx context.Context, id pgtype.UUID) (Fignod
 		&i.FileName,
 		&i.RowCount,
 		&i.Status,
+		&i.IsAmbiguous,
+		&i.AmbiguityReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -835,7 +865,7 @@ func (q *Queries) InsertCleanupRow(ctx context.Context, arg InsertCleanupRowPara
 }
 
 const listCleanupSessions = `-- name: ListCleanupSessions :many
-SELECT id, realm_id, created_by, file_name, row_count, status, created_at, updated_at
+SELECT id, realm_id, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
 FROM fignode.staging_sessions
 WHERE ($1::TEXT IS NULL OR realm_id = $1::TEXT)
   AND ($2::UUID IS NULL OR created_by = $2::UUID)
@@ -847,17 +877,30 @@ type ListCleanupSessionsParams struct {
 	CreatedBy pgtype.UUID
 }
 
+type ListCleanupSessionsRow struct {
+	ID              pgtype.UUID
+	RealmID         pgtype.Text
+	CreatedBy       pgtype.UUID
+	FileName        pgtype.Text
+	RowCount        int32
+	Status          string
+	IsAmbiguous     bool
+	AmbiguityReason pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 // Returns sessions for a realm (when realm_id is provided) OR sessions created by a user
 // (when realm_id is NULL). Exactly one of the two filters will be non-null per call.
-func (q *Queries) ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]FignodeStagingSession, error) {
+func (q *Queries) ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]ListCleanupSessionsRow, error) {
 	rows, err := q.db.Query(ctx, listCleanupSessions, arg.RealmID, arg.CreatedBy)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []FignodeStagingSession
+	var items []ListCleanupSessionsRow
 	for rows.Next() {
-		var i FignodeStagingSession
+		var i ListCleanupSessionsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.RealmID,
@@ -865,6 +908,8 @@ func (q *Queries) ListCleanupSessions(ctx context.Context, arg ListCleanupSessio
 			&i.FileName,
 			&i.RowCount,
 			&i.Status,
+			&i.IsAmbiguous,
+			&i.AmbiguityReason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -876,6 +921,23 @@ func (q *Queries) ListCleanupSessions(ctx context.Context, arg ListCleanupSessio
 		return nil, err
 	}
 	return items, nil
+}
+
+const markCleanupSessionAmbiguous = `-- name: MarkCleanupSessionAmbiguous :exec
+UPDATE fignode.staging_sessions
+SET is_ambiguous = $2, ambiguity_reason = $3, updated_at = NOW()
+WHERE id = $1
+`
+
+type MarkCleanupSessionAmbiguousParams struct {
+	ID              pgtype.UUID
+	IsAmbiguous     bool
+	AmbiguityReason pgtype.Text
+}
+
+func (q *Queries) MarkCleanupSessionAmbiguous(ctx context.Context, arg MarkCleanupSessionAmbiguousParams) error {
+	_, err := q.db.Exec(ctx, markCleanupSessionAmbiguous, arg.ID, arg.IsAmbiguous, arg.AmbiguityReason)
+	return err
 }
 
 const markRowPosted = `-- name: MarkRowPosted :exec

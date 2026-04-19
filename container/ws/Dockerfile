@@ -11,7 +11,9 @@ COPY go/go.mod go/go.sum ./
 COPY tap /tap
 
 # Copy source code and vendor directory
-COPY go/ .
+COPY go/vendor ./vendor
+COPY go/internal ./internal
+COPY go/cmd/ws ./cmd/ws
 
 # Build the WebSocket server using the vendor folder
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /ws ./cmd/ws

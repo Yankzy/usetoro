@@ -3,35 +3,41 @@ package wshandler
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"fmt"
+	"log/slog"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/queue"
-	"github.com/nats-io/nats.go"
 )
 
 // WorkflowEventConsumer handles NATS subscription for Workflow status events
 type WorkflowEventConsumer struct {
-	client *queue.Client
-	hub    *Hub
-	logger *slog.Logger
-	cfg    *config.Config
-	sub    *nats.Subscription
-	ctx    context.Context
-	cancel context.CancelFunc
+	client  *queue.Client
+	hub     *Hub
+	logger  *slog.Logger
+	cfg     *config.Config
+	sub     *nats.Subscription
+	ctx     context.Context
+	cancel  context.CancelFunc
+	queries *database.Queries
 }
 
 // NewWorkflowEventConsumer creates a new Workflow event consumer
-func NewWorkflowEventConsumer(client *queue.Client, hub *Hub, logger *slog.Logger, cfg *config.Config) *WorkflowEventConsumer {
+func NewWorkflowEventConsumer(client *queue.Client, hub *Hub, logger *slog.Logger, cfg *config.Config, queries *database.Queries) *WorkflowEventConsumer {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &WorkflowEventConsumer{
-		client: client,
-		hub:    hub,
-		logger: logger,
-		cfg:    cfg,
-		ctx:    ctx,
-		cancel: cancel,
+		client:  client,
+		hub:     hub,
+		logger:  logger,
+		cfg:     cfg,
+		ctx:     ctx,
+		cancel:  cancel,
+		queries: queries,
 	}
 }
 
@@ -94,8 +100,36 @@ func (c *WorkflowEventConsumer) handleWorkflowStatusEvent(msg *nats.Msg) {
 		return
 	}
 
-	// Targeted broadcast to the specific room (entity_id)
-	c.hub.BroadcastToRoom(entityID, wsMsg)
+	sessionID, _ := payload["session_id"].(string)
+	roomID := entityID
+	if sessionID != "" {
+		roomID = sessionID
+	}
+	// Targeted broadcast to the specific room (session preferred)
+	c.hub.BroadcastToRoom(roomID, wsMsg)
+
+	if status, ok := payload["status"].(string); ok && status == "ambiguous" {
+		if c.queries != nil {
+			if sessionID == "" {
+				c.logger.Warn("Ambiguity event missing session_id; cannot update session row", "entity_id", entityID)
+			} else if sid, err := uuid.Parse(sessionID); err == nil {
+				reason := ""
+				if r, ok := payload["suspension_reason"].(string); ok {
+					reason = r
+				}
+				err := c.queries.MarkCleanupSessionAmbiguous(context.Background(), database.MarkCleanupSessionAmbiguousParams{
+					ID:              pgtype.UUID{Bytes: sid, Valid: true},
+					IsAmbiguous:     true,
+					AmbiguityReason: pgtype.Text{String: reason, Valid: reason != ""},
+				})
+				if err != nil {
+					c.logger.Error("Failed to mark cleanup session ambiguous", "error", err, "session", sessionID)
+				}
+			} else {
+				c.logger.Error("Invalid session ID in ambiguity event", "session_id", sessionID, "error", err)
+			}
+		}
+	}
 
 	if err := msg.Ack(); err != nil {
 		c.logger.Error("Failed to acknowledge workflow NATS message", "error", err)

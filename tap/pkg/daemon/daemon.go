@@ -18,6 +18,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/tap/agents"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/lookup"
 	"github.com/Yankzy/usetoro/tap/pkg/memory"
 	"github.com/Yankzy/usetoro/tap/pkg/redux"
@@ -112,21 +113,13 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 		return fmt.Errorf("orchestrator blueprint sync failed: %w", err)
 	}
 
-	// 7. Enrich agent configuration with TaskQueues dynamically parsed from blueprints
-	taskQueues := d.Orchestrator.GetTaskQueues()
-	for i, cfg := range d.currentConfig.Agents {
-		if tq, ok := taskQueues[cfg.ActivityType]; ok {
-			d.currentConfig.Agents[i].TaskQueue = tq
-		}
-	}
-
 	// 8. Load Initial Agent Configuration into the supervisor
 	if err := d.Supervisor.LoadAgents(d.currentConfig.Agents); err != nil {
 		return err
 	}
 
 	// 9. Initialize the Almanac Registry
-	d.Almanac = lookup.NewRegistry(d.Logger, d.NATS)
+	d.Almanac = lookup.NewRegistry(d.Logger, d.NATS, d.JS)
 
 	// 4. Use ErrGroup to manage concurrent sub-systems
 	// If one dies, they all die (fail fast)
@@ -306,13 +299,21 @@ func (d *ProtocolDaemon) loadConfig() error {
 	d.currentConfig = newCfg
 	d.v = v
 
-	if d.Orchestrator != nil {
-		taskQueues := d.Orchestrator.GetTaskQueues()
-		for i, cfg := range d.currentConfig.Agents {
-			if tq, ok := taskQueues[cfg.ActivityType]; ok {
-				d.currentConfig.Agents[i].TaskQueue = tq
-			}
+	for i := range d.currentConfig.Agents {
+		cfg := &d.currentConfig.Agents[i]
+		if cfg.ActivityType == "" {
+			continue
 		}
+		if cfg.TaskQueue != "" {
+			continue
+		}
+		derived, err := core.NormalizeTaskQueueWithComplexity(cfg.ActivityType, "", core.ComplexityEntry)
+		if err != nil {
+			d.Logger.Warn("Agent config missing task_queue and normalization failed", "did", cfg.DID, "activity_type", cfg.ActivityType, "error", err)
+			continue
+		}
+		cfg.TaskQueue = derived
+		d.Logger.Warn("Agent config missing explicit task queue; derived canonical queue", "did", cfg.DID, "activity_type", cfg.ActivityType, "task_queue", cfg.TaskQueue)
 	}
 
 	// HotLoad: The Supervisor will diff the new config against running agents

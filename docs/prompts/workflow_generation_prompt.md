@@ -32,6 +32,10 @@ Each step fields:
 - `negotiate` (bool)
 - `timeout` (string duration, e.g. `"60s"`)
 - `description` (string, optional)
+- `depends_on` (array of step IDs controlling DAG execution)
+- `route_condition` (optional `{ step_id: "<dependency>", values: [...] }` that matches the upstream `route` value)
+- `suspend_routes` (optional array of route integers that pause the workflow until a resume signal)
+- `sub_workflow` (optional workflow reference for nested compositions)
 
 Important: do NOT include `complexity` (it is not part of the current workflow step schema).
 
@@ -55,8 +59,13 @@ Routing Rules
 - `negotiate: false` -> orchestrator dispatches `ACCEPT_PROPOSAL` directly to resolved queue.
 
 4. Completion expectation
-- Step actors should return `INFORM` envelopes to `orchestrator.inbox` with the same conversation id.
-- Orchestrator advances sequencing from those inbox messages.
+ - Step actors should return `INFORM` envelopes to `orchestrator.inbox` with the same conversation id.
+ - Orchestrator advances sequencing from those inbox messages.
+
+Dependency graph & payloads
+- Express branching and fan-in/fan-out by referencing prior steps with `depends_on`, `route_condition`, and `suspend_routes`.
+- The orchestrator merges every dependency proof into `{"dependencies": {"step_id": <proof>, ...}}`, so downstream actors always read the merged JSON from `dependencies.<step_id>`.
+- When a switch step suspends (e.g., `route == 1` for ambiguity), the workflow pauses until a `workflow.resume` with a new payload clears the suspension.
 
 Generation Constraints (LLM-Friendly)
 

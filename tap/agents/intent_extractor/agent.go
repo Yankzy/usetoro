@@ -57,8 +57,14 @@ func NewAgent(env core.Environment) core.Runnable {
 		}
 
 		if err := a.handleCFP(msg); err != nil {
-			a.Logger.Error("Transient error processing message, nacking", "error", err)
-			msg.Nak()
+			a.Logger.Error("Transient error processing message, replying with FAILURE", "error", err)
+			
+			var origEnv core.Envelope
+			if envErr := json.Unmarshal(msg.Data, &origEnv); envErr == nil {
+				a.ReplyFailure(msg, origEnv, err)
+			} else {
+				msg.Nak()
+			}
 			return
 		}
 
@@ -127,7 +133,7 @@ func (a *IntentExtractorAgent) executeTask(cfpEnv core.Envelope) error {
 	}
 
 	var payload taskPayload
-	if err := json.Unmarshal(task.Payload, &payload); err != nil {
+	if err := core.UnmarshalTaskPayload(task.Payload, &payload); err != nil {
 		a.Logger.Error("Failed to parse task payload", "error", err)
 		return nil
 	}

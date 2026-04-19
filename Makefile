@@ -183,10 +183,15 @@ clean_db:
 scr:
 	scrcpy --window-title "iPhone"
 
-vndr:
+vndr: go/vendor/modules.txt tap/vendor/modules.txt
+
+go/vendor/modules.txt: go/go.mod go/go.sum
 	cd go && GOWORK=off go mod tidy && GOWORK=off go mod vendor
+
+tap/vendor/modules.txt: tap/go.mod tap/go.sum
 	cd tap && GOWORK=off go mod tidy && GOWORK=off go mod vendor
 
+# Preference should be given to rebuilding specific services (e.g., make rebuild gate)
 rebuild_all:
 	$(MAKE) vndr && $(MAKE) down && $(MAKE) upd && $(MAKE) logs
 

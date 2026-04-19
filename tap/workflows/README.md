@@ -84,6 +84,13 @@ For each step:
    - `negotiate: true` → `CFP` published to task queue.
    - `negotiate: false` → `ACCEPT_PROPOSAL` published directly to resolved inbox/queue.
 
+### Dependency graph & payloads
+The orchestrator no longer assumes sequential steps—`WorkflowStep.DependsOn` now declares the DAG, `scheduleReadySteps` only fires when each dependency is complete, and optional `route_condition` filters (typically used with `workers.switch`) gate the next steps. `buildStepPayload` merges every dependency proof into `{"dependencies": {"step_id": <proof>, ...}}`, wraps the result with any per-step `config`, and stores it in `state.Variables`. Fan-in/fan-out just works because each downstream step only reads the proofs for the `step_id`s it declared. `suspend_routes` can pause the instance (recording `suspension_reason`), and a `workflow.resume` payload written back into `state.Variables[stepID]` clears the suspension before resuming scheduling.
+
+`sub_workflow` steps spin up child instances (their conversation IDs look like `root/child/step`), and when the child finishes its final proof is merged back into the parent’s `variables` so the parent’s DAG continues without extra wiring.
+
+When a route step (like `ambiguity_gate`) hits a `suspend_routes` value, the orchestrator publishes to `workflow.events.ambiguous` so downstream systems (WebSocket rooms, dashboards) see the exact `proof`, `route`, and `suspension_reason` even though the workflow is paused.
+
 ### Completion phase
 1. Orchestrator receives incoming envelope on `orchestrator.inbox`.
 2. Validates performative.
@@ -100,6 +107,10 @@ For each step:
   - `activity_type: workers.database.insert_rows`
   - `task_queue: csv-mapping-worker` (worker id)
   - normalized queue: `worker.inbox.csv-mapping-worker`
+- Switch gate example:
+  - `activity_type: workers.switch`
+  - routes on `dependencies.map_columns.is_ambiguous`
+  - `suspend_routes: [1]` so ambiguity blocks downstream steps until manual resume
 
 ### CSV Cleaner subject map (publisher/subscriber)
 
@@ -109,10 +120,13 @@ For each step:
 | Trigger delivery | `orchestrator.triggers.deliver` | JetStream consumer | Orchestrator |
 | Step 1 CFP | `tasks.accounting.1.map_csv` | Orchestrator | CSV Mapping Agent(s) |
 | Agent proposal/proof return | `orchestrator.inbox` | Agents/Workers | Orchestrator |
+| Ambiguity gate | `worker.inbox.switch` | Orchestrator | `workers.switch` |
 | Step 2 direct dispatch | `worker.inbox.csv-mapping-worker` | Orchestrator | CSV Mapping Worker |
 | Step 3 direct dispatch | `worker.inbox.enrichment-worker` | Orchestrator | Enrichment Worker |
 | Step 4 CFP | `tasks.accounting.1.reconcile_revenue` | Orchestrator | Revenue Agent(s) |
 | Step 5 CFP | `tasks.accounting.1.reconcile_expense` | Orchestrator | Expense Agent(s) |
+
+Every step sees a payload shaped like `{"dependencies": {"map_columns": {...}, "ambiguity_gate": {...}}}` thanks to `buildStepPayload`, so `ambiguity_gate` can mark `route 1` as ambiguous, `suspend_routes` halts before `commit_mapped_columns`, and the downstream reconciliation agents only run when `route_condition` equals `0`. This matches the orchestrator’s DAG scheduler without needing agent-side schema enforcement.
 
 ## 7) Message shape by stage
 

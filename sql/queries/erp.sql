@@ -24,9 +24,18 @@ SELECT access_token, refresh_token, expires_at, entity_id
 FROM toro_core.erp_connections
 WHERE erp_system = $1 AND realm_id = $2;
 
+-- name: UpdateERPTokens :exec
+UPDATE toro_core.erp_connections
+SET access_token = $3, refresh_token = $4, expires_at = $5, updated_at = NOW()
+WHERE erp_system = $1 AND realm_id = $2;
+
 -- name: GetERPConnection :one
 SELECT * FROM toro_core.erp_connections
 WHERE entity_id = $1;
+
+-- name: GetERPConnectionByRealm :one
+SELECT * FROM toro_core.erp_connections
+WHERE erp_system = $1 AND realm_id = $2;
 
 -- name: UpdateLastSyncTimestamp :exec
 UPDATE toro_core.erp_connections
@@ -78,6 +87,11 @@ UPDATE toro_core.erp_connections
 SET last_webhook_transaction = $3, updated_at = NOW()
 WHERE erp_system = $1 AND realm_id = $2;
 
+-- name: UpdateLastWebhookDeposit :exec
+UPDATE toro_core.erp_connections
+SET last_webhook_deposit = $3, updated_at = NOW()
+WHERE erp_system = $1 AND realm_id = $2;
+
 -- name: GetConnectionWithWebhookTimes :one
 SELECT
     erp_system,
@@ -89,7 +103,8 @@ SELECT
     last_webhook_customer,
     last_webhook_invoice,
     last_webhook_bill,
-    last_webhook_transaction
+    last_webhook_transaction,
+    last_webhook_deposit
 FROM toro_core.erp_connections
 WHERE erp_system = $1 AND realm_id = $2;
 
@@ -230,6 +245,63 @@ WHERE realm_id = $2 AND erp_id = $3;
 UPDATE shadow_erp.bills
 SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
 WHERE realm_id = $2 AND erp_id = $3;
+
+-- name: UpsertPurchase :exec
+INSERT INTO shadow_erp.purchases (
+    erp_id, realm_id, txn_date, total_amount, payment_type,
+    source_account_id, entity_id, lines,
+    event_source, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8,
+    'erp_sync', NOW(), NOW()
+)
+ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    txn_date          = EXCLUDED.txn_date,
+    total_amount      = EXCLUDED.total_amount,
+    payment_type      = EXCLUDED.payment_type,
+    source_account_id = EXCLUDED.source_account_id,
+    entity_id         = EXCLUDED.entity_id,
+    lines             = EXCLUDED.lines,
+    event_source      = 'erp_sync',
+    updated_at        = NOW(),
+    deleted_at        = NULL;
+
+-- name: UpsertDeposit :exec
+INSERT INTO shadow_erp.deposits (
+    erp_id, realm_id, txn_date, total_amount, target_account_id, lines,
+    event_source, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6,
+    'erp_sync', NOW(), NOW()
+)
+ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    txn_date          = EXCLUDED.txn_date,
+    total_amount      = EXCLUDED.total_amount,
+    target_account_id = EXCLUDED.target_account_id,
+    lines             = EXCLUDED.lines,
+    event_source      = 'erp_sync',
+    updated_at        = NOW(),
+    deleted_at        = NULL;
+
+-- name: SoftDeletePurchase :exec
+UPDATE shadow_erp.purchases
+SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
+WHERE realm_id = $2 AND erp_id = $3;
+
+-- name: SoftDeleteDeposit :exec
+UPDATE shadow_erp.deposits
+SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
+WHERE realm_id = $2 AND erp_id = $3;
+
+-- name: GetPurchaseByERPID :one
+SELECT * FROM shadow_erp.purchases
+WHERE realm_id = $1 AND erp_id = $2;
+
+-- name: GetDepositByERPID :one
+SELECT * FROM shadow_erp.deposits
+WHERE realm_id = $1 AND erp_id = $2;
 
 -- =========================================================================
 -- AI Vector Sync State
@@ -557,3 +629,12 @@ WHERE id = $1;
 UPDATE shadow_erp.customers
 SET industry = $3, industry_icon = $4, customer_description = $5, customer_url = $6
 WHERE realm_id = $1 AND erp_id = $2;
+
+-- name: GetFilteredAccountsForAI :many
+SELECT erp_id, name, account_sub_type 
+FROM shadow_erp.accounts 
+WHERE realm_id = $1 
+  AND classification = $2 
+  AND account_type = $3 
+  AND active = true 
+  AND deleted_at IS NULL;

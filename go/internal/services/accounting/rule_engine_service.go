@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/database"
-	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
+	ruleEngine "github.com/Yankzy/usetoro/internal/erp/rule_engine"
 	"github.com/dgraph-io/ristretto"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -31,11 +31,11 @@ func NewRuleEngineService(logger *slog.Logger, q *database.Queries, cache *ristr
 
 // getActiveRules fetches all rule groups and conditions for a realm, compiles them,
 // and assembles them into a nested tree structure.
-func (s *RuleEngineService) getActiveRules(ctx context.Context, realmID string) ([]*quickbooks.RuleGroup, error) {
+func (s *RuleEngineService) getActiveRules(ctx context.Context, realmID string) ([]*ruleEngine.RuleGroup, error) {
 	cacheKey := fmt.Sprintf("rules:%s", realmID)
 
 	if val, found := s.cache.Get(cacheKey); found {
-		if rules, ok := val.([]*quickbooks.RuleGroup); ok {
+		if rules, ok := val.([]*ruleEngine.RuleGroup); ok {
 			return rules, nil
 		}
 	}
@@ -58,32 +58,39 @@ func (s *RuleEngineService) getActiveRules(ctx context.Context, realmID string) 
 		return nil, fmt.Errorf("failed to fetch rule conditions: %w", err)
 	}
 
-	groupMap := make(map[int32]*quickbooks.RuleGroup, len(dbGroups))
+	groupMap := make(map[int32]*ruleEngine.RuleGroup, len(dbGroups))
 	for _, g := range dbGroups {
-		groupMap[g.ID] = &quickbooks.RuleGroup{
-			ID:              int(g.ID),
-			Name:            g.Name,
-			Logic:           quickbooks.LogicChoice(g.Logic),
-			Priority:        int(g.Priority),
-			Keywords:        g.Keywords.String,
-			Active:          g.Active,
-			TargetAccountID: g.TargetAccountID,
-			TargetVendorID:  g.TargetVendorID,
+		rg := &ruleEngine.RuleGroup{
+			ID:             int(g.ID),
+			Name:           g.Name,
+			Logic:          ruleEngine.LogicChoice(g.Logic),
+			Priority:       int(g.Priority),
+			Keywords:       g.Keywords.String,
+			Active:         g.Active,
+			TargetEntityID: g.TargetEntityID,
+			RequiresReview: g.RequiresReview,
 		}
+
+		if len(g.Allocations) > 0 {
+			if err := json.Unmarshal(g.Allocations, &rg.Allocations); err != nil {
+				s.logger.Warn("Failed to unmarshal allocations", "rule_id", g.ID, "error", err)
+			}
+		}
+		groupMap[g.ID] = rg
 	}
 
 	for _, c := range dbConditions {
 		if group, ok := groupMap[c.RuleGroupID]; ok {
-			group.Conditions = append(group.Conditions, &quickbooks.RuleCondition{
+			group.Conditions = append(group.Conditions, &ruleEngine.RuleCondition{
 				ID:       int(c.ID),
-				Field:    quickbooks.Field(c.Field),
-				Operator: quickbooks.Operator(c.Operator),
+				Field:    ruleEngine.Field(c.Field),
+				Operator: ruleEngine.Operator(c.Operator),
 				Value:    c.Value,
 			})
 		}
 	}
 
-	var topLevelRules []*quickbooks.RuleGroup
+	var topLevelRules []*ruleEngine.RuleGroup
 	for _, g := range dbGroups {
 		group := groupMap[g.ID]
 		if g.ParentID.Valid {
@@ -99,7 +106,7 @@ func (s *RuleEngineService) getActiveRules(ctx context.Context, realmID string) 
 	// P1-A: Only cache rules that pass validation and compilation.
 	// Invalid rules are excluded to avoid silent "always false" degradation
 	// and potential data races from lazy compilation on shared cached structs.
-	validRules := make([]*quickbooks.RuleGroup, 0, len(topLevelRules))
+	validRules := make([]*ruleEngine.RuleGroup, 0, len(topLevelRules))
 	for _, r := range topLevelRules {
 		if err := r.Validate(); err != nil {
 			s.logger.Warn("Rule validation failed, excluding from cache", "rule_id", r.ID, "error", err)
@@ -120,15 +127,16 @@ func (s *RuleEngineService) getActiveRules(ctx context.Context, realmID string) 
 // Explanation carries the full structured trace for deferred audit-log persistence.
 type RuleResult struct {
 	MatchedRuleGroupID *int32
-	TargetAccountID    pgtype.UUID
-	TargetVendorID     pgtype.UUID
-	Explanation        quickbooks.MatchExplanation
+	TargetEntityID     pgtype.UUID
+	Allocations        []ruleEngine.Allocation
+	RequiresReview     bool
+	Explanation        ruleEngine.MatchExplanation
 }
 
 // EvaluateTransaction runs the transaction through the rule engine to find a match.
 // Audit-log persistence is NOT performed here; the caller must invoke PersistAuditLog
 // after a proposed_transactions row exists.
-func (s *RuleEngineService) EvaluateTransaction(ctx context.Context, tx quickbooks.Transaction) (*RuleResult, error) {
+func (s *RuleEngineService) EvaluateTransaction(ctx context.Context, tx ruleEngine.Transaction) (*RuleResult, error) {
 	rules, err := s.getActiveRules(ctx, tx.EntityID)
 	if err != nil {
 		return nil, err
@@ -137,7 +145,7 @@ func (s *RuleEngineService) EvaluateTransaction(ctx context.Context, tx quickboo
 		return nil, nil
 	}
 
-	candidates := quickbooks.FilterCandidates(tx, rules)
+	candidates := ruleEngine.FilterCandidates(tx, rules)
 
 	for _, rule := range candidates {
 		matched, exp := rule.Evaluate(tx)
@@ -145,8 +153,9 @@ func (s *RuleEngineService) EvaluateTransaction(ctx context.Context, tx quickboo
 			id := int32(rule.ID)
 			return &RuleResult{
 				MatchedRuleGroupID: &id,
-				TargetAccountID:    rule.TargetAccountID,
-				TargetVendorID:     rule.TargetVendorID,
+				TargetEntityID:     rule.TargetEntityID,
+				Allocations:        rule.Allocations,
+				RequiresReview:     rule.RequiresReview,
 				Explanation:        exp,
 			}, nil
 		}

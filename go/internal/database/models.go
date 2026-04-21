@@ -42,11 +42,11 @@ type FignodeStagingSession struct {
 	CreatedBy       pgtype.UUID
 	FileName        pgtype.Text
 	RowCount        int32
-	IsAmbiguous     bool
-	AmbiguityReason pgtype.Text
 	Status          string
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	IsAmbiguous     bool
+	AmbiguityReason pgtype.Text
 }
 
 type FignodeStagingTransaction struct {
@@ -217,6 +217,20 @@ type ShadowErpCustomer struct {
 	CustomerUrl         pgtype.Text
 }
 
+type ShadowErpDeposit struct {
+	ID              pgtype.UUID
+	ErpID           string
+	RealmID         string
+	TxnDate         pgtype.Date
+	TotalAmount     pgtype.Numeric
+	TargetAccountID pgtype.Text
+	Lines           []byte
+	EventSource     string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+}
+
 type ShadowErpInvoice struct {
 	ID          pgtype.UUID
 	ErpID       string
@@ -232,6 +246,22 @@ type ShadowErpInvoice struct {
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
+}
+
+type ShadowErpPurchase struct {
+	ID              pgtype.UUID
+	ErpID           string
+	RealmID         string
+	TxnDate         pgtype.Date
+	TotalAmount     pgtype.Numeric
+	PaymentType     pgtype.Text
+	SourceAccountID pgtype.Text
+	EntityID        pgtype.Text
+	Lines           []byte
+	EventSource     string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
 }
 
 type ShadowErpRuleAuditLog struct {
@@ -257,18 +287,19 @@ type ShadowErpRuleCondition struct {
 }
 
 type ShadowErpRuleGroup struct {
-	ID              int32
-	RealmID         string
-	Name            string
-	Logic           string
-	Priority        int32
-	Keywords        pgtype.Text
-	Active          bool
-	TargetAccountID pgtype.UUID
-	TargetVendorID  pgtype.UUID
-	ParentID        pgtype.Int4
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	ID             int32
+	RealmID        string
+	Name           string
+	Logic          string
+	Priority       int32
+	Keywords       pgtype.Text
+	Active         bool
+	TargetEntityID pgtype.UUID
+	ParentID       pgtype.Int4
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	RequiresReview bool
+	Allocations    []byte
 }
 
 // Tracks Pinecone vector database sync state per ERP realm
@@ -360,6 +391,7 @@ type ToroCoreErpConnection struct {
 	LastWebhookTransaction pgtype.Timestamptz
 	CreatedAt              pgtype.Timestamptz
 	UpdatedAt              pgtype.Timestamptz
+	LastWebhookDeposit     pgtype.Timestamptz
 }
 
 type ToroCoreRefreshToken struct {

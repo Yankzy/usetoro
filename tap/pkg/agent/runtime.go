@@ -67,11 +67,19 @@ func (r *Runtime) Stop() error {
 }
 
 // Exec provides the standardized static LLM execution signature.
-func (r *Runtime) Exec(ctx context.Context, prompt string) (string, error) {
+func (r *Runtime) Exec(ctx context.Context, prompt string, systemPrompt string) (string, error) {
+	if systemPrompt == "" {
+		systemPrompt = r.Config.SystemPrompt
+	}
+
+	fullPrompt := prompt
+	if systemPrompt != "" {
+		fullPrompt = fmt.Sprintf("SYSTEM: %s\n\n%s", systemPrompt, prompt)
+	}
 	client := openai.NewClient()
 
 	resp, err := client.Responses.New(ctx, responses.ResponseNewParams{
-		Input: responses.ResponseNewParamsInputUnion{OfString: openai.String(prompt)},
+		Input: responses.ResponseNewParamsInputUnion{OfString: openai.String(fullPrompt)},
 		Model: shared.ChatModel(r.Config.Model),
 	})
 
@@ -95,12 +103,7 @@ func (r *Runtime) handleTrigger(msg *nats.Msg) {
 
 	input := string(msg.Data)
 
-	fullPrompt := input
-	if r.Config.SystemPrompt != "" {
-		fullPrompt = fmt.Sprintf("SYSTEM: %s\n\n%s", r.Config.SystemPrompt, fullPrompt)
-	}
-
-	response, err := r.Exec(ctx, fullPrompt)
+	response, err := r.Exec(ctx, input, r.Config.SystemPrompt)
 	if err != nil {
 		r.Logger.Error("❌ Reasoning failed", "error", err)
 		msg.Nak()
@@ -115,15 +118,18 @@ func (r *Runtime) handleTrigger(msg *nats.Msg) {
 }
 
 // ExecWithPaging replaces naive text calls with an advanced Tool Calling interceptor structurally validating document arrays securely!
-func (r *Runtime) ExecWithPaging(ctx context.Context, prompt string, pages []PageContext, fetcher DocumentFetcher) (string, error) {
+func (r *Runtime) ExecWithPaging(ctx context.Context, prompt string, systemPrompt string, pages []PageContext, fetcher DocumentFetcher) (string, error) {
+	if systemPrompt == "" {
+		systemPrompt = r.Config.SystemPrompt
+	}
+
 	client := openai.NewClient()
 
 	localMap, pagesJSON := GenerateLocalContextMap(pages)
 
-	// Inject pages directory
 	sysPrompt := ""
-	if r.Config.SystemPrompt != "" {
-		sysPrompt = r.Config.SystemPrompt + "\n\n"
+	if systemPrompt != "" {
+		sysPrompt = systemPrompt + "\n\n"
 	}
 	sysPrompt += fmt.Sprintf("AVAILABLE PAGES DIRECTORY:\n%s\n\nUse the PAGE_IN tool with a local_ref to fetch uncompressed documents. DO NOT guess paths. You MUST use integers mapping directly specifically from the Context Directory mapping.", string(pagesJSON))
 
@@ -169,7 +175,7 @@ func (r *Runtime) ExecWithPaging(ctx context.Context, prompt string, pages []Pag
 
 		// Format output response structurally
 		messages = append(messages, msg.ToParam())
-
+		r.Logger.Info("🧠 [DEBUG] LLM RESPONSE: " + msg.Content)
 		// If the model returns content without tool calls, it's a terminal response.
 		if len(msg.ToolCalls) == 0 {
 			if msg.Content != "" {

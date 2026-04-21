@@ -62,7 +62,7 @@ func main() {
 	ctx := context.Background()
 
 	prompt := csvmapping.BuildUserPrompt(rows)
-	respText, err := rt.ExecWithPaging(ctx, prompt, nil, nil)
+	respText, err := rt.ExecWithPaging(ctx, prompt, "", nil, nil)
 	if err != nil {
 		os.Exit(1)
 	}

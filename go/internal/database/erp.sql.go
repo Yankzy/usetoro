@@ -616,7 +616,8 @@ SELECT
     last_webhook_customer,
     last_webhook_invoice,
     last_webhook_bill,
-    last_webhook_transaction
+    last_webhook_transaction,
+    last_webhook_deposit
 FROM toro_core.erp_connections
 WHERE erp_system = $1 AND realm_id = $2
 `
@@ -637,6 +638,7 @@ type GetConnectionWithWebhookTimesRow struct {
 	LastWebhookInvoice     pgtype.Timestamptz
 	LastWebhookBill        pgtype.Timestamptz
 	LastWebhookTransaction pgtype.Timestamptz
+	LastWebhookDeposit     pgtype.Timestamptz
 }
 
 func (q *Queries) GetConnectionWithWebhookTimes(ctx context.Context, arg GetConnectionWithWebhookTimesParams) (GetConnectionWithWebhookTimesRow, error) {
@@ -653,6 +655,7 @@ func (q *Queries) GetConnectionWithWebhookTimes(ctx context.Context, arg GetConn
 		&i.LastWebhookInvoice,
 		&i.LastWebhookBill,
 		&i.LastWebhookTransaction,
+		&i.LastWebhookDeposit,
 	)
 	return i, err
 }
@@ -833,8 +836,37 @@ func (q *Queries) GetCustomersUpdatedSince(ctx context.Context, arg GetCustomers
 	return items, nil
 }
 
+const getDepositByERPID = `-- name: GetDepositByERPID :one
+SELECT id, erp_id, realm_id, txn_date, total_amount, target_account_id, lines, event_source, created_at, updated_at, deleted_at FROM shadow_erp.deposits
+WHERE realm_id = $1 AND erp_id = $2
+`
+
+type GetDepositByERPIDParams struct {
+	RealmID string
+	ErpID   string
+}
+
+func (q *Queries) GetDepositByERPID(ctx context.Context, arg GetDepositByERPIDParams) (ShadowErpDeposit, error) {
+	row := q.db.QueryRow(ctx, getDepositByERPID, arg.RealmID, arg.ErpID)
+	var i ShadowErpDeposit
+	err := row.Scan(
+		&i.ID,
+		&i.ErpID,
+		&i.RealmID,
+		&i.TxnDate,
+		&i.TotalAmount,
+		&i.TargetAccountID,
+		&i.Lines,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getERPConnection = `-- name: GetERPConnection :one
-SELECT id, entity_id, erp_system, realm_id, access_token, refresh_token, expires_at, last_sync_timestamp, last_webhook_account, last_webhook_vendor, last_webhook_customer, last_webhook_invoice, last_webhook_bill, last_webhook_transaction, created_at, updated_at FROM toro_core.erp_connections
+SELECT id, entity_id, erp_system, realm_id, access_token, refresh_token, expires_at, last_sync_timestamp, last_webhook_account, last_webhook_vendor, last_webhook_customer, last_webhook_invoice, last_webhook_bill, last_webhook_transaction, created_at, updated_at, last_webhook_deposit FROM toro_core.erp_connections
 WHERE entity_id = $1
 `
 
@@ -858,6 +890,42 @@ func (q *Queries) GetERPConnection(ctx context.Context, entityID pgtype.UUID) (T
 		&i.LastWebhookTransaction,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LastWebhookDeposit,
+	)
+	return i, err
+}
+
+const getERPConnectionByRealm = `-- name: GetERPConnectionByRealm :one
+SELECT id, entity_id, erp_system, realm_id, access_token, refresh_token, expires_at, last_sync_timestamp, last_webhook_account, last_webhook_vendor, last_webhook_customer, last_webhook_invoice, last_webhook_bill, last_webhook_transaction, created_at, updated_at, last_webhook_deposit FROM toro_core.erp_connections
+WHERE erp_system = $1 AND realm_id = $2
+`
+
+type GetERPConnectionByRealmParams struct {
+	ErpSystem string
+	RealmID   string
+}
+
+func (q *Queries) GetERPConnectionByRealm(ctx context.Context, arg GetERPConnectionByRealmParams) (ToroCoreErpConnection, error) {
+	row := q.db.QueryRow(ctx, getERPConnectionByRealm, arg.ErpSystem, arg.RealmID)
+	var i ToroCoreErpConnection
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.ErpSystem,
+		&i.RealmID,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.ExpiresAt,
+		&i.LastSyncTimestamp,
+		&i.LastWebhookAccount,
+		&i.LastWebhookVendor,
+		&i.LastWebhookCustomer,
+		&i.LastWebhookInvoice,
+		&i.LastWebhookBill,
+		&i.LastWebhookTransaction,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastWebhookDeposit,
 	)
 	return i, err
 }
@@ -890,6 +958,48 @@ func (q *Queries) GetERPTokens(ctx context.Context, arg GetERPTokensParams) (Get
 		&i.EntityID,
 	)
 	return i, err
+}
+
+const getFilteredAccountsForAI = `-- name: GetFilteredAccountsForAI :many
+SELECT erp_id, name, account_sub_type 
+FROM shadow_erp.accounts 
+WHERE realm_id = $1 
+  AND classification = $2 
+  AND account_type = $3 
+  AND active = true 
+  AND deleted_at IS NULL
+`
+
+type GetFilteredAccountsForAIParams struct {
+	RealmID        string
+	Classification pgtype.Text
+	AccountType    string
+}
+
+type GetFilteredAccountsForAIRow struct {
+	ErpID          string
+	Name           string
+	AccountSubType pgtype.Text
+}
+
+func (q *Queries) GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredAccountsForAIParams) ([]GetFilteredAccountsForAIRow, error) {
+	rows, err := q.db.Query(ctx, getFilteredAccountsForAI, arg.RealmID, arg.Classification, arg.AccountType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFilteredAccountsForAIRow
+	for rows.Next() {
+		var i GetFilteredAccountsForAIRow
+		if err := rows.Scan(&i.ErpID, &i.Name, &i.AccountSubType); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getInvoiceByERPID = `-- name: GetInvoiceByERPID :one
@@ -1031,6 +1141,37 @@ func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetPro
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPurchaseByERPID = `-- name: GetPurchaseByERPID :one
+SELECT id, erp_id, realm_id, txn_date, total_amount, payment_type, source_account_id, entity_id, lines, event_source, created_at, updated_at, deleted_at FROM shadow_erp.purchases
+WHERE realm_id = $1 AND erp_id = $2
+`
+
+type GetPurchaseByERPIDParams struct {
+	RealmID string
+	ErpID   string
+}
+
+func (q *Queries) GetPurchaseByERPID(ctx context.Context, arg GetPurchaseByERPIDParams) (ShadowErpPurchase, error) {
+	row := q.db.QueryRow(ctx, getPurchaseByERPID, arg.RealmID, arg.ErpID)
+	var i ShadowErpPurchase
+	err := row.Scan(
+		&i.ID,
+		&i.ErpID,
+		&i.RealmID,
+		&i.TxnDate,
+		&i.TotalAmount,
+		&i.PaymentType,
+		&i.SourceAccountID,
+		&i.EntityID,
+		&i.Lines,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -1523,6 +1664,23 @@ func (q *Queries) SoftDeleteCustomer(ctx context.Context, arg SoftDeleteCustomer
 	return err
 }
 
+const softDeleteDeposit = `-- name: SoftDeleteDeposit :exec
+UPDATE shadow_erp.deposits
+SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
+WHERE realm_id = $2 AND erp_id = $3
+`
+
+type SoftDeleteDepositParams struct {
+	DeletedAt pgtype.Timestamptz
+	RealmID   string
+	ErpID     string
+}
+
+func (q *Queries) SoftDeleteDeposit(ctx context.Context, arg SoftDeleteDepositParams) error {
+	_, err := q.db.Exec(ctx, softDeleteDeposit, arg.DeletedAt, arg.RealmID, arg.ErpID)
+	return err
+}
+
 const softDeleteInvoice = `-- name: SoftDeleteInvoice :exec
 UPDATE shadow_erp.invoices
 SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
@@ -1537,6 +1695,23 @@ type SoftDeleteInvoiceParams struct {
 
 func (q *Queries) SoftDeleteInvoice(ctx context.Context, arg SoftDeleteInvoiceParams) error {
 	_, err := q.db.Exec(ctx, softDeleteInvoice, arg.DeletedAt, arg.RealmID, arg.ErpID)
+	return err
+}
+
+const softDeletePurchase = `-- name: SoftDeletePurchase :exec
+UPDATE shadow_erp.purchases
+SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
+WHERE realm_id = $2 AND erp_id = $3
+`
+
+type SoftDeletePurchaseParams struct {
+	DeletedAt pgtype.Timestamptz
+	RealmID   string
+	ErpID     string
+}
+
+func (q *Queries) SoftDeletePurchase(ctx context.Context, arg SoftDeletePurchaseParams) error {
+	_, err := q.db.Exec(ctx, softDeletePurchase, arg.DeletedAt, arg.RealmID, arg.ErpID)
 	return err
 }
 
@@ -1626,6 +1801,31 @@ func (q *Queries) UpdateCustomerVectorSync(ctx context.Context, arg UpdateCustom
 	return err
 }
 
+const updateERPTokens = `-- name: UpdateERPTokens :exec
+UPDATE toro_core.erp_connections
+SET access_token = $3, refresh_token = $4, expires_at = $5, updated_at = NOW()
+WHERE erp_system = $1 AND realm_id = $2
+`
+
+type UpdateERPTokensParams struct {
+	ErpSystem    string
+	RealmID      string
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateERPTokens(ctx context.Context, arg UpdateERPTokensParams) error {
+	_, err := q.db.Exec(ctx, updateERPTokens,
+		arg.ErpSystem,
+		arg.RealmID,
+		arg.AccessToken,
+		arg.RefreshToken,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
 const updateLastSyncTimestamp = `-- name: UpdateLastSyncTimestamp :exec
 UPDATE toro_core.erp_connections
 SET last_sync_timestamp = $3, updated_at = NOW()
@@ -1695,6 +1895,23 @@ type UpdateLastWebhookCustomerParams struct {
 
 func (q *Queries) UpdateLastWebhookCustomer(ctx context.Context, arg UpdateLastWebhookCustomerParams) error {
 	_, err := q.db.Exec(ctx, updateLastWebhookCustomer, arg.ErpSystem, arg.RealmID, arg.LastWebhookCustomer)
+	return err
+}
+
+const updateLastWebhookDeposit = `-- name: UpdateLastWebhookDeposit :exec
+UPDATE toro_core.erp_connections
+SET last_webhook_deposit = $3, updated_at = NOW()
+WHERE erp_system = $1 AND realm_id = $2
+`
+
+type UpdateLastWebhookDepositParams struct {
+	ErpSystem          string
+	RealmID            string
+	LastWebhookDeposit pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateLastWebhookDeposit(ctx context.Context, arg UpdateLastWebhookDepositParams) error {
+	_, err := q.db.Exec(ctx, updateLastWebhookDeposit, arg.ErpSystem, arg.RealmID, arg.LastWebhookDeposit)
 	return err
 }
 
@@ -2098,6 +2315,46 @@ func (q *Queries) UpsertCustomer(ctx context.Context, arg UpsertCustomerParams) 
 	return err
 }
 
+const upsertDeposit = `-- name: UpsertDeposit :exec
+INSERT INTO shadow_erp.deposits (
+    erp_id, realm_id, txn_date, total_amount, target_account_id, lines,
+    event_source, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6,
+    'erp_sync', NOW(), NOW()
+)
+ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    txn_date          = EXCLUDED.txn_date,
+    total_amount      = EXCLUDED.total_amount,
+    target_account_id = EXCLUDED.target_account_id,
+    lines             = EXCLUDED.lines,
+    event_source      = 'erp_sync',
+    updated_at        = NOW(),
+    deleted_at        = NULL
+`
+
+type UpsertDepositParams struct {
+	ErpID           string
+	RealmID         string
+	TxnDate         pgtype.Date
+	TotalAmount     pgtype.Numeric
+	TargetAccountID pgtype.Text
+	Lines           []byte
+}
+
+func (q *Queries) UpsertDeposit(ctx context.Context, arg UpsertDepositParams) error {
+	_, err := q.db.Exec(ctx, upsertDeposit,
+		arg.ErpID,
+		arg.RealmID,
+		arg.TxnDate,
+		arg.TotalAmount,
+		arg.TargetAccountID,
+		arg.Lines,
+	)
+	return err
+}
+
 const upsertERPTokens = `-- name: UpsertERPTokens :exec
 
 WITH evict AS (
@@ -2187,6 +2444,53 @@ func (q *Queries) UpsertInvoice(ctx context.Context, arg UpsertInvoiceParams) er
 		arg.TxnDate,
 		arg.SyncToken,
 		arg.CustomerErpID,
+	)
+	return err
+}
+
+const upsertPurchase = `-- name: UpsertPurchase :exec
+INSERT INTO shadow_erp.purchases (
+    erp_id, realm_id, txn_date, total_amount, payment_type,
+    source_account_id, entity_id, lines,
+    event_source, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8,
+    'erp_sync', NOW(), NOW()
+)
+ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    txn_date          = EXCLUDED.txn_date,
+    total_amount      = EXCLUDED.total_amount,
+    payment_type      = EXCLUDED.payment_type,
+    source_account_id = EXCLUDED.source_account_id,
+    entity_id         = EXCLUDED.entity_id,
+    lines             = EXCLUDED.lines,
+    event_source      = 'erp_sync',
+    updated_at        = NOW(),
+    deleted_at        = NULL
+`
+
+type UpsertPurchaseParams struct {
+	ErpID           string
+	RealmID         string
+	TxnDate         pgtype.Date
+	TotalAmount     pgtype.Numeric
+	PaymentType     pgtype.Text
+	SourceAccountID pgtype.Text
+	EntityID        pgtype.Text
+	Lines           []byte
+}
+
+func (q *Queries) UpsertPurchase(ctx context.Context, arg UpsertPurchaseParams) error {
+	_, err := q.db.Exec(ctx, upsertPurchase,
+		arg.ErpID,
+		arg.RealmID,
+		arg.TxnDate,
+		arg.TotalAmount,
+		arg.PaymentType,
+		arg.SourceAccountID,
+		arg.EntityID,
+		arg.Lines,
 	)
 	return err
 }

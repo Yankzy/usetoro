@@ -17,12 +17,7 @@ import (
 
 const AgentName = "intent-extractor-agent"
 
-// defaultSchema is used when no workflow_schema is provided in the agent's YAML config.
-// It produces a minimal, domain-neutral classification envelope.
-const defaultSchema = `{
-  "classified_intent": "<domain-specific intent label, string>",
-  "confidence_score": <float 0.0–1.0>
-}`
+
 
 type IntentExtractorAgent struct {
 	*agent.BaseAgent
@@ -146,7 +141,7 @@ func (a *IntentExtractorAgent) executeTask(cfpEnv core.Envelope) error {
 
 	a.Logger.Info("🧠 Extracting intent via LLM", "workflow_id", task.ID, "phone", payload.PhoneNumber, "domain", payload.Domain, "schema_override", schema != "")
 
-	result, err := a.extractIntentUsingLLM(context.Background(), payload.Text, schema)
+	result, err := a.extractIntentUsingLLM(context.Background(), task.SystemPrompt, payload.Text, schema)
 	if err != nil {
 		a.Logger.Error("Failed to extract intent from LLM", "error", err)
 		return err // Transient error → NAK + retry
@@ -193,20 +188,14 @@ func (a *IntentExtractorAgent) executeTask(cfpEnv core.Envelope) error {
 //
 // This makes the agent fully domain-agnostic: switching from roofing to ride-hailing (or
 // any other vertical) requires only a YAML config change — no Go recompile.
-func (a *IntentExtractorAgent) extractIntentUsingLLM(ctx context.Context, text string, schemaHint string) (json.RawMessage, error) {
+func (a *IntentExtractorAgent) extractIntentUsingLLM(ctx context.Context, systemPrompt string, text string, schemaHint string) (json.RawMessage, error) {
 	schema := schemaHint
-	if strings.TrimSpace(schema) == "" {
-		schema = defaultSchema
-	}
 
 	prompt := "Text to classify:\n\n" + text +
 		"\n\nRespond with ONLY a JSON object that exactly matches this schema (no markdown, no explanation):\n" + schema
 
-	// ExecWithPaging owns the system-level paging context; pass the agent's
-	// system prompt as the leading part of the user turn so it is not lost.
-	fullPrompt := a.Cfg.SystemPrompt + "\n\n" + prompt
-
-	respText, err := a.rt.ExecWithPaging(ctx, fullPrompt, nil, nil)
+	// ExecWithPaging owns the system-level paging context.
+	respText, err := a.rt.ExecWithPaging(ctx, prompt, systemPrompt, nil, nil)
 	if err != nil {
 		return nil, err
 	}

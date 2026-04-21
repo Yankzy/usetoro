@@ -1,4 +1,4 @@
-package quickbooks
+package ruleEngine
 
 import (
 	"fmt"

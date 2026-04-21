@@ -89,3 +89,5 @@ func TestBuildUserPrompt(t *testing.T) {
 		t.Errorf("expected polarity_sign field in prompt")
 	}
 }
+
+

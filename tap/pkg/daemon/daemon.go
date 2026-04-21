@@ -173,6 +173,11 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 		}
 		return nil
 	})
+ 
+	// Sub-system G: Workflow Directory Watcher (for hot-reloading)
+	g.Go(func() error {
+		return d.Orchestrator.WatchWorkflows(ctx, "tap/workflows")
+	})
 
 	d.Logger.Info("🚀 Protocol Hive Active", "admin_port", d.AdminPort)
 

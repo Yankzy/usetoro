@@ -13,35 +13,44 @@ steps:
         "type": "object",
         "properties": {
           "status": { "type": "string" },
-          "mapped_rows": { "type": "object" }
+          "mapped_rows": { "type": "object" },
+          "route": { "type": "integer" },
+          "is_ambiguous": { "type": "boolean" },
+          "ambiguity_reason": { "type": ["string", "null"] },
+          "polarity_sign": { "type": "string" }
         },
-        "required": ["status", "mapped_rows"]
+        "required": ["status", "mapped_rows", "route"]
+      }
+    system_prompt: |
+      You are an expert data analyst parsing raw bank statement CSV headers. Analyze the columns and map them to standard accounting fields. You MUST reply with valid JSON.
+      The JSON must strictly conform to this schema:
+      {
+        "date_col_idx": <int>,
+        "description_col_idx": <int>,
+        "amount_col_idx": <int or null>,
+        "is_split_amount": <bool>,
+        "debit_col_idx": <int or null>,
+        "credit_col_idx": <int or null>,
+        "vendor_col_idx": <int or null>,
+        "customer_col_idx": <int or null>,
+        "custom_col_idx": <int or null>,
+        "is_expense_positive": <bool>,
+        "confidence_score": <float 0 to 1>,
+        "is_ambiguous": <bool>,
+        "ambiguity_reason": <string or null>,
+        "reasoning": <string explaining the mapping choices>
       }
 
-  - id: ambiguity_switch
-    activity_type: workers.switch
-    complexity: 1
-    negotiate: false
-    timeout: "10s"
-    description: "Routes based on the ambiguous detection from the mapping step."
-    depends_on:
-      - map_columns
-    config:
-      nodeMode: sender
-      mode: rules
-      dataType: boolean
-      value1Path: "dependencies.map_columns.data.is_ambiguous"
-      rules:
-        - operation: equal
-          value2: true
-          output: 1
-        - operation: equal
-          value2: false
-          output: 0
-      fallbackOutput: -1
-    suspend_routes:
-      - 1
-    suspension_reason_path: "dependencies.map_columns.data.ambiguity_reason"
+      SPLIT AMOUNTS: If the statement uses separate Debit and Credit columns, set is_split_amount to true, provide debit_col_idx and credit_col_idx, and set amount_col_idx to null.
+      NULL HANDLING: For any optional field that is NOT present, you MUST set its index to null. Do NOT use 0 as a placeholder.
+
+      AMBIGUITY (Polarity): The data is ambiguous if you cannot definitively determine the cash direction (Inflow vs Outflow). This happens when there is only a single 'Amount' column with NO polarity indicators (no signs '-' or parentheses '()'). If this occurs, set is_ambiguous to true and provide an ambiguity_reason using precise language (e.g., 'cannot distinguish Cash Inflow from Outflow').
+
+      Use precise accounting language: refer to cash flow directions as "Cash Inflow" and "Cash Outflow", never as "Income" or "Expense". Flag ambiguity if inflow vs outflow cannot be distinguished.
+
+      Crucially, determine the sign convention (is_expense_positive). Look at obvious outflows (like 'AMZN', 'AWS', 'Starbucks', 'Uber', or rent/tax payments). If these outflows are represented by positive numbers, set is_expense_positive to true. If they are negative, set it to false.
+    suspend_routes: [1]
+    suspension_reason_path: "ambiguity_reason"
 
   - id: commit_mapped_columns
     activity_type: workers.database.insert_rows
@@ -49,9 +58,9 @@ steps:
     timeout: "10s"
     description: "Inserts the mapped rows into Postgres DB as PENDING."
     depends_on:
-      - ambiguity_switch
+      - map_columns
     route_condition:
-      step_id: ambiguity_switch
+      step_id: map_columns
       values: [0]
 
   - id: run_enrichment
@@ -62,20 +71,20 @@ steps:
     depends_on:
       - commit_mapped_columns
 
-  - id: reconcile_revenue
-    activity_type: agents.accounting.reconcile_revenue
-    complexity: 1
-    negotiate: true
-    timeout: "60s"
-    description: "Filters positive entries and assigns Customers/Accounts via spatial resolution."
-    depends_on:
-      - run_enrichment
+  # - id: reconcile_revenue
+  #   activity_type: agents.accounting.reconcile_revenue
+  #   complexity: 1
+  #   negotiate: true
+  #   timeout: "60s"
+  #   description: "Filters positive entries and assigns Customers/Accounts via spatial resolution."
+  #   depends_on:
+  #     - run_enrichment
 
-  - id: reconcile_expense
-    activity_type: agents.accounting.reconcile_expense
-    complexity: 1
-    negotiate: true
-    timeout: "60s"
-    description: "Filters negative entries and assigns Vendors/Accounts via spatial resolution."
-    depends_on:
-      - run_enrichment
+  # - id: reconcile_expense
+  #   activity_type: agents.accounting.reconcile_expense
+  #   complexity: 1
+  #   negotiate: true
+  #   timeout: "60s"
+  #   description: "Filters negative entries and assigns Vendors/Accounts via spatial resolution."
+  #   depends_on:
+  #     - run_enrichment

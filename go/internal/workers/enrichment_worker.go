@@ -137,10 +137,21 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	}
 
 	bodyBytes := env.Body
-	if env.Performative == core.ACCEPT_PROPOSAL {
+	var workflowID string
+
+	switch env.Performative {
+	case core.ACCEPT_PROPOSAL:
 		var taskDef core.TaskDefinition
-		if err := json.Unmarshal(env.Body, &taskDef); err == nil && len(taskDef.Payload) > 0 {
-			bodyBytes = taskDef.Payload
+		if err := json.Unmarshal(env.Body, &taskDef); err == nil {
+			workflowID = taskDef.ID
+			if len(taskDef.Payload) > 0 {
+				bodyBytes = taskDef.Payload
+			}
+		}
+	case core.INFORM:
+		var proof core.Proof
+		if err := json.Unmarshal(env.Body, &proof); err == nil {
+			workflowID = proof.TaskID
 		}
 	}
 
@@ -345,10 +356,15 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	}
 	store, _ := redux.NewStore(cfg)
 
-	var workflowID pgtype.UUID
-	_ = workflowID.Scan(sessionID)
+	var pgWorkflowID pgtype.UUID
+	if workflowID != "" {
+		_ = pgWorkflowID.Scan(workflowID)
+	} else {
+		// Fallback to sessionID for legacy or direct calls if TaskID is missing
+		_ = pgWorkflowID.Scan(sessionID)
+	}
 
-	wf, wfErr := e.db.GetWorkflow(ctx, workflowID)
+	wf, wfErr := e.db.GetWorkflow(ctx, pgWorkflowID)
 	baseState := []byte(`{}`)
 	currentSeq := uint64(0)
 	if wfErr == nil {
@@ -373,7 +389,12 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	_, _, faults, reduceErr := store.Reduce(ctx, baseState, currentSeq, []redux.RFC6902Event{event})
 	if reduceErr == nil && len(faults) == 0 {
 		eventBytes, _ := json.Marshal(event)
-		uuidStr := uuid.UUID(workflowID.Bytes).String()
+		var uuidStr string
+		if pgWorkflowID.Valid {
+			uuidStr = uuid.UUID(pgWorkflowID.Bytes).String()
+		} else {
+			uuidStr = sessionID
+		}
 		traceTopic := fmt.Sprintf("workflow.trace.%s", uuidStr)
 		js, _ := e.nc.JetStream()
 		_, _ = js.Publish(traceTopic, eventBytes)

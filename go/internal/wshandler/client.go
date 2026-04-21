@@ -207,6 +207,7 @@ func (c *Client) cardPump() {
 					consumerName = fmt.Sprintf("junior_accountants_%s", conn.RealmID)
 
 					c.blastDatabaseCards(conn.RealmID)
+					c.hub.JoinRoom(c, conn.RealmID)
 
 					// Dynamically wait for reconciliation pipeline completion to instantly rehydrate the mobile websocket!
 					if c.hub.queueClient != nil && c.hub.queueClient.Conn() != nil {

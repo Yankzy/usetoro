@@ -99,6 +99,9 @@ services:
         condition: service_healthy
     networks:
       - toro-net
+    volumes:
+      - ../tap/workflows:/app/tap/workflows
+      - ../go/internal/config/defaults.yaml:/app/internal/config/defaults.yaml
 
   sync:
     build:

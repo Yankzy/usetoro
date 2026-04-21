@@ -19,6 +19,13 @@ import (
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_expense"
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_revenue"
 	_ "github.com/Yankzy/usetoro/tap/agents/stripe_processor"
+	_ "github.com/Yankzy/usetoro/tap/agents/intent_extractor"
+	_ "github.com/Yankzy/usetoro/tap/agents/ocr_agent"
+	_ "github.com/Yankzy/usetoro/tap/agents/outflow_classification_agent"
+	_ "github.com/Yankzy/usetoro/tap/agents/inflow_classification_agent"
+	_ "github.com/Yankzy/usetoro/tap/agents/account_type_agent"
+	_ "github.com/Yankzy/usetoro/tap/agents/customer_vendor_selection"
+	_ "github.com/Yankzy/usetoro/tap/agents/account_selection"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/nats-io/nats.go"
 )

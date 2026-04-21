@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS shadow_erp.accounts (
     name                 TEXT NOT NULL,
     account_type         TEXT NOT NULL,              -- 'Expense', 'Revenue', 'Asset', etc.
     account_sub_type     TEXT,                       -- 'OfficeGeneralExpenses', etc.
-    classification       TEXT,                       -- 'BalanceSheet' or 'IncomeStatement'
+    classification       TEXT,                       -- assets, liabilities, equity, income, expense
     fully_qualified_name TEXT,
     active               BOOLEAN DEFAULT true,
     sync_token           TEXT NOT NULL,              -- For collision detection

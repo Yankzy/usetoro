@@ -102,10 +102,12 @@ func (c *WorkflowEventConsumer) handleWorkflowStatusEvent(msg *nats.Msg) {
 
 	sessionID, _ := payload["session_id"].(string)
 	roomID := entityID
-	if sessionID != "" {
+	if rid, ok := payload["realm_id"].(string); ok && rid != "" {
+		roomID = rid
+	} else if sessionID != "" {
 		roomID = sessionID
 	}
-	// Targeted broadcast to the specific room (session preferred)
+	// Targeted broadcast to the specific room (realm preferred, then session, then entity)
 	c.hub.BroadcastToRoom(roomID, wsMsg)
 
 	if status, ok := payload["status"].(string); ok && status == "ambiguous" {

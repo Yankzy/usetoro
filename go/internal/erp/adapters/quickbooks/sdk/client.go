@@ -332,10 +332,18 @@ func (s *notifyTokenSource) Token() (*oauth2.Token, error) {
 	// We compare AccessToken as the primary indicator of a change.
 	// lastKnownToken is initialized in NewClient, so it won't be nil here.
 	if t.AccessToken != s.lastKnownToken.AccessToken {
+		// IMPORTANT: QBO refresh tokens are not always rotated. If the new token
+		// has an empty RefreshToken, we MUST retain the old one, otherwise
+		// we will overwrite the database with an empty string and lose access.
+		refreshToken := t.RefreshToken
+		if refreshToken == "" {
+			refreshToken = s.lastKnownToken.RefreshToken
+		}
+
 		if s.onTokenUpdated != nil {
 			bt := &BearerToken{
 				AccessToken:  t.AccessToken,
-				RefreshToken: t.RefreshToken,
+				RefreshToken: refreshToken,
 				ExpiresIn:    int64(time.Until(t.Expiry).Seconds()),
 				Expiry:       t.Expiry,
 				TokenType:    t.TokenType,
@@ -345,6 +353,8 @@ func (s *notifyTokenSource) Token() (*oauth2.Token, error) {
 			}
 		}
 		s.lastKnownToken = t
+		// Update the returned token too so the caller (http.Client) has the full state
+		t.RefreshToken = refreshToken
 	}
 
 	return t, nil
@@ -372,6 +382,7 @@ type QueryResponseItem struct {
 	Bill         []Bill         `json:"Bill,omitempty"`
 	JournalEntry []JournalEntry `json:"JournalEntry,omitempty"`
 	Purchase     []Purchase     `json:"Purchase,omitempty"`
+	Deposit      []Deposit      `json:"Deposit,omitempty"`
 	Attachable   []Attachable   `json:"Attachable,omitempty"`
 }
 

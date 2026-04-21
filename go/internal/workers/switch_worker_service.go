@@ -99,13 +99,28 @@ func (s *SwitchWorkerService) Handle(ctx context.Context, msg *nats.Msg) error {
 		Config SwitchConfig    `json:"config"`
 		Input  json.RawMessage `json:"input"`
 	}
-	if err := core.UnmarshalTaskPayload(task.Payload, &swPayload); err != nil {
+
+	// 1. Resolve raw data from envelope (handle FIPA Proof wrapper)
+	rawData := task.Payload
+	var proof core.Proof
+	if err := json.Unmarshal(task.Payload, &proof); err == nil && len(proof.Data) > 0 && proof.Type != "" {
+		rawData = proof.Data
+	}
+
+	// 2. Unmarshal into our payload struct. 
+	// This captures { "config": ..., "input": ... } if present.
+	if err := json.Unmarshal(rawData, &swPayload); err != nil {
 		return fmt.Errorf("switch worker: malformed payload: %w", err)
+	}
+
+	// 3. If swPayload.Input is still empty, it might be a raw payload (no orchestrator wrapper)
+	if len(swPayload.Input) == 0 {
+		swPayload.Input = rawData
 	}
 
 	// Preserve whether original input was an array
 	isOriginalArray := gjson.ParseBytes(swPayload.Input).IsArray()
-	
+
 	// Switch requires an array for internal iteration logic
 	input := swPayload.Input
 	if !isOriginalArray {
@@ -116,6 +131,7 @@ func (s *SwitchWorkerService) Handle(ctx context.Context, msg *nats.Msg) error {
 	if err != nil {
 		return fmt.Errorf("switch worker: evaluation failed: %w", err)
 	}
+
 
 	// If it was a single object, unwrap the result array to restore standard format
 	if !isOriginalArray {

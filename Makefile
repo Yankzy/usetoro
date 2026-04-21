@@ -22,7 +22,7 @@ ifneq ($(filter rebuild restart,$(firstword $(MAKECMDGOALS))),)
   $(eval $(RUN_ARGS):;@:)
 endif
 
-.PHONY: deploy up-scanner down-scanner build-scanner
+.PHONY: deploy up-scanner down-scanner build-scanner vndr
 deploy:
 	@touch .deploy
 	@git add .deploy
@@ -183,12 +183,8 @@ clean_db:
 scr:
 	scrcpy --window-title "iPhone"
 
-vndr: go/vendor/modules.txt tap/vendor/modules.txt
-
-go/vendor/modules.txt: go/go.mod go/go.sum
+vndr:
 	cd go && GOWORK=off go mod tidy && GOWORK=off go mod vendor
-
-tap/vendor/modules.txt: tap/go.mod tap/go.sum
 	cd tap && GOWORK=off go mod tidy && GOWORK=off go mod vendor
 
 # Preference should be given to rebuilding specific services (e.g., make rebuild gate)
@@ -198,11 +194,11 @@ rebuild_all:
 
 rebuild: fix-permissions
 	@if [ -n "$(RUN_ARGS)" ]; then \
-		$(DOCKER_COMPOSE) up --build -d --force-recreate $(RUN_ARGS); \
+		$(MAKE) vndr && $(DOCKER_COMPOSE) up --build -d --force-recreate $(RUN_ARGS); \
 	else \
 		echo "Enter the service name: "; \
 		read SER_NAME; \
-		$(DOCKER_COMPOSE) up --build -d --force-recreate $$SER_NAME; \
+		$(MAKE) vndr && $(DOCKER_COMPOSE) up --build -d --force-recreate $$SER_NAME; \
 	fi
 
 ingest-messy:

@@ -38,6 +38,16 @@ func (q *Queries) CreateOrGetWorkflow(ctx context.Context, arg CreateOrGetWorkfl
 	return i, err
 }
 
+const deleteWorkflowBlueprint = `-- name: DeleteWorkflowBlueprint :exec
+DELETE FROM toro_core.workflow_blueprints
+WHERE name = $1
+`
+
+func (q *Queries) DeleteWorkflowBlueprint(ctx context.Context, name string) error {
+	_, err := q.db.Exec(ctx, deleteWorkflowBlueprint, name)
+	return err
+}
+
 const getBlueprintByName = `-- name: GetBlueprintByName :one
 SELECT name, trigger_topic, definition, created_at, updated_at
 FROM toro_core.workflow_blueprints

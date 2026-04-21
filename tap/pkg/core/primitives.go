@@ -68,6 +68,7 @@ type TaskDefinition struct {
 	Domain         string         `json:"domain"`     // e.g., "accounting", "logistics"
 	Complexity     TaskComplexity `json:"complexity"` // Used for NATS routing permissions
 	WorkflowSchema string         `json:"workflow_schema,omitempty"`
+	SystemPrompt   string         `json:"system_prompt,omitempty"`
 
 	// The Incentive
 	Reward   int64  `json:"reward"`   // Amount in micrions
@@ -214,19 +215,33 @@ type CredentialProof struct {
 
 // UnmarshalTaskPayload is a protocol-aware unmarshaler that handles both
 // raw JSON payloads and payloads wrapped in FIPA 'Proof' envelopes.
+// It also transparently unwraps the Orchestrator's 'input' wrapper if present.
 func UnmarshalTaskPayload(payload []byte, target interface{}) error {
 	if len(payload) == 0 {
 		return fmt.Errorf("empty payload")
 	}
 
+	var data []byte
+
 	// 1. Try to unmarshal as FIPA Proof
 	var proof Proof
 	if err := json.Unmarshal(payload, &proof); err == nil && len(proof.Data) > 0 && proof.Type != "" {
-		return json.Unmarshal(proof.Data, target)
+		data = proof.Data
+	} else {
+		// 2. Fallback to direct unmarshal for backward compatibility
+		data = payload
 	}
 
-	// 2. Fallback to direct unmarshal for backward compatibility
-	return json.Unmarshal(payload, target)
+	// 3. Transparently unwrap Orchestrator's "input" wrapper: {"input": ..., "config": ...}
+	// We check if the data is an object containing an "input" field.
+	var wrapper struct {
+		Input json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err == nil && len(wrapper.Input) > 0 {
+		return json.Unmarshal(wrapper.Input, target)
+	}
+
+	return json.Unmarshal(data, target)
 }
 
 // RowString is a resilient helper to extract a string value from a row map,

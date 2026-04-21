@@ -1,4 +1,4 @@
-package quickbooks
+package ruleEngine
 
 import (
 	"encoding/json"
@@ -69,6 +69,13 @@ const (
 	LogicOr  LogicChoice = "OR"
 )
 
+type CashDirection string
+
+const (
+	Outflow CashDirection = "OUTFLOW"
+	Inflow  CashDirection = "INFLOW"
+)
+
 // ============================================================================
 //  2. Structs
 // ============================================================================
@@ -80,6 +87,7 @@ type Transaction struct {
 	Customer    string
 	Description string
 	Amount      float64
+	Direction   CashDirection
 	Category    string
 	Date        time.Time
 	Time        time.Time // time-of-day component; only H/M/S are compared
@@ -106,6 +114,12 @@ type RuleCondition struct {
 	isCompiled         bool
 }
 
+// struct to handle QBO line-item mapping
+type Allocation struct {
+	AccountID  pgtype.UUID
+	Percentage float64 // e.g., 100.0 for standard, 50.0 for splits
+}
+
 type RuleGroup struct {
 	ID       int
 	Name     string
@@ -114,8 +128,10 @@ type RuleGroup struct {
 	Keywords string // Auto-generated for candidate selection optimization
 	Active   bool
 
-	TargetAccountID pgtype.UUID
-	TargetVendorID  pgtype.UUID
+	// TargetAccountID pgtype.UUID
+	TargetEntityID  pgtype.UUID  // Replacing VendorID so it works for Customers too
+	RequiresReview bool         // If true, park in the UI for the CPA to manually split (Loans)
+	Allocations    []Allocation // Slice of splits (e.g., 50% to Phone, 50% to Owner Draw)
 
 	Conditions []*RuleCondition
 	Children   []*RuleGroup

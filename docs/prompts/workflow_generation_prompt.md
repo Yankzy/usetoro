@@ -32,6 +32,8 @@ Each step fields:
 - `negotiate` (bool)
 - `timeout` (string duration, e.g. `"60s"`)
 - `description` (string, optional)
+- `system_prompt` (string, optional - instructions for the agent)
+- `workflow_schema` (string, optional - JSON schema for Redux validation)
 - `depends_on` (array of step IDs controlling DAG execution)
 - `route_condition` (optional `{ step_id: "<dependency>", values: [...] }` that matches the upstream `route` value)
 - `suspend_routes` (optional array of route integers that pause the workflow until a resume signal)
@@ -102,6 +104,10 @@ steps:
     negotiate: true
     timeout: "60s"
     description: "Map raw CSV columns into canonical row objects."
+    system_prompt: |
+      You are the CSV Mapping Agent. Analyze the headers and rows to...
+    workflow_schema: |
+      { "type": "object", "properties": { "status": { "type": "string" } } }
 
   - id: commit_mapped_columns
     activity_type: workers.database.insert_rows
@@ -121,12 +127,14 @@ steps:
     negotiate: true
     timeout: "60s"
     description: "Process positive rows and assign customer/account signals."
+    system_prompt: "You are the Revenue Reconciliation Agent. Match rows to customers..."
 
   - id: reconcile_expense
     activity_type: agents.accounting.reconcile_expense
     negotiate: true
     timeout: "60s"
     description: "Process negative rows and assign vendor/account signals."
+    system_prompt: "You are the Expense Reconciliation Agent. Match rows to vendors..."
 ```
 
 What to Return

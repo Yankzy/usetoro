@@ -23,6 +23,9 @@ type Hub struct {
 	// Unregister requests from clients.
 	unregister chan *Client
 
+	// JoinRoom requests from clients.
+	joinRoom chan joinRoomRequest
+
 	// Logger
 	logger *slog.Logger
 
@@ -44,12 +47,18 @@ type broadcastMessage struct {
 	data   []byte
 }
 
+type joinRoomRequest struct {
+	client *Client
+	roomID string
+}
+
 // NewHub creates a new Hub instance
 func NewHub(logger *slog.Logger, queueClient *queue.Client, db *database.Queries, llm *ai.LLMClient) *Hub {
 	return &Hub{
 		broadcast:   make(chan broadcastMessage, 256),
 		register:    make(chan *Client),
 		unregister:  make(chan *Client),
+		joinRoom:    make(chan joinRoomRequest),
 		rooms:       make(map[string]map[*Client]bool),
 		logger:      logger,
 		queueClient: queueClient,
@@ -73,17 +82,27 @@ func (h *Hub) Run() {
 
 		case client := <-h.unregister:
 			h.mu.Lock()
-			if room, ok := h.rooms[client.entityID]; ok {
+			// Unregister from all rooms this client might belong to
+			for roomID, room := range h.rooms {
 				if _, exists := room[client]; exists {
 					delete(room, client)
-					close(client.send)
 					if len(room) == 0 {
-						delete(h.rooms, client.entityID)
+						delete(h.rooms, roomID)
 					}
 				}
 			}
+			close(client.send)
 			h.mu.Unlock()
-			h.logger.Info("Client unregistered", "room", client.entityID, "total_clients", h.ClientCount())
+			h.logger.Info("Client unregistered from all rooms", "entity_id", client.entityID, "total_clients", h.ClientCount())
+
+		case req := <-h.joinRoom:
+			h.mu.Lock()
+			if h.rooms[req.roomID] == nil {
+				h.rooms[req.roomID] = make(map[*Client]bool)
+			}
+			h.rooms[req.roomID][req.client] = true
+			h.mu.Unlock()
+			h.logger.Info("Client joined additional room", "room", req.roomID, "entity_id", req.client.entityID)
 
 		case bm := <-h.broadcast:
 			h.mu.RLock()
@@ -129,6 +148,11 @@ func (h *Hub) Broadcast(message []byte) {
 // BroadcastToRoom sends a message only to clients in a specific room (entity_id).
 func (h *Hub) BroadcastToRoom(roomID string, message []byte) {
 	h.broadcast <- broadcastMessage{roomID: roomID, data: message}
+}
+
+// JoinRoom allows a client to join an additional broadcast room (e.g. realm_id)
+func (h *Hub) JoinRoom(client *Client, roomID string) {
+	h.joinRoom <- joinRoomRequest{client: client, roomID: roomID}
 }
 
 // ClientCount returns the number of connected clients

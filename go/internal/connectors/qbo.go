@@ -49,6 +49,12 @@ func (c *QBOConnector) Fetch(ctx context.Context, tenantID string) error {
 	if _, err := c.SyncFullVendors(ctx, tenantID, ""); err != nil {
 		return fmt.Errorf("fetch vendors: %w", err)
 	}
+	if _, err := c.SyncFullPurchases(ctx, tenantID, ""); err != nil {
+		return fmt.Errorf("fetch purchases: %w", err)
+	}
+	if _, err := c.SyncFullDeposits(ctx, tenantID, ""); err != nil {
+		return fmt.Errorf("fetch deposits: %w", err)
+	}
 	return nil
 }
 
@@ -140,6 +146,12 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 			// Skip Echo checks for Purchases since webhook events are low-frequency for Bank Feeds
 			entityData = qboEntity
 		}
+	case "Deposit":
+		qboEntity, err := client.FindDepositById(entityID)
+		err2 = err
+		if err2 == nil {
+			entityData = qboEntity
+		}
 	case "Attachable":
 		qboEntity, err := client.FindAttachableById(entityID)
 		err2 = err
@@ -165,6 +177,155 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 		return err
 	}
 	return c.updateLastWebhookTime(ctx, realmID, entityType, time.Now())
+}
+
+// HandleWebhook processes a QBO webhook request
+func (c *QBOConnector) HandleWebhook(ctx context.Context, payload []byte) error {
+	var notification struct {
+		EventNotifications []struct {
+			RealmID string `json:"realmId"`
+			Data    struct {
+				Entities []struct {
+					Name      string `json:"name"`
+					ID        string `json:"id"`
+					Operation string `json:"operation"`
+					LastUpdated string `json:"lastUpdated"`
+				} `json:"entities"`
+			} `json:"data"`
+		} `json:"eventNotifications"`
+	}
+
+	if err := json.Unmarshal(payload, &notification); err != nil {
+		return fmt.Errorf("failed to unmarshal webhook payload: %w", err)
+	}
+
+	for _, n := range notification.EventNotifications {
+		for _, e := range n.Data.Entities {
+			if err := c.FetchEntity(ctx, n.RealmID, e.Name, e.ID, e.Operation); err != nil {
+				c.logger.Error("Failed to process webhook entity", "error", err, "realm_id", n.RealmID, "entity", e.Name, "id", e.ID)
+			}
+		}
+	}
+
+	return nil
+}
+
+// SyncCDC performs a Change Data Capture sync for all supported entities
+func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync time.Time) error {
+	c.logger.Info("🔄 Starting QBO CDC sync", "realm_id", realmID)
+
+	// 1. Get connection with last webhook timestamps
+	conn, err := c.store.Queries.GetConnectionWithWebhookTimes(ctx, database.GetConnectionWithWebhookTimesParams{
+		ErpSystem: "quickbooks_online",
+		RealmID:   realmID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get connection times: %w", err)
+	}
+
+	client, err := c.getClient(ctx, "", realmID)
+	if err != nil {
+		return err
+	}
+
+	// List of entities to sync via CDC
+	entities := "Account,Vendor,Customer,Invoice,Bill,Purchase,Deposit,Attachable"
+	
+	// Determine the earliest timestamp to look back from
+	// QBO CDC has a 30-day limit.
+	lookback := time.Now().Add(-30 * 24 * time.Hour)
+	
+	// We'll use the oldest webhook timestamp among the ones we track, or 30 days if none exist
+	lastSync = lookback
+	timestamps := []time.Time{
+		conn.LastWebhookAccount.Time,
+		conn.LastWebhookVendor.Time,
+		conn.LastWebhookCustomer.Time,
+		conn.LastWebhookInvoice.Time,
+		conn.LastWebhookBill.Time,
+		conn.LastWebhookTransaction.Time,
+		conn.LastWebhookDeposit.Time,
+	}
+	
+	for _, t := range timestamps {
+		if !t.IsZero() && t.After(lastSync) {
+			lastSync = t
+		}
+	}
+
+	resp, err := client.QueryCDC(entities, lastSync)
+	if err != nil {
+		return fmt.Errorf("CDC query failed: %w", err)
+	}
+
+	for _, group := range resp.CDCResponse {
+		for _, item := range group.QueryResponse {
+			if len(item.Account) > 0 {
+				for _, acct := range item.Account {
+					if err := c.upsertEntity(ctx, realmID, "Account", acct.Id, &acct); err != nil {
+						c.logger.Error("CDC upsert failed", "entity", "Account", "id", acct.Id, "error", err)
+					}
+				}
+				c.updateLastWebhookTime(ctx, realmID, "Account", time.Now())
+			}
+			if len(item.Vendor) > 0 {
+				for _, v := range item.Vendor {
+					if err := c.upsertEntity(ctx, realmID, "Vendor", v.Id, &v); err != nil {
+						c.logger.Error("CDC upsert failed", "entity", "Vendor", "id", v.Id, "error", err)
+					}
+				}
+				c.updateLastWebhookTime(ctx, realmID, "Vendor", time.Now())
+			}
+			if len(item.Customer) > 0 {
+				for _, cust := range item.Customer {
+					if err := c.upsertEntity(ctx, realmID, "Customer", cust.Id, &cust); err != nil {
+						c.logger.Error("CDC upsert failed", "entity", "Customer", "id", cust.Id, "error", err)
+					}
+				}
+				c.updateLastWebhookTime(ctx, realmID, "Customer", time.Now())
+			}
+			if len(item.Invoice) > 0 {
+				for _, inv := range item.Invoice {
+					if err := c.upsertEntity(ctx, realmID, "Invoice", inv.Id, &inv); err != nil {
+						c.logger.Error("CDC upsert failed", "entity", "Invoice", "id", inv.Id, "error", err)
+					}
+				}
+				c.updateLastWebhookTime(ctx, realmID, "Invoice", time.Now())
+			}
+			if len(item.Bill) > 0 {
+				for _, bill := range item.Bill {
+					if err := c.upsertEntity(ctx, realmID, "Bill", bill.Id, &bill); err != nil {
+						c.logger.Error("CDC upsert failed", "entity", "Bill", "id", bill.Id, "error", err)
+					}
+				}
+				c.updateLastWebhookTime(ctx, realmID, "Bill", time.Now())
+			}
+			if len(item.Purchase) > 0 {
+				if err := c.batchUpsertPurchases(ctx, realmID, item.Purchase); err != nil {
+					c.logger.Error("CDC batch upsert failed", "entity", "Purchase", "error", err)
+				}
+				if err := c.batchUpsertTransactions(ctx, realmID, item.Purchase); err != nil {
+					c.logger.Error("CDC Fignode sync failed", "entity", "Purchase", "error", err)
+				}
+				c.updateLastWebhookTime(ctx, realmID, "Purchase", time.Now())
+			}
+			if len(item.Deposit) > 0 {
+				if err := c.batchUpsertDeposits(ctx, realmID, item.Deposit); err != nil {
+					c.logger.Error("CDC batch upsert failed", "entity", "Deposit", "error", err)
+				}
+				c.updateLastWebhookTime(ctx, realmID, "Deposit", time.Now())
+			}
+			if len(item.Attachable) > 0 {
+				for _, att := range item.Attachable {
+					if err := c.upsertEntity(ctx, realmID, "Attachable", att.Id, &att); err != nil {
+						c.logger.Error("CDC upsert failed", "entity", "Attachable", "id", att.Id, "error", err)
+					}
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // softDeleteEntity marks an entity as deleted in the shadow DB using sqlc
@@ -199,6 +360,18 @@ func (c *QBOConnector) softDeleteEntity(ctx context.Context, realmID, entityType
 		})
 	case "Bill":
 		err = c.store.Queries.SoftDeleteBill(ctx, database.SoftDeleteBillParams{
+			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
+			RealmID:   realmID,
+			ErpID:     entityID,
+		})
+	case "Purchase":
+		err = c.store.Queries.SoftDeletePurchase(ctx, database.SoftDeletePurchaseParams{
+			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
+			RealmID:   realmID,
+			ErpID:     entityID,
+		})
+	case "Deposit":
+		err = c.store.Queries.SoftDeleteDeposit(ctx, database.SoftDeleteDepositParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
 			ErpID:     entityID,
@@ -328,6 +501,32 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 			ErpID_2:          mappedTx.AccountID,
 			Status:           "PENDING",
 		})
+		if err == nil {
+			// Also upsert to shadow ERP
+			linesJSON, _ := json.Marshal(p.Line)
+			err = c.store.Queries.UpsertPurchase(ctx, database.UpsertPurchaseParams{
+				ErpID:           p.Id,
+				RealmID:         realmID,
+				TxnDate:         pgtype.Date{Time: p.TxnDate.Time, Valid: !p.TxnDate.IsZero()},
+				TotalAmount:     jsonNumberToNumeric(p.TotalAmt),
+				PaymentType:     pgtype.Text{String: p.PaymentType, Valid: p.PaymentType != ""},
+				SourceAccountID: pgtype.Text{String: p.AccountRef.Value, Valid: p.AccountRef.Value != ""},
+				EntityID:        pgtype.Text{String: p.EntityRef.Value, Valid: p.EntityRef.Value != ""},
+				Lines:           linesJSON,
+			})
+		}
+
+	case "Deposit":
+		d := data.(*quickbooks.Deposit)
+		linesJSON, _ := json.Marshal(d.Line)
+		err = c.store.Queries.UpsertDeposit(ctx, database.UpsertDepositParams{
+			ErpID:           d.Id,
+			RealmID:         realmID,
+			TxnDate:         pgtype.Date{Time: d.TxnDate.Time, Valid: !d.TxnDate.IsZero()},
+			TotalAmount:     jsonNumberToNumeric(d.TotalAmt),
+			TargetAccountID: pgtype.Text{String: d.DepositToAccountRef.Value, Valid: d.DepositToAccountRef.Value != ""},
+			Lines:           linesJSON,
+		})
 
 	case "Attachable":
 		attachable := data.(*quickbooks.Attachable)
@@ -364,27 +563,39 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 
 // getClient initializes a QBO client with tokens from the store and an auto-refresh callback.
 func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) (*quickbooks.Client, error) {
-	if realmID == "" && tenantID != "" {
-		conn, err := c.store.GetQBOConnection(ctx, tenantID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get QBO connection for tenant %s: %w", tenantID, err)
+	// 1. Fetch tokens
+	var tokens database.GetERPTokensRow
+	var err error
+
+	if realmID != "" {
+		tokens, err = c.store.Queries.GetERPTokens(ctx, database.GetERPTokensParams{
+			ErpSystem: "quickbooks_online",
+			RealmID:   realmID,
+		})
+	} else {
+		// Try to find realm for tenant
+		conn, err2 := c.store.Queries.GetERPConnection(ctx, ParseUUID(tenantID))
+		if err2 != nil {
+			return nil, fmt.Errorf("failed to get ERP connection for tenant %s: %w", tenantID, err2)
 		}
 		realmID = conn.RealmID
+		tokens = database.GetERPTokensRow{
+			AccessToken:  conn.AccessToken,
+			RefreshToken: conn.RefreshToken,
+			ExpiresAt:    conn.ExpiresAt,
+			EntityID:     conn.EntityID,
+		}
 	}
 
-	if realmID == "" {
-		return nil, fmt.Errorf("realmID is required")
-	}
-
-	accessToken, refreshToken, expiresAt, entityID, err := c.store.GetQBOTokens(ctx, realmID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get QBO tokens for realm %s: %w", realmID, err)
+		return nil, fmt.Errorf("failed to get ERP tokens: %w", err)
 	}
 
-	// Prefer the caller-supplied tenantID; fall back to the entityID stored alongside the tokens.
+	// 2. Initialize QBO client with auto-refresh callback
 	effectiveEntityID := tenantID
 	if effectiveEntityID == "" {
-		effectiveEntityID = entityID
+		// If tenantID wasn't provided (e.g. from webhook), use the one tied to the connection.
+		effectiveEntityID = UUIDToString(tokens.EntityID)
 	}
 
 	client, err := quickbooks.NewClient(
@@ -394,13 +605,27 @@ func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) 
 		c.cfg.QBOIsProduction,
 		c.cfg.QBOMinorVersion,
 		&quickbooks.BearerToken{
-			AccessToken:  accessToken,
-			RefreshToken: refreshToken,
-			Expiry:       expiresAt,
+			AccessToken:  tokens.AccessToken,
+			RefreshToken: tokens.RefreshToken,
+			Expiry:       tokens.ExpiresAt.Time,
 		},
 		func(token *quickbooks.BearerToken) error {
 			c.logger.Info("Auto-refreshed QBO token", "realm_id", realmID)
-			return c.store.SaveQBOTokens(ctx, effectiveEntityID, realmID, token.AccessToken, token.RefreshToken, token.Expiry)
+
+			// Defensive check: If the SDK somehow returns an empty refresh token,
+			// fallback to the one we already have in memory from the database.
+			refreshToken := token.RefreshToken
+			if refreshToken == "" {
+				refreshToken = tokens.RefreshToken
+			}
+
+			return c.store.Queries.UpdateERPTokens(ctx, database.UpdateERPTokensParams{
+				ErpSystem:    "quickbooks_online",
+				RealmID:      realmID,
+				AccessToken:  token.AccessToken,
+				RefreshToken: refreshToken,
+				ExpiresAt:    pgtype.Timestamptz{Time: token.Expiry, Valid: true},
+			})
 		},
 	)
 	if err != nil {
@@ -415,164 +640,6 @@ func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) 
 // can obtain a client without being tightly coupled to QBOConnector internals.
 func (c *QBOConnector) ClientForRealm(ctx context.Context, realmID string) (*quickbooks.Client, error) {
 	return c.getClient(ctx, "", realmID)
-}
-
-// SyncCDC performs a CDC (Change Data Capture) sync for the specified realm.
-// This fetches all entities that have changed since the last sync and upserts them to the shadow DB.
-// Optimization: Uses event-driven timestamps (last successful webhook) per entity type instead of fixed schedule.
-func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync time.Time) error {
-	c.logger.Info("🔄 Running CDC sync", "realm_id", realmID, "fallback_timestamp", lastSync.Format(time.RFC3339))
-
-	// 1. Initialize QBO client
-	client, err := c.getClient(ctx, "", realmID)
-	if err != nil {
-		return err
-	}
-
-	// Get connection with webhook timestamps
-	conn, err := c.store.Queries.GetConnectionWithWebhookTimes(ctx, database.GetConnectionWithWebhookTimesParams{
-		ErpSystem: "quickbooks_online",
-		RealmID:   realmID,
-	})
-	if err != nil {
-		c.logger.Warn("Failed to get webhook times, using fallback", "error", err)
-	}
-
-	// 3. Query CDC per entity type using event-driven timestamps
-	// Use last webhook time if available, otherwise fall back to last_sync_timestamp
-	maxLookback := time.Now().Add(-30 * 24 * time.Hour) // QBO 30-day limit
-
-	entityTimestamps := map[string]time.Time{
-		"Account":    getMaxTime(conn.LastWebhookAccount.Time, lastSync, maxLookback),
-		"Vendor":     getMaxTime(conn.LastWebhookVendor.Time, lastSync, maxLookback),
-		"Customer":   getMaxTime(conn.LastWebhookCustomer.Time, lastSync, maxLookback),
-		"Invoice":    getMaxTime(conn.LastWebhookInvoice.Time, lastSync, maxLookback),
-		"Bill":       getMaxTime(conn.LastWebhookBill.Time, lastSync, maxLookback),
-		"Purchase":   getMaxTime(conn.LastWebhookTransaction.Time, lastSync, maxLookback),
-		"Attachable": getMaxTime(lastSync, lastSync, maxLookback),
-	}
-
-	// Log event-driven timestamps
-	for entityType, timestamp := range entityTimestamps {
-		c.logger.Debug("CDC timestamp for entity type",
-			"entity_type", entityType,
-			"since", timestamp.Format(time.RFC3339),
-		)
-	}
-
-	var totalProcessed int
-	var processingErrors []string
-
-	// Process each entity type with its specific timestamp
-	for entityType, changedSince := range entityTimestamps {
-		response, err := client.QueryCDC(entityType, changedSince)
-		if err != nil {
-			c.logger.Error("CDC query failed for entity type", "entity_type", entityType, "error", err)
-			processingErrors = append(processingErrors, fmt.Sprintf("%s: %v", entityType, err))
-			continue
-		}
-
-		// Collect entities from response
-		var entities interface{}
-		var count int
-
-		for _, cdcEntity := range response.CDCResponse {
-			for _, queryResp := range cdcEntity.QueryResponse {
-				switch entityType {
-				case "Account":
-					if len(queryResp.Account) > 0 {
-						entities = queryResp.Account
-						count = len(queryResp.Account)
-					}
-				case "Vendor":
-					if len(queryResp.Vendor) > 0 {
-						entities = queryResp.Vendor
-						count = len(queryResp.Vendor)
-					}
-				case "Customer":
-					if len(queryResp.Customer) > 0 {
-						entities = queryResp.Customer
-						count = len(queryResp.Customer)
-					}
-				case "Invoice":
-					if len(queryResp.Invoice) > 0 {
-						entities = queryResp.Invoice
-						count = len(queryResp.Invoice)
-					}
-				case "Bill":
-					if len(queryResp.Bill) > 0 {
-						entities = queryResp.Bill
-						count = len(queryResp.Bill)
-					}
-				case "Purchase":
-					if len(queryResp.Purchase) > 0 {
-						entities = queryResp.Purchase
-						count = len(queryResp.Purchase)
-					}
-				case "Attachable":
-					if len(queryResp.Attachable) > 0 {
-						entities = queryResp.Attachable
-						count = len(queryResp.Attachable)
-					}
-				}
-			}
-		}
-
-		if count == 0 {
-			c.logger.Debug("No changes for entity type", "entity_type", entityType)
-			continue
-		}
-
-		// Batch upsert
-		var batchErr error
-		switch entityType {
-		case "Account":
-			batchErr = c.batchUpsertAccounts(ctx, realmID, entities.([]quickbooks.Account))
-		case "Vendor":
-			batchErr = c.batchUpsertVendors(ctx, realmID, entities.([]quickbooks.Vendor))
-		case "Customer":
-			batchErr = c.batchUpsertCustomers(ctx, realmID, entities.([]quickbooks.Customer))
-		case "Invoice":
-			batchErr = c.batchUpsertInvoices(ctx, realmID, entities.([]quickbooks.Invoice))
-		case "Bill":
-			batchErr = c.batchUpsertBills(ctx, realmID, entities.([]quickbooks.Bill))
-		case "Purchase":
-			batchErr = c.batchUpsertTransactions(ctx, realmID, entities.([]quickbooks.Purchase))
-		case "Attachable":
-			batchErr = c.batchUpsertAttachables(ctx, realmID, entities.([]quickbooks.Attachable))
-		}
-
-		if batchErr != nil {
-			c.logger.Error("Failed to batch upsert entities", "entity_type", entityType, "error", batchErr, "count", count)
-			processingErrors = append(processingErrors, fmt.Sprintf("%s: %v", entityType, batchErr))
-		} else {
-			totalProcessed += count
-			c.logger.Info("CDC processed entity type", "entity_type", entityType, "count", count)
-		}
-	}
-
-	// 6. Update last sync timestamp (even if some entities failed)
-	if err := c.store.Queries.UpdateLastSyncTimestamp(ctx, database.UpdateLastSyncTimestampParams{
-		RealmID:           realmID,
-		LastSyncTimestamp: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-	}); err != nil {
-		return fmt.Errorf("failed to update last sync timestamp: %w", err)
-	}
-
-	if len(processingErrors) > 0 {
-		c.logger.Warn("CDC sync completed with errors",
-			"realm_id", realmID,
-			"entities_processed", totalProcessed,
-			"errors", processingErrors,
-		)
-	} else {
-		c.logger.Info("✅ CDC sync completed",
-			"realm_id", realmID,
-			"entities_processed", totalProcessed,
-		)
-	}
-
-	return nil
 }
 
 // CreateAccount creates an account in QBO and upserts it to the shadow DB.
@@ -780,8 +847,13 @@ func (c *QBOConnector) SyncFullPurchases(ctx context.Context, tenantID, realmID 
 		return 0, fmt.Errorf("failed to fetch purchases: %w", err)
 	}
 
+	// Double-sync: to Fignode staging and to shadow_erp.purchases
 	if err := c.batchUpsertTransactions(ctx, realmID, purchases); err != nil {
-		return 0, fmt.Errorf("failed to upsert purchases: %w", err)
+		return 0, fmt.Errorf("failed to upsert purchases to staging: %w", err)
+	}
+
+	if err := c.batchUpsertPurchases(ctx, realmID, purchases); err != nil {
+		return 0, fmt.Errorf("failed to upsert purchases to shadow_erp: %w", err)
 	}
 
 	if err := c.store.Queries.UpdateLastSyncTimestamp(ctx, database.UpdateLastSyncTimestampParams{
@@ -793,6 +865,40 @@ func (c *QBOConnector) SyncFullPurchases(ctx context.Context, tenantID, realmID 
 
 	c.logger.Info("✅ Full Purchases sync completed", "realm_id", realmID, "count", len(purchases))
 	return len(purchases), nil
+}
+
+// SyncFullDeposits performs a full Deposit sync for the specified realm.
+func (c *QBOConnector) SyncFullDeposits(ctx context.Context, tenantID, realmID string) (int, error) {
+	if realmID == "" && tenantID != "" {
+		conn, err := c.store.GetQBOConnection(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get QBO connection for tenant %s: %w", tenantID, err)
+		}
+		realmID = conn.RealmID
+	}
+
+	if realmID == "" {
+		return 0, fmt.Errorf("realmID is required")
+	}
+
+	c.logger.Info("🔄 Running full Deposits sync", "realm_id", realmID, "tenant_id", tenantID)
+
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return 0, err
+	}
+
+	deposits, err := client.FindDeposits()
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch deposits: %w", err)
+	}
+
+	if err := c.batchUpsertDeposits(ctx, realmID, deposits); err != nil {
+		return 0, fmt.Errorf("failed to upsert deposits to shadow_erp: %w", err)
+	}
+
+	c.logger.Info("✅ Full Deposits sync completed", "realm_id", realmID, "count", len(deposits))
+	return len(deposits), nil
 }
 
 // SyncCompanyInfo fetches the QBO CompanyInfo for the given realm and upserts it
@@ -1143,6 +1249,74 @@ func (c *QBOConnector) batchUpsertAttachables(ctx context.Context, realmID strin
 	return nil
 }
 
+// batchUpsertPurchases uses a PostgreSQL transaction to upsert multiple purchases efficiently into shadow_erp
+func (c *QBOConnector) batchUpsertPurchases(ctx context.Context, realmID string, purchases []quickbooks.Purchase) error {
+	tx, err := c.store.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := c.store.Queries.WithTx(tx)
+
+	for _, p := range purchases {
+		linesJSON, _ := json.Marshal(p.Line)
+
+		if err := qtx.UpsertPurchase(ctx, database.UpsertPurchaseParams{
+			ErpID:           p.Id,
+			RealmID:         realmID,
+			TxnDate:         pgtype.Date{Time: p.TxnDate.Time, Valid: !p.TxnDate.IsZero()},
+			TotalAmount:     jsonNumberToNumeric(p.TotalAmt),
+			PaymentType:     pgtype.Text{String: p.PaymentType, Valid: p.PaymentType != ""},
+			SourceAccountID: pgtype.Text{String: p.AccountRef.Value, Valid: p.AccountRef.Value != ""},
+			EntityID:        pgtype.Text{String: p.EntityRef.Value, Valid: p.EntityRef.Value != ""},
+			Lines:           linesJSON,
+		}); err != nil {
+			return fmt.Errorf("failed to upsert purchase %s: %w", p.Id, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	c.logger.Debug("💾 Batch upserted purchases to shadow_erp", "count", len(purchases))
+	return nil
+}
+
+// batchUpsertDeposits uses a PostgreSQL transaction to upsert multiple deposits efficiently into shadow_erp
+func (c *QBOConnector) batchUpsertDeposits(ctx context.Context, realmID string, deposits []quickbooks.Deposit) error {
+	tx, err := c.store.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := c.store.Queries.WithTx(tx)
+
+	for _, d := range deposits {
+		linesJSON, _ := json.Marshal(d.Line)
+
+		if err := qtx.UpsertDeposit(ctx, database.UpsertDepositParams{
+			ErpID:           d.Id,
+			RealmID:         realmID,
+			TxnDate:         pgtype.Date{Time: d.TxnDate.Time, Valid: !d.TxnDate.IsZero()},
+			TotalAmount:     jsonNumberToNumeric(d.TotalAmt),
+			TargetAccountID: pgtype.Text{String: d.DepositToAccountRef.Value, Valid: d.DepositToAccountRef.Value != ""},
+			Lines:           linesJSON,
+		}); err != nil {
+			return fmt.Errorf("failed to upsert deposit %s: %w", d.Id, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	c.logger.Debug("💾 Batch upserted deposits to shadow_erp", "count", len(deposits))
+	return nil
+}
+
 // batchUpsertTransactions uses a PostgreSQL transaction to upsert multiple transactions efficiently into fignode
 func (c *QBOConnector) batchUpsertTransactions(ctx context.Context, realmID string, purchases []quickbooks.Purchase) error {
 	tx, err := c.store.Pool.Begin(ctx)
@@ -1223,6 +1397,12 @@ func (c *QBOConnector) updateLastWebhookTime(ctx context.Context, realmID, entit
 			RealmID:                realmID,
 			LastWebhookTransaction: ts,
 		})
+	case "Deposit":
+		return c.store.Queries.UpdateLastWebhookDeposit(ctx, database.UpdateLastWebhookDepositParams{
+			ErpSystem:          "quickbooks_online",
+			RealmID:            realmID,
+			LastWebhookDeposit: ts,
+		})
 	default:
 		// Unsupported entity type, silently skip (no error)
 		return nil
@@ -1258,6 +1438,22 @@ func executeBatched[T any](
 		all = append(all, resp.BatchItemResponse...)
 	}
 	return all, nil
+}
+
+func ParseUUID(s string) pgtype.UUID {
+	var u pgtype.UUID
+	err := u.Scan(s)
+	if err != nil {
+		return pgtype.UUID{Valid: false}
+	}
+	return u
+}
+
+func UUIDToString(u pgtype.UUID) string {
+	if !u.Valid {
+		return ""
+	}
+	return fmt.Sprintf("%x-%x-%x-%x-%x", u.Bytes[0:4], u.Bytes[4:6], u.Bytes[6:8], u.Bytes[8:10], u.Bytes[10:16])
 }
 
 // batchSendToQBO is the shared implementation for create/update batch operations.

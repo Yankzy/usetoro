@@ -182,7 +182,7 @@ func (a *OCRAgent) executeTask(env core.Envelope) error {
 			patches = append(patches, []byte(fmt.Sprintf(`{"op": "test", "path": "/status", "value": %s}`, string(b))))
 		}
 
-		extraction, err := a.extractDocumentUsingLLM(context.Background(), payload)
+		extraction, err := a.extractDocumentUsingLLM(context.Background(), task, payload)
 		if err != nil {
 			return nil, err
 		}
@@ -235,7 +235,7 @@ func (a *OCRAgent) executeTask(env core.Envelope) error {
 	)
 }
 
-func (a *OCRAgent) extractDocumentUsingLLM(ctx context.Context, payload OCRTaskPayload) (*OCRExtraction, error) {
+func (a *OCRAgent) extractDocumentUsingLLM(ctx context.Context, task core.TaskDefinition, payload OCRTaskPayload) (*OCRExtraction, error) {
 	pages := []agent.PageContext{
 		{
 			Type:    "document",
@@ -272,9 +272,7 @@ func (a *OCRAgent) extractDocumentUsingLLM(ctx context.Context, payload OCRTaskP
 
 	prompt := "Extract the structured contents from the available document.\n\nUse the PAGE_IN tool to read the raw contents of the document before answering.\n\nReturn ONLY a JSON object with 'text' (full raw text), 'entities' (key-value pairs of found fields), and 'confidence' (float 0-1)."
 
-	fullPrompt := fmt.Sprintf("%s\n\n%s", a.Cfg.SystemPrompt, prompt)
-
-	respText, err := a.rt.ExecWithPaging(ctx, fullPrompt, pages, fetcher)
+	respText, err := a.rt.ExecWithPaging(ctx, prompt, task.SystemPrompt, pages, fetcher)
 	if err != nil {
 		return nil, err
 	}

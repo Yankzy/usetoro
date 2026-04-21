@@ -47,3 +47,7 @@ SELECT *
 FROM toro_core.workflow_blueprints
 WHERE name = $1 OR trigger_topic = $1
 LIMIT 1;
+
+-- name: DeleteWorkflowBlueprint :exec
+DELETE FROM toro_core.workflow_blueprints
+WHERE name = $1;

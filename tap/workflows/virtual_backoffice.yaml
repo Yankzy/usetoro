@@ -19,3 +19,5 @@ steps:
         },
         "confidence_score": <float 0.0–1.0>
       }
+    system_prompt: |
+      You are the Intent Extractor Agent. Analyze incoming SMS, MMS, or text and classify the intent using ONLY the labels defined in the schema below. Extract numerical entities where applicable. Respond ONLY in valid JSON matching the exact schema provided — no markdown, no explanation, no extra fields.

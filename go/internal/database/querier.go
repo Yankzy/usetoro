@@ -50,6 +50,7 @@ type Querier interface {
 	DeleteExpiredTeamInvites(ctx context.Context) error
 	DeleteRefreshToken(ctx context.Context, tokenHash string) error
 	DeleteStalledMessage(ctx context.Context, id pgtype.UUID) error
+	DeleteWorkflowBlueprint(ctx context.Context, name string) error
 	GetAccountByERPID(ctx context.Context, arg GetAccountByERPIDParams) (ShadowErpAccount, error)
 	GetAccountByID(ctx context.Context, id pgtype.UUID) (ShadowErpAccount, error)
 	GetAccountsByRealm(ctx context.Context, realmID string) ([]ShadowErpAccount, error)
@@ -80,7 +81,9 @@ type Querier interface {
 	GetCustomerByName(ctx context.Context, arg GetCustomerByNameParams) (ShadowErpCustomer, error)
 	GetCustomersByRealm(ctx context.Context, realmID string) ([]ShadowErpCustomer, error)
 	GetCustomersUpdatedSince(ctx context.Context, arg GetCustomersUpdatedSinceParams) ([]ShadowErpCustomer, error)
+	GetDepositByERPID(ctx context.Context, arg GetDepositByERPIDParams) (ShadowErpDeposit, error)
 	GetERPConnection(ctx context.Context, entityID pgtype.UUID) (ToroCoreErpConnection, error)
+	GetERPConnectionByRealm(ctx context.Context, arg GetERPConnectionByRealmParams) (ToroCoreErpConnection, error)
 	GetERPTokens(ctx context.Context, arg GetERPTokensParams) (GetERPTokensRow, error)
 	GetEmployeeByEmail(ctx context.Context, email string) (GetEmployeeByEmailRow, error)
 	GetEmployeeByID(ctx context.Context, id pgtype.UUID) (GetEmployeeByIDRow, error)
@@ -95,6 +98,7 @@ type Querier interface {
 	GetEmployeeStats(ctx context.Context, userID pgtype.UUID) (GetEmployeeStatsRow, error)
 	GetEntities(ctx context.Context, arg GetEntitiesParams) ([]ToroCoreEntity, error)
 	GetEntityDescendants(ctx context.Context, id pgtype.UUID) ([]pgtype.UUID, error)
+	GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredAccountsForAIParams) ([]GetFilteredAccountsForAIRow, error)
 	// =========================================================================
 	// Fignode Transactions Startup
 	// =========================================================================
@@ -110,6 +114,7 @@ type Querier interface {
 	GetPendingSessionRows(ctx context.Context, sessionID pgtype.UUID) ([]GetPendingSessionRowsRow, error)
 	GetProposedTransactionByID(ctx context.Context, id pgtype.UUID) (FignodeStagingTransaction, error)
 	GetProposedTransactionByValues(ctx context.Context, arg GetProposedTransactionByValuesParams) (FignodeStagingTransaction, error)
+	GetPurchaseByERPID(ctx context.Context, arg GetPurchaseByERPIDParams) (ShadowErpPurchase, error)
 	GetRealmIDByEntityID(ctx context.Context, entityID pgtype.UUID) (string, error)
 	GetRealmsForEntities(ctx context.Context, authorizedEntityIds []pgtype.UUID) ([]string, error)
 	GetRecentCorrections(ctx context.Context, arg GetRecentCorrectionsParams) ([]ShadowErpAiCorrection, error)
@@ -178,13 +183,16 @@ type Querier interface {
 	SoftDeleteAttachable(ctx context.Context, arg SoftDeleteAttachableParams) error
 	SoftDeleteBill(ctx context.Context, arg SoftDeleteBillParams) error
 	SoftDeleteCustomer(ctx context.Context, arg SoftDeleteCustomerParams) error
+	SoftDeleteDeposit(ctx context.Context, arg SoftDeleteDepositParams) error
 	SoftDeleteInvoice(ctx context.Context, arg SoftDeleteInvoiceParams) error
+	SoftDeletePurchase(ctx context.Context, arg SoftDeletePurchaseParams) error
 	SoftDeleteVendor(ctx context.Context, arg SoftDeleteVendorParams) error
 	UpdateCleanupSessionRowCount(ctx context.Context, arg UpdateCleanupSessionRowCountParams) error
 	UpdateCleanupSessionStatus(ctx context.Context, arg UpdateCleanupSessionStatusParams) error
 	UpdateCompanyTaxonomy(ctx context.Context, arg UpdateCompanyTaxonomyParams) error
 	UpdateCustomerTaxonomy(ctx context.Context, arg UpdateCustomerTaxonomyParams) error
 	UpdateCustomerVectorSync(ctx context.Context, arg UpdateCustomerVectorSyncParams) error
+	UpdateERPTokens(ctx context.Context, arg UpdateERPTokensParams) error
 	UpdateLastSyncTimestamp(ctx context.Context, arg UpdateLastSyncTimestampParams) error
 	// =========================================================================
 	// Webhook Timestamp Tracking (for event-driven CDC)
@@ -192,6 +200,7 @@ type Querier interface {
 	UpdateLastWebhookAccount(ctx context.Context, arg UpdateLastWebhookAccountParams) error
 	UpdateLastWebhookBill(ctx context.Context, arg UpdateLastWebhookBillParams) error
 	UpdateLastWebhookCustomer(ctx context.Context, arg UpdateLastWebhookCustomerParams) error
+	UpdateLastWebhookDeposit(ctx context.Context, arg UpdateLastWebhookDepositParams) error
 	UpdateLastWebhookInvoice(ctx context.Context, arg UpdateLastWebhookInvoiceParams) error
 	UpdateLastWebhookTransaction(ctx context.Context, arg UpdateLastWebhookTransactionParams) error
 	UpdateLastWebhookVendor(ctx context.Context, arg UpdateLastWebhookVendorParams) error
@@ -218,6 +227,7 @@ type Querier interface {
 	// =========================================================================
 	UpsertCompanyInfo(ctx context.Context, arg UpsertCompanyInfoParams) error
 	UpsertCustomer(ctx context.Context, arg UpsertCustomerParams) error
+	UpsertDeposit(ctx context.Context, arg UpsertDepositParams) error
 	// =========================================================================
 	// QBO Connection / Token Management
 	// =========================================================================
@@ -225,6 +235,7 @@ type Querier interface {
 	// before upserting, so the UNIQUE(entity_id) constraint never blocks a transfer.
 	UpsertERPTokens(ctx context.Context, arg UpsertERPTokensParams) error
 	UpsertInvoice(ctx context.Context, arg UpsertInvoiceParams) error
+	UpsertPurchase(ctx context.Context, arg UpsertPurchaseParams) error
 	UpsertStagingTransaction(ctx context.Context, arg UpsertStagingTransactionParams) error
 	UpsertVectorSyncState(ctx context.Context, arg UpsertVectorSyncStateParams) error
 	UpsertVendor(ctx context.Context, arg UpsertVendorParams) error

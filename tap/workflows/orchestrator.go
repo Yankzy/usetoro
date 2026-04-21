@@ -13,12 +13,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
+	"github.com/spf13/viper"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
-	"gopkg.in/yaml.v3"
 
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
@@ -155,48 +156,111 @@ func (o *Orchestrator) LoadFromDir(ctx context.Context, dirPath string) error {
 		return fmt.Errorf("orchestrator: failed to read workflow config directory: %w", err)
 	}
 
+	o.logger.Info("📂 Orchestrator: loading workflows from directory", "path", dirPath)
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
 			continue
 		}
 
 		fullPath := filepath.Join(dirPath, entry.Name())
-		data, err := os.ReadFile(fullPath)
-		if err != nil {
-			o.logger.Error("Orchestrator: failed to read workflow file", "file", entry.Name(), "error", err)
-			continue
+		if err := o.UpsertWorkflowFromFile(ctx, fullPath); err != nil {
+			o.logger.Error("❌ Orchestrator: failed to load workflow file", "file", entry.Name(), "error", err)
 		}
-
-		var wfDef WorkflowDef
-		if err := yaml.Unmarshal(data, &wfDef); err != nil {
-			o.logger.Error("Orchestrator: failed to parse workflow file", "file", entry.Name(), "error", err)
-			continue
-		}
-		var mutated bool
-		wfDef, mutated = normalizeWorkflowDef(wfDef)
-		if mutated {
-			o.logger.Info("Orchestrator: normalized workflow graph", "file", entry.Name())
-		}
-
-		defBytes, err := json.Marshal(wfDef)
-		if err != nil {
-			o.logger.Error("Orchestrator: failed to marshal workflow definition", "file", entry.Name(), "error", err)
-			continue
-		}
-
-		_, err = o.queries.UpsertWorkflowBlueprint(ctx, database.UpsertWorkflowBlueprintParams{
-			Name:         wfDef.Name,
-			TriggerTopic: wfDef.TriggerTopic,
-			Definition:   defBytes,
-		})
-		if err != nil {
-			o.logger.Error("Orchestrator: failed to upsert workflow blueprint", "name", wfDef.Name, "error", err)
-			continue
-		}
-
-		o.logger.Info("Orchestrator: upserted workflow blueprint", "name", wfDef.Name, "steps", len(wfDef.Steps), "trigger_topic", wfDef.TriggerTopic)
 	}
 	return nil
+}
+
+// UpsertWorkflowFromFile reads a single YAML file using Viper and upserts it to the DB.
+func (o *Orchestrator) UpsertWorkflowFromFile(ctx context.Context, filePath string) error {
+	v := viper.New()
+	v.SetConfigFile(filePath)
+	if err := v.ReadInConfig(); err != nil {
+		return fmt.Errorf("read workflow config: %w", err)
+	}
+
+	var wfDef WorkflowDef
+	if err := v.Unmarshal(&wfDef); err != nil {
+		return fmt.Errorf("unmarshal workflow: %w", err)
+	}
+
+	if wfDef.Name == "" {
+		return fmt.Errorf("workflow name is required")
+	}
+
+	var mutated bool
+	wfDef, mutated = normalizeWorkflowDef(wfDef)
+	if mutated {
+		o.logger.Info("Orchestrator: normalized workflow graph", "file", filepath.Base(filePath))
+	}
+
+	defBytes, err := json.Marshal(wfDef)
+	if err != nil {
+		return fmt.Errorf("marshal workflow definition: %w", err)
+	}
+
+	_, err = o.queries.UpsertWorkflowBlueprint(ctx, database.UpsertWorkflowBlueprintParams{
+		Name:         wfDef.Name,
+		TriggerTopic: wfDef.TriggerTopic,
+		Definition:   defBytes,
+	})
+	if err != nil {
+		return fmt.Errorf("upsert workflow blueprint: %w", err)
+	}
+
+	o.logger.Info("✅ Orchestrator: upserted workflow blueprint", "name", wfDef.Name, "steps", len(wfDef.Steps), "trigger", wfDef.TriggerTopic, "file", filepath.Base(filePath))
+	return nil
+}
+
+// WatchWorkflows monitors the provided directory for YAML changes and hot-reloads them.
+func (o *Orchestrator) WatchWorkflows(ctx context.Context, dirPath string) error {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("create fsnotify watcher: %w", err)
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(dirPath); err != nil {
+		return fmt.Errorf("add dir to watcher: %w", err)
+	}
+
+	o.logger.Info("👁️  Orchestrator: watching workflows directory for changes", "path", dirPath)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+			// We only care about writes or creates of .yaml files
+			if filepath.Ext(event.Name) != ".yaml" {
+				continue
+			}
+			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
+				o.logger.Info("🔄 Workflow file change detected", "file", event.Name)
+				// Defer a bit to let the write finish (debounce)
+				time.Sleep(200 * time.Millisecond)
+
+				if err := o.UpsertWorkflowFromFile(ctx, event.Name); err != nil {
+					o.logger.Error("❌ Orchestrator: failed to hot-reload workflow", "file", event.Name, "error", err)
+					continue
+				}
+
+				// After upserting to DB, refresh the in-memory blueprints
+				if err := o.SyncBlueprints(ctx); err != nil {
+					o.logger.Error("❌ Orchestrator: failed to sync blueprints after hot-reload", "error", err)
+				} else {
+					o.logger.Info("🚀 Orchestrator: hot-reload complete", "file", event.Name)
+				}
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			o.logger.Error("Orchestrator: watcher error", "error", err)
+		}
+	}
 }
 
 // SyncBlueprints refreshes the in-memory snapshot of workflow blueprints from the DB and reconciles
@@ -264,7 +328,7 @@ func (o *Orchestrator) SyncBlueprints(ctx context.Context) error {
 		return fmt.Errorf("ensure %s stream: %w", WorkflowTriggerStream, err)
 	}
 
-	o.logger.Info("Orchestrator: synced workflow blueprints", "count", len(next), "trigger_topics", len(subjects))
+	o.logger.Info("📋 Orchestrator: synced workflow blueprints from DB", "count", len(next), "trigger_topics", len(subjects))
 	return nil
 }
 
@@ -730,7 +794,6 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 	o.logger.Info("🚀 [DEBUG] Orchestrator dispatching step",
 		"activity", step.ActivityType,
 		"cid", cid,
-		// "payload", string(payload),
 	)
 	if len(instancePath) == 0 {
 		return fmt.Errorf("orchestrator: missing instance path for step %q", step.ID)
@@ -749,17 +812,18 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 			"activity_type", step.ActivityType,
 			"negotiate", step.Negotiate,
 			"task_queue", queue,
-			"payload", string(payload),
 		)
 
 		// ── FIPA path: broadcast CFP to the public task_queue ─────────────────
 		// 3rd-party agents (Firecracker) and internal agents listening on this
 		// topic can all reply with PROPOSE to the orchestrator inbox.
 		taskDef := core.TaskDefinition{
-			ID:         instanceID,
-			Domain:     step.ActivityType,
-			Payload:    payload,
-			Complexity: step.Complexity,
+			ID:             instanceID,
+			Domain:         step.ActivityType,
+			Payload:        json.RawMessage(payload),
+			Complexity:     step.Complexity,
+			WorkflowSchema: step.WorkflowSchema,
+			SystemPrompt:   step.SystemPrompt,
 		}
 		cfp, err := core.NewEnvelope(
 			uuid.New().String(),
@@ -819,10 +883,12 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 		)
 
 		taskDef := core.TaskDefinition{
-			ID:         instanceID,
-			Domain:     step.ActivityType,
-			Payload:    payload,
-			Complexity: step.Complexity,
+			ID:             instanceID,
+			Domain:         step.ActivityType,
+			Payload:        payload,
+			Complexity:     step.Complexity,
+			WorkflowSchema: step.WorkflowSchema,
+			SystemPrompt:   step.SystemPrompt,
 		}
 		accept, err := core.NewEnvelope(
 			uuid.New().String(),
@@ -914,10 +980,6 @@ func (o *Orchestrator) spawnSubWorkflow(ctx context.Context, step WorkflowStep, 
 // - PROPOSE   → log bid; in the future, select best proposal and send ACCEPT
 // - INFORM    → step completed; advance to DAG-friendly successors
 func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
-
-	// o.logger.Info("🚀 [DEBUG] Orchestrator received message on inbox",
-	// 	"payload", string(msg.Data),
-	// )
 	var env core.Envelope
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
 		o.logger.Error("Orchestrator: malformed envelope on inbox", "error", err)
@@ -1351,11 +1413,50 @@ func (o *Orchestrator) publishAmbiguityEvent(instanceID string, entityID pgtype.
 			evt["proof"] = string(proof)
 		}
 	}
+	if rid := findRealmIDInProof(proof); rid != "" {
+		evt["realm_id"] = rid
+	}
 	if session := findSessionIDInProof(proof); session != "" {
 		evt["session_id"] = session
 	}
 	data, _ := json.Marshal(evt)
 	return o.bus.Publish(WorkflowAmbiguousSubject, data)
+}
+
+func findRealmIDInProof(proof json.RawMessage) string {
+	if len(proof) == 0 {
+		return ""
+	}
+	var payload interface{}
+	if err := json.Unmarshal(proof, &payload); err != nil {
+		return ""
+	}
+	return searchForRealmID(payload)
+}
+
+func searchForRealmID(value interface{}) string {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for _, key := range []string{"realm_id", "RealmID"} {
+			if raw, ok := typed[key]; ok {
+				if str, ok := raw.(string); ok && str != "" {
+					return str
+				}
+			}
+		}
+		for _, v := range typed {
+			if str := searchForRealmID(v); str != "" {
+				return str
+			}
+		}
+	case []interface{}:
+		for _, v := range typed {
+			if str := searchForRealmID(v); str != "" {
+				return str
+			}
+		}
+	}
+	return ""
 }
 
 func findSessionIDInProof(proof json.RawMessage) string {
@@ -1495,6 +1596,18 @@ func extractRouteValue(raw json.RawMessage) (int, bool) {
 		return 0, false
 	}
 	val := gjson.ParseBytes(raw)
+
+	// Direct root lookup (raw Redux state)
+	if route := val.Get("route"); route.Exists() {
+		return int(route.Int()), true
+	}
+
+	// Protocol-wrapped lookup (FIPA Proof.Data)
+	if route := val.Get("data.route"); route.Exists() {
+		return int(route.Int()), true
+	}
+
+	// Legacy/Other envelope structure lookup
 	if val.IsArray() {
 		arr := val.Array()
 		if len(arr) > 0 {
@@ -1504,41 +1617,35 @@ func extractRouteValue(raw json.RawMessage) (int, bool) {
 			}
 		}
 	}
-	if route := val.Get("route"); route.Exists() {
-		return int(route.Int()), true
-	}
+
 	return 0, false
 }
 
 func buildStepPayload(step WorkflowStep, state InstanceState, fallback []byte) []byte {
 	var payload []byte
-	if len(step.DependsOn) == 0 {
-		if len(fallback) > 0 {
-			payload = fallback
-		} else if len(state.LastProof) > 0 {
-			payload = state.LastProof
-		} else {
-			payload = []byte("{}")
-		}
-	} else {
+
+	// If history is requested, bundle all specified dependencies.
+	if step.IncludeHistory && len(step.DependsOn) > 0 {
 		bundle := make(map[string]json.RawMessage)
 		for _, dep := range step.DependsOn {
 			if raw, ok := state.Variables[dep]; ok {
 				bundle[dep] = raw
 			}
 		}
-		if len(bundle) == 0 {
-			if len(state.LastProof) > 0 {
-				payload = state.LastProof
-			} else if len(fallback) > 0 {
-				payload = fallback
-			} else {
-				payload = []byte("{}")
-			}
-		} else {
+		if len(bundle) > 0 {
 			merged := map[string]map[string]json.RawMessage{"dependencies": bundle}
-			mergedBytes, _ := json.Marshal(merged)
-			payload = mergedBytes
+			payload, _ = json.Marshal(merged)
+		}
+	}
+
+	// Default/Fallback: If no history was bundled (or not requested), use the direct input (LastProof).
+	if len(payload) == 0 {
+		if len(state.LastProof) > 0 {
+			payload = state.LastProof
+		} else if len(fallback) > 0 {
+			payload = fallback
+		} else {
+			payload = []byte("{}")
 		}
 	}
 	raw := wrapPayloadWithConfig(step, payload)
@@ -1552,13 +1659,12 @@ func buildStepPayload(step WorkflowStep, state InstanceState, fallback []byte) [
 }
 
 func wrapPayloadWithConfig(step WorkflowStep, payload []byte) []byte {
-	if len(step.Config) == 0 {
-		return payload
-	}
-	configBytes, _ := json.Marshal(step.Config)
 	wrapper := map[string]json.RawMessage{
-		"config": json.RawMessage(configBytes),
-		"input":  json.RawMessage(payload),
+		"input": json.RawMessage(payload),
+	}
+	if len(step.Config) > 0 {
+		configBytes, _ := json.Marshal(step.Config)
+		wrapper["config"] = json.RawMessage(configBytes)
 	}
 	final, err := json.Marshal(wrapper)
 	if err != nil {

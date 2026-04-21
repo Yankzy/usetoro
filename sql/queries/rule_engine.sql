@@ -1,9 +1,9 @@
 -- name: CreateRuleGroup :one
 INSERT INTO shadow_erp.rule_groups (
     realm_id, name, logic, priority, active,
-    target_account_id, target_vendor_id, parent_id
+    target_entity_id, requires_review, allocations, parent_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
 ) RETURNING *;
 
 -- name: GetActiveRuleGroupsByRealm :many

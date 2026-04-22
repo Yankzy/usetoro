@@ -53,7 +53,7 @@ func (r *mutationResolver) getQBOConnectorHelper(ctx context.Context, realmID st
 		QBOIsProduction: isProd,
 	}
 
-	qboConn := connectors.NewQBOConnector(r.Logger, cfg, r.Store)
+	qboConn := connectors.NewQBOConnector(r.Logger, cfg, r.Store, r.NatsConn)
 	return qboConn, entityID, nil
 }
 

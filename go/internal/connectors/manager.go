@@ -7,6 +7,7 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/store"
+	"github.com/nats-io/nats.go"
 )
 
 // Manager handles the lifecycle of connectors (Plaid, QBO).
@@ -16,7 +17,7 @@ type Manager struct {
 	connectors map[string]Connector
 }
 
-func NewManager(logger *slog.Logger, cfg *config.Config, store *store.Store) *Manager {
+func NewManager(logger *slog.Logger, cfg *config.Config, store *store.Store, nc *nats.Conn) *Manager {
 	m := &Manager{
 		logger:     logger,
 		cfg:        cfg,
@@ -24,7 +25,7 @@ func NewManager(logger *slog.Logger, cfg *config.Config, store *store.Store) *Ma
 	}
 
 	// Register connectors (Factory Pattern)
-	m.connectors["qbo"] = NewQBOConnector(logger, cfg, store)
+	m.connectors["qbo"] = NewQBOConnector(logger, cfg, store, nc)
 	// m.connectors["plaid"] = NewPlaidConnector(logger, cfg)
 
 	return m

@@ -236,6 +236,7 @@ func (c *Client) reqContext(ctx context.Context, method string, endpoint string,
 	}
 
 	bodyBytes := executeRes.([]byte)
+
 	if responseObject != nil {
 		if err = json.Unmarshal(bodyBytes, &responseObject); err != nil {
 			return fmt.Errorf("failed to unmarshal response into object: %v", err)

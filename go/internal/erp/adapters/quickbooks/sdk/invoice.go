@@ -171,7 +171,7 @@ func (c *Client) FindInvoices() ([]Invoice, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no invoices could be found")
+		return nil, nil
 	}
 
 	invoices := make([]Invoice, 0, resp.QueryResponse.TotalCount)

@@ -302,6 +302,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
       AUTH_PRIVATE_KEY: ${AUTH_PRIVATE_KEY}
       PORT: 8080
       PINECONE_API_KEY: ${PINECONE_API_KEY}
@@ -321,6 +322,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      nats-1:
+        condition: service_healthy
     networks:
       - toro-net
 

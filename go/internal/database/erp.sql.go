@@ -295,6 +295,34 @@ func (q *Queries) GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUp
 	return items, nil
 }
 
+const getActiveRealms = `-- name: GetActiveRealms :many
+
+SELECT DISTINCT realm_id FROM toro_core.erp_connections
+`
+
+// =========================================================================
+// Rule Execution & Cleanup
+// =========================================================================
+func (q *Queries) GetActiveRealms(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, getActiveRealms)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var realm_id string
+		if err := rows.Scan(&realm_id); err != nil {
+			return nil, err
+		}
+		items = append(items, realm_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAllAccountsForRealms = `-- name: GetAllAccountsForRealms :many
 SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
 WHERE realm_id = ANY($1::text[]) AND deleted_at IS NULL
@@ -837,7 +865,7 @@ func (q *Queries) GetCustomersUpdatedSince(ctx context.Context, arg GetCustomers
 }
 
 const getDepositByERPID = `-- name: GetDepositByERPID :one
-SELECT id, erp_id, realm_id, txn_date, total_amount, target_account_id, lines, event_source, created_at, updated_at, deleted_at FROM shadow_erp.deposits
+SELECT id, erp_id, realm_id, sync_token, txn_date, total_amount, target_account_id, lines, domain, sparse, erp_created_time, erp_updated_time, rule_id, event_source, created_at, updated_at, deleted_at FROM shadow_erp.deposits
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -853,10 +881,16 @@ func (q *Queries) GetDepositByERPID(ctx context.Context, arg GetDepositByERPIDPa
 		&i.ID,
 		&i.ErpID,
 		&i.RealmID,
+		&i.SyncToken,
 		&i.TxnDate,
 		&i.TotalAmount,
 		&i.TargetAccountID,
 		&i.Lines,
+		&i.Domain,
+		&i.Sparse,
+		&i.ErpCreatedTime,
+		&i.ErpUpdatedTime,
+		&i.RuleID,
 		&i.EventSource,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -960,6 +994,42 @@ func (q *Queries) GetERPTokens(ctx context.Context, arg GetERPTokensParams) (Get
 	return i, err
 }
 
+const getExpenseAccountsFromPurchases = `-- name: GetExpenseAccountsFromPurchases :many
+SELECT 
+    erp_id AS transaction_id,
+    source_account_id AS paid_from_bank_account,
+    -- This extracts the second AccountRef (The Expense Category)
+    jsonb_array_elements(lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS expense_account_id
+FROM shadow_erp.purchases
+WHERE realm_id = $1
+`
+
+type GetExpenseAccountsFromPurchasesRow struct {
+	TransactionID       string
+	PaidFromBankAccount string
+	ExpenseAccountID    interface{}
+}
+
+func (q *Queries) GetExpenseAccountsFromPurchases(ctx context.Context, realmID string) ([]GetExpenseAccountsFromPurchasesRow, error) {
+	rows, err := q.db.Query(ctx, getExpenseAccountsFromPurchases, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetExpenseAccountsFromPurchasesRow
+	for rows.Next() {
+		var i GetExpenseAccountsFromPurchasesRow
+		if err := rows.Scan(&i.TransactionID, &i.PaidFromBankAccount, &i.ExpenseAccountID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getFilteredAccountsForAI = `-- name: GetFilteredAccountsForAI :many
 SELECT erp_id, name, account_sub_type 
 FROM shadow_erp.accounts 
@@ -1002,6 +1072,206 @@ func (q *Queries) GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredA
 	return items, nil
 }
 
+const getHistoricalDepositConsensus = `-- name: GetHistoricalDepositConsensus :many
+WITH DepositLines AS (
+    SELECT 
+        jsonb_array_elements(lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value'::text AS customer_id,
+        jsonb_array_elements(lines)->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM shadow_erp.deposits
+    WHERE realm_id = $1 AND deleted_at IS NULL
+),
+RankedMappings AS (
+    SELECT 
+        customer_id,
+        income_account_id,
+        COUNT(*) as usage_count,
+        ROW_NUMBER() OVER(PARTITION BY customer_id ORDER BY COUNT(*) DESC) as rank
+    FROM DepositLines
+    WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+    GROUP BY customer_id, income_account_id
+)
+SELECT customer_id, income_account_id, usage_count
+FROM RankedMappings
+WHERE rank = 1 AND usage_count >= 3
+`
+
+type GetHistoricalDepositConsensusRow struct {
+	CustomerID      interface{}
+	IncomeAccountID interface{}
+	UsageCount      int64
+}
+
+// Finds the #1 most frequently used Income Account for a customer (requires minimum 3 uses).
+func (q *Queries) GetHistoricalDepositConsensus(ctx context.Context, realmID string) ([]GetHistoricalDepositConsensusRow, error) {
+	rows, err := q.db.Query(ctx, getHistoricalDepositConsensus, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetHistoricalDepositConsensusRow
+	for rows.Next() {
+		var i GetHistoricalDepositConsensusRow
+		if err := rows.Scan(&i.CustomerID, &i.IncomeAccountID, &i.UsageCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getHistoricalDepositSplitters = `-- name: GetHistoricalDepositSplitters :many
+WITH DepositLines AS (
+    SELECT 
+        erp_id AS deposit_id,
+        jsonb_array_elements(lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value'::text AS customer_id,
+        jsonb_array_elements(lines)->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM shadow_erp.deposits
+    WHERE realm_id = $1 AND deleted_at IS NULL
+),
+CustomerDepositCounts AS (
+    SELECT 
+        customer_id,
+        COUNT(DISTINCT deposit_id) as total_txns,
+        SUM(CASE WHEN lines_in_deposit > 1 THEN 1 ELSE 0 END) as split_count
+    FROM (
+        SELECT customer_id, deposit_id, COUNT(*) as lines_in_deposit
+        FROM DepositLines
+        WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+        GROUP BY customer_id, deposit_id
+    ) sub
+    GROUP BY customer_id
+)
+SELECT customer_id, total_txns, split_count
+FROM CustomerDepositCounts
+WHERE split_count >= 2 AND (split_count::decimal / total_txns) >= 0.5
+`
+
+type GetHistoricalDepositSplittersRow struct {
+	CustomerID interface{}
+	TotalTxns  int64
+	SplitCount int64
+}
+
+// Flags customers where >= 50% of their historical deposits were split across multiple income accounts.
+func (q *Queries) GetHistoricalDepositSplitters(ctx context.Context, realmID string) ([]GetHistoricalDepositSplittersRow, error) {
+	rows, err := q.db.Query(ctx, getHistoricalDepositSplitters, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetHistoricalDepositSplittersRow
+	for rows.Next() {
+		var i GetHistoricalDepositSplittersRow
+		if err := rows.Scan(&i.CustomerID, &i.TotalTxns, &i.SplitCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getHistoricalPurchaseConsensus = `-- name: GetHistoricalPurchaseConsensus :many
+WITH ExtractedLines AS (
+    SELECT 
+        entity_id,
+        jsonb_array_elements(lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id
+    FROM shadow_erp.purchases
+    WHERE realm_id = $1 AND entity_id IS NOT NULL AND deleted_at IS NULL
+),
+RankedMappings AS (
+    SELECT 
+        entity_id,
+        target_account_id,
+        COUNT(*) as usage_count,
+        ROW_NUMBER() OVER(PARTITION BY entity_id ORDER BY COUNT(*) DESC) as rank
+    FROM ExtractedLines
+    WHERE target_account_id IS NOT NULL
+    GROUP BY entity_id, target_account_id
+)
+SELECT entity_id, target_account_id, usage_count
+FROM RankedMappings
+WHERE rank = 1 AND usage_count >= 3
+`
+
+type GetHistoricalPurchaseConsensusRow struct {
+	EntityID        pgtype.Text
+	TargetAccountID interface{}
+	UsageCount      int64
+}
+
+// Finds the #1 most frequently used expense account for a vendor (requires minimum 3 uses).
+func (q *Queries) GetHistoricalPurchaseConsensus(ctx context.Context, realmID string) ([]GetHistoricalPurchaseConsensusRow, error) {
+	rows, err := q.db.Query(ctx, getHistoricalPurchaseConsensus, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetHistoricalPurchaseConsensusRow
+	for rows.Next() {
+		var i GetHistoricalPurchaseConsensusRow
+		if err := rows.Scan(&i.EntityID, &i.TargetAccountID, &i.UsageCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getHistoricalSplitters = `-- name: GetHistoricalSplitters :many
+
+WITH VendorSplitStats AS (
+    SELECT 
+        entity_id,
+        COUNT(*) AS total_txns,
+        SUM(CASE WHEN jsonb_array_length(lines) > 1 THEN 1 ELSE 0 END) AS split_count
+    FROM shadow_erp.purchases
+    WHERE realm_id = $1 AND entity_id IS NOT NULL AND deleted_at IS NULL
+    GROUP BY entity_id
+)
+SELECT entity_id, total_txns, split_count
+FROM VendorSplitStats
+WHERE split_count >= 2 AND (split_count::decimal / total_txns) >= 0.5
+`
+
+type GetHistoricalSplittersRow struct {
+	EntityID   pgtype.Text
+	TotalTxns  int64
+	SplitCount int64
+}
+
+// =========================================================================
+// Rule engine Bootstrapper Queries
+// =========================================================================
+// Finds vendors where >= 50% of their historical transactions had multiple expense lines.
+func (q *Queries) GetHistoricalSplitters(ctx context.Context, realmID string) ([]GetHistoricalSplittersRow, error) {
+	rows, err := q.db.Query(ctx, getHistoricalSplitters, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetHistoricalSplittersRow
+	for rows.Next() {
+		var i GetHistoricalSplittersRow
+		if err := rows.Scan(&i.EntityID, &i.TotalTxns, &i.SplitCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getInvoiceByERPID = `-- name: GetInvoiceByERPID :one
 SELECT id, erp_id, realm_id, customer_id, doc_number, total_amount, balance, due_date, txn_date, sync_token, event_source, created_at, updated_at, deleted_at FROM shadow_erp.invoices
 WHERE realm_id = $1 AND erp_id = $2
@@ -1032,6 +1302,140 @@ func (q *Queries) GetInvoiceByERPID(ctx context.Context, arg GetInvoiceByERPIDPa
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const getOrphanedDeposits = `-- name: GetOrphanedDeposits :many
+SELECT d.id, d.erp_id, d.realm_id, d.sync_token, d.txn_date, d.total_amount, d.target_account_id, d.lines, d.domain, d.sparse, d.erp_created_time, d.erp_updated_time, d.rule_id, d.event_source, d.created_at, d.updated_at, d.deleted_at, c.display_name AS customer_name 
+FROM shadow_erp.deposits d
+LEFT JOIN LATERAL (
+    SELECT jsonb_array_elements(d.lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value' AS customer_id
+    LIMIT 1
+) AS loc ON true
+LEFT JOIN shadow_erp.customers c ON c.realm_id = d.realm_id AND c.erp_id = loc.customer_id
+WHERE d.realm_id = $1 AND d.rule_id IS NULL AND d.deleted_at IS NULL
+`
+
+type GetOrphanedDepositsRow struct {
+	ID              pgtype.UUID
+	ErpID           string
+	RealmID         string
+	SyncToken       string
+	TxnDate         pgtype.Date
+	TotalAmount     pgtype.Numeric
+	TargetAccountID string
+	Lines           []byte
+	Domain          pgtype.Text
+	Sparse          pgtype.Bool
+	ErpCreatedTime  pgtype.Timestamptz
+	ErpUpdatedTime  pgtype.Timestamptz
+	RuleID          pgtype.Int4
+	EventSource     string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+	CustomerName    pgtype.Text
+}
+
+func (q *Queries) GetOrphanedDeposits(ctx context.Context, realmID string) ([]GetOrphanedDepositsRow, error) {
+	rows, err := q.db.Query(ctx, getOrphanedDeposits, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetOrphanedDepositsRow
+	for rows.Next() {
+		var i GetOrphanedDepositsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ErpID,
+			&i.RealmID,
+			&i.SyncToken,
+			&i.TxnDate,
+			&i.TotalAmount,
+			&i.TargetAccountID,
+			&i.Lines,
+			&i.Domain,
+			&i.Sparse,
+			&i.ErpCreatedTime,
+			&i.ErpUpdatedTime,
+			&i.RuleID,
+			&i.EventSource,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.CustomerName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getOrphanedPurchases = `-- name: GetOrphanedPurchases :many
+SELECT p.id, p.erp_id, p.realm_id, p.sync_token, p.txn_date, p.total_amount, p.payment_type, p.source_account_id, p.entity_id, p.lines, p.rule_id, p.event_source, p.created_at, p.updated_at, p.deleted_at, v.display_name AS vendor_name 
+FROM shadow_erp.purchases p
+LEFT JOIN shadow_erp.vendors v ON v.erp_id = p.entity_id AND v.realm_id = p.realm_id
+WHERE p.realm_id = $1 AND p.rule_id IS NULL AND p.deleted_at IS NULL
+`
+
+type GetOrphanedPurchasesRow struct {
+	ID              pgtype.UUID
+	ErpID           string
+	RealmID         string
+	SyncToken       string
+	TxnDate         pgtype.Date
+	TotalAmount     pgtype.Numeric
+	PaymentType     pgtype.Text
+	SourceAccountID string
+	EntityID        pgtype.Text
+	Lines           []byte
+	RuleID          pgtype.Int4
+	EventSource     string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+	VendorName      pgtype.Text
+}
+
+func (q *Queries) GetOrphanedPurchases(ctx context.Context, realmID string) ([]GetOrphanedPurchasesRow, error) {
+	rows, err := q.db.Query(ctx, getOrphanedPurchases, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetOrphanedPurchasesRow
+	for rows.Next() {
+		var i GetOrphanedPurchasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ErpID,
+			&i.RealmID,
+			&i.SyncToken,
+			&i.TxnDate,
+			&i.TotalAmount,
+			&i.PaymentType,
+			&i.SourceAccountID,
+			&i.EntityID,
+			&i.Lines,
+			&i.RuleID,
+			&i.EventSource,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.VendorName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getProposedTransactionByID = `-- name: GetProposedTransactionByID :one
@@ -1146,7 +1550,7 @@ func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetPro
 }
 
 const getPurchaseByERPID = `-- name: GetPurchaseByERPID :one
-SELECT id, erp_id, realm_id, txn_date, total_amount, payment_type, source_account_id, entity_id, lines, event_source, created_at, updated_at, deleted_at FROM shadow_erp.purchases
+SELECT id, erp_id, realm_id, sync_token, txn_date, total_amount, payment_type, source_account_id, entity_id, lines, rule_id, event_source, created_at, updated_at, deleted_at FROM shadow_erp.purchases
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -1162,12 +1566,14 @@ func (q *Queries) GetPurchaseByERPID(ctx context.Context, arg GetPurchaseByERPID
 		&i.ID,
 		&i.ErpID,
 		&i.RealmID,
+		&i.SyncToken,
 		&i.TxnDate,
 		&i.TotalAmount,
 		&i.PaymentType,
 		&i.SourceAccountID,
 		&i.EntityID,
 		&i.Lines,
+		&i.RuleID,
 		&i.EventSource,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -1801,6 +2207,22 @@ func (q *Queries) UpdateCustomerVectorSync(ctx context.Context, arg UpdateCustom
 	return err
 }
 
+const updateDepositRuleID = `-- name: UpdateDepositRuleID :exec
+UPDATE shadow_erp.deposits
+SET rule_id = $2, updated_at = NOW()
+WHERE id = $1
+`
+
+type UpdateDepositRuleIDParams struct {
+	ID     pgtype.UUID
+	RuleID pgtype.Int4
+}
+
+func (q *Queries) UpdateDepositRuleID(ctx context.Context, arg UpdateDepositRuleIDParams) error {
+	_, err := q.db.Exec(ctx, updateDepositRuleID, arg.ID, arg.RuleID)
+	return err
+}
+
 const updateERPTokens = `-- name: UpdateERPTokens :exec
 UPDATE toro_core.erp_connections
 SET access_token = $3, refresh_token = $4, expires_at = $5, updated_at = NOW()
@@ -1987,6 +2409,22 @@ func (q *Queries) UpdateProposedTransactionSyncStatus(ctx context.Context, arg U
 		arg.ErpTransactionID,
 		arg.ErrorMessage,
 	)
+	return err
+}
+
+const updatePurchaseRuleID = `-- name: UpdatePurchaseRuleID :exec
+UPDATE shadow_erp.purchases
+SET rule_id = $2, updated_at = NOW()
+WHERE id = $1
+`
+
+type UpdatePurchaseRuleIDParams struct {
+	ID     pgtype.UUID
+	RuleID pgtype.Int4
+}
+
+func (q *Queries) UpdatePurchaseRuleID(ctx context.Context, arg UpdatePurchaseRuleIDParams) error {
+	_, err := q.db.Exec(ctx, updatePurchaseRuleID, arg.ID, arg.RuleID)
 	return err
 }
 
@@ -2317,14 +2755,15 @@ func (q *Queries) UpsertCustomer(ctx context.Context, arg UpsertCustomerParams) 
 
 const upsertDeposit = `-- name: UpsertDeposit :exec
 INSERT INTO shadow_erp.deposits (
-    erp_id, realm_id, txn_date, total_amount, target_account_id, lines,
+    erp_id, realm_id, sync_token, txn_date, total_amount, target_account_id, lines,
     event_source, created_at, updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6,
+    $1, $2, $3, $4, $5, $6, $7,
     'erp_sync', NOW(), NOW()
 )
 ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    sync_token        = EXCLUDED.sync_token,
     txn_date          = EXCLUDED.txn_date,
     total_amount      = EXCLUDED.total_amount,
     target_account_id = EXCLUDED.target_account_id,
@@ -2337,9 +2776,10 @@ ON CONFLICT (realm_id, erp_id) DO UPDATE SET
 type UpsertDepositParams struct {
 	ErpID           string
 	RealmID         string
+	SyncToken       string
 	TxnDate         pgtype.Date
 	TotalAmount     pgtype.Numeric
-	TargetAccountID pgtype.Text
+	TargetAccountID string
 	Lines           []byte
 }
 
@@ -2347,6 +2787,7 @@ func (q *Queries) UpsertDeposit(ctx context.Context, arg UpsertDepositParams) er
 	_, err := q.db.Exec(ctx, upsertDeposit,
 		arg.ErpID,
 		arg.RealmID,
+		arg.SyncToken,
 		arg.TxnDate,
 		arg.TotalAmount,
 		arg.TargetAccountID,
@@ -2450,15 +2891,16 @@ func (q *Queries) UpsertInvoice(ctx context.Context, arg UpsertInvoiceParams) er
 
 const upsertPurchase = `-- name: UpsertPurchase :exec
 INSERT INTO shadow_erp.purchases (
-    erp_id, realm_id, txn_date, total_amount, payment_type,
+    erp_id, realm_id, sync_token, txn_date, total_amount, payment_type,
     source_account_id, entity_id, lines,
     event_source, created_at, updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9,
     'erp_sync', NOW(), NOW()
 )
 ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    sync_token        = EXCLUDED.sync_token,
     txn_date          = EXCLUDED.txn_date,
     total_amount      = EXCLUDED.total_amount,
     payment_type      = EXCLUDED.payment_type,
@@ -2473,10 +2915,11 @@ ON CONFLICT (realm_id, erp_id) DO UPDATE SET
 type UpsertPurchaseParams struct {
 	ErpID           string
 	RealmID         string
+	SyncToken       string
 	TxnDate         pgtype.Date
 	TotalAmount     pgtype.Numeric
 	PaymentType     pgtype.Text
-	SourceAccountID pgtype.Text
+	SourceAccountID string
 	EntityID        pgtype.Text
 	Lines           []byte
 }
@@ -2485,6 +2928,7 @@ func (q *Queries) UpsertPurchase(ctx context.Context, arg UpsertPurchaseParams) 
 	_, err := q.db.Exec(ctx, upsertPurchase,
 		arg.ErpID,
 		arg.RealmID,
+		arg.SyncToken,
 		arg.TxnDate,
 		arg.TotalAmount,
 		arg.PaymentType,

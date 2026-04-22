@@ -221,10 +221,16 @@ type ShadowErpDeposit struct {
 	ID              pgtype.UUID
 	ErpID           string
 	RealmID         string
+	SyncToken       string
 	TxnDate         pgtype.Date
 	TotalAmount     pgtype.Numeric
-	TargetAccountID pgtype.Text
+	TargetAccountID string
 	Lines           []byte
+	Domain          pgtype.Text
+	Sparse          pgtype.Bool
+	ErpCreatedTime  pgtype.Timestamptz
+	ErpUpdatedTime  pgtype.Timestamptz
+	RuleID          pgtype.Int4
 	EventSource     string
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
@@ -252,12 +258,14 @@ type ShadowErpPurchase struct {
 	ID              pgtype.UUID
 	ErpID           string
 	RealmID         string
+	SyncToken       string
 	TxnDate         pgtype.Date
 	TotalAmount     pgtype.Numeric
 	PaymentType     pgtype.Text
-	SourceAccountID pgtype.Text
+	SourceAccountID string
 	EntityID        pgtype.Text
 	Lines           []byte
+	RuleID          pgtype.Int4
 	EventSource     string
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz

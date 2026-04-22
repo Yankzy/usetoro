@@ -111,7 +111,7 @@ func (c *Client) FindCustomers() ([]Customer, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no customers could be found")
+		return nil, nil
 	}
 
 	customers := make([]Customer, 0, resp.QueryResponse.TotalCount)

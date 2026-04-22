@@ -291,6 +291,10 @@ workers:
     activity_type: workers.webhooks.execute
     subject: ""
     group: ""
+  rule_bootstrap:
+    activity_type: workers.rule_bootstrap
+    subject: ""
+    group: ""
   vector_sync:
     subjects:
       - "ledger.accounts.*"

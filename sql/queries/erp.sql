@@ -248,15 +248,16 @@ WHERE realm_id = $2 AND erp_id = $3;
 
 -- name: UpsertPurchase :exec
 INSERT INTO shadow_erp.purchases (
-    erp_id, realm_id, txn_date, total_amount, payment_type,
+    erp_id, realm_id, sync_token, txn_date, total_amount, payment_type,
     source_account_id, entity_id, lines,
     event_source, created_at, updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9,
     'erp_sync', NOW(), NOW()
 )
 ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    sync_token        = EXCLUDED.sync_token,
     txn_date          = EXCLUDED.txn_date,
     total_amount      = EXCLUDED.total_amount,
     payment_type      = EXCLUDED.payment_type,
@@ -269,14 +270,15 @@ ON CONFLICT (realm_id, erp_id) DO UPDATE SET
 
 -- name: UpsertDeposit :exec
 INSERT INTO shadow_erp.deposits (
-    erp_id, realm_id, txn_date, total_amount, target_account_id, lines,
+    erp_id, realm_id, sync_token, txn_date, total_amount, target_account_id, lines,
     event_source, created_at, updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6,
+    $1, $2, $3, $4, $5, $6, $7,
     'erp_sync', NOW(), NOW()
 )
 ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    sync_token        = EXCLUDED.sync_token,
     txn_date          = EXCLUDED.txn_date,
     total_amount      = EXCLUDED.total_amount,
     target_account_id = EXCLUDED.target_account_id,
@@ -302,6 +304,15 @@ WHERE realm_id = $1 AND erp_id = $2;
 -- name: GetDepositByERPID :one
 SELECT * FROM shadow_erp.deposits
 WHERE realm_id = $1 AND erp_id = $2;
+
+-- name: GetExpenseAccountsFromPurchases :many
+SELECT 
+    erp_id AS transaction_id,
+    source_account_id AS paid_from_bank_account,
+    -- This extracts the second AccountRef (The Expense Category)
+    jsonb_array_elements(lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS expense_account_id
+FROM shadow_erp.purchases
+WHERE realm_id = $1;
 
 -- =========================================================================
 -- AI Vector Sync State
@@ -638,3 +649,128 @@ WHERE realm_id = $1
   AND account_type = $3 
   AND active = true 
   AND deleted_at IS NULL;
+
+-- =========================================================================
+-- Rule engine Bootstrapper Queries
+-- =========================================================================
+
+-- name: GetHistoricalSplitters :many
+-- Finds vendors where >= 50% of their historical transactions had multiple expense lines.
+WITH VendorSplitStats AS (
+    SELECT 
+        entity_id,
+        COUNT(*) AS total_txns,
+        SUM(CASE WHEN jsonb_array_length(lines) > 1 THEN 1 ELSE 0 END) AS split_count
+    FROM shadow_erp.purchases
+    WHERE realm_id = $1 AND entity_id IS NOT NULL AND deleted_at IS NULL
+    GROUP BY entity_id
+)
+SELECT entity_id, total_txns, split_count
+FROM VendorSplitStats
+WHERE split_count >= 2 AND (split_count::decimal / total_txns) >= 0.5;
+
+-- name: GetHistoricalPurchaseConsensus :many
+-- Finds the #1 most frequently used expense account for a vendor (requires minimum 3 uses).
+WITH ExtractedLines AS (
+    SELECT 
+        entity_id,
+        jsonb_array_elements(lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id
+    FROM shadow_erp.purchases
+    WHERE realm_id = $1 AND entity_id IS NOT NULL AND deleted_at IS NULL
+),
+RankedMappings AS (
+    SELECT 
+        entity_id,
+        target_account_id,
+        COUNT(*) as usage_count,
+        ROW_NUMBER() OVER(PARTITION BY entity_id ORDER BY COUNT(*) DESC) as rank
+    FROM ExtractedLines
+    WHERE target_account_id IS NOT NULL
+    GROUP BY entity_id, target_account_id
+)
+SELECT entity_id, target_account_id, usage_count
+FROM RankedMappings
+WHERE rank = 1 AND usage_count >= 3;
+
+-- name: GetHistoricalDepositSplitters :many
+-- Flags customers where >= 50% of their historical deposits were split across multiple income accounts.
+WITH DepositLines AS (
+    SELECT 
+        erp_id AS deposit_id,
+        jsonb_array_elements(lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value'::text AS customer_id,
+        jsonb_array_elements(lines)->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM shadow_erp.deposits
+    WHERE realm_id = $1 AND deleted_at IS NULL
+),
+CustomerDepositCounts AS (
+    SELECT 
+        customer_id,
+        COUNT(DISTINCT deposit_id) as total_txns,
+        SUM(CASE WHEN lines_in_deposit > 1 THEN 1 ELSE 0 END) as split_count
+    FROM (
+        SELECT customer_id, deposit_id, COUNT(*) as lines_in_deposit
+        FROM DepositLines
+        WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+        GROUP BY customer_id, deposit_id
+    ) sub
+    GROUP BY customer_id
+)
+SELECT customer_id, total_txns, split_count
+FROM CustomerDepositCounts
+WHERE split_count >= 2 AND (split_count::decimal / total_txns) >= 0.5;
+
+-- name: GetHistoricalDepositConsensus :many
+-- Finds the #1 most frequently used Income Account for a customer (requires minimum 3 uses).
+WITH DepositLines AS (
+    SELECT 
+        jsonb_array_elements(lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value'::text AS customer_id,
+        jsonb_array_elements(lines)->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM shadow_erp.deposits
+    WHERE realm_id = $1 AND deleted_at IS NULL
+),
+RankedMappings AS (
+    SELECT 
+        customer_id,
+        income_account_id,
+        COUNT(*) as usage_count,
+        ROW_NUMBER() OVER(PARTITION BY customer_id ORDER BY COUNT(*) DESC) as rank
+    FROM DepositLines
+    WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+    GROUP BY customer_id, income_account_id
+)
+SELECT customer_id, income_account_id, usage_count
+FROM RankedMappings
+WHERE rank = 1 AND usage_count >= 3;
+
+-- =========================================================================
+-- Rule Execution & Cleanup
+-- =========================================================================
+
+-- name: GetActiveRealms :many
+SELECT DISTINCT realm_id FROM toro_core.erp_connections;
+
+-- name: GetOrphanedPurchases :many
+SELECT p.*, v.display_name AS vendor_name 
+FROM shadow_erp.purchases p
+LEFT JOIN shadow_erp.vendors v ON v.erp_id = p.entity_id AND v.realm_id = p.realm_id
+WHERE p.realm_id = $1 AND p.rule_id IS NULL AND p.deleted_at IS NULL;
+
+-- name: GetOrphanedDeposits :many
+SELECT d.*, c.display_name AS customer_name 
+FROM shadow_erp.deposits d
+LEFT JOIN LATERAL (
+    SELECT jsonb_array_elements(d.lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value' AS customer_id
+    LIMIT 1
+) AS loc ON true
+LEFT JOIN shadow_erp.customers c ON c.realm_id = d.realm_id AND c.erp_id = loc.customer_id
+WHERE d.realm_id = $1 AND d.rule_id IS NULL AND d.deleted_at IS NULL;
+
+-- name: UpdatePurchaseRuleID :exec
+UPDATE shadow_erp.purchases
+SET rule_id = $2, updated_at = NOW()
+WHERE id = $1;
+
+-- name: UpdateDepositRuleID :exec
+UPDATE shadow_erp.deposits
+SET rule_id = $2, updated_at = NOW()
+WHERE id = $1;

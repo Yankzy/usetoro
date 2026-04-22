@@ -168,6 +168,15 @@ func (w *Worker) processQBOConnected(msg *nats.Msg) {
 		Status   string `json:"status"`
 	}
 
+	type qboConnectedSyncer interface {
+		SyncCompanyInfo(ctx context.Context, tenantID, realmID string) error
+		SyncFullChartOfAccounts(ctx context.Context, tenantID, realmID string) (int, error)
+		SyncFullCustomers(ctx context.Context, tenantID, realmID string) (int, error)
+		SyncFullVendors(ctx context.Context, tenantID, realmID string) (int, error)
+		SyncFullPurchases(ctx context.Context, tenantID, realmID string) (int, error)
+		SyncFullDeposits(ctx context.Context, tenantID, realmID string) (int, error)
+	}
+
 	var payload connectedPayload
 	if err := json.Unmarshal(msg.Data, &payload); err != nil {
 		w.logger.Error("Failed to parse QBO connected payload", "error", err)
@@ -188,9 +197,9 @@ func (w *Worker) processQBOConnected(msg *nats.Msg) {
 		return
 	}
 
-	qboConn, ok := connector.(*QBOConnector)
+	qboConn, ok := connector.(qboConnectedSyncer)
 	if !ok {
-		w.logger.Error("Connector is not a QBOConnector")
+		w.logger.Error("Connector does not support QBO full sync after connect")
 		msg.Nak()
 		return
 	}
@@ -230,6 +239,18 @@ func (w *Worker) processQBOConnected(msg *nats.Msg) {
 	if _, err := qboConn.SyncFullPurchases(bgCtx, payload.EntityID, payload.RealmID); err != nil {
 		handleSyncError("Full Purchases", err)
 		return
+	}
+
+	if _, err := qboConn.SyncFullDeposits(bgCtx, payload.EntityID, payload.RealmID); err != nil {
+		handleSyncError("Full Deposits", err)
+		return
+	}
+
+	// Trigger rule engine bootstrap after all syncs are done
+	if qboObj, ok := connector.(*QBOConnector); ok {
+		if err := qboObj.PublishRuleBootstrapTask(bgCtx, payload.RealmID); err != nil {
+			w.logger.Error("Failed to trigger rule engine bootstrap after connected sync", "error", err, "realm_id", payload.RealmID)
+		}
 	}
 
 	msg.Ack()

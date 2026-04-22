@@ -61,7 +61,7 @@ func (c *Client) FindPurchases() ([]Purchase, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no purchases could be found")
+		return nil, nil
 	}
 
 	purchases := make([]Purchase, 0, resp.QueryResponse.TotalCount)

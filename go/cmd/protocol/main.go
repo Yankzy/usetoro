@@ -209,7 +209,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	}
 
 	// 6. Initialize Workers & Managers
-	qboMgr := connectors.NewManager(logger, cfg, st)
+	qboMgr := connectors.NewManager(logger, cfg, st, q.Conn())
 	qboConn := qboMgr.GetConnector("qbo").(*connectors.QBOConnector)
 
 	providerFactory := erp.NewProviderFactory(logger, dbPool)

@@ -67,7 +67,7 @@ func (c *Client) FindEstimates() ([]Estimate, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no estimates could be found")
+		return nil, nil
 	}
 
 	estimates := make([]Estimate, 0, resp.QueryResponse.TotalCount)

@@ -78,7 +78,7 @@ func (c *Client) FindAccounts() ([]Account, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no accounts could be found")
+		return nil, nil
 	}
 
 	accounts := make([]Account, 0, resp.QueryResponse.TotalCount)

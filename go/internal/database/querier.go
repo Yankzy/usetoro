@@ -55,6 +55,10 @@ type Querier interface {
 	GetAccountByID(ctx context.Context, id pgtype.UUID) (ShadowErpAccount, error)
 	GetAccountsByRealm(ctx context.Context, realmID string) ([]ShadowErpAccount, error)
 	GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUpdatedSinceParams) ([]ShadowErpAccount, error)
+	// =========================================================================
+	// Rule Execution & Cleanup
+	// =========================================================================
+	GetActiveRealms(ctx context.Context) ([]string, error)
 	GetActiveRuleGroupsByRealm(ctx context.Context, realmID string) ([]ShadowErpRuleGroup, error)
 	GetAiCorrectionByRawInput(ctx context.Context, arg GetAiCorrectionByRawInputParams) (GetAiCorrectionByRawInputRow, error)
 	GetAllAccountsForRealms(ctx context.Context, realmIds []string) ([]ShadowErpAccount, error)
@@ -98,7 +102,19 @@ type Querier interface {
 	GetEmployeeStats(ctx context.Context, userID pgtype.UUID) (GetEmployeeStatsRow, error)
 	GetEntities(ctx context.Context, arg GetEntitiesParams) ([]ToroCoreEntity, error)
 	GetEntityDescendants(ctx context.Context, id pgtype.UUID) ([]pgtype.UUID, error)
+	GetExpenseAccountsFromPurchases(ctx context.Context, realmID string) ([]GetExpenseAccountsFromPurchasesRow, error)
 	GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredAccountsForAIParams) ([]GetFilteredAccountsForAIRow, error)
+	// Finds the #1 most frequently used Income Account for a customer (requires minimum 3 uses).
+	GetHistoricalDepositConsensus(ctx context.Context, realmID string) ([]GetHistoricalDepositConsensusRow, error)
+	// Flags customers where >= 50% of their historical deposits were split across multiple income accounts.
+	GetHistoricalDepositSplitters(ctx context.Context, realmID string) ([]GetHistoricalDepositSplittersRow, error)
+	// Finds the #1 most frequently used expense account for a vendor (requires minimum 3 uses).
+	GetHistoricalPurchaseConsensus(ctx context.Context, realmID string) ([]GetHistoricalPurchaseConsensusRow, error)
+	// =========================================================================
+	// Rule engine Bootstrapper Queries
+	// =========================================================================
+	// Finds vendors where >= 50% of their historical transactions had multiple expense lines.
+	GetHistoricalSplitters(ctx context.Context, realmID string) ([]GetHistoricalSplittersRow, error)
 	// =========================================================================
 	// Fignode Transactions Startup
 	// =========================================================================
@@ -106,6 +122,8 @@ type Querier interface {
 	GetInvoiceByERPID(ctx context.Context, arg GetInvoiceByERPIDParams) (ShadowErpInvoice, error)
 	GetLatestLeaderboardSnapshot(ctx context.Context, period string) (GetLatestLeaderboardSnapshotRow, error)
 	GetMemoryRules(ctx context.Context, realmID string) ([]GetMemoryRulesRow, error)
+	GetOrphanedDeposits(ctx context.Context, realmID string) ([]GetOrphanedDepositsRow, error)
+	GetOrphanedPurchases(ctx context.Context, realmID string) ([]GetOrphanedPurchasesRow, error)
 	// =========================================================================
 	// Transactions Batch
 	// =========================================================================
@@ -120,6 +138,8 @@ type Querier interface {
 	GetRecentCorrections(ctx context.Context, arg GetRecentCorrectionsParams) ([]ShadowErpAiCorrection, error)
 	GetRefreshToken(ctx context.Context, tokenHash string) (ToroCoreRefreshToken, error)
 	GetRuleAuditLogsByTransaction(ctx context.Context, transactionID pgtype.UUID) ([]ShadowErpRuleAuditLog, error)
+	GetRuleConditionByExample(ctx context.Context, arg GetRuleConditionByExampleParams) (ShadowErpRuleCondition, error)
+	GetRuleGroupByRealmAndName(ctx context.Context, arg GetRuleGroupByRealmAndNameParams) (ShadowErpRuleGroup, error)
 	GetSessionRows(ctx context.Context, arg GetSessionRowsParams) ([]GetSessionRowsRow, error)
 	GetSessionSummary(ctx context.Context, sessionID pgtype.UUID) (GetSessionSummaryRow, error)
 	GetStalledMessagesByAgent(ctx context.Context, agentDid string) ([]ToroCoreStalledMessage, error)
@@ -192,6 +212,7 @@ type Querier interface {
 	UpdateCompanyTaxonomy(ctx context.Context, arg UpdateCompanyTaxonomyParams) error
 	UpdateCustomerTaxonomy(ctx context.Context, arg UpdateCustomerTaxonomyParams) error
 	UpdateCustomerVectorSync(ctx context.Context, arg UpdateCustomerVectorSyncParams) error
+	UpdateDepositRuleID(ctx context.Context, arg UpdateDepositRuleIDParams) error
 	UpdateERPTokens(ctx context.Context, arg UpdateERPTokensParams) error
 	UpdateLastSyncTimestamp(ctx context.Context, arg UpdateLastSyncTimestampParams) error
 	// =========================================================================
@@ -205,6 +226,7 @@ type Querier interface {
 	UpdateLastWebhookTransaction(ctx context.Context, arg UpdateLastWebhookTransactionParams) error
 	UpdateLastWebhookVendor(ctx context.Context, arg UpdateLastWebhookVendorParams) error
 	UpdateProposedTransactionSyncStatus(ctx context.Context, arg UpdateProposedTransactionSyncStatusParams) error
+	UpdatePurchaseRuleID(ctx context.Context, arg UpdatePurchaseRuleIDParams) error
 	UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichmentParams) error
 	UpdateRuleGroupKeywords(ctx context.Context, arg UpdateRuleGroupKeywordsParams) error
 	// =========================================================================

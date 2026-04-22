@@ -1,6 +1,7 @@
 package accounting
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,84 @@ func NewRuleEngineService(logger *slog.Logger, q *database.Queries, cache *ristr
 		logger: logger,
 		q:      q,
 		cache:  cache,
+	}
+}
+
+// ProcessOrphanedTransactions finds Purchases and Deposits for a realm that lack a rule_id
+// and runs them through the rule engine to attempt automatic categorization.
+func (s *RuleEngineService) ProcessOrphanedTransactions(ctx context.Context, realmID string) error {
+	s.logger.Info("Starting orphaned transaction cleanup", "realm_id", realmID)
+
+	// 1. Process Purchases
+	purchases, err := s.q.GetOrphanedPurchases(ctx, realmID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch orphaned purchases: %w", err)
+	}
+
+	for _, p := range purchases {
+		tx := s.mapPurchaseToTransaction(p)
+		result, err := s.EvaluateTransaction(ctx, tx)
+		if err != nil {
+			s.logger.Warn("Failed to evaluate purchase", "purchase_id", p.ID, "error", err)
+			continue
+		}
+		if result != nil && result.MatchedRuleGroupID != nil {
+			ruleID := pgtype.Int4{}
+			ruleID.Scan(*result.MatchedRuleGroupID)
+			if err := s.q.UpdatePurchaseRuleID(ctx, database.UpdatePurchaseRuleIDParams{ID: p.ID, RuleID: ruleID}); err != nil {
+				s.logger.Warn("Failed to update purchase rule_id", "purchase_id", p.ID, "error", err)
+			}
+			s.PersistAuditLog(ctx, realmID, p.ID, result)
+		}
+	}
+
+	// 2. Process Deposits
+	deposits, err := s.q.GetOrphanedDeposits(ctx, realmID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch orphaned deposits: %w", err)
+	}
+
+	for _, d := range deposits {
+		tx := s.mapDepositToTransaction(d)
+		result, err := s.EvaluateTransaction(ctx, tx)
+		if err != nil {
+			s.logger.Warn("Failed to evaluate deposit", "deposit_id", d.ID, "error", err)
+			continue
+		}
+		if result != nil && result.MatchedRuleGroupID != nil {
+			ruleID := pgtype.Int4{}
+			ruleID.Scan(*result.MatchedRuleGroupID)
+			if err := s.q.UpdateDepositRuleID(ctx, database.UpdateDepositRuleIDParams{ID: d.ID, RuleID: ruleID}); err != nil {
+				s.logger.Warn("Failed to update deposit rule_id", "deposit_id", d.ID, "error", err)
+			}
+			s.PersistAuditLog(ctx, realmID, d.ID, result)
+		}
+	}
+
+	return nil
+}
+
+func (s *RuleEngineService) mapPurchaseToTransaction(p database.GetOrphanedPurchasesRow) ruleEngine.Transaction {
+	amount, _ := p.TotalAmount.Float64Value()
+	return ruleEngine.Transaction{
+		ID:        fmt.Sprintf("%v", p.ID),
+		EntityID:  p.RealmID,
+		Amount:    amount.Float64,
+		Direction: ruleEngine.Outflow,
+		Date:      p.TxnDate.Time,
+		Vendor:    p.VendorName.String,
+	}
+}
+
+func (s *RuleEngineService) mapDepositToTransaction(d database.GetOrphanedDepositsRow) ruleEngine.Transaction {
+	amount, _ := d.TotalAmount.Float64Value()
+	return ruleEngine.Transaction{
+		ID:        fmt.Sprintf("%v", d.ID),
+		EntityID:  d.RealmID,
+		Amount:    amount.Float64,
+		Direction: ruleEngine.Inflow,
+		Date:      d.TxnDate.Time,
+		Customer:  d.CustomerName.String,
 	}
 }
 
@@ -121,6 +200,101 @@ func (s *RuleEngineService) getActiveRules(ctx context.Context, realmID string) 
 
 	s.cache.SetWithTTL(cacheKey, validRules, 1, 5*time.Minute)
 	return validRules, nil
+}
+
+// CreateRule creates a new rule group and its conditions, ensuring strict idempotency.
+func (s *RuleEngineService) CreateRule(ctx context.Context, req ruleEngine.CreateRuleRequest) error {
+	activeRules, err := s.getActiveRules(ctx, req.RealmID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch rules for idempotency check: %w", err)
+	}
+
+	for _, existingRule := range activeRules {
+		if s.isLogicalDuplicate(existingRule, req) {
+			s.logger.Debug("Idempotent rule creation: exact rule already exists, skipping.", "rule_name", req.Name)
+			return nil
+		}
+	}
+
+	allocBytes, err := json.Marshal(req.Allocations)
+	if err != nil {
+		return fmt.Errorf("failed to marshal allocations: %w", err)
+	}
+
+	group, err := s.q.CreateRuleGroup(ctx, database.CreateRuleGroupParams{
+		RealmID:        req.RealmID,
+		Name:           req.Name,
+		Logic:          string(req.Logic),
+		Priority:       int32(req.Priority),
+		Active:         req.Active,
+		TargetEntityID: req.TargetEntityID,
+		Allocations:    allocBytes,
+		RequiresReview: req.RequiresReview,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to insert rule group: %w", err)
+	}
+
+	for _, cond := range req.Conditions {
+		if _, err := s.q.CreateRuleCondition(ctx, database.CreateRuleConditionParams{
+			RuleGroupID: group.ID,
+			Field:       string(cond.Field),
+			Operator:    string(cond.Operator),
+			Value:       cond.Value,
+		}); err != nil {
+			return fmt.Errorf("failed to insert rule condition: %w", err)
+		}
+	}
+
+	cacheKey := fmt.Sprintf("rules:%s", req.RealmID)
+	s.cache.Del(cacheKey)
+	return nil
+}
+
+// isLogicalDuplicate compares an incoming request against an existing compiled rule.
+func (s *RuleEngineService) isLogicalDuplicate(existing *ruleEngine.RuleGroup, req ruleEngine.CreateRuleRequest) bool {
+	if !uuidEqual(existing.TargetEntityID, req.TargetEntityID) {
+		return false
+	}
+
+	if existing.RequiresReview != req.RequiresReview {
+		return false
+	}
+
+	if len(existing.Allocations) != len(req.Allocations) {
+		return false
+	}
+
+	for i, alloc := range existing.Allocations {
+		if !uuidEqual(alloc.AccountID, req.Allocations[i].AccountID) || alloc.Percentage != req.Allocations[i].Percentage {
+			return false
+		}
+	}
+
+	if len(existing.Conditions) != len(req.Conditions) {
+		return false
+	}
+
+	for i, existingCond := range existing.Conditions {
+		reqCond := req.Conditions[i]
+		if existingCond.Field != reqCond.Field ||
+			existingCond.Operator != reqCond.Operator ||
+			existingCond.Value != reqCond.Value {
+			return false
+		}
+	}
+
+	return true
+}
+
+func uuidEqual(a, b pgtype.UUID) bool {
+	if a.Valid != b.Valid {
+		return false
+	}
+	if !a.Valid {
+		return true
+	}
+	return bytes.Equal(a.Bytes[:], b.Bytes[:])
 }
 
 // RuleResult contains the match outcome and target UUIDs for the caller to use.

@@ -7,19 +7,23 @@ import (
 )
 
 type Deposit struct {
-	SyncToken           string        `json:",omitempty"`
+	Id                  string        `json:"Id,omitempty"`
+	SyncToken           string        `json:"SyncToken,omitempty"`
 	Domain              string        `json:"domain,omitempty"`
+	MetaData            MetaData      `json:",omitempty"`
+	DocNumber           string        `json:",omitempty"`
 	DepositToAccountRef ReferenceType `json:",omitempty"`
 	TxnDate             Date          `json:",omitempty"`
 	TotalAmt            json.Number   `json:",omitempty"`
+	PrivateNote         string        `json:",omitempty"`
 	Line                []DepositLine `json:",omitempty"`
-	Id                  string        `json:",omitempty"`
-	MetaData            MetaData      `json:",omitempty"`
+	CashBack            *CashBack     `json:",omitempty"`
 }
 
 // DepositLine represents a single line in a QBO Deposit payload.
-// Minimal fields needed to create a deposit backed by an account and/or linked txn.
 type DepositLine struct {
+	Id                string            `json:"Id,omitempty"`
+	Description       string            `json:",omitempty"`
 	Amount            json.Number       `json:",omitempty"`
 	DetailType        string            `json:",omitempty"` // typically "DepositLineDetail"
 	DepositLineDetail DepositLineDetail `json:",omitempty"`
@@ -28,8 +32,17 @@ type DepositLine struct {
 
 // DepositLineDetail is the QBO "DepositLineDetail" object.
 type DepositLineDetail struct {
+	AccountRef       ReferenceType `json:",omitempty"`
+	EntityRef        ReferenceType `json:",omitempty"`
+	PaymentMethodRef ReferenceType `json:",omitempty"`
+	CheckNum         string        `json:",omitempty"`
+}
+
+// CashBack represents a QBO CashBack object.
+type CashBack struct {
 	AccountRef ReferenceType `json:",omitempty"`
-	Entity     ReferenceType `json:",omitempty"`
+	Amount     json.Number   `json:",omitempty"`
+	Memo       string        `json:",omitempty"`
 }
 
 // CreateDeposit creates the given deposit within QuickBooks
@@ -70,13 +83,13 @@ func (c *Client) FindDeposits() ([]Deposit, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no deposits could be found")
+		return nil, nil
 	}
 
 	deposits := make([]Deposit, 0, resp.QueryResponse.TotalCount)
 
 	for i := 0; i < resp.QueryResponse.TotalCount; i += queryPageSize {
-		query := "SELECT * FROM Deposit ORDERBY Id STARTPOSITION " + strconv.Itoa(i+1) + " MAXRESULTS " + strconv.Itoa(queryPageSize)
+		query := "SELECT * FROM Deposit ORDERBY TxnDate STARTPOSITION " + strconv.Itoa(i+1) + " MAXRESULTS " + strconv.Itoa(queryPageSize)
 
 		if err := c.Query(query, &resp); err != nil {
 			return nil, err

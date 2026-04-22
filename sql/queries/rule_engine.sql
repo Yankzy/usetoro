@@ -11,6 +11,10 @@ SELECT * FROM shadow_erp.rule_groups
 WHERE realm_id = $1 AND active = true
 ORDER BY priority ASC, id ASC;
 
+-- name: GetRuleGroupByRealmAndName :one
+SELECT * FROM shadow_erp.rule_groups
+WHERE realm_id = $1 AND name = $2;
+
 -- name: UpdateRuleGroupKeywords :exec
 UPDATE shadow_erp.rule_groups
 SET keywords = $2, updated_at = timezone('utc', now())
@@ -27,6 +31,10 @@ INSERT INTO shadow_erp.rule_conditions (
 SELECT * FROM shadow_erp.rule_conditions
 WHERE rule_group_id = ANY(@rule_group_ids::int[])
 ORDER BY rule_group_id ASC, id ASC;
+
+-- name: GetRuleConditionByExample :one
+SELECT * FROM shadow_erp.rule_conditions
+WHERE rule_group_id = $1 AND field = $2 AND operator = $3 AND value = $4;
 
 -- name: CreateRuleAuditLog :one
 INSERT INTO shadow_erp.rule_audit_logs (

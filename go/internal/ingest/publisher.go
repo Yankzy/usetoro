@@ -1,4 +1,3 @@
-// Package ingest handles event ingestion with circuit breaker protection
 package ingest
 
 import (
@@ -12,6 +11,7 @@ import (
 )
 
 // Publisher handles the ingestion of events into the system.
+// Package ingest handles event ingestion with circuit breaker protection
 type Publisher struct {
 	q       *queue.Client
 	breaker *gobreaker.CircuitBreaker

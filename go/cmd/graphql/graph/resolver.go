@@ -14,6 +14,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,6 +24,7 @@ type Resolver struct {
 	PrivateKey         ed25519.PrivateKey
 	Logger             *slog.Logger
 	Store              *store.Store
+	NatsConn           *nats.Conn
 	EmailSender        auth.EmailSender
 	CoAMapper          *ai.CoAMapper
 	EntityResolver     *ai.EntityResolver

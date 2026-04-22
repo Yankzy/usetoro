@@ -30,6 +30,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 	"github.com/vektah/gqlparser/v2/ast"
 )
@@ -106,6 +107,15 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("redis ping failed: %w", err)
 	}
 	logger.Info("Connected to Redis")
+
+	// 4.1 Connect to NATS
+	natsURL := cmp.Or(os.Getenv("NATS_URL"), "nats://localhost:4222")
+	nc, err := nats.Connect(natsURL, nats.Name("graphql-service"))
+	if err != nil {
+		return fmt.Errorf("nats connection error: %w", err)
+	}
+	defer nc.Close()
+	logger.Info("Connected to NATS", "url", natsURL)
 
 	// 4.5 Initialize Store dependencies (Cache + Encryption)
 	// We need an encryption key from env
@@ -185,6 +195,7 @@ func run(logger *slog.Logger) error {
 			PrivateKey:     edInternalKey,
 			Logger:         logger,
 			Store:          storeObj,
+			NatsConn:       nc,
 			EmailSender:    emailSender,
 			CoAMapper:      coaMapper,
 			EntityResolver: entityResolver,

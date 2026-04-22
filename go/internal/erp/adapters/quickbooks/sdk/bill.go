@@ -72,7 +72,7 @@ func (c *Client) FindBills() ([]Bill, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no bills could be found")
+		return nil, nil
 	}
 
 	bills := make([]Bill, 0, resp.QueryResponse.TotalCount)

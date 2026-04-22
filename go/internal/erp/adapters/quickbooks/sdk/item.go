@@ -68,7 +68,7 @@ func (c *Client) FindItems() ([]Item, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no items could be found")
+		return nil, nil
 	}
 
 	items := make([]Item, 0, resp.QueryResponse.TotalCount)

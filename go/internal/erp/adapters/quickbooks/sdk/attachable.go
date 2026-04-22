@@ -137,7 +137,7 @@ func (c *Client) FindAttachables() ([]Attachable, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no attachables could be found")
+		return nil, nil
 	}
 
 	attachables := make([]Attachable, 0, resp.QueryResponse.TotalCount)

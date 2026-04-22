@@ -51,7 +51,7 @@ func (c *Client) FindEmployees() ([]Employee, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no employees could be found")
+		return nil, nil
 	}
 
 	employees := make([]Employee, 0, resp.QueryResponse.TotalCount)

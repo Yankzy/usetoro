@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/database"
@@ -57,16 +59,33 @@ func (s *Store) GetQBOTokens(ctx context.Context, realmID string) (string, strin
 
 	accessToken, err := s.Encryptor.Decrypt(row.AccessToken)
 	if err != nil {
-		return "", "", time.Time{}, "", fmt.Errorf("failed to decrypt access token: %w", err)
+		// Backward-compat: older code paths accidentally persisted plaintext tokens. Only
+		// treat it as plaintext if it doesn't look like our base64 ciphertext.
+		if errors.Is(err, ErrInvalidCiphertext) && looksLikePlaintextToken(row.AccessToken) {
+			accessToken = row.AccessToken
+		} else {
+			return "", "", time.Time{}, "", fmt.Errorf("failed to decrypt access token: %w", err)
+		}
 	}
 
 	refreshToken, err := s.Encryptor.Decrypt(row.RefreshToken)
 	if err != nil {
-		return "", "", time.Time{}, "", fmt.Errorf("failed to decrypt refresh token: %w", err)
+		if errors.Is(err, ErrInvalidCiphertext) && looksLikePlaintextToken(row.RefreshToken) {
+			refreshToken = row.RefreshToken
+		} else {
+			return "", "", time.Time{}, "", fmt.Errorf("failed to decrypt refresh token: %w", err)
+		}
 	}
 
 	entityID := uuid.UUID(row.EntityID.Bytes).String()
 	return accessToken, refreshToken, row.ExpiresAt.Time, entityID, nil
+}
+
+func looksLikePlaintextToken(s string) bool {
+	// Our Encryptor stores standard base64 (may include + / and usually ends with padding),
+	// while OAuth tokens (Intuit/QBO) are typically JWT/base64url-ish and contain '.' '-' '_'.
+	// This heuristic avoids silently "decrypting" ciphertext with a wrong key.
+	return strings.ContainsAny(s, ".-_")
 }
 
 // GetQBOConnection returns the basic connection info (no secrets) for an entity.

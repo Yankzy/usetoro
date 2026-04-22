@@ -46,7 +46,7 @@ func NewServer(
 	registry.Register(NewStripeVerifier())
 	registry.Register(NewHMACVerifier("qbo", "intuit-signature", crypto.SHA256))
 
-	connector := connectors.NewQBOConnector(logger, cfg, st)
+	connector := connectors.NewQBOConnector(logger, cfg, st, natsClient.Conn())
 	reconciler := accounting.NewReconciliationService(logger, st.Queries, connector.ClientForRealm)
 
 	// Since we are migrating toward standard erp.Providers, passing nil will gracefully fall back to the QBO factory resolver.

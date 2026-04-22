@@ -75,7 +75,7 @@ func (c *Client) FindVendors() ([]Vendor, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no vendors could be found")
+		return nil, nil
 	}
 
 	vendors := make([]Vendor, 0, resp.QueryResponse.TotalCount)

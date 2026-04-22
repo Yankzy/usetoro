@@ -282,6 +282,69 @@ func (q *Queries) GetRuleAuditLogsByTransaction(ctx context.Context, transaction
 	return items, nil
 }
 
+const getRuleConditionByExample = `-- name: GetRuleConditionByExample :one
+SELECT id, rule_group_id, field, operator, value, created_at, updated_at FROM shadow_erp.rule_conditions
+WHERE rule_group_id = $1 AND field = $2 AND operator = $3 AND value = $4
+`
+
+type GetRuleConditionByExampleParams struct {
+	RuleGroupID int32
+	Field       string
+	Operator    string
+	Value       string
+}
+
+func (q *Queries) GetRuleConditionByExample(ctx context.Context, arg GetRuleConditionByExampleParams) (ShadowErpRuleCondition, error) {
+	row := q.db.QueryRow(ctx, getRuleConditionByExample,
+		arg.RuleGroupID,
+		arg.Field,
+		arg.Operator,
+		arg.Value,
+	)
+	var i ShadowErpRuleCondition
+	err := row.Scan(
+		&i.ID,
+		&i.RuleGroupID,
+		&i.Field,
+		&i.Operator,
+		&i.Value,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getRuleGroupByRealmAndName = `-- name: GetRuleGroupByRealmAndName :one
+SELECT id, realm_id, name, logic, priority, keywords, active, target_entity_id, parent_id, created_at, updated_at, requires_review, allocations FROM shadow_erp.rule_groups
+WHERE realm_id = $1 AND name = $2
+`
+
+type GetRuleGroupByRealmAndNameParams struct {
+	RealmID string
+	Name    string
+}
+
+func (q *Queries) GetRuleGroupByRealmAndName(ctx context.Context, arg GetRuleGroupByRealmAndNameParams) (ShadowErpRuleGroup, error) {
+	row := q.db.QueryRow(ctx, getRuleGroupByRealmAndName, arg.RealmID, arg.Name)
+	var i ShadowErpRuleGroup
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.Name,
+		&i.Logic,
+		&i.Priority,
+		&i.Keywords,
+		&i.Active,
+		&i.TargetEntityID,
+		&i.ParentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequiresReview,
+		&i.Allocations,
+	)
+	return i, err
+}
+
 const getVendorByID = `-- name: GetVendorByID :one
 SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at, industry, industry_icon, vendor_description, vendor_url FROM shadow_erp.vendors WHERE id = $1
 `

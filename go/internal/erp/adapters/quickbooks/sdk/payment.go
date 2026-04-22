@@ -63,7 +63,7 @@ func (c *Client) FindPayments() ([]Payment, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no payments could be found")
+		return nil, nil
 	}
 
 	payments := make([]Payment, 0, resp.QueryResponse.TotalCount)

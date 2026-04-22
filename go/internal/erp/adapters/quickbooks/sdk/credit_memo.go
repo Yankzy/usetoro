@@ -68,7 +68,7 @@ func (c *Client) FindCreditMemos() ([]CreditMemo, error) {
 	}
 
 	if resp.QueryResponse.TotalCount == 0 {
-		return nil, errors.New("no credit memos could be found")
+		return nil, nil
 	}
 
 	creditMemos := make([]CreditMemo, 0, resp.QueryResponse.TotalCount)

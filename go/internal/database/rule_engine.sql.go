@@ -89,10 +89,10 @@ func (q *Queries) CreateRuleCondition(ctx context.Context, arg CreateRuleConditi
 const createRuleGroup = `-- name: CreateRuleGroup :one
 INSERT INTO shadow_erp.rule_groups (
     realm_id, name, logic, priority, active,
-    target_entity_id, requires_review, allocations, parent_id
+    target_entity_id, requires_review, allocations, parent_id, direction
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
-) RETURNING id, realm_id, name, logic, priority, keywords, active, target_entity_id, parent_id, created_at, updated_at, requires_review, allocations
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+) RETURNING id, realm_id, name, logic, priority, keywords, active, target_entity_id, allocations, direction, requires_review, parent_id, created_at, updated_at
 `
 
 type CreateRuleGroupParams struct {
@@ -105,6 +105,7 @@ type CreateRuleGroupParams struct {
 	RequiresReview bool
 	Allocations    []byte
 	ParentID       pgtype.Int4
+	Direction      string
 }
 
 func (q *Queries) CreateRuleGroup(ctx context.Context, arg CreateRuleGroupParams) (ShadowErpRuleGroup, error) {
@@ -118,6 +119,7 @@ func (q *Queries) CreateRuleGroup(ctx context.Context, arg CreateRuleGroupParams
 		arg.RequiresReview,
 		arg.Allocations,
 		arg.ParentID,
+		arg.Direction,
 	)
 	var i ShadowErpRuleGroup
 	err := row.Scan(
@@ -129,11 +131,12 @@ func (q *Queries) CreateRuleGroup(ctx context.Context, arg CreateRuleGroupParams
 		&i.Keywords,
 		&i.Active,
 		&i.TargetEntityID,
+		&i.Allocations,
+		&i.Direction,
+		&i.RequiresReview,
 		&i.ParentID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.RequiresReview,
-		&i.Allocations,
 	)
 	return i, err
 }
@@ -174,7 +177,7 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (ShadowErp
 }
 
 const getActiveRuleGroupsByRealm = `-- name: GetActiveRuleGroupsByRealm :many
-SELECT id, realm_id, name, logic, priority, keywords, active, target_entity_id, parent_id, created_at, updated_at, requires_review, allocations FROM shadow_erp.rule_groups 
+SELECT id, realm_id, name, logic, priority, keywords, active, target_entity_id, allocations, direction, requires_review, parent_id, created_at, updated_at FROM shadow_erp.rule_groups 
 WHERE realm_id = $1 AND active = true
 ORDER BY priority ASC, id ASC
 `
@@ -197,11 +200,12 @@ func (q *Queries) GetActiveRuleGroupsByRealm(ctx context.Context, realmID string
 			&i.Keywords,
 			&i.Active,
 			&i.TargetEntityID,
+			&i.Allocations,
+			&i.Direction,
+			&i.RequiresReview,
 			&i.ParentID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.RequiresReview,
-			&i.Allocations,
 		); err != nil {
 			return nil, err
 		}
@@ -315,7 +319,7 @@ func (q *Queries) GetRuleConditionByExample(ctx context.Context, arg GetRuleCond
 }
 
 const getRuleGroupByRealmAndName = `-- name: GetRuleGroupByRealmAndName :one
-SELECT id, realm_id, name, logic, priority, keywords, active, target_entity_id, parent_id, created_at, updated_at, requires_review, allocations FROM shadow_erp.rule_groups
+SELECT id, realm_id, name, logic, priority, keywords, active, target_entity_id, allocations, direction, requires_review, parent_id, created_at, updated_at FROM shadow_erp.rule_groups
 WHERE realm_id = $1 AND name = $2
 `
 
@@ -336,11 +340,12 @@ func (q *Queries) GetRuleGroupByRealmAndName(ctx context.Context, arg GetRuleGro
 		&i.Keywords,
 		&i.Active,
 		&i.TargetEntityID,
+		&i.Allocations,
+		&i.Direction,
+		&i.RequiresReview,
 		&i.ParentID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.RequiresReview,
-		&i.Allocations,
 	)
 	return i, err
 }

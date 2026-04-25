@@ -281,8 +281,8 @@ func (s *RevenueService) postDeposit(ctx context.Context, input DepositInput, dc
 	line := quickbooks.DepositLine{
 		Amount:     json.Number(formatMoney2(input.Amount)),
 		DetailType: "DepositLineDetail",
-		DepositLineDetail: quickbooks.DepositLineDetail{
-			AccountRef: quickbooks.ReferenceType{Value: input.FromAccountHint},
+		DepositLineDetail: &quickbooks.DepositLineDetail{
+			AccountRef: &quickbooks.ReferenceType{Value: input.FromAccountHint},
 		},
 	}
 	if input.LinkedTxnID != "" && input.LinkedTxnType != "" {
@@ -292,7 +292,7 @@ func (s *RevenueService) postDeposit(ctx context.Context, input DepositInput, dc
 	}
 
 	dep := &quickbooks.Deposit{
-		DepositToAccountRef: quickbooks.ReferenceType{Value: input.DepositToAccountHint},
+		DepositToAccountRef: &quickbooks.ReferenceType{Value: input.DepositToAccountHint},
 		TxnDate:             quickbooks.Date{Time: txnDate},
 		TotalAmt:            json.Number(formatMoney2(input.Amount)),
 		Line:                []quickbooks.DepositLine{line},

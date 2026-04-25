@@ -1,6 +1,7 @@
 package ruleEngine
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ const (
 	FieldUUID        Field = "uuid"
 	FieldMCC         Field = "mcc"
 	FieldInvoiceText Field = "invoice_text"
+	FieldSourceAccount Field = "source_account"
 )
 
 type Operator string
@@ -96,6 +98,7 @@ type Transaction struct {
 	UUID        string
 	MCC         string
 	InvoiceText string
+	SourceAccount string
 }
 
 type RuleCondition struct {
@@ -114,7 +117,7 @@ type RuleCondition struct {
 	isCompiled         bool
 }
 
-// struct to handle QBO line-item mapping
+// Allocation handles QBO line-item mapping
 type Allocation struct {
 	AccountID  pgtype.UUID
 	Percentage float64 // e.g., 100.0 for standard, 50.0 for splits
@@ -128,16 +131,42 @@ type RuleGroup struct {
 	Keywords string // Auto-generated for candidate selection optimization
 	Active   bool
 
-	// TargetAccountID pgtype.UUID
-	TargetEntityID  pgtype.UUID  // Replacing VendorID so it works for Customers too
-	RequiresReview bool         // If true, park in the UI for the CPA to manually split (Loans)
-	Allocations    []Allocation // Slice of splits (e.g., 50% to Phone, 50% to Owner Draw)
+	Direction      CashDirection // Strict inflow/outflow boundary
+	TargetEntityID pgtype.UUID   // Replacing VendorID so it works for Customers too
+	RequiresReview bool          // If true, park in the UI for the CPA to manually split (Loans)
+	Allocations    []Allocation  // Slice of splits (e.g., 50% to Phone, 50% to Owner Draw)
 
 	Conditions []*RuleCondition
 	Children   []*RuleGroup
 	Parent     *RuleGroup // Nested rule groups
 
 	keywordSet map[string]struct{} // pre-split Keywords for O(1) lookup in FilterCandidates
+}
+
+type RuleCreator interface {
+	CreateRule(ctx context.Context, req CreateRuleRequest) error
+}
+
+// --- Creation Structs (AST Payload) ---
+
+type RuleConditionRequest struct {
+	Field    Field    `json:"field"`
+	Operator Operator `json:"operator"`
+	Value    string   `json:"value"`
+}
+
+type CreateRuleRequest struct {
+	RealmID        string
+	Name           string
+	Logic          LogicChoice
+	Priority       int
+	Active         bool
+	Direction      CashDirection // Strict inflow/outflow boundary
+	TargetEntityID pgtype.UUID
+	Allocations    []Allocation
+	RequiresReview bool
+	Conditions     []RuleConditionRequest
+	ChildGroups    []CreateRuleRequest // For nested OR/AND logic
 }
 
 // --- Audit / Explanation Structs ---
@@ -171,6 +200,7 @@ var validOperators = map[Field]map[Operator]struct{}{
 	FieldDescription: stringOps, FieldVendor: stringOps, FieldCustomer: stringOps,
 	FieldCategory: stringOps, FieldMemo: stringOps, FieldRole: stringOps,
 	FieldUUID: stringOps, FieldMCC: stringOps, FieldInvoiceText: stringOps,
+	FieldSourceAccount: stringOps,
 	FieldAmount: numericOps,
 	FieldDate:   dateOps,
 	FieldTime:   timeOps,
@@ -258,7 +288,8 @@ func (g *RuleGroup) DeriveKeywords() string {
 	for _, c := range g.Conditions {
 		isStringField := c.Field == FieldDescription || c.Field == FieldVendor || c.Field == FieldCustomer ||
 			c.Field == FieldCategory || c.Field == FieldMemo || c.Field == FieldRole ||
-			c.Field == FieldUUID || c.Field == FieldMCC || c.Field == FieldInvoiceText
+			c.Field == FieldUUID || c.Field == FieldMCC || c.Field == FieldInvoiceText ||
+			c.Field == FieldSourceAccount
 		isStringOp := c.Operator == OpContains || c.Operator == OpEquals || c.Operator == OpStartsWith || c.Operator == OpEndsWith
 
 		if isStringField && isStringOp {
@@ -411,6 +442,12 @@ func FilterCandidates(tx Transaction, rules []*RuleGroup) []*RuleGroup {
 		if !r.Active {
 			continue
 		}
+
+		// Hard boundary check. Inflows never touch Outflow rules.
+		if r.Direction != tx.Direction {
+			continue
+		}
+
 		if len(r.keywordSet) == 0 {
 			candidates = append(candidates, r)
 			continue
@@ -444,6 +481,7 @@ func extractTxTokens(tx Transaction) map[string]struct{} {
 	add(tx.InvoiceText)
 	add(tx.Role)
 	add(tx.UUID)
+	add(tx.SourceAccount)
 	return tokens
 }
 
@@ -547,6 +585,8 @@ func (c *RuleCondition) evaluate(tx Transaction) (string, bool) {
 		val = tx.MCC
 	case FieldInvoiceText:
 		val = tx.InvoiceText
+	case FieldSourceAccount:
+		val = tx.SourceAccount
 	case FieldAmount:
 		// Use %g to preserve full float64 precision in the audit trail.
 		// %.2f would round 100.005 → "100.01" while evaluation uses 100.005,

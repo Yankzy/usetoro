@@ -2,12 +2,27 @@ name: Bookkeeping Workflow
 version: "1.0"
 trigger_topic: events.accounting.bookkeeping
 steps:
+  - id: run_rule_engine
+    activity_type: workers.rule_bootstrap
+    negotiate: false
+    timeout: "300s"
+    description: "Bootstraps the rule engine so historical vendor rules are seeded before the bookkeeping steps run."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "realm_id": { "type": "string" }
+        },
+        "required": ["realm_id"]
+      }
   - id: classify_transaction
     activity_type: agents.accounting.classify_outflow
     complexity: 1
     negotiate: false
     timeout: "60s"
     description: "Assigns a transaction to ASSET, LIABILITY, EQUITY, INCOME, or EXPENSE"
+    depends_on:
+      - run_rule_engine
     workflow_schema: |
       {
         "type": "object",
@@ -46,6 +61,8 @@ steps:
     negotiate: false
     timeout: "60s"
     description: "Assigns a bank inflow to ASSET, LIABILITY, EQUITY, or INCOME"
+    depends_on:
+      - run_rule_engine
     workflow_schema: |
       {
         "type": "object",

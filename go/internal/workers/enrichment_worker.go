@@ -372,9 +372,9 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		currentSeq = uint64(wf.SequenceID)
 	}
 
-	enrichmentMap := make(map[string]*cleanup.EnrichedRow)
+	enrichmentMap := make(map[string]reduxEnrichedTraceRow, len(allRows))
 	for _, ptr := range allRows {
-		enrichmentMap[ptr.ID] = ptr
+		enrichmentMap[ptr.ID] = buildReduxEnrichedTraceRow(ptr)
 	}
 	enrichmentsJSON, _ := json.Marshal(enrichmentMap)
 	patch1 := `{"op": "add", "path": "/status", "value": "ENRICHED"}`
@@ -423,7 +423,6 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 
 	return nil
 }
-
 
 func (e *EnrichmentWorker) extractRowsPayload(data []byte, depth int) ([]map[string]interface{}, error) {
 	if len(data) == 0 {
@@ -567,6 +566,67 @@ func (e *EnrichmentWorker) persistEnrichedRow(ctx context.Context, er cleanup.En
 		MerchantName:          pgtype.Text{String: er.MerchantName, Valid: er.MerchantName != ""},
 		PlaidCategory:         pgtype.Text{String: er.PlaidCategory, Valid: er.PlaidCategory != ""},
 	})
+}
+
+type reduxEnrichedTraceRow struct {
+	ID                   string                       `json:"id"`
+	SessionID            string                       `json:"session_id"`
+	RealmID              string                       `json:"realm_id,omitempty"`
+	RawDescription       string                       `json:"raw_description,omitempty"`
+	RawAmount            float64                      `json:"raw_amount,omitempty"`
+	RawDate              time.Time                    `json:"raw_date,omitempty"`
+	RawVendorName        string                       `json:"raw_vendor_name,omitempty"`
+	RawCustomerName      string                       `json:"raw_customer_name,omitempty"`
+	PredictedVendorID    string                       `json:"predicted_vendor_id,omitempty"`
+	PredictedCustomerID  string                       `json:"predicted_customer_id,omitempty"`
+	PredictedAccountID   string                       `json:"predicted_account_id,omitempty"`
+	PredictedAccountName string                       `json:"predicted_account_name,omitempty"`
+	NormalizedVendor     string                       `json:"normalized_vendor,omitempty"`
+	NormalizedCustomer   string                       `json:"normalized_customer,omitempty"`
+	MerchantName         string                       `json:"merchant_name,omitempty"`
+	PlaidCategory        string                       `json:"plaid_category,omitempty"`
+	ConfidenceScore      float64                      `json:"confidence_score,omitempty"`
+	AIReasoning          string                       `json:"ai_reasoning,omitempty"`
+	IsRecurring          bool                         `json:"is_recurring,omitempty"`
+	SplitSuggestion      map[string]cleanup.SplitLine `json:"split_suggestion,omitempty"`
+	DuplicateOf          string                       `json:"duplicate_of,omitempty"`
+}
+
+func buildReduxEnrichedTraceRow(ptr *cleanup.EnrichedRow) reduxEnrichedTraceRow {
+	return reduxEnrichedTraceRow{
+		ID:                   ptr.ID,
+		SessionID:            ptr.SessionID,
+		RealmID:              ptr.RealmID,
+		RawDescription:       ptr.RawDescription,
+		RawAmount:            ptr.RawAmount,
+		RawDate:              ptr.RawDate,
+		RawVendorName:        ptr.RawVendorName,
+		RawCustomerName:      ptr.RawCustomerName,
+		PredictedVendorID:    ptr.PredictedVendorID,
+		PredictedCustomerID:  ptr.PredictedCustomerID,
+		PredictedAccountID:   ptr.PredictedAccountID,
+		PredictedAccountName: ptr.PredictedAccountName,
+		NormalizedVendor:     ptr.NormalizedVendor,
+		NormalizedCustomer:   ptr.NormalizedCustomer,
+		MerchantName:         ptr.MerchantName,
+		PlaidCategory:        ptr.PlaidCategory,
+		ConfidenceScore:      ptr.ConfidenceScore,
+		AIReasoning:          ptr.AIReasoning,
+		IsRecurring:          ptr.IsRecurring,
+		SplitSuggestion:      splitSuggestionTraceMap(ptr.SplitSuggestion),
+		DuplicateOf:          ptr.DuplicateOf,
+	}
+}
+
+func splitSuggestionTraceMap(suggestions []cleanup.SplitLine) map[string]cleanup.SplitLine {
+	if len(suggestions) == 0 {
+		return nil
+	}
+	out := make(map[string]cleanup.SplitLine, len(suggestions))
+	for idx, line := range suggestions {
+		out[fmt.Sprintf("line_%d", idx+1)] = line
+	}
+	return out
 }
 
 type EnrichmentExtract struct {

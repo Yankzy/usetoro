@@ -31,6 +31,18 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "8080", cfg.Port)
 	assert.Equal(t, "nats://test:4222", cfg.NATS.URL)
 	assert.InDelta(t, 0.75, cfg.AIThreshold, 1e-9, "AIThreshold should default to 0.75")
+	assert.Equal(t, 1, cfg.RuleEngine.TargetRank)
+	assert.Equal(t, 2, cfg.RuleEngine.MinUsageCount)
+}
+
+func TestGlobalConfig(t *testing.T) {
+	cfg1 := &Config{Port: "8081"}
+	SetGlobal(cfg1)
+	assert.Equal(t, "8081", GetGlobal().Port)
+
+	cfg2 := &Config{Port: "8082"}
+	SetGlobal(cfg2)
+	assert.Equal(t, "8082", GetGlobal().Port)
 }
 
 func TestLoad_AIThresholdEnvOverride(t *testing.T) {

@@ -12,23 +12,33 @@ import (
 // Bootstrapper analyses a realm's historical QBO purchases and auto-generates
 // categorization rules using the rule_engine package.
 type Bootstrapper struct {
-	logger      *slog.Logger
-	q           *database.Queries
-	ruleCreator RuleCreator
+	logger        *slog.Logger
+	q             *database.Queries
+	ruleCreator   RuleCreator
+	targetRank    int
+	minUsageCount int
 }
 
 func NewBootstrapper(logger *slog.Logger, q *database.Queries, ruleCreator RuleCreator) *Bootstrapper {
 	return &Bootstrapper{
-		logger:      logger,
-		q:           q,
-		ruleCreator: ruleCreator,
+		logger:        logger,
+		q:             q,
+		ruleCreator:   ruleCreator,
+		targetRank:    1, // Default fallback
+		minUsageCount: 1, // Default fallback
 	}
+}
+
+func (b *Bootstrapper) WithConfig(targetRank, minUsageCount int) *Bootstrapper {
+	b.targetRank = targetRank
+	b.minUsageCount = minUsageCount
+	return b
 }
 
 // RunRuleEngineForPurchases is the master orchestrator called after the initial QBO sync.
 // It runs the 2-step pipeline:
 //  1. Detect chronic splitters → RequiresReview = true
-//  2. Generate 1-to-1 rules for all safe vendors
+//  2. Generate highly contextual 1-to-1 rules
 func (b *Bootstrapper) RunRuleEngineForPurchases(ctx context.Context, realmID string) error {
 	b.logger.Info("Starting combined rule bootstrapping", "realm_id", realmID)
 
@@ -44,6 +54,7 @@ func (b *Bootstrapper) RunRuleEngineForPurchases(ctx context.Context, realmID st
 	}
 
 	// Step 3 & 4: Run the equivalent pipeline for Deposit / Income rules
+	// (Ensure your deposit bootstrapper injects Direction: Inflow)
 	if err := b.RunRuleEngineForDeposits(ctx, realmID); err != nil {
 		return fmt.Errorf("failed deposit onboarding: %w", err)
 	}
@@ -88,11 +99,14 @@ func (b *Bootstrapper) GenerateSplitReviewRules(ctx context.Context, realmID str
 			Logic:          LogicAnd,
 			Priority:       5,
 			Active:         true,
+			Direction:      Outflow, // 🚨 Strict boundary for Purchase rules
 			TargetEntityID: entityUUID,
 			Allocations:    []Allocation{},
 			RequiresReview: true,
 			Conditions: []RuleConditionRequest{
 				{
+					// We intentionally omit Source Account here because Gusto is complex
+					// regardless of which checking account pays it.
 					Field:    FieldVendor,
 					Operator: OpEqualsCS,
 					Value:    vendor.DisplayName,
@@ -114,10 +128,14 @@ func (b *Bootstrapper) GenerateSplitReviewRules(ctx context.Context, realmID str
 	return flaggedVendors, nil
 }
 
-// GenerateRulesFromHistory generates 100% allocation rules for simple vendors,
-// skipping any that were caught by the Splitter logic in Step 1.
+// GenerateRulesFromHistory generates 100% allocation rules mapped securely to
+// BOTH the Vendor and the specific Source Bank/Credit Card Account.
 func (b *Bootstrapper) GenerateRulesFromHistory(ctx context.Context, realmID string, flaggedVendors map[string]bool) error {
-	rows, err := b.q.GetHistoricalPurchaseConsensus(ctx, realmID)
+	rows, err := b.q.GetHistoricalPurchaseConsensus(ctx, database.GetHistoricalPurchaseConsensusParams{
+		RealmID:       realmID,
+		TargetRank:    int32(b.targetRank),
+		MinUsageCount: int64(b.minUsageCount),
+	})
 	if err != nil {
 		return fmt.Errorf("GetHistoricalPurchaseConsensus: %w", err)
 	}
@@ -150,14 +168,25 @@ func (b *Bootstrapper) GenerateRulesFromHistory(ctx context.Context, realmID str
 			continue
 		}
 
-		// Resolve target account UUID from its QBO ERP ID
+		// Resolve target account UUID from its QBO ERP ID (Debit Side - e.g., Meals)
 		account, err := b.q.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{
 			RealmID: realmID,
 			ErpID:   targetAccountErpID,
 		})
 		if err != nil {
-			b.logger.Warn("Consensus: account not found, skipping",
+			b.logger.Warn("Consensus: target account not found, skipping",
 				"vendor", vendor.DisplayName, "account_erp_id", targetAccountErpID, "error", err)
+			continue
+		}
+
+		// Resolve source account UUID from its QBO ERP ID (Credit Side - e.g., Chase Checking)
+		sourceAccount, err := b.q.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{
+			RealmID: realmID,
+			ErpID:   row.SourceAccountID,
+		})
+		if err != nil {
+			b.logger.Warn("Consensus: source account not found, skipping",
+				"vendor", vendor.DisplayName, "source_erp_id", row.SourceAccountID, "error", err)
 			continue
 		}
 
@@ -167,11 +196,13 @@ func (b *Bootstrapper) GenerateRulesFromHistory(ctx context.Context, realmID str
 		allocations := []Allocation{{AccountID: account.ID, Percentage: 100.0}}
 
 		if err := b.ruleCreator.CreateRule(ctx, CreateRuleRequest{
-			RealmID:        realmID,
-			Name:           fmt.Sprintf("Auto-Generated: %s", vendor.DisplayName),
+			RealmID: realmID,
+			// Make the rule name clearly reflect its context to the CPA
+			Name:           fmt.Sprintf("Auto-Generated: %s (via %s)", vendor.DisplayName, sourceAccount.Name),
 			Logic:          LogicAnd,
 			Priority:       10,
 			Active:         true,
+			Direction:      Outflow, // 🚨 Strict boundary for Purchase rules
 			TargetEntityID: entityUUID,
 			Allocations:    allocations,
 			RequiresReview: false,
@@ -181,15 +212,22 @@ func (b *Bootstrapper) GenerateRulesFromHistory(ctx context.Context, realmID str
 					Operator: OpEqualsCS,
 					Value:    vendor.DisplayName,
 				},
+				{
+					// 🚨 Contextual lock: Rule only fires for this specific bank account
+					Field:    FieldSourceAccount,
+					Operator: OpEqualsCS,
+					Value:    sourceAccount.Name,
+				},
 			},
 		}); err != nil {
 			b.logger.Error("Consensus: failed to create rule", "vendor", vendor.DisplayName, "error", err)
 			continue
 		}
 
-		b.logger.Info("Consensus: created 1-to-1 rule",
+		b.logger.Info("Consensus: created double-entry 1-to-1 rule",
 			"vendor", vendor.DisplayName,
-			"account", account.Name,
+			"target_account", account.Name,
+			"source_account", sourceAccount.Name,
 			"usage_count", row.UsageCount,
 		)
 	}

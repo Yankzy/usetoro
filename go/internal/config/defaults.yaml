@@ -10,6 +10,12 @@ x-jetstream-default: &jetstream-default
 cdc_enabled: true
 cdc_sync_interval: 1h
 
+rule_engine:
+  # target_rank defines which consensus result to pick (1 = most frequent)
+  target_rank: 1
+  # min_usage_count is the minimum number of historical matches required to auto-generate a rule
+  min_usage_count: 1
+
 nats:
   streams:
     sync:
@@ -293,6 +299,10 @@ workers:
     group: ""
   rule_bootstrap:
     activity_type: workers.rule_bootstrap
+    subject: ""
+    group: ""
+  sql:
+    activity_type: workers.sql.execute
     subject: ""
     group: ""
   vector_sync:

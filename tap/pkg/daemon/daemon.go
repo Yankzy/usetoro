@@ -276,6 +276,7 @@ func (d *ProtocolDaemon) watchWithViper(ctx context.Context) error {
 		}
 
 		d.currentConfig = newCfg
+		config.SetGlobal(newCfg)
 
 		// HotLoad: The Supervisor will diff the new config against running agents
 		if d.Supervisor != nil {

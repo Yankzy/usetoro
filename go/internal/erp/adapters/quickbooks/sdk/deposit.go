@@ -7,42 +7,40 @@ import (
 )
 
 type Deposit struct {
-	Id                  string        `json:"Id,omitempty"`
-	SyncToken           string        `json:"SyncToken,omitempty"`
-	Domain              string        `json:"domain,omitempty"`
-	MetaData            MetaData      `json:",omitempty"`
-	DocNumber           string        `json:",omitempty"`
-	DepositToAccountRef ReferenceType `json:",omitempty"`
-	TxnDate             Date          `json:",omitempty"`
-	TotalAmt            json.Number   `json:",omitempty"`
-	PrivateNote         string        `json:",omitempty"`
-	Line                []DepositLine `json:",omitempty"`
-	CashBack            *CashBack     `json:",omitempty"`
+	Id                  string         `json:"Id,omitempty"`
+	SyncToken           string         `json:"SyncToken,omitempty"`
+	Domain              string         `json:"domain,omitempty"`
+	MetaData            MetaData       `json:",omitempty"`
+	DocNumber           string         `json:",omitempty"`
+	DepositToAccountRef *ReferenceType `json:",omitempty"` // Changed to pointer
+	TxnDate             Date           `json:",omitempty"`
+	TotalAmt            json.Number    `json:",omitempty"`
+	PrivateNote         string         `json:",omitempty"`
+	Line                []DepositLine  `json:",omitempty"`
+	CashBack            *CashBack      `json:",omitempty"`
 }
 
-// DepositLine represents a single line in a QBO Deposit payload.
 type DepositLine struct {
-	Id                string            `json:"Id,omitempty"`
-	Description       string            `json:",omitempty"`
-	Amount            json.Number       `json:",omitempty"`
-	DetailType        string            `json:",omitempty"` // typically "DepositLineDetail"
-	DepositLineDetail DepositLineDetail `json:",omitempty"`
-	LinkedTxn         []LinkedTxn       `json:",omitempty"`
+	Id                string             `json:"Id,omitempty"`
+	Description       string             `json:",omitempty"`
+	Amount            json.Number        `json:",omitempty"`
+	DetailType        string             `json:",omitempty"`
+	DepositLineDetail *DepositLineDetail `json:",omitempty"`
+	LinkedTxn         []LinkedTxn        `json:",omitempty"`
 }
 
-// DepositLineDetail is the QBO "DepositLineDetail" object.
 type DepositLineDetail struct {
-	AccountRef       ReferenceType `json:",omitempty"`
-	EntityRef        ReferenceType `json:",omitempty"`
-	PaymentMethodRef ReferenceType `json:",omitempty"`
-	CheckNum         string        `json:",omitempty"`
+	Entity           *ReferenceType `json:"Entity,omitempty"`
+	AccountRef       *ReferenceType `json:"AccountRef,omitempty"`
+	PaymentMethodRef *ReferenceType `json:"PaymentMethodRef,omitempty"`
+	ClassRef         *ReferenceType `json:"ClassRef,omitempty"`
+	CheckNum         string         `json:"CheckNum,omitempty"`
 }
 
-// CashBack represents a QBO CashBack object.
 type CashBack struct {
-	AccountRef ReferenceType `json:",omitempty"`
-	Amount     json.Number   `json:",omitempty"`
-	Memo       string        `json:",omitempty"`
+	AccountRef *ReferenceType `json:"AccountRef,omitempty"`
+	Amount     json.Number    `json:"Amount,omitempty"`
+	Memo       string         `json:"Memo,omitempty"`
 }
 
 // CreateDeposit creates the given deposit within QuickBooks

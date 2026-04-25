@@ -139,6 +139,40 @@ func (q *Queries) GetWorkflowBlueprints(ctx context.Context) ([]ToroCoreWorkflow
 	return items, nil
 }
 
+const getWorkflowsByEntityID = `-- name: GetWorkflowsByEntityID :many
+SELECT id, entity_id, state, sequence_id, status, created_at, updated_at FROM toro_core.workflows 
+WHERE entity_id = $1
+ORDER BY updated_at DESC
+`
+
+func (q *Queries) GetWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error) {
+	rows, err := q.db.Query(ctx, getWorkflowsByEntityID, entityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreWorkflow
+	for rows.Next() {
+		var i ToroCoreWorkflow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.State,
+			&i.SequenceID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const logWorkflowHistory = `-- name: LogWorkflowHistory :one
 INSERT INTO toro_core.workflow_history (workflow_id, role, content)
 VALUES ($1, $2, $3)

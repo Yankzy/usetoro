@@ -15,6 +15,7 @@ import (
 )
 
 // Run with: go run -tags "dev" tap/cmd/rule_worker/main.go --realm <realm_id>
+// For local mocked rule-evaluation runs, use tap/cmd/rule_engine/main.go.
 
 func main() {
 	realmID := flag.String("realm", "", "The QBO Realm ID to bootstrap")
@@ -63,5 +64,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("🚀 Published rule bootstrap task", "realm_id", *realmID, "subject", subject)
+	logger.Info("published rule bootstrap task", "realm_id", *realmID, "subject", subject)
 }

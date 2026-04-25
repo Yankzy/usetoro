@@ -186,20 +186,18 @@ COMMENT ON COLUMN shadow_erp.ai_corrections.user_correction IS 'The correct enti
 -- =========================================================================
 -- Rule Engine (from 007 & 008)
 -- =========================================================================
-
--- Rule Groups hold the hierarchical logic and metadata
 CREATE TABLE IF NOT EXISTS shadow_erp.rule_groups (
-    id SERIAL PRIMARY KEY,
-    realm_id TEXT NOT NULL, -- To isolate rules per tenant/connection
+    id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    realm_id TEXT NOT NULL, 
     name VARCHAR(255) NOT NULL,
-    logic VARCHAR(10) NOT NULL DEFAULT 'AND', -- 'AND' or 'OR'
+    logic VARCHAR(10) NOT NULL DEFAULT 'AND', 
     priority INT NOT NULL DEFAULT 0,
-    keywords TEXT, -- Auto-generated for optimization
+    keywords TEXT, 
     active BOOLEAN NOT NULL DEFAULT true,
-    
-    -- Resolution Targets
-    target_account_id UUID REFERENCES shadow_erp.accounts(id) ON DELETE SET NULL,
-    target_vendor_id UUID REFERENCES shadow_erp.vendors(id) ON DELETE SET NULL,
+    target_entity_id UUID, -- Can link to shadow_erp.vendors OR shadow_erp.customers
+    allocations JSONB NOT NULL DEFAULT '[]'::jsonb,
+    direction TEXT NOT NULL DEFAULT 'OUTFLOW', -- Strict inflow/outflow boundary
+    requires_review BOOLEAN NOT NULL DEFAULT false,
 
     parent_id INT REFERENCES shadow_erp.rule_groups(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL,
@@ -213,7 +211,7 @@ CREATE INDEX IF NOT EXISTS idx_rule_groups_active ON shadow_erp.rule_groups(acti
 
 -- Rule Conditions define the specific matching criteria for a group
 CREATE TABLE IF NOT EXISTS shadow_erp.rule_conditions (
-    id SERIAL PRIMARY KEY,
+    id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     rule_group_id INT NOT NULL REFERENCES shadow_erp.rule_groups(id) ON DELETE CASCADE,
     field VARCHAR(50) NOT NULL,    -- 'description', 'vendor', etc.
     operator VARCHAR(50) NOT NULL, -- 'equals', 'contains', etc.
@@ -225,7 +223,7 @@ CREATE TABLE IF NOT EXISTS shadow_erp.rule_conditions (
 CREATE INDEX IF NOT EXISTS idx_rule_conditions_group ON shadow_erp.rule_conditions(rule_group_id);
 
 CREATE TABLE IF NOT EXISTS shadow_erp.rule_audit_logs (
-    id SERIAL PRIMARY KEY,
+    id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     realm_id TEXT NOT NULL,
     transaction_id UUID NOT NULL,
     rule_group_id INT REFERENCES shadow_erp.rule_groups(id) ON DELETE SET NULL,
@@ -309,7 +307,71 @@ CREATE TABLE IF NOT EXISTS shadow_erp.attachables (
 
 CREATE INDEX IF NOT EXISTS idx_attachables_realm_id ON shadow_erp.attachables(realm_id);
 
+-- The Local Purchase Table (Money Out)
+CREATE TABLE IF NOT EXISTS shadow_erp.purchases (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    erp_id TEXT NOT NULL,                  -- QBO Purchase ID (e.g., "252")
+    realm_id TEXT NOT NULL,                -- The CPA's Client ID
+    sync_token TEXT NOT NULL,              -- Required for QBO updates/conflict resolution
+    
+    txn_date DATE NOT NULL,
+    total_amount DECIMAL(15,2) NOT NULL,
+    payment_type TEXT,                     -- 'Cash', 'Check', 'CreditCard'
+    
+    -- The TOP-LEVEL Account (Where the money came from)
+    source_account_id TEXT NOT NULL,       -- e.g., "35" (Checking)
+    
+    -- The VENDOR (Who we paid)
+    entity_id TEXT,                        -- e.g., Vendor ID. Nullable because of anonymous receipts.
+    
+    -- THE LINE ITEMS (What we bought - contains the second AccountRefs)
+    lines JSONB NOT NULL,                  -- Holds the array of AccountBasedExpenseLineDetail
+    rule_id INT REFERENCES shadow_erp.rule_groups(id),
+    event_source TEXT NOT NULL DEFAULT 'toro_internal',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE(realm_id, erp_id)
+);
+
+CREATE TABLE IF NOT EXISTS shadow_erp.deposits (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    erp_id TEXT NOT NULL,                  -- QBO Deposit ID (e.g., "148")
+    realm_id TEXT NOT NULL,                -- The CPA's Client ID
+    sync_token TEXT NOT NULL,              -- For QBO collision detection
+    
+    -- Transaction Data
+    txn_date DATE NOT NULL,
+    total_amount DECIMAL(15,2) NOT NULL,
+    target_account_id TEXT NOT NULL,       -- Mapped from DepositToAccountRef.value
+    
+    -- Line Items (JSONB handles both DepositLineDetail AND LinkedTxn arrays)
+    lines JSONB NOT NULL,                  
+    
+    -- QBO System Metadata (Added from your JSON)
+    domain TEXT,                           -- e.g., 'QBO'
+    sparse BOOLEAN,                        -- True if QBO sent a partial update payload
+    erp_created_time TIMESTAMPTZ,          -- Mapped from MetaData.CreateTime
+    erp_updated_time TIMESTAMPTZ,          -- Mapped from MetaData.LastUpdatedTime
+    
+    -- Internal State
+    rule_id INT REFERENCES shadow_erp.rule_groups(id),
+    event_source TEXT NOT NULL DEFAULT 'toro_internal',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE(realm_id, erp_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchases_realm ON shadow_erp.purchases(realm_id);
+CREATE INDEX IF NOT EXISTS idx_deposits_realm ON shadow_erp.deposits(realm_id);
+
+-- Add support for Deposit webhooks to the core connections table
+ALTER TABLE toro_core.erp_connections ADD COLUMN IF NOT EXISTS last_webhook_deposit TIMESTAMPTZ;
+
 -- +goose Down
+DROP TABLE IF EXISTS shadow_erp.deposits;
+DROP TABLE IF EXISTS shadow_erp.purchases;
 DROP TABLE IF EXISTS shadow_erp.attachables;
 DROP TABLE IF EXISTS shadow_erp.bills;
 DROP TABLE IF EXISTS shadow_erp.invoices;

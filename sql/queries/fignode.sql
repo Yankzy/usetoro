@@ -191,6 +191,25 @@ SET status = 'SKIPPED', updated_at = now()
 WHERE id = $1;
 
 -- =========================================================================
+-- Rule evaluation worker
+-- =========================================================================
+
+-- name: GetPendingStagingTransactions :many
+SELECT * FROM fignode.staging_transactions
+WHERE session_id = $1 AND status = 'PENDING_AI';
+
+-- name: UpdateStagingTransactionWithRule :exec
+UPDATE fignode.staging_transactions
+SET rule_group_id = $2,
+    predicted_account_id = $3,
+    predicted_vendor_id = $4,
+    predicted_customer_id = $5,
+    status = $6,
+    ai_reasoning = $7,
+    updated_at = NOW()
+WHERE id = $1;
+
+-- =========================================================================
 -- Updates
 -- =========================================================================
 

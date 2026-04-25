@@ -93,6 +93,7 @@ func (s *RuleEngineService) mapPurchaseToTransaction(p database.GetOrphanedPurch
 		Direction: ruleEngine.Outflow,
 		Date:      p.TxnDate.Time,
 		Vendor:    p.VendorName.String,
+		SourceAccount: p.SourceAccountName.String,
 	}
 }
 
@@ -105,6 +106,7 @@ func (s *RuleEngineService) mapDepositToTransaction(d database.GetOrphanedDeposi
 		Direction: ruleEngine.Inflow,
 		Date:      d.TxnDate.Time,
 		Customer:  d.CustomerName.String,
+		SourceAccount: d.SourceAccountName.String,
 	}
 }
 
@@ -148,6 +150,7 @@ func (s *RuleEngineService) getActiveRules(ctx context.Context, realmID string) 
 			Active:         g.Active,
 			TargetEntityID: g.TargetEntityID,
 			RequiresReview: g.RequiresReview,
+			Direction:      ruleEngine.CashDirection(g.Direction),
 		}
 
 		if len(g.Allocations) > 0 {
@@ -202,7 +205,7 @@ func (s *RuleEngineService) getActiveRules(ctx context.Context, realmID string) 
 	return validRules, nil
 }
 
-// CreateRule creates a new rule group and its conditions, ensuring strict idempotency.
+// CreateRule creates a new rule group and its conditions/children, ensuring strict idempotency.
 func (s *RuleEngineService) CreateRule(ctx context.Context, req ruleEngine.CreateRuleRequest) error {
 	activeRules, err := s.getActiveRules(ctx, req.RealmID)
 	if err != nil {
@@ -216,11 +219,23 @@ func (s *RuleEngineService) CreateRule(ctx context.Context, req ruleEngine.Creat
 		}
 	}
 
+	// Start recursive insertion with a null ParentID
+	if err := s.insertRuleRecursive(ctx, req, pgtype.Int4{}); err != nil {
+		return err
+	}
+
+	cacheKey := fmt.Sprintf("rules:%s", req.RealmID)
+	s.cache.Del(cacheKey)
+	return nil
+}
+
+func (s *RuleEngineService) insertRuleRecursive(ctx context.Context, req ruleEngine.CreateRuleRequest, parentID pgtype.Int4) error {
 	allocBytes, err := json.Marshal(req.Allocations)
 	if err != nil {
 		return fmt.Errorf("failed to marshal allocations: %w", err)
 	}
 
+	// Insert the Group
 	group, err := s.q.CreateRuleGroup(ctx, database.CreateRuleGroupParams{
 		RealmID:        req.RealmID,
 		Name:           req.Name,
@@ -230,11 +245,14 @@ func (s *RuleEngineService) CreateRule(ctx context.Context, req ruleEngine.Creat
 		TargetEntityID: req.TargetEntityID,
 		Allocations:    allocBytes,
 		RequiresReview: req.RequiresReview,
+		ParentID:       parentID, // Links to parent if this is a nested child group
+		Direction:      string(req.Direction),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to insert rule group: %w", err)
 	}
 
+	// Insert its Conditions
 	for _, cond := range req.Conditions {
 		if _, err := s.q.CreateRuleCondition(ctx, database.CreateRuleConditionParams{
 			RuleGroupID: group.ID,
@@ -246,40 +264,69 @@ func (s *RuleEngineService) CreateRule(ctx context.Context, req ruleEngine.Creat
 		}
 	}
 
-	cacheKey := fmt.Sprintf("rules:%s", req.RealmID)
-	s.cache.Del(cacheKey)
+	// Recurse for Child Groups
+	var currentGroupID pgtype.Int4
+	currentGroupID.Scan(group.ID)
+
+	for _, childReq := range req.ChildGroups {
+		// Ensure children inherit the realm ID
+		childReq.RealmID = req.RealmID
+		childReq.Direction = req.Direction
+		if err := s.insertRuleRecursive(ctx, childReq, currentGroupID); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 // isLogicalDuplicate compares an incoming request against an existing compiled rule.
 func (s *RuleEngineService) isLogicalDuplicate(existing *ruleEngine.RuleGroup, req ruleEngine.CreateRuleRequest) bool {
+	// Top-level properties must match
 	if !uuidEqual(existing.TargetEntityID, req.TargetEntityID) {
 		return false
 	}
-
 	if existing.RequiresReview != req.RequiresReview {
 		return false
 	}
-
-	if len(existing.Allocations) != len(req.Allocations) {
+	if string(existing.Logic) != string(req.Logic) {
+		return false
+	}
+	if existing.Direction != req.Direction {
 		return false
 	}
 
+	// Allocations must match
+	if len(existing.Allocations) != len(req.Allocations) {
+		return false
+	}
 	for i, alloc := range existing.Allocations {
 		if !uuidEqual(alloc.AccountID, req.Allocations[i].AccountID) || alloc.Percentage != req.Allocations[i].Percentage {
 			return false
 		}
 	}
 
+	// Conditions must match
 	if len(existing.Conditions) != len(req.Conditions) {
 		return false
 	}
-
 	for i, existingCond := range existing.Conditions {
 		reqCond := req.Conditions[i]
-		if existingCond.Field != reqCond.Field ||
-			existingCond.Operator != reqCond.Operator ||
+		if string(existingCond.Field) != string(reqCond.Field) ||
+			string(existingCond.Operator) != string(reqCond.Operator) ||
 			existingCond.Value != reqCond.Value {
+			return false
+		}
+	}
+
+	// Children must match (Recursion)
+	if len(existing.Children) != len(req.ChildGroups) {
+		return false
+	}
+	for i, existingChild := range existing.Children {
+		reqChild := req.ChildGroups[i]
+		// Recursively check the child
+		if !s.isLogicalDuplicate(existingChild, reqChild) {
 			return false
 		}
 	}

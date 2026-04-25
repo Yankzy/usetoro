@@ -38,19 +38,19 @@ WHERE id = $1;
 
 -- name: InsertCleanupRow :one
 INSERT INTO fignode.staging_transactions (
-    session_id, realm_id, source_type, raw_description, raw_amount, raw_date, status,
+    session_id, row_index, realm_id, source_type, raw_description, raw_amount, raw_date, status,
     predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name,
     confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
     human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id,
-    erp_transaction_id, error_message, plaid_transaction_id, plaid_account_id,
+    erp_transaction_id, error_message, plaid_transaction_id, bank_account_id,
     merchant_name, logo_url, plaid_category, is_pending
 )
 VALUES (
-    $1, sqlc.narg('realm_id'), $2, $3, $4, $5, COALESCE(sqlc.narg('status'), 'PENDING'),
+    $1, sqlc.narg('row_index'), sqlc.narg('realm_id'), $2, $3, $4, $5, COALESCE(sqlc.narg('status'), 'PENDING'),
     sqlc.narg('predicted_vendor_id'), sqlc.narg('predicted_vendor_name'), sqlc.narg('predicted_customer_id'), sqlc.narg('predicted_customer_name'), sqlc.narg('predicted_account_id'), sqlc.narg('predicted_account_name'),
     sqlc.narg('confidence_score'), sqlc.narg('ai_reasoning'), sqlc.narg('duplicate_of'), COALESCE(sqlc.narg('is_recurring'), FALSE), sqlc.narg('split_suggestion'),
     sqlc.narg('human_action'), sqlc.narg('swiped_by'), sqlc.narg('swiped_at'), sqlc.narg('override_vendor_id'), sqlc.narg('override_customer_id'), sqlc.narg('override_account_id'),
-    sqlc.narg('erp_transaction_id'), sqlc.narg('error_message'), sqlc.narg('plaid_transaction_id'), sqlc.narg('plaid_account_id'),
+    sqlc.narg('erp_transaction_id'), sqlc.narg('error_message'), sqlc.narg('plaid_transaction_id'), sqlc.narg('bank_account_id'),
     sqlc.narg('merchant_name'), sqlc.narg('logo_url'), sqlc.narg('plaid_category'), COALESCE(sqlc.narg('is_pending'), FALSE)
 )
 RETURNING id;

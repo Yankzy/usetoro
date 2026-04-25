@@ -35,6 +35,7 @@ type LLMColumnMapping struct {
 	IsAmbiguous       bool    `json:"is_ambiguous"`
 	AmbiguityReason   string  `json:"ambiguity_reason"`
 	PolaritySign      string  `json:"polarity_sign"`
+	SourceAccount     string  `json:"source_account"`
 }
 
 type CSVMappingTaskPayload struct {
@@ -234,13 +235,13 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		statusVal, _ := json.Marshal("COLUMNS_MAPPED")
 		patch1 := fmt.Sprintf(`{"op": "add", "path": "/status", "value": %s}`, string(statusVal))
 		patch2 := fmt.Sprintf(`{"op": "add", "path": "/mapped_rows", "value": %s}`, string(finalRowsJSON))
-		
+
 		isAmbiguousVal, _ := json.Marshal(mapping.IsAmbiguous)
 		patch3 := fmt.Sprintf(`{"op": "add", "path": "/is_ambiguous", "value": %s}`, string(isAmbiguousVal))
-		
+
 		reasonVal, _ := json.Marshal(mapping.AmbiguityReason)
 		patch4 := fmt.Sprintf(`{"op": "add", "path": "/ambiguity_reason", "value": %s}`, string(reasonVal))
-		
+
 		polarityVal, _ := json.Marshal(mapping.PolaritySign)
 		patch5 := fmt.Sprintf(`{"op": "add", "path": "/polarity_sign", "value": %s}`, string(polarityVal))
 
@@ -364,13 +365,13 @@ func ExtractJSONToMapping(respText string) (*LLMColumnMapping, error) {
 	// Robust extraction: find the first { and the last }
 	firstIdx := strings.Index(respText, "{")
 	lastIdx := strings.LastIndex(respText, "}")
-	
+
 	if firstIdx == -1 || lastIdx == -1 || lastIdx <= firstIdx {
 		return nil, fmt.Errorf("no valid JSON object found in LLM response (first={ at %d, last=} at %d)", firstIdx, lastIdx)
 	}
 
 	extracted := strings.TrimSpace(respText[firstIdx : lastIdx+1])
-	
+
 	// Pre-parse validation logging
 	sampleLen := 40
 	startSample := extracted
@@ -388,7 +389,7 @@ func ExtractJSONToMapping(respText string) (*LLMColumnMapping, error) {
 	if err := json.Unmarshal([]byte(extracted), &mapping); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal extracted JSON (len=%d): %w", len(extracted), err)
 	}
-	
+
 	return &mapping, nil
 }
 
@@ -540,6 +541,9 @@ func BuildUserPrompt(rows [][]string) string {
 	sb.WriteString("- `brackets`: Expenses are in parentheses (e.g., (10.00)).\n")
 	sb.WriteString("- `none`: There are no indicators (all numbers are positive).\n\n")
 	sb.WriteString("- If polarity is none, then set `is_ambiguous` to true and explain it in `ambiguity_reason` (e.g., 'structural ambiguity: all amounts are positive without polarity indicators').\n\n")
+	sb.WriteString("If you can determine the source account (the bank or credit card used), set `source_account` to its name.\n\n")
+	sb.WriteString("If there's no bank account but you can clearly the csv is from Shopify or Stripe set the `source_account` to 'Shopify' or 'Stripe'.\n\n")
+
 	sb.WriteString("Sample Data (Up to 20 valid rows):\n")
 
 	var validRows int

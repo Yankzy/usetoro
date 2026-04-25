@@ -12,7 +12,25 @@ import (
 
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/spf13/viper"
+	"sync"
 )
+
+var (
+	globalMu sync.RWMutex
+	global   *Config
+)
+
+func SetGlobal(c *Config) {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+	global = c
+}
+
+func GetGlobal() *Config {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+	return global
+}
 
 // Config mirrors your defaults.yaml structure and environment variables.
 type Config struct {
@@ -59,6 +77,14 @@ type Config struct {
 	// Agents Config
 	Agents  []core.AgentConfig `mapstructure:"agents"`
 	Workers WorkerSubjects     `mapstructure:"workers"`
+
+	// Rule Engine
+	RuleEngine RuleEngineConfig `mapstructure:"rule_engine"`
+}
+
+type RuleEngineConfig struct {
+	TargetRank    int `mapstructure:"target_rank"`
+	MinUsageCount int `mapstructure:"min_usage_count"`
 }
 
 type NATSConfig struct {
@@ -236,6 +262,8 @@ func Load() (*Config, *viper.Viper, error) {
 	v.SetDefault("embedding_dimensions", 3072)
 	v.SetDefault("ai_threshold", 0.75)
 	v.SetDefault("workers.erp_event.subject", "toro.erp.events.*")
+	v.SetDefault("rule_engine.target_rank", 1)
+	v.SetDefault("rule_engine.min_usage_count", 3)
 
 	// 3. Actually read the file from disk
 	if err := v.ReadInConfig(); err != nil {
@@ -248,6 +276,9 @@ func Load() (*Config, *viper.Viper, error) {
 	}
 
 	c, err := Unmarshal(v)
+	if err == nil {
+		SetGlobal(c)
+	}
 	return c, v, err
 }
 

@@ -351,6 +351,7 @@ func (c *Client) writePump() {
 func (c *Client) Start() {
 	go c.writePump()
 	go c.readPump()
+	go c.blastActiveWorkflows()
 }
 
 func (c *Client) blastDatabaseCards(realmID string) {
@@ -464,6 +465,79 @@ func (c *Client) blastDatabaseCards(realmID string) {
 		case c.send <- b:
 		case <-time.After(100 * time.Millisecond):
 			// If buffer full, skip to avoid deadlock. JS will resend.
+		}
+	}
+}
+
+func (c *Client) blastActiveWorkflows() {
+	if c.hub == nil || c.hub.db == nil || c.entityID == "unknown" {
+		return
+	}
+
+	entityUUID, err := uuid.Parse(c.entityID)
+	if err != nil {
+		c.logger.Error("Failed to parse entity ID for workflows", "error", err)
+		return
+	}
+
+	workflows, err := c.hub.db.GetWorkflowsByEntityID(context.Background(), pgtype.UUID{Bytes: entityUUID, Valid: true})
+	if err != nil {
+		c.logger.Error("Failed to fetch active workflows", "error", err)
+		return
+	}
+
+	for _, wf := range workflows {
+		// Parse state
+		var state map[string]interface{}
+		if err := json.Unmarshal(wf.State, &state); err != nil {
+			continue
+		}
+
+		workflowDefName, _ := state["workflow_def"].(string)
+		currentStepID, _ := state["current_step_id"].(string)
+
+		activeSteps := []string{}
+		if activeMap, ok := state["active_steps"].(map[string]interface{}); ok {
+			for k, v := range activeMap {
+				if b, ok := v.(bool); ok && b {
+					activeSteps = append(activeSteps, k)
+				}
+			}
+		}
+
+		if len(activeSteps) == 0 && currentStepID != "" {
+			activeSteps = []string{currentStepID}
+		}
+
+		blueprintRow, err := c.hub.db.GetBlueprintByName(context.Background(), workflowDefName)
+		if err != nil {
+			c.logger.Warn("Failed to fetch blueprint for workflow", "name", workflowDefName, "error", err)
+			continue
+		}
+
+		var blueprint interface{}
+		if err := json.Unmarshal(blueprintRow.Definition, &blueprint); err != nil {
+			continue
+		}
+
+		evt := map[string]interface{}{
+			"instance_id":     uuid.UUID(wf.ID.Bytes).String(),
+			"entity_id":       c.entityID,
+			"status":          wf.Status,
+			"current_step_id": currentStepID,
+			"blueprint":       blueprint,
+			"active_steps":    activeSteps,
+			"timestamp":       time.Now().UTC().Format(time.RFC3339),
+		}
+
+		wsMsg, err := NewWorkflowStatusMessage(evt)
+		if err != nil {
+			continue
+		}
+
+		select {
+		case c.send <- wsMsg:
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }

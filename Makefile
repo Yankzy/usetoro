@@ -8,9 +8,9 @@ ENVIRONMENT := $(if $(PRODUCTION_SERVER),prod,dev)
 PROJECT_NAME := be_voxprofit
 
 ifeq ($(ENVIRONMENT),prod)
-	DOCKER_COMPOSE := docker compose -f container/docker-compose.prod.yml
+	DOCKER_COMPOSE := docker-compose -f container/docker-compose.prod.yml
 else
-	DOCKER_COMPOSE := docker compose -f container/docker-compose.yml
+	DOCKER_COMPOSE := docker-compose -f container/docker-compose.yml
 endif
 
 # App Services
@@ -169,7 +169,7 @@ migrate:
 	$(DOCKER_COMPOSE) up migrator
 
 sqlc:
-	~/go/bin/sqlc generate && make migrate
+	~/go/bin/sqlc generate && $(MAKE) migrate
 
 test:
 	cd go && go test ./...
@@ -177,7 +177,7 @@ test:
 clean_db:
 	$(DOCKER_COMPOSE) down
 	rm -rf container/postgres/db_data
-	$(MAKE) upd
+	$(MAKE) sqlc && $(MAKE) upd && \
 	cd go && go build -o ../bin/store-webhook-secret ./cmd/store-webhook-secret/main.go && .. && ./bin/store-webhook-secret
 
 scr:

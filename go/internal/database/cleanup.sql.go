@@ -125,30 +125,17 @@ type CreateCleanupSessionParams struct {
 	RealmID   pgtype.Text
 }
 
-type CreateCleanupSessionRow struct {
-	ID              pgtype.UUID
-	RealmID         pgtype.Text
-	CreatedBy       pgtype.UUID
-	FileName        pgtype.Text
-	RowCount        int32
-	Status          string
-	IsAmbiguous     bool
-	AmbiguityReason pgtype.Text
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-}
-
 // =========================================================================
 // Cleanup Mode Queries (now stored in fignode schema)
 // =========================================================================
-func (q *Queries) CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (CreateCleanupSessionRow, error) {
+func (q *Queries) CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (FignodeStagingSession, error) {
 	row := q.db.QueryRow(ctx, createCleanupSession,
 		arg.CreatedBy,
 		arg.FileName,
 		arg.RowCount,
 		arg.RealmID,
 	)
-	var i CreateCleanupSessionRow
+	var i FignodeStagingSession
 	err := row.Scan(
 		&i.ID,
 		&i.RealmID,
@@ -348,22 +335,9 @@ FROM fignode.staging_sessions
 WHERE id = $1
 `
 
-type GetCleanupSessionRow struct {
-	ID              pgtype.UUID
-	RealmID         pgtype.Text
-	CreatedBy       pgtype.UUID
-	FileName        pgtype.Text
-	RowCount        int32
-	Status          string
-	IsAmbiguous     bool
-	AmbiguityReason pgtype.Text
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-}
-
-func (q *Queries) GetCleanupSession(ctx context.Context, id pgtype.UUID) (GetCleanupSessionRow, error) {
+func (q *Queries) GetCleanupSession(ctx context.Context, id pgtype.UUID) (FignodeStagingSession, error) {
 	row := q.db.QueryRow(ctx, getCleanupSession, id)
-	var i GetCleanupSessionRow
+	var i FignodeStagingSession
 	err := row.Scan(
 		&i.ID,
 		&i.RealmID,
@@ -771,20 +745,20 @@ func (q *Queries) GetSessionSummary(ctx context.Context, sessionID pgtype.UUID) 
 
 const insertCleanupRow = `-- name: InsertCleanupRow :one
 INSERT INTO fignode.staging_transactions (
-    session_id, realm_id, source_type, raw_description, raw_amount, raw_date, status,
+    session_id, row_index, realm_id, source_type, raw_description, raw_amount, raw_date, status,
     predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name,
     confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
     human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id,
-    erp_transaction_id, error_message, plaid_transaction_id, plaid_account_id,
+    erp_transaction_id, error_message, plaid_transaction_id, bank_account_id,
     merchant_name, logo_url, plaid_category, is_pending
 )
 VALUES (
-    $1, $6, $2, $3, $4, $5, COALESCE($7, 'PENDING'),
-    $8, $9, $10, $11, $12, $13,
-    $14, $15, $16, COALESCE($17, FALSE), $18,
-    $19, $20, $21, $22, $23, $24,
-    $25, $26, $27, $28,
-    $29, $30, $31, COALESCE($32, FALSE)
+    $1, $6, $7, $2, $3, $4, $5, COALESCE($8, 'PENDING'),
+    $9, $10, $11, $12, $13, $14,
+    $15, $16, $17, COALESCE($18, FALSE), $19,
+    $20, $21, $22, $23, $24, $25,
+    $26, $27, $28, $29,
+    $30, $31, $32, COALESCE($33, FALSE)
 )
 RETURNING id
 `
@@ -795,6 +769,7 @@ type InsertCleanupRowParams struct {
 	RawDescription        pgtype.Text
 	RawAmount             string
 	RawDate               pgtype.Date
+	RowIndex              pgtype.Int4
 	RealmID               pgtype.Text
 	Status                interface{}
 	PredictedVendorID     pgtype.UUID
@@ -817,7 +792,7 @@ type InsertCleanupRowParams struct {
 	ErpTransactionID      pgtype.Text
 	ErrorMessage          pgtype.Text
 	PlaidTransactionID    pgtype.Text
-	PlaidAccountID        pgtype.Text
+	BankAccountID         pgtype.Text
 	MerchantName          pgtype.Text
 	LogoUrl               pgtype.Text
 	PlaidCategory         pgtype.Text
@@ -831,6 +806,7 @@ func (q *Queries) InsertCleanupRow(ctx context.Context, arg InsertCleanupRowPara
 		arg.RawDescription,
 		arg.RawAmount,
 		arg.RawDate,
+		arg.RowIndex,
 		arg.RealmID,
 		arg.Status,
 		arg.PredictedVendorID,
@@ -853,7 +829,7 @@ func (q *Queries) InsertCleanupRow(ctx context.Context, arg InsertCleanupRowPara
 		arg.ErpTransactionID,
 		arg.ErrorMessage,
 		arg.PlaidTransactionID,
-		arg.PlaidAccountID,
+		arg.BankAccountID,
 		arg.MerchantName,
 		arg.LogoUrl,
 		arg.PlaidCategory,
@@ -877,30 +853,17 @@ type ListCleanupSessionsParams struct {
 	CreatedBy pgtype.UUID
 }
 
-type ListCleanupSessionsRow struct {
-	ID              pgtype.UUID
-	RealmID         pgtype.Text
-	CreatedBy       pgtype.UUID
-	FileName        pgtype.Text
-	RowCount        int32
-	Status          string
-	IsAmbiguous     bool
-	AmbiguityReason pgtype.Text
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-}
-
 // Returns sessions for a realm (when realm_id is provided) OR sessions created by a user
 // (when realm_id is NULL). Exactly one of the two filters will be non-null per call.
-func (q *Queries) ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]ListCleanupSessionsRow, error) {
+func (q *Queries) ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]FignodeStagingSession, error) {
 	rows, err := q.db.Query(ctx, listCleanupSessions, arg.RealmID, arg.CreatedBy)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListCleanupSessionsRow
+	var items []FignodeStagingSession
 	for rows.Next() {
-		var i ListCleanupSessionsRow
+		var i FignodeStagingSession
 		if err := rows.Scan(
 			&i.ID,
 			&i.RealmID,

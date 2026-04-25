@@ -13,6 +13,11 @@ SET state = @state, sequence_id = @sequence_id, updated_at = NOW()
 WHERE id = @id
 RETURNING *;
 
+-- name: GetWorkflowsByEntityID :many
+SELECT * FROM toro_core.workflows 
+WHERE entity_id = $1
+ORDER BY updated_at DESC;
+
 -- name: LogWorkflowHistory :one
 INSERT INTO toro_core.workflow_history (workflow_id, role, content)
 VALUES (@workflow_id, @role, @content)

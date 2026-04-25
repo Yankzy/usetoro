@@ -13,7 +13,6 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/services/ai"
-	"github.com/Yankzy/usetoro/internal/services/cleanup"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/workflows"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -27,7 +26,6 @@ type CSVMappingWorker struct {
 	entityResolver *ai.EntityResolver
 	coaMapper      *ai.CoAMapper
 	nc             *nats.Conn
-	dedup          *cleanup.Deduplicator
 	logger         *slog.Logger
 	cfg            *config.Config
 }
@@ -46,7 +44,6 @@ func NewCSVMappingWorker(
 		entityResolver: entityResolver,
 		coaMapper:      coaMapper,
 		nc:             nc,
-		dedup:          cleanup.NewDeduplicator(),
 		logger:         logger,
 		cfg:            cfg,
 	}, nil
@@ -97,8 +94,11 @@ func (e *CSVMappingWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	e.logger.Info("📡 [DEBUG] csv_mapping_worker received JetStream TAP message", "topic", msg.Subject, "data_length", len(msg.Data))
 	if err := e.handleProof(ctx, msg); err != nil {
 		e.logger.Error("csv mapping worker transient error", "error", err)
+		msg.Nak() // Tell JetStream to redeliver immediately
 		return err
 	}
+
+	msg.Ack() // We are completely done, explicitly ack the message
 	return nil
 }
 
@@ -248,7 +248,14 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 	}
 
 	// Insert rows
-	for _, r := range rows {
+	for i, r := range rows {
+		// Ping NATS every 50 rows to reset the AckWait timer and prevent timeout redeliveries.
+		if i > 0 && i%50 == 0 {
+			if err := msg.InProgress(); err != nil {
+				e.logger.Warn("csv mapping worker: failed to ping nats in-progress", "error", err)
+			}
+		}
+
 		rawDescription, _ := r["Description"].(string)
 		rawAmount, _ := r["Amount"].(string)
 		rawDateStr, _ := r["Date"].(string)
@@ -260,6 +267,7 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 
 		_, err := e.db.InsertCleanupRow(ctx, database.InsertCleanupRowParams{
 			SessionID:             pgSessionID,
+			RowIndex:              pgtype.Int4{Int32: int32(i), Valid: true}, // Uniquely identifies the row position to prevent dupe inserts on retry
 			RealmID:               pgtype.Text{String: realmID, Valid: realmID != ""},
 			SourceType:            "CSV",
 			RawDescription:        pgtype.Text{String: rawDescription, Valid: rawDescription != ""},

@@ -417,7 +417,7 @@ func (q *Queries) GetEmployeeStats(ctx context.Context, userID pgtype.UUID) (Get
 
 const getInitialEnrichedTransactionsByRealm = `-- name: GetInitialEnrichedTransactionsByRealm :many
 
-SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at FROM fignode.staging_transactions
+SELECT id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason FROM fignode.staging_transactions
 WHERE status = 'ENRICHED' AND realm_id = $1 AND duplicate_of IS NULL
 ORDER BY created_at DESC LIMIT 50
 `
@@ -438,12 +438,13 @@ func (q *Queries) GetInitialEnrichedTransactionsByRealm(ctx context.Context, rea
 			&i.ID,
 			&i.SessionID,
 			&i.RealmID,
+			&i.RowIndex,
 			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
 			&i.PlaidTransactionID,
-			&i.PlaidAccountID,
+			&i.BankAccountID,
 			&i.MerchantName,
 			&i.LogoUrl,
 			&i.PlaidCategory,
@@ -468,8 +469,13 @@ func (q *Queries) GetInitialEnrichedTransactionsByRealm(ctx context.Context, rea
 			&i.Status,
 			&i.ErpTransactionID,
 			&i.ErrorMessage,
+			&i.ReconciledAt,
+			&i.ReconciledBy,
+			&i.RuleGroupID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsAmbiguous,
+			&i.AmbiguityReason,
 		); err != nil {
 			return nil, err
 		}
@@ -503,7 +509,7 @@ func (q *Queries) GetLatestLeaderboardSnapshot(ctx context.Context, period strin
 
 const getPendingFignodeTransactions = `-- name: GetPendingFignodeTransactions :many
 
-SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at FROM fignode.staging_transactions
+SELECT id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason FROM fignode.staging_transactions
 WHERE status = 'PENDING_AI' 
   AND human_action IS NULL
   AND session_id IS NOT NULL -- Example: filter logic
@@ -527,12 +533,13 @@ func (q *Queries) GetPendingFignodeTransactions(ctx context.Context) ([]FignodeS
 			&i.ID,
 			&i.SessionID,
 			&i.RealmID,
+			&i.RowIndex,
 			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
 			&i.PlaidTransactionID,
-			&i.PlaidAccountID,
+			&i.BankAccountID,
 			&i.MerchantName,
 			&i.LogoUrl,
 			&i.PlaidCategory,
@@ -557,8 +564,84 @@ func (q *Queries) GetPendingFignodeTransactions(ctx context.Context) ([]FignodeS
 			&i.Status,
 			&i.ErpTransactionID,
 			&i.ErrorMessage,
+			&i.ReconciledAt,
+			&i.ReconciledBy,
+			&i.RuleGroupID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsAmbiguous,
+			&i.AmbiguityReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPendingStagingTransactions = `-- name: GetPendingStagingTransactions :many
+
+SELECT id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason FROM fignode.staging_transactions
+WHERE session_id = $1 AND status = 'PENDING_AI'
+`
+
+// =========================================================================
+// Rule evaluation worker
+// =========================================================================
+func (q *Queries) GetPendingStagingTransactions(ctx context.Context, sessionID pgtype.UUID) ([]FignodeStagingTransaction, error) {
+	rows, err := q.db.Query(ctx, getPendingStagingTransactions, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FignodeStagingTransaction
+	for rows.Next() {
+		var i FignodeStagingTransaction
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RealmID,
+			&i.RowIndex,
+			&i.SourceType,
+			&i.RawDescription,
+			&i.RawAmount,
+			&i.RawDate,
+			&i.PlaidTransactionID,
+			&i.BankAccountID,
+			&i.MerchantName,
+			&i.LogoUrl,
+			&i.PlaidCategory,
+			&i.IsPending,
+			&i.PredictedVendorID,
+			&i.PredictedVendorName,
+			&i.PredictedCustomerID,
+			&i.PredictedCustomerName,
+			&i.PredictedAccountID,
+			&i.PredictedAccountName,
+			&i.ConfidenceScore,
+			&i.AiReasoning,
+			&i.HumanAction,
+			&i.SwipedBy,
+			&i.SwipedAt,
+			&i.OverrideVendorID,
+			&i.OverrideCustomerID,
+			&i.OverrideAccountID,
+			&i.DuplicateOf,
+			&i.IsRecurring,
+			&i.SplitSuggestion,
+			&i.Status,
+			&i.ErpTransactionID,
+			&i.ErrorMessage,
+			&i.ReconciledAt,
+			&i.ReconciledBy,
+			&i.RuleGroupID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IsAmbiguous,
+			&i.AmbiguityReason,
 		); err != nil {
 			return nil, err
 		}
@@ -652,6 +735,41 @@ WHERE id = $1
 
 func (q *Queries) SetTransactionInReview(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, setTransactionInReview, id)
+	return err
+}
+
+const updateStagingTransactionWithRule = `-- name: UpdateStagingTransactionWithRule :exec
+UPDATE fignode.staging_transactions
+SET rule_group_id = $2,
+    predicted_account_id = $3,
+    predicted_vendor_id = $4,
+    predicted_customer_id = $5,
+    status = $6,
+    ai_reasoning = $7,
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type UpdateStagingTransactionWithRuleParams struct {
+	ID                  pgtype.UUID
+	RuleGroupID         pgtype.Int4
+	PredictedAccountID  pgtype.UUID
+	PredictedVendorID   pgtype.UUID
+	PredictedCustomerID pgtype.UUID
+	Status              string
+	AiReasoning         pgtype.Text
+}
+
+func (q *Queries) UpdateStagingTransactionWithRule(ctx context.Context, arg UpdateStagingTransactionWithRuleParams) error {
+	_, err := q.db.Exec(ctx, updateStagingTransactionWithRule,
+		arg.ID,
+		arg.RuleGroupID,
+		arg.PredictedAccountID,
+		arg.PredictedVendorID,
+		arg.PredictedCustomerID,
+		arg.Status,
+		arg.AiReasoning,
+	)
 	return err
 }
 

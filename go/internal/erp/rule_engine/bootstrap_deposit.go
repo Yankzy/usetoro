@@ -28,7 +28,6 @@ func (b *Bootstrapper) RunRuleEngineForDeposits(ctx context.Context, realmID str
 
 // GenerateDepositSplitReviewRules flags complex customers (e.g., Stripe payouts
 // that mix income with processing fees) for manual CPA review.
-// It returns the set of flagged customer ERP IDs so Step 2 can skip them.
 func (b *Bootstrapper) GenerateDepositSplitReviewRules(ctx context.Context, realmID string) (map[string]bool, error) {
 	rows, err := b.q.GetHistoricalDepositSplitters(ctx, realmID)
 	if err != nil {
@@ -38,9 +37,8 @@ func (b *Bootstrapper) GenerateDepositSplitReviewRules(ctx context.Context, real
 	flaggedCustomers := make(map[string]bool)
 
 	for _, row := range rows {
-		// customer_id is extracted from JSONB; sqlc types it as interface{}
-		customerErpID, ok := row.CustomerID.(string)
-		if !ok || customerErpID == "" {
+		customerErpID := row.CustomerID
+		if customerErpID == "" {
 			continue
 		}
 
@@ -63,6 +61,7 @@ func (b *Bootstrapper) GenerateDepositSplitReviewRules(ctx context.Context, real
 			Logic:          LogicAnd,
 			Priority:       5,
 			Active:         true,
+			Direction:      Inflow, // 🚨 Strict boundary for Deposit rules
 			TargetEntityID: entityUUID,
 			Allocations:    []Allocation{},
 			RequiresReview: true,
@@ -91,32 +90,29 @@ func (b *Bootstrapper) GenerateDepositSplitReviewRules(ctx context.Context, real
 }
 
 // GenerateDepositRulesFromHistory creates 100% allocation rules for standard
-// income customers, skipping any that were flagged by the Splitter logic.
+// income mapped securely to BOTH the Customer and the receiving Bank Account.
 func (b *Bootstrapper) GenerateDepositRulesFromHistory(ctx context.Context, realmID string, flaggedCustomers map[string]bool) error {
-	rows, err := b.q.GetHistoricalDepositConsensus(ctx, realmID)
+	rows, err := b.q.GetHistoricalDepositConsensus(ctx, database.GetHistoricalDepositConsensusParams{
+		RealmID:       realmID,
+		TargetRank:    int32(b.targetRank),
+		MinUsageCount: int64(b.minUsageCount),
+	})
+
 	if err != nil {
 		return fmt.Errorf("GetHistoricalDepositConsensus: %w", err)
 	}
 
 	for _, row := range rows {
-		// customer_id is extracted from JSONB; sqlc types it as interface{}
-		customerErpID, ok := row.CustomerID.(string)
-		if !ok || customerErpID == "" {
+		customerErpID := row.CustomerID
+		if customerErpID == "" {
 			continue
 		}
 
-		// Skip customers already flagged for manual CPA review
 		if flaggedCustomers[customerErpID] {
 			continue
 		}
 
-		// income_account_id is also extracted from JSONB; sqlc types it as interface{}
-		incomeAccountErpID, ok := row.IncomeAccountID.(string)
-		if !ok || incomeAccountErpID == "" {
-			b.logger.Warn("DepositConsensus: income_account_id is not a string, skipping",
-				"customer_erp_id", customerErpID)
-			continue
-		}
+		incomeAccountErpID := row.IncomeAccountID.(string)
 
 		customer, err := b.q.GetCustomerByERPID(ctx, database.GetCustomerByERPIDParams{
 			RealmID: realmID,
@@ -128,8 +124,8 @@ func (b *Bootstrapper) GenerateDepositRulesFromHistory(ctx context.Context, real
 			continue
 		}
 
-		// Resolve target income account UUID from its QBO ERP ID
-		account, err := b.q.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{
+		// Resolve target income account UUID from its QBO ERP ID (The Credit Side)
+		incomeAccount, err := b.q.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{
 			RealmID: realmID,
 			ErpID:   incomeAccountErpID,
 		})
@@ -139,17 +135,29 @@ func (b *Bootstrapper) GenerateDepositRulesFromHistory(ctx context.Context, real
 			continue
 		}
 
+		// Resolve the bank account UUID receiving the funds (The Debit Side)
+		bankAccount, err := b.q.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{
+			RealmID: realmID,
+			ErpID:   row.BankAccountID,
+		})
+		if err != nil {
+			b.logger.Warn("DepositConsensus: bank account not found, skipping",
+				"customer", customer.DisplayName, "bank_erp_id", row.BankAccountID, "error", err)
+			continue
+		}
+
 		var entityUUID pgtype.UUID
 		_ = entityUUID.Scan(customer.ID)
 
-		allocations := []Allocation{{AccountID: account.ID, Percentage: 100.0}}
+		allocations := []Allocation{{AccountID: incomeAccount.ID, Percentage: 100.0}}
 
 		if err := b.ruleCreator.CreateRule(ctx, CreateRuleRequest{
 			RealmID:        realmID,
-			Name:           fmt.Sprintf("Auto-Generated Income: %s", customer.DisplayName),
+			Name:           fmt.Sprintf("Auto-Generated Income: %s (to %s)", customer.DisplayName, bankAccount.Name),
 			Logic:          LogicAnd,
 			Priority:       10,
 			Active:         true,
+			Direction:      Inflow, // 🚨 Strict boundary for Deposit rules
 			TargetEntityID: entityUUID,
 			Allocations:    allocations,
 			RequiresReview: false,
@@ -159,6 +167,12 @@ func (b *Bootstrapper) GenerateDepositRulesFromHistory(ctx context.Context, real
 					Operator: OpEqualsCS,
 					Value:    customer.DisplayName,
 				},
+				{
+					// 🚨 Contextual lock: Rule only fires if deposited to this specific bank
+					Field:    FieldSourceAccount,
+					Operator: OpEqualsCS,
+					Value:    bankAccount.Name,
+				},
 			},
 		}); err != nil {
 			b.logger.Error("DepositConsensus: failed to create rule",
@@ -166,9 +180,10 @@ func (b *Bootstrapper) GenerateDepositRulesFromHistory(ctx context.Context, real
 			continue
 		}
 
-		b.logger.Info("DepositConsensus: created 1-to-1 income rule",
+		b.logger.Info("DepositConsensus: created double-entry income rule",
 			"customer", customer.DisplayName,
-			"account", account.Name,
+			"income_account", incomeAccount.Name,
+			"bank_account", bankAccount.Name,
 			"usage_count", row.UsageCount,
 		)
 	}

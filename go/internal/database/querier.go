@@ -28,7 +28,7 @@ type Querier interface {
 	// =========================================================================
 	// Cleanup Mode Queries (now stored in fignode schema)
 	// =========================================================================
-	CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (CreateCleanupSessionRow, error)
+	CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (FignodeStagingSession, error)
 	CreateEmployeeProfile(ctx context.Context, arg CreateEmployeeProfileParams) error
 	// =========================================================================
 	// Auth: Employee Registration & Login
@@ -76,7 +76,7 @@ type Querier interface {
 	GetBlueprintByName(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
 	GetBlueprintByNameOrTriggerTopic(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
 	GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanupRowRow, error)
-	GetCleanupSession(ctx context.Context, id pgtype.UUID) (GetCleanupSessionRow, error)
+	GetCleanupSession(ctx context.Context, id pgtype.UUID) (FignodeStagingSession, error)
 	GetCompanyInfo(ctx context.Context, realmID string) (ShadowErpCompanyInfo, error)
 	GetConditionsByRuleGroups(ctx context.Context, ruleGroupIds []int32) ([]ShadowErpRuleCondition, error)
 	GetConnectionWithWebhookTimes(ctx context.Context, arg GetConnectionWithWebhookTimesParams) (GetConnectionWithWebhookTimesRow, error)
@@ -104,12 +104,12 @@ type Querier interface {
 	GetEntityDescendants(ctx context.Context, id pgtype.UUID) ([]pgtype.UUID, error)
 	GetExpenseAccountsFromPurchases(ctx context.Context, realmID string) ([]GetExpenseAccountsFromPurchasesRow, error)
 	GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredAccountsForAIParams) ([]GetFilteredAccountsForAIRow, error)
-	// Finds the #1 most frequently used Income Account for a customer (requires minimum 3 uses).
-	GetHistoricalDepositConsensus(ctx context.Context, realmID string) ([]GetHistoricalDepositConsensusRow, error)
+	// Finds the #1 most frequently used Income Account for a (customer, bank_account) pair.
+	GetHistoricalDepositConsensus(ctx context.Context, arg GetHistoricalDepositConsensusParams) ([]GetHistoricalDepositConsensusRow, error)
 	// Flags customers where >= 50% of their historical deposits were split across multiple income accounts.
 	GetHistoricalDepositSplitters(ctx context.Context, realmID string) ([]GetHistoricalDepositSplittersRow, error)
-	// Finds the #1 most frequently used expense account for a vendor (requires minimum 3 uses).
-	GetHistoricalPurchaseConsensus(ctx context.Context, realmID string) ([]GetHistoricalPurchaseConsensusRow, error)
+	// Finds the #1 most frequently used expense account for a (vendor, source_account) pair.
+	GetHistoricalPurchaseConsensus(ctx context.Context, arg GetHistoricalPurchaseConsensusParams) ([]GetHistoricalPurchaseConsensusRow, error)
 	// =========================================================================
 	// Rule engine Bootstrapper Queries
 	// =========================================================================
@@ -130,6 +130,10 @@ type Querier interface {
 	GetPendingFignodeTransactions(ctx context.Context) ([]FignodeStagingTransaction, error)
 	GetPendingRealmRows(ctx context.Context, arg GetPendingRealmRowsParams) ([]GetPendingRealmRowsRow, error)
 	GetPendingSessionRows(ctx context.Context, sessionID pgtype.UUID) ([]GetPendingSessionRowsRow, error)
+	// =========================================================================
+	// Rule evaluation worker
+	// =========================================================================
+	GetPendingStagingTransactions(ctx context.Context, sessionID pgtype.UUID) ([]FignodeStagingTransaction, error)
 	GetProposedTransactionByID(ctx context.Context, id pgtype.UUID) (FignodeStagingTransaction, error)
 	GetProposedTransactionByValues(ctx context.Context, arg GetProposedTransactionByValuesParams) (FignodeStagingTransaction, error)
 	GetPurchaseByERPID(ctx context.Context, arg GetPurchaseByERPIDParams) (ShadowErpPurchase, error)
@@ -170,6 +174,7 @@ type Querier interface {
 	GetWebhookSecret(ctx context.Context, connectionID string) (string, error)
 	GetWorkflow(ctx context.Context, id pgtype.UUID) (ToroCoreWorkflow, error)
 	GetWorkflowBlueprints(ctx context.Context) ([]ToroCoreWorkflowBlueprint, error)
+	GetWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error)
 	IncrementEmployeeCleared(ctx context.Context, userID pgtype.UUID) error
 	InsertCleanupRow(ctx context.Context, arg InsertCleanupRowParams) (pgtype.UUID, error)
 	InsertLeaderboardSnapshot(ctx context.Context, arg InsertLeaderboardSnapshotParams) error
@@ -182,7 +187,7 @@ type Querier interface {
 	InsertSkip(ctx context.Context, id pgtype.UUID) error
 	// Returns sessions for a realm (when realm_id is provided) OR sessions created by a user
 	// (when realm_id is NULL). Exactly one of the two filters will be non-null per call.
-	ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]ListCleanupSessionsRow, error)
+	ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]FignodeStagingSession, error)
 	LogBulkBurn(ctx context.Context, arg LogBulkBurnParams) (ToroCoreWalletTransaction, error)
 	LogPurchase(ctx context.Context, arg LogPurchaseParams) (ToroCoreWalletTransaction, error)
 	LogStalledMessage(ctx context.Context, arg LogStalledMessageParams) (ToroCoreStalledMessage, error)
@@ -229,6 +234,7 @@ type Querier interface {
 	UpdatePurchaseRuleID(ctx context.Context, arg UpdatePurchaseRuleIDParams) error
 	UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichmentParams) error
 	UpdateRuleGroupKeywords(ctx context.Context, arg UpdateRuleGroupKeywordsParams) error
+	UpdateStagingTransactionWithRule(ctx context.Context, arg UpdateStagingTransactionWithRuleParams) error
 	// =========================================================================
 	// Streak: Update & midnight reset
 	// =========================================================================

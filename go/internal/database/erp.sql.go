@@ -18,7 +18,7 @@ SET predicted_account_id = $2,
     status               = 'APPROVED',
     updated_at           = NOW()
 WHERE id = $1
-RETURNING id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at
+RETURNING id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason
 `
 
 type ApproveProposedTransactionParams struct {
@@ -34,12 +34,13 @@ func (q *Queries) ApproveProposedTransaction(ctx context.Context, arg ApprovePro
 		&i.ID,
 		&i.SessionID,
 		&i.RealmID,
+		&i.RowIndex,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
 		&i.PlaidTransactionID,
-		&i.PlaidAccountID,
+		&i.BankAccountID,
 		&i.MerchantName,
 		&i.LogoUrl,
 		&i.PlaidCategory,
@@ -64,8 +65,13 @@ func (q *Queries) ApproveProposedTransaction(ctx context.Context, arg ApprovePro
 		&i.Status,
 		&i.ErpTransactionID,
 		&i.ErrorMessage,
+		&i.ReconciledAt,
+		&i.ReconciledBy,
+		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsAmbiguous,
+		&i.AmbiguityReason,
 	)
 	return i, err
 }
@@ -79,7 +85,7 @@ INSERT INTO fignode.staging_transactions (
 VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
 )
-RETURNING id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at
+RETURNING id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason
 `
 
 type CreateProposedTransactionParams struct {
@@ -113,12 +119,13 @@ func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreatePropo
 		&i.ID,
 		&i.SessionID,
 		&i.RealmID,
+		&i.RowIndex,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
 		&i.PlaidTransactionID,
-		&i.PlaidAccountID,
+		&i.BankAccountID,
 		&i.MerchantName,
 		&i.LogoUrl,
 		&i.PlaidCategory,
@@ -143,8 +150,13 @@ func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreatePropo
 		&i.Status,
 		&i.ErpTransactionID,
 		&i.ErrorMessage,
+		&i.ReconciledAt,
+		&i.ReconciledBy,
+		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsAmbiguous,
+		&i.AmbiguityReason,
 	)
 	return i, err
 }
@@ -494,7 +506,7 @@ func (q *Queries) GetAllVendorsForRealms(ctx context.Context, realmIds []string)
 }
 
 const getAmbiguousProposals = `-- name: GetAmbiguousProposals :many
-SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at FROM fignode.staging_transactions
+SELECT id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason FROM fignode.staging_transactions
 WHERE realm_id = $1
   AND confidence_score < $2
   AND status = 'PENDING'
@@ -519,12 +531,13 @@ func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousPro
 			&i.ID,
 			&i.SessionID,
 			&i.RealmID,
+			&i.RowIndex,
 			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
 			&i.PlaidTransactionID,
-			&i.PlaidAccountID,
+			&i.BankAccountID,
 			&i.MerchantName,
 			&i.LogoUrl,
 			&i.PlaidCategory,
@@ -549,8 +562,13 @@ func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousPro
 			&i.Status,
 			&i.ErpTransactionID,
 			&i.ErrorMessage,
+			&i.ReconciledAt,
+			&i.ReconciledBy,
+			&i.RuleGroupID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsAmbiguous,
+			&i.AmbiguityReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1073,37 +1091,56 @@ func (q *Queries) GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredA
 }
 
 const getHistoricalDepositConsensus = `-- name: GetHistoricalDepositConsensus :many
-WITH DepositLines AS (
+WITH RawLines AS (
     SELECT 
-        jsonb_array_elements(lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value'::text AS customer_id,
-        jsonb_array_elements(lines)->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+        target_account_id AS bank_account_id,
+        jsonb_array_elements(lines) AS line
     FROM shadow_erp.deposits
     WHERE realm_id = $1 AND deleted_at IS NULL
+),
+DepositLines AS (
+    SELECT 
+        bank_account_id,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM RawLines
 ),
 RankedMappings AS (
     SELECT 
         customer_id,
+        bank_account_id,
         income_account_id,
         COUNT(*) as usage_count,
-        ROW_NUMBER() OVER(PARTITION BY customer_id ORDER BY COUNT(*) DESC) as rank
+        ROW_NUMBER() OVER(PARTITION BY customer_id, bank_account_id ORDER BY COUNT(*) DESC) as rank
     FROM DepositLines
     WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
-    GROUP BY customer_id, income_account_id
+    GROUP BY customer_id, bank_account_id, income_account_id
 )
-SELECT customer_id, income_account_id, usage_count
+SELECT customer_id, bank_account_id, income_account_id, usage_count
 FROM RankedMappings
-WHERE rank = 1 AND usage_count >= 3
+WHERE rank = $2::int 
+  AND usage_count >= $3::bigint
 `
 
+type GetHistoricalDepositConsensusParams struct {
+	RealmID       string
+	TargetRank    int32
+	MinUsageCount int64
+}
+
 type GetHistoricalDepositConsensusRow struct {
-	CustomerID      interface{}
+	CustomerID      string
+	BankAccountID   string
 	IncomeAccountID interface{}
 	UsageCount      int64
 }
 
-// Finds the #1 most frequently used Income Account for a customer (requires minimum 3 uses).
-func (q *Queries) GetHistoricalDepositConsensus(ctx context.Context, realmID string) ([]GetHistoricalDepositConsensusRow, error) {
-	rows, err := q.db.Query(ctx, getHistoricalDepositConsensus, realmID)
+// Finds the #1 most frequently used Income Account for a (customer, bank_account) pair.
+func (q *Queries) GetHistoricalDepositConsensus(ctx context.Context, arg GetHistoricalDepositConsensusParams) ([]GetHistoricalDepositConsensusRow, error) {
+	rows, err := q.db.Query(ctx, getHistoricalDepositConsensus, arg.RealmID, arg.TargetRank, arg.MinUsageCount)
 	if err != nil {
 		return nil, err
 	}
@@ -1111,7 +1148,12 @@ func (q *Queries) GetHistoricalDepositConsensus(ctx context.Context, realmID str
 	var items []GetHistoricalDepositConsensusRow
 	for rows.Next() {
 		var i GetHistoricalDepositConsensusRow
-		if err := rows.Scan(&i.CustomerID, &i.IncomeAccountID, &i.UsageCount); err != nil {
+		if err := rows.Scan(
+			&i.CustomerID,
+			&i.BankAccountID,
+			&i.IncomeAccountID,
+			&i.UsageCount,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1123,13 +1165,22 @@ func (q *Queries) GetHistoricalDepositConsensus(ctx context.Context, realmID str
 }
 
 const getHistoricalDepositSplitters = `-- name: GetHistoricalDepositSplitters :many
-WITH DepositLines AS (
+WITH RawLines AS (
     SELECT 
         erp_id AS deposit_id,
-        jsonb_array_elements(lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value'::text AS customer_id,
-        jsonb_array_elements(lines)->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+        jsonb_array_elements(lines) AS line
     FROM shadow_erp.deposits
     WHERE realm_id = $1 AND deleted_at IS NULL
+),
+DepositLines AS (
+    SELECT 
+        deposit_id,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM RawLines
 ),
 CustomerDepositCounts AS (
     SELECT 
@@ -1150,7 +1201,7 @@ WHERE split_count >= 2 AND (split_count::decimal / total_txns) >= 0.5
 `
 
 type GetHistoricalDepositSplittersRow struct {
-	CustomerID interface{}
+	CustomerID string
 	TotalTxns  int64
 	SplitCount int64
 }
@@ -1180,6 +1231,7 @@ const getHistoricalPurchaseConsensus = `-- name: GetHistoricalPurchaseConsensus 
 WITH ExtractedLines AS (
     SELECT 
         entity_id,
+        source_account_id,
         jsonb_array_elements(lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id
     FROM shadow_erp.purchases
     WHERE realm_id = $1 AND entity_id IS NOT NULL AND deleted_at IS NULL
@@ -1187,27 +1239,36 @@ WITH ExtractedLines AS (
 RankedMappings AS (
     SELECT 
         entity_id,
+        source_account_id,
         target_account_id,
         COUNT(*) as usage_count,
-        ROW_NUMBER() OVER(PARTITION BY entity_id ORDER BY COUNT(*) DESC) as rank
+        ROW_NUMBER() OVER(PARTITION BY entity_id, source_account_id ORDER BY COUNT(*) DESC) as rank
     FROM ExtractedLines
     WHERE target_account_id IS NOT NULL
-    GROUP BY entity_id, target_account_id
+    GROUP BY entity_id, source_account_id, target_account_id
 )
-SELECT entity_id, target_account_id, usage_count
+SELECT entity_id, source_account_id, target_account_id, usage_count
 FROM RankedMappings
-WHERE rank = 1 AND usage_count >= 3
+WHERE rank = $2::int 
+  AND usage_count >= $3::bigint
 `
+
+type GetHistoricalPurchaseConsensusParams struct {
+	RealmID       string
+	TargetRank    int32
+	MinUsageCount int64
+}
 
 type GetHistoricalPurchaseConsensusRow struct {
 	EntityID        pgtype.Text
+	SourceAccountID string
 	TargetAccountID interface{}
 	UsageCount      int64
 }
 
-// Finds the #1 most frequently used expense account for a vendor (requires minimum 3 uses).
-func (q *Queries) GetHistoricalPurchaseConsensus(ctx context.Context, realmID string) ([]GetHistoricalPurchaseConsensusRow, error) {
-	rows, err := q.db.Query(ctx, getHistoricalPurchaseConsensus, realmID)
+// Finds the #1 most frequently used expense account for a (vendor, source_account) pair.
+func (q *Queries) GetHistoricalPurchaseConsensus(ctx context.Context, arg GetHistoricalPurchaseConsensusParams) ([]GetHistoricalPurchaseConsensusRow, error) {
+	rows, err := q.db.Query(ctx, getHistoricalPurchaseConsensus, arg.RealmID, arg.TargetRank, arg.MinUsageCount)
 	if err != nil {
 		return nil, err
 	}
@@ -1215,7 +1276,12 @@ func (q *Queries) GetHistoricalPurchaseConsensus(ctx context.Context, realmID st
 	var items []GetHistoricalPurchaseConsensusRow
 	for rows.Next() {
 		var i GetHistoricalPurchaseConsensusRow
-		if err := rows.Scan(&i.EntityID, &i.TargetAccountID, &i.UsageCount); err != nil {
+		if err := rows.Scan(
+			&i.EntityID,
+			&i.SourceAccountID,
+			&i.TargetAccountID,
+			&i.UsageCount,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1305,35 +1371,41 @@ func (q *Queries) GetInvoiceByERPID(ctx context.Context, arg GetInvoiceByERPIDPa
 }
 
 const getOrphanedDeposits = `-- name: GetOrphanedDeposits :many
-SELECT d.id, d.erp_id, d.realm_id, d.sync_token, d.txn_date, d.total_amount, d.target_account_id, d.lines, d.domain, d.sparse, d.erp_created_time, d.erp_updated_time, d.rule_id, d.event_source, d.created_at, d.updated_at, d.deleted_at, c.display_name AS customer_name 
+SELECT d.id, d.erp_id, d.realm_id, d.sync_token, d.txn_date, d.total_amount, d.target_account_id, d.lines, d.domain, d.sparse, d.erp_created_time, d.erp_updated_time, d.rule_id, d.event_source, d.created_at, d.updated_at, d.deleted_at, c.display_name AS customer_name, a.name AS source_account_name
 FROM shadow_erp.deposits d
 LEFT JOIN LATERAL (
-    SELECT jsonb_array_elements(d.lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value' AS customer_id
+    SELECT COALESCE(
+        l->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+        l->'DepositLineDetail'->'Entity'->>'value'
+    ) AS customer_id
+    FROM jsonb_array_elements(d.lines) l
     LIMIT 1
 ) AS loc ON true
 LEFT JOIN shadow_erp.customers c ON c.realm_id = d.realm_id AND c.erp_id = loc.customer_id
+LEFT JOIN shadow_erp.accounts a ON a.erp_id = d.target_account_id AND a.realm_id = d.realm_id
 WHERE d.realm_id = $1 AND d.rule_id IS NULL AND d.deleted_at IS NULL
 `
 
 type GetOrphanedDepositsRow struct {
-	ID              pgtype.UUID
-	ErpID           string
-	RealmID         string
-	SyncToken       string
-	TxnDate         pgtype.Date
-	TotalAmount     pgtype.Numeric
-	TargetAccountID string
-	Lines           []byte
-	Domain          pgtype.Text
-	Sparse          pgtype.Bool
-	ErpCreatedTime  pgtype.Timestamptz
-	ErpUpdatedTime  pgtype.Timestamptz
-	RuleID          pgtype.Int4
-	EventSource     string
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-	DeletedAt       pgtype.Timestamptz
-	CustomerName    pgtype.Text
+	ID                pgtype.UUID
+	ErpID             string
+	RealmID           string
+	SyncToken         string
+	TxnDate           pgtype.Date
+	TotalAmount       pgtype.Numeric
+	TargetAccountID   string
+	Lines             []byte
+	Domain            pgtype.Text
+	Sparse            pgtype.Bool
+	ErpCreatedTime    pgtype.Timestamptz
+	ErpUpdatedTime    pgtype.Timestamptz
+	RuleID            pgtype.Int4
+	EventSource       string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	DeletedAt         pgtype.Timestamptz
+	CustomerName      pgtype.Text
+	SourceAccountName pgtype.Text
 }
 
 func (q *Queries) GetOrphanedDeposits(ctx context.Context, realmID string) ([]GetOrphanedDepositsRow, error) {
@@ -1364,6 +1436,7 @@ func (q *Queries) GetOrphanedDeposits(ctx context.Context, realmID string) ([]Ge
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.CustomerName,
+			&i.SourceAccountName,
 		); err != nil {
 			return nil, err
 		}
@@ -1376,29 +1449,31 @@ func (q *Queries) GetOrphanedDeposits(ctx context.Context, realmID string) ([]Ge
 }
 
 const getOrphanedPurchases = `-- name: GetOrphanedPurchases :many
-SELECT p.id, p.erp_id, p.realm_id, p.sync_token, p.txn_date, p.total_amount, p.payment_type, p.source_account_id, p.entity_id, p.lines, p.rule_id, p.event_source, p.created_at, p.updated_at, p.deleted_at, v.display_name AS vendor_name 
+SELECT p.id, p.erp_id, p.realm_id, p.sync_token, p.txn_date, p.total_amount, p.payment_type, p.source_account_id, p.entity_id, p.lines, p.rule_id, p.event_source, p.created_at, p.updated_at, p.deleted_at, v.display_name AS vendor_name, a.name AS source_account_name
 FROM shadow_erp.purchases p
 LEFT JOIN shadow_erp.vendors v ON v.erp_id = p.entity_id AND v.realm_id = p.realm_id
+LEFT JOIN shadow_erp.accounts a ON a.erp_id = p.source_account_id AND a.realm_id = p.realm_id
 WHERE p.realm_id = $1 AND p.rule_id IS NULL AND p.deleted_at IS NULL
 `
 
 type GetOrphanedPurchasesRow struct {
-	ID              pgtype.UUID
-	ErpID           string
-	RealmID         string
-	SyncToken       string
-	TxnDate         pgtype.Date
-	TotalAmount     pgtype.Numeric
-	PaymentType     pgtype.Text
-	SourceAccountID string
-	EntityID        pgtype.Text
-	Lines           []byte
-	RuleID          pgtype.Int4
-	EventSource     string
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-	DeletedAt       pgtype.Timestamptz
-	VendorName      pgtype.Text
+	ID                pgtype.UUID
+	ErpID             string
+	RealmID           string
+	SyncToken         string
+	TxnDate           pgtype.Date
+	TotalAmount       pgtype.Numeric
+	PaymentType       pgtype.Text
+	SourceAccountID   string
+	EntityID          pgtype.Text
+	Lines             []byte
+	RuleID            pgtype.Int4
+	EventSource       string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	DeletedAt         pgtype.Timestamptz
+	VendorName        pgtype.Text
+	SourceAccountName pgtype.Text
 }
 
 func (q *Queries) GetOrphanedPurchases(ctx context.Context, realmID string) ([]GetOrphanedPurchasesRow, error) {
@@ -1427,6 +1502,7 @@ func (q *Queries) GetOrphanedPurchases(ctx context.Context, realmID string) ([]G
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.VendorName,
+			&i.SourceAccountName,
 		); err != nil {
 			return nil, err
 		}
@@ -1439,7 +1515,7 @@ func (q *Queries) GetOrphanedPurchases(ctx context.Context, realmID string) ([]G
 }
 
 const getProposedTransactionByID = `-- name: GetProposedTransactionByID :one
-SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at FROM fignode.staging_transactions WHERE id = $1
+SELECT id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason FROM fignode.staging_transactions WHERE id = $1
 `
 
 func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID) (FignodeStagingTransaction, error) {
@@ -1449,12 +1525,13 @@ func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID
 		&i.ID,
 		&i.SessionID,
 		&i.RealmID,
+		&i.RowIndex,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
 		&i.PlaidTransactionID,
-		&i.PlaidAccountID,
+		&i.BankAccountID,
 		&i.MerchantName,
 		&i.LogoUrl,
 		&i.PlaidCategory,
@@ -1479,14 +1556,19 @@ func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID
 		&i.Status,
 		&i.ErpTransactionID,
 		&i.ErrorMessage,
+		&i.ReconciledAt,
+		&i.ReconciledBy,
+		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsAmbiguous,
+		&i.AmbiguityReason,
 	)
 	return i, err
 }
 
 const getProposedTransactionByValues = `-- name: GetProposedTransactionByValues :one
-SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, plaid_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, created_at, updated_at FROM fignode.staging_transactions
+SELECT id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason FROM fignode.staging_transactions
 WHERE realm_id = $1
   AND predicted_vendor_id = $2
   AND raw_date = $3
@@ -1513,12 +1595,13 @@ func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetPro
 		&i.ID,
 		&i.SessionID,
 		&i.RealmID,
+		&i.RowIndex,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
 		&i.PlaidTransactionID,
-		&i.PlaidAccountID,
+		&i.BankAccountID,
 		&i.MerchantName,
 		&i.LogoUrl,
 		&i.PlaidCategory,
@@ -1543,8 +1626,13 @@ func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetPro
 		&i.Status,
 		&i.ErpTransactionID,
 		&i.ErrorMessage,
+		&i.ReconciledAt,
+		&i.ReconciledBy,
+		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsAmbiguous,
+		&i.AmbiguityReason,
 	)
 	return i, err
 }

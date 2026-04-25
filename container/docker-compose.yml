@@ -19,7 +19,7 @@ services:
     ports:
       - "5435:5432"
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U toro" ]
+      test: [ "CMD-SHELL", "pg_isready -h localhost -U toro" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -342,7 +342,8 @@ services:
   migrator:
     image: gomicro/goose
     restart: on-failure
-    command: "goose -dir /migrations postgres \"postgres://toro:toro_password@db/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,fignode,public\" up"
+    command: >
+      sh -c "sleep 2 && goose -dir /migrations postgres \"postgres://toro:toro_password@db/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,fignode,public\" up"
     volumes:
       - ../sql/schema:/migrations
     depends_on:

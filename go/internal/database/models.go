@@ -43,22 +43,23 @@ type FignodeStagingSession struct {
 	FileName        pgtype.Text
 	RowCount        int32
 	Status          string
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
 	IsAmbiguous     bool
 	AmbiguityReason pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type FignodeStagingTransaction struct {
 	ID                    pgtype.UUID
 	SessionID             pgtype.UUID
 	RealmID               pgtype.Text
+	RowIndex              pgtype.Int4
 	SourceType            string
 	RawDescription        pgtype.Text
 	RawAmount             string
 	RawDate               pgtype.Date
 	PlaidTransactionID    pgtype.Text
-	PlaidAccountID        pgtype.Text
+	BankAccountID         pgtype.Text
 	MerchantName          pgtype.Text
 	LogoUrl               pgtype.Text
 	PlaidCategory         pgtype.Text
@@ -83,8 +84,13 @@ type FignodeStagingTransaction struct {
 	Status                string
 	ErpTransactionID      pgtype.Text
 	ErrorMessage          pgtype.Text
+	ReconciledAt          pgtype.Timestamptz
+	ReconciledBy          pgtype.UUID
+	RuleGroupID           pgtype.Int4
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	IsAmbiguous           bool
+	AmbiguityReason       pgtype.Text
 }
 
 type MarketingLeadForm struct {
@@ -303,11 +309,12 @@ type ShadowErpRuleGroup struct {
 	Keywords       pgtype.Text
 	Active         bool
 	TargetEntityID pgtype.UUID
+	Allocations    []byte
+	Direction      string
+	RequiresReview bool
 	ParentID       pgtype.Int4
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
-	RequiresReview bool
-	Allocations    []byte
 }
 
 // Tracks Pinecone vector database sync state per ERP realm

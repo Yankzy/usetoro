@@ -670,10 +670,11 @@ FROM VendorSplitStats
 WHERE split_count >= 2 AND (split_count::decimal / total_txns) >= 0.5;
 
 -- name: GetHistoricalPurchaseConsensus :many
--- Finds the #1 most frequently used expense account for a vendor (requires minimum 3 uses).
+-- Finds the #1 most frequently used expense account for a (vendor, source_account) pair.
 WITH ExtractedLines AS (
     SELECT 
         entity_id,
+        source_account_id,
         jsonb_array_elements(lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id
     FROM shadow_erp.purchases
     WHERE realm_id = $1 AND entity_id IS NOT NULL AND deleted_at IS NULL
@@ -681,26 +682,37 @@ WITH ExtractedLines AS (
 RankedMappings AS (
     SELECT 
         entity_id,
+        source_account_id,
         target_account_id,
         COUNT(*) as usage_count,
-        ROW_NUMBER() OVER(PARTITION BY entity_id ORDER BY COUNT(*) DESC) as rank
+        ROW_NUMBER() OVER(PARTITION BY entity_id, source_account_id ORDER BY COUNT(*) DESC) as rank
     FROM ExtractedLines
     WHERE target_account_id IS NOT NULL
-    GROUP BY entity_id, target_account_id
+    GROUP BY entity_id, source_account_id, target_account_id
 )
-SELECT entity_id, target_account_id, usage_count
+SELECT entity_id, source_account_id, target_account_id, usage_count
 FROM RankedMappings
-WHERE rank = 1 AND usage_count >= 3;
+WHERE rank = sqlc.arg('target_rank')::int 
+  AND usage_count >= sqlc.arg('min_usage_count')::bigint;
 
 -- name: GetHistoricalDepositSplitters :many
 -- Flags customers where >= 50% of their historical deposits were split across multiple income accounts.
-WITH DepositLines AS (
+WITH RawLines AS (
     SELECT 
         erp_id AS deposit_id,
-        jsonb_array_elements(lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value'::text AS customer_id,
-        jsonb_array_elements(lines)->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+        jsonb_array_elements(lines) AS line
     FROM shadow_erp.deposits
     WHERE realm_id = $1 AND deleted_at IS NULL
+),
+DepositLines AS (
+    SELECT 
+        deposit_id,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM RawLines
 ),
 CustomerDepositCounts AS (
     SELECT 
@@ -720,27 +732,39 @@ FROM CustomerDepositCounts
 WHERE split_count >= 2 AND (split_count::decimal / total_txns) >= 0.5;
 
 -- name: GetHistoricalDepositConsensus :many
--- Finds the #1 most frequently used Income Account for a customer (requires minimum 3 uses).
-WITH DepositLines AS (
+-- Finds the #1 most frequently used Income Account for a (customer, bank_account) pair.
+WITH RawLines AS (
     SELECT 
-        jsonb_array_elements(lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value'::text AS customer_id,
-        jsonb_array_elements(lines)->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+        target_account_id AS bank_account_id,
+        jsonb_array_elements(lines) AS line
     FROM shadow_erp.deposits
     WHERE realm_id = $1 AND deleted_at IS NULL
+),
+DepositLines AS (
+    SELECT 
+        bank_account_id,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM RawLines
 ),
 RankedMappings AS (
     SELECT 
         customer_id,
+        bank_account_id,
         income_account_id,
         COUNT(*) as usage_count,
-        ROW_NUMBER() OVER(PARTITION BY customer_id ORDER BY COUNT(*) DESC) as rank
+        ROW_NUMBER() OVER(PARTITION BY customer_id, bank_account_id ORDER BY COUNT(*) DESC) as rank
     FROM DepositLines
     WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
-    GROUP BY customer_id, income_account_id
+    GROUP BY customer_id, bank_account_id, income_account_id
 )
-SELECT customer_id, income_account_id, usage_count
+SELECT customer_id, bank_account_id, income_account_id, usage_count
 FROM RankedMappings
-WHERE rank = 1 AND usage_count >= 3;
+WHERE rank = sqlc.arg('target_rank')::int 
+  AND usage_count >= sqlc.arg('min_usage_count')::bigint;
 
 -- =========================================================================
 -- Rule Execution & Cleanup
@@ -750,19 +774,25 @@ WHERE rank = 1 AND usage_count >= 3;
 SELECT DISTINCT realm_id FROM toro_core.erp_connections;
 
 -- name: GetOrphanedPurchases :many
-SELECT p.*, v.display_name AS vendor_name 
+SELECT p.*, v.display_name AS vendor_name, a.name AS source_account_name
 FROM shadow_erp.purchases p
 LEFT JOIN shadow_erp.vendors v ON v.erp_id = p.entity_id AND v.realm_id = p.realm_id
+LEFT JOIN shadow_erp.accounts a ON a.erp_id = p.source_account_id AND a.realm_id = p.realm_id
 WHERE p.realm_id = $1 AND p.rule_id IS NULL AND p.deleted_at IS NULL;
 
 -- name: GetOrphanedDeposits :many
-SELECT d.*, c.display_name AS customer_name 
+SELECT d.*, c.display_name AS customer_name, a.name AS source_account_name
 FROM shadow_erp.deposits d
 LEFT JOIN LATERAL (
-    SELECT jsonb_array_elements(d.lines)->'DepositLineDetail'->'Entity'->'EntityRef'->>'value' AS customer_id
+    SELECT COALESCE(
+        l->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+        l->'DepositLineDetail'->'Entity'->>'value'
+    ) AS customer_id
+    FROM jsonb_array_elements(d.lines) l
     LIMIT 1
 ) AS loc ON true
 LEFT JOIN shadow_erp.customers c ON c.realm_id = d.realm_id AND c.erp_id = loc.customer_id
+LEFT JOIN shadow_erp.accounts a ON a.erp_id = d.target_account_id AND a.realm_id = d.realm_id
 WHERE d.realm_id = $1 AND d.rule_id IS NULL AND d.deleted_at IS NULL;
 
 -- name: UpdatePurchaseRuleID :exec

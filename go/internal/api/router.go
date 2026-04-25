@@ -57,6 +57,9 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	// E2E Redux Test Flow (Global Entrypoint)
 	mux.HandleFunc("POST /test/redux", h.HandleTestRedux)
 
+	// Simple Ingress Worker Endpoint
+	mux.HandleFunc("POST /ingress", h.HandleIngressWorker)
+
 	// System & Actor Discovery
 	mux.HandleFunc("GET /v1/system/actors", h.HandleListActors)
 	mux.HandleFunc("GET /v1/workflows/{id}", h.HandleGetWorkflowStatus)

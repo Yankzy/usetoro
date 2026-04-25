@@ -17,7 +17,7 @@ Worker Specification
   `[ORCHESTRATOR_ENVELOPE | PROOF_EVENT | CDC_EVENT | CUSTOM_JSON]`
 - If orchestrator-driven, expected performative(s): `[accept-proposal|inform|both]`
 - Subscription source config key(s):
-  [e.g. `cfg.Workers.CSVMapping`, `cfg.Workers.CSVMappingActivityType`, `cfg.Workers.CSVMappingGroup`]
+  [No longer needed, workers use `cfg.Workers.GetForWorker(w)` directly]
 - Dependencies needed from `workers.Dependencies`:
   [List only what is required: `Store.Queries`, `Queue`, `Logger`, `Config`, `EntityResolver`, `LLMClient`, etc.]
 
@@ -61,40 +61,49 @@ Canonical `Subscriptions()` pattern:
 
 ```go
 func (w *[WORKER_TYPE_NAME]) Subscriptions() []SubscriptionConfig {
-    subject := w.cfg.Workers.[SUBJECT_KEY]
-    if subject == "" {
-        // optional derivation path when your worker supports it
-    }
+	_, workerCfg := w.cfg.Workers.GetForWorker(w)
+	activityType := workerCfg.ActivityType
+	if activityType == "" {
+		w.logger.Error("[WORKER_TYPE_NAME]: no activity_type configured")
+		return nil
+	}
 
-    group := w.cfg.Workers.[GROUP_KEY]
-    if group == "" {
-        group = groupFromSubject(subject)
-    }
+	subject := workerCfg.Subject
+	if subject == "" {
+		if derived, err := core.BuildWorkerInboxFromActivity(activityType); err == nil {
+			subject = derived
+		} else {
+			w.logger.Error("[WORKER_TYPE_NAME]: failed to derive inbox", "activity_type", activityType, "error", err)
+			return nil
+		}
+	}
 
-    return []SubscriptionConfig{
-        {
-            Subject: subject,
-            Group:   group,
-            Options: []nats.SubOpt{
-                nats.Durable(durableFromSubject(subject)),
-                nats.DeliverAll(),
-                nats.AckExplicit(),
-            },
-        },
-    }
+	group := workerCfg.Group
+	if group == "" {
+		group = groupFromSubject(subject)
+	}
+
+	return []SubscriptionConfig{
+		{
+			Subject: subject,
+			Group:   group,
+			Options: []nats.SubOpt{
+				nats.Durable(durableFromSubject(subject)),
+				nats.DeliverAll(),
+				nats.AckExplicit(),
+			},
+		},
+	}
 }
 ```
 
 4. Handle semantics (critical)
 
-`Manager` controls ACK/NAK behavior:
-- `Handle(...) == nil` => manager `Ack()`
-- `Handle(...) != nil` => manager `Nak()`
-
-Therefore:
-- return `nil` for ignorable messages (wrong type, malformed non-retryable, unsupported performative)
-- return `error` only for transient/retryable failures
-- if poison pill after repeated delivery, call `msg.Term()` and return `nil`
+`Worker` controls ACK/NAK behavior directly due to explicit acks (`nats.AckExplicit()`):
+- MUST call `msg.Ack()` and return `nil` on success.
+- MUST call `msg.Nak()` and return `error` for transient/retryable failures.
+- MUST call `msg.Term()` and return `nil` for ignorable/malformed messages (wrong type, malformed json).
+- if poison pill after repeated delivery, call `msg.Term()` and return `nil`.
 
 Poison-pill guard pattern:
 
@@ -109,12 +118,9 @@ if metaErr == nil && meta.NumDelivered > 3 {
 
 5. Envelope handling for orchestrator-driven workers
 
-When subject carries TAP envelopes:
-- unmarshal `core.Envelope`
-- validate `core.IsValidPerformative(env.Performative)`
-- parse `env.Body` as either:
-  - `core.TaskDefinition` (common for `ACCEPT_PROPOSAL` dispatch)
-  - `core.Proof` (common for `INFORM` chains)
+When subject carries TAP envelopes or raw bodies:
+- Unmarshal to `core.Envelope` optionally
+- Use `core.UnmarshalTaskPayload(data, &payload)` which handles both raw payloads and `TaskDefinition` or `Proof` bodies.
 
 `TaskDefinition` shape:
 
@@ -158,12 +164,13 @@ type CSVMappingWorker struct {
 }
 
 func (w *CSVMappingWorker) Subscriptions() []SubscriptionConfig {
-    activityType := w.cfg.Workers.CSVMappingActivityType
-    subject := w.cfg.Workers.CSVMapping
+    _, workerCfg := w.cfg.Workers.GetForWorker(w)
+    activityType := workerCfg.ActivityType
+    subject := workerCfg.Subject
     if subject == "" {
         subject, _ = core.BuildWorkerInboxFromActivity(activityType)
     }
-    group := w.cfg.Workers.CSVMappingGroup
+    group := workerCfg.Group
     if group == "" {
         group = groupFromSubject(subject)
     }
@@ -176,11 +183,13 @@ func (w *CSVMappingWorker) Subscriptions() []SubscriptionConfig {
 
 func (w *CSVMappingWorker) Handle(ctx context.Context, msg *nats.Msg) error {
     // parse envelope-like payload
-    // accept both INFORM and ACCEPT_PROPOSAL paths
-    // parse TaskDefinition.Payload first, then fallback to direct Proof body
+    // accept both INFORM and ACCEPT_PROPOSAL paths using core.UnmarshalTaskPayload
     // write DB side effects
-    // if cid exists, publish INFORM back to workflows.OrchestratorInbox
-    // otherwise optional legacy broadcast path
+    // if transient error:
+    //     msg.Nak()
+    //     return err
+    //
+    // msg.Ack()
     return nil
 }
 ```
@@ -215,6 +224,4 @@ Placeholder Values
 ```env
 WORKER_TYPE_NAME=""
 FILE_NAME=""
-SUBJECT_KEY=""
-GROUP_KEY=""
 ```

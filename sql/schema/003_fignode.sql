@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS fignode.staging_sessions (
     file_name   TEXT,
     row_count   INT NOT NULL DEFAULT 0,
     status      TEXT NOT NULL DEFAULT 'PROCESSING',
+    is_ambiguous      BOOLEAN NOT NULL DEFAULT FALSE,
+    ambiguity_reason  TEXT,
     created_at  TIMESTAMPTZ DEFAULT NOW(),
     updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
@@ -50,6 +52,7 @@ CREATE TABLE IF NOT EXISTS fignode.staging_transactions (
     id                   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     session_id           UUID REFERENCES fignode.staging_sessions(id) ON DELETE CASCADE, -- NULL if from Plaid
     realm_id             TEXT,      -- The QBO client
+    row_index            INT,       -- Position of the row within a CSV session for de-duplication
 
     -- A. Raw Input (Universal)
     source_type          TEXT NOT NULL DEFAULT 'BankFeed', -- 'CSV', 'BankFeed', 'Receipt'
@@ -59,7 +62,7 @@ CREATE TABLE IF NOT EXISTS fignode.staging_transactions (
 
     -- B. Plaid / Open Banking Specifics (Rich Data)
     plaid_transaction_id TEXT UNIQUE,                      -- Prevents webhook duplicates
-    plaid_account_id     TEXT,                             -- The specific bank account
+    bank_account_id     TEXT,                             -- The specific bank account
     merchant_name        TEXT,                             -- Cleaned by Plaid (e.g., "Amazon")
     logo_url             TEXT,                             -- CRITICAL for mobile swipe UI
     plaid_category       TEXT,                             -- e.g., "Food and Drink"
@@ -93,9 +96,14 @@ CREATE TABLE IF NOT EXISTS fignode.staging_transactions (
     status               TEXT NOT NULL DEFAULT 'PENDING_AI',
     erp_transaction_id   TEXT,                             -- The QBO 'Purchase' or 'Deposit' ID
     error_message        TEXT,                             -- If QBO API rejects it
-
+    reconciled_at        TIMESTAMPTZ,
+    reconciled_by        UUID REFERENCES toro_core.users(id) ON DELETE SET NULL,
+    -- Rule engine flags
+    rule_group_id INT REFERENCES shadow_erp.rule_groups(id) ON DELETE SET NULL,    
     created_at           TIMESTAMPTZ DEFAULT NOW(),
     updated_at           TIMESTAMPTZ DEFAULT NOW(),
+    is_ambiguous         BOOLEAN NOT NULL DEFAULT FALSE,
+    ambiguity_reason    TEXT,
     UNIQUE(realm_id, erp_transaction_id)
 );
 
@@ -103,6 +111,7 @@ CREATE TABLE IF NOT EXISTS fignode.staging_transactions (
 CREATE INDEX IF NOT EXISTS idx_fignode_tx_status_realm ON fignode.staging_transactions(realm_id, status);
 CREATE INDEX IF NOT EXISTS idx_fignode_tx_plaid_id     ON fignode.staging_transactions(plaid_transaction_id) WHERE plaid_transaction_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_fignode_tx_session      ON fignode.staging_transactions(session_id) WHERE session_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fignode_tx_session_row ON fignode.staging_transactions(session_id, row_index) WHERE row_index IS NOT NULL;
 
 -- =========================================================================
 -- 4. Leaderboard Snapshots (Materialized for Gamification)

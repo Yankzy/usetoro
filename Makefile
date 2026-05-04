@@ -172,7 +172,7 @@ sqlc:
 	~/go/bin/sqlc generate && $(MAKE) migrate
 
 test:
-	cd go && go test ./...
+	cd go && GOWORK=off go test -mod=vendor ./...
 
 clean_db:
 	$(DOCKER_COMPOSE) down
@@ -184,6 +184,7 @@ scr:
 	scrcpy --window-title "iPhone"
 
 vndr:
+	go work vendor
 	cd go && GOWORK=off go mod tidy && GOWORK=off go mod vendor
 	cd tap && GOWORK=off go mod tidy && GOWORK=off go mod vendor
 
@@ -209,3 +210,10 @@ ingest-messy:
 
 nats_consumers:
 	./container/scripts/list-nats-consumers.sh 
+
+docker_context_prod_up:
+	COMPOSE_PARALLEL_LIMIT=1 docker --context droplet compose -f container/docker-compose.prod.yml build
+	docker --context droplet compose -f container/docker-compose.prod.yml up -d
+docker_context_prod_down:
+	docker --context droplet compose -f container/docker-compose.prod.yml down
+

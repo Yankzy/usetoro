@@ -9,14 +9,14 @@ import (
 // RFC6902Event is the standard NATS Event Sequence Wrapper delivering dynamic LLM instructions.
 // The embedded PatchArray explicitly avoids standard unmarshal mapping targets internally
 // to prevent Go from silently filtering 'omitempty' nulls matching strictly with specification boundaries.
-// The SequenceID enforces strict monotonic idempotent event replays logically.
+// The SequenceID enforces strict monotonic idempotent event replays.
 type RFC6902Event struct {
-	EventID    string            `json:"event_id"`    
-	SequenceID uint64            `json:"sequence_id"` 
-	Timestamp  time.Time         `json:"timestamp"`   
-	Type       string            `json:"type"`        
-	Actor      string            `json:"actor"`       
-	PatchArray []json.RawMessage `json:"patch_array"` 
+	EventID    string            `json:"event_id"`
+	SequenceID uint64            `json:"sequence_id"`
+	Timestamp  time.Time         `json:"timestamp"`
+	Type       string            `json:"type"`
+	Actor      string            `json:"actor"`
+	PatchArray []json.RawMessage `json:"patch_array"`
 }
 
 // DomainFault encapsulates a structural validation, RBAC rejection, or mapping error efficiently.

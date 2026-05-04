@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -373,28 +372,53 @@ func (p *OAuthPipeline) Run(ctx *OAuthContext) {
 	}
 }
 
-// getRedirectURI determines the correct redirect URI to use based on the request host.
+// getRedirectURI determines the correct redirect URI to use dynamically based on the request.
 func (h *Handler) getRedirectURI(r *http.Request, logger *slog.Logger) string {
-	if h.QBOConfig == nil || len(h.QBOConfig.RedirectURIs) == 0 {
-		logger.Error("No RedirectURIs configured")
-		return ""
-	}
-
+	// 1. Determine Host
 	host := r.Header.Get("X-Forwarded-Host")
 	if host == "" {
 		host = r.Host
 	}
 
-	for _, uri := range h.QBOConfig.RedirectURIs {
-		u, err := url.Parse(uri)
-		if err == nil && u.Host == host {
-			return uri
+	// 2. Determine Scheme
+	scheme := "https"
+	forwardedProto := r.Header.Get("X-Forwarded-Proto")
+	if forwardedProto != "" {
+		scheme = forwardedProto
+	} else if r.TLS == nil {
+		// Fallback for local development without proxy
+		if strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.0.0.1") {
+			scheme = "http"
 		}
 	}
 
-	chosenURI := h.QBOConfig.RedirectURIs[0]
-	logger.Warn("No exact RedirectURI match for host, using default", "host", host, "chosen_uri", chosenURI)
-	return chosenURI
+	// 3. Determine Path
+	// We derive the callback path from the current request path to maintain any prefixes (like /api)
+	currentPath := r.URL.Path
+	callbackPath := "/auth/qbo/callback"
+	if idx := strings.Index(currentPath, "/auth/qbo/"); idx != -1 {
+		callbackPath = currentPath[:idx] + "/auth/qbo/callback"
+	}
+
+	uri := fmt.Sprintf("%s://%s%s", scheme, host, callbackPath)
+	logger.Debug("Dynamically determined RedirectURI", "host", host, "scheme", scheme, "path", callbackPath, "uri", uri)
+
+	// Optional: Still check against configured URIs if we want to restrict to a whitelist
+	if h.QBOConfig != nil && len(h.QBOConfig.RedirectURIs) > 0 {
+		matched := false
+		for _, configured := range h.QBOConfig.RedirectURIs {
+			if configured == uri {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			logger.Warn("Dynamic RedirectURI not in configured whitelist", "uri", uri, "whitelist", h.QBOConfig.RedirectURIs)
+			// We still return the dynamic one as requested by user, but log a warning
+		}
+	}
+
+	return uri
 }
 
 // HandleGetQBOAuthURL handles the QuickBooks Online OAuth2 redirect URL request.

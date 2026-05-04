@@ -1,0 +1,4 @@
+queries:
+  get_bank_accounts: "SELECT name FROM shadow_erp.accounts WHERE active = true AND account_type IN ('Bank', 'Credit Card');"
+  get_credit_card_accounts: "SELECT name FROM shadow_erp.accounts WHERE active = true AND account_type IN ('Credit Card');"
+  get_checking_accounts: "SELECT name FROM shadow_erp.accounts WHERE active = true AND account_type IN ('Bank');"

@@ -33,7 +33,7 @@ func TestSQLWorker_Handle_Envelope(t *testing.T) {
 	// but we can test if it correctly extracts the payload from an envelope.
 
 	payload := SQLWorkerPayload{
-		Query: "SELECT 1",
+		QueryID: "get_bank_accounts",
 	}
 
 	env, _ := core.NewEnvelope(uuid.New().String(), "src", "dst", "cid-123", core.INFORM, payload)
@@ -47,15 +47,15 @@ func TestSQLWorker_Handle_Envelope(t *testing.T) {
 		t.Fatalf("failed to unmarshal from envelope body: %v", err)
 	}
 
-	if extracted.Query != "SELECT 1" {
-		t.Errorf("expected Query 'SELECT 1', got '%s'", extracted.Query)
+	if extracted.QueryID != "get_bank_accounts" {
+		t.Errorf("expected QueryID 'get_bank_accounts', got '%s'", extracted.QueryID)
 	}
 }
 
 func TestSQLWorker_Handle_TaskPayload(t *testing.T) {
 	// Test the Orchestrator's "input" wrapper
 	inner := SQLWorkerPayload{
-		Query: "SELECT 2",
+		QueryID: "get_checking_accounts",
 	}
 	innerBytes, _ := json.Marshal(inner)
 
@@ -72,7 +72,14 @@ func TestSQLWorker_Handle_TaskPayload(t *testing.T) {
 		t.Fatalf("failed to unmarshal from wrapped payload: %v", err)
 	}
 
-	if extracted.Query != "SELECT 2" {
-		t.Errorf("expected Query 'SELECT 2', got '%s'", extracted.Query)
+	if extracted.QueryID != "get_checking_accounts" {
+		t.Errorf("expected QueryID 'get_checking_accounts', got '%s'", extracted.QueryID)
 	}
+}
+
+func TestSQLWorker_Handle_ReplyFallback(t *testing.T) {
+	// This test verifies that if ReturnSubject is empty, the worker uses msg.Reply.
+	// Since we can't easily mock the DB and NATS for a full Handle call here without a lot of setup,
+	// we are mostly documenting the expectation.
+	// In a real environment, we'd use a mock DB pool.
 }

@@ -55,8 +55,10 @@ type Client struct {
 	// Message handler for processing requests
 	messageHandler *MessageHandler
 
-	// Host from handshake request
-	host string
+	// Connection details for dynamic redirects
+	host       string
+	scheme     string
+	pathPrefix string
 
 	// Identity
 	entityID string
@@ -70,9 +72,10 @@ type Client struct {
 }
 
 // NewClient creates a new Client instance
-func NewClient(hub *Hub, conn *websocket.Conn, logger *slog.Logger, messageHandler *MessageHandler, host string, rCtx context.Context) *Client {
-	// DO NOT inherit cancellation from rCtx, as the HTTP context is destroyed instantly after WebSocket upgrade
-	ctx, cancel := context.WithCancel(context.WithoutCancel(rCtx))
+func NewClient(hub *Hub, conn *websocket.Conn, logger *slog.Logger, messageHandler *MessageHandler, host, scheme, pathPrefix string, rCtx context.Context) *Client {
+	// Inherit cancellation from rCtx. The HTTP handler blocks on readPump, so rCtx
+	// remains valid until the connection drops or the server shuts down gracefully.
+	ctx, cancel := context.WithCancel(rCtx)
 	// Extract entityID from context (set by auth middleware)
 	entityID := "unknown"
 	if eid, ok := rCtx.Value(auth.EntityIDKey).(uuid.UUID); ok {
@@ -86,6 +89,8 @@ func NewClient(hub *Hub, conn *websocket.Conn, logger *slog.Logger, messageHandl
 		logger:          logger,
 		messageHandler:  messageHandler,
 		host:            host,
+		scheme:          scheme,
+		pathPrefix:      pathPrefix,
 		entityID:        entityID,
 		unackedMessages: make(map[string]*nats.Msg),
 		ctx:             ctx,
@@ -165,7 +170,9 @@ func (c *Client) readPump() {
 
 		// Process the message if handler is available
 		if c.messageHandler != nil {
-			ctx := context.WithValue(context.Background(), "host", c.host)
+			ctx := context.WithValue(c.ctx, "host", c.host)
+			ctx = context.WithValue(ctx, "scheme", c.scheme)
+			ctx = context.WithValue(ctx, "path_prefix", c.pathPrefix)
 			response, err := c.messageHandler.HandleMessage(ctx, message)
 			if err != nil {
 				c.logger.Error("Failed to handle message", "error", err)
@@ -200,7 +207,7 @@ func (c *Client) cardPump() {
 		if c.hub != nil && c.hub.db != nil {
 			var entityUUID pgtype.UUID
 			if pgErr := entityUUID.Scan(entityID.String()); pgErr == nil {
-				conn, dbErr := c.hub.db.GetERPConnection(context.Background(), entityUUID)
+				conn, dbErr := c.hub.db.GetERPConnection(c.ctx, entityUUID)
 				if dbErr == nil && conn.RealmID != "" {
 					// We must align JetStream specifically with the actual QBO realm mapping, not the internal UUID
 					subjectStr = fmt.Sprintf("cards.unswiped.%s", conn.RealmID)
@@ -251,6 +258,8 @@ func (c *Client) cardPump() {
 	for {
 		select {
 		case <-c.ctx.Done():
+			c.logger.Info("Context done, unsubscribing from NATS pull consumer", "subject", subjectStr)
+			sub.Unsubscribe()
 			return
 		case <-ticker.C:
 			// Fetch 1 card at a time to prevent buffering unneeded cards
@@ -347,29 +356,24 @@ func (c *Client) writePump() {
 	}
 }
 
-// Start begins the client's read and write pumps
-func (c *Client) Start() {
-	go c.writePump()
-	go c.readPump()
-	go c.blastActiveWorkflows()
-}
+
 
 func (c *Client) blastDatabaseCards(realmID string) {
 	if c.hub == nil || c.hub.db == nil {
 		return
 	}
 	pgRealm := pgtype.Text{String: realmID, Valid: true}
-	rows, dbErr := c.hub.db.GetInitialEnrichedTransactionsByRealm(context.Background(), pgRealm)
+	rows, dbErr := c.hub.db.GetInitialEnrichedTransactionsByRealm(c.ctx, pgRealm)
 	if dbErr != nil || len(rows) == 0 {
 		return
 	}
 
 	compName := "Unknown Company"
 	compTax := fignode.CompanyTaxonomy{}
-	info, infoErr := c.hub.db.GetCompanyInfo(context.Background(), realmID)
+	info, infoErr := c.hub.db.GetCompanyInfo(c.ctx, realmID)
 	if infoErr == nil && info.CompanyName != "" {
 		compName = info.CompanyName
-		compTax, _ = fignode.EnsureCompanyContext(context.Background(), c.hub.db, c.hub.llm, info)
+		compTax, _ = fignode.EnsureCompanyContext(c.ctx, c.hub.db, c.hub.llm, info)
 	}
 
 	c.logger.Info("⚡️ Fast Hydrating Fignode Cards Iteratively", "count", len(rows), "realm_id", realmID)
@@ -395,7 +399,7 @@ func (c *Client) blastDatabaseCards(realmID string) {
 
 		var accountType string
 		if r.PredictedAccountID.Valid {
-			if acc, e := c.hub.db.GetAccountByID(context.Background(), r.PredictedAccountID); e == nil {
+			if acc, e := c.hub.db.GetAccountByID(c.ctx, r.PredictedAccountID); e == nil {
 				accountType = acc.AccountType
 			}
 		}
@@ -408,8 +412,8 @@ func (c *Client) blastDatabaseCards(realmID string) {
 		if txType == "expense" {
 			entityName = r.PredictedVendorName.String
 			if r.PredictedVendorID.Valid {
-				if vendorRec, vErr := c.hub.db.GetVendorByID(context.Background(), r.PredictedVendorID); vErr == nil {
-					vTax, _ := fignode.EnsureVendorContext(context.Background(), c.hub.db, c.hub.llm, vendorRec)
+				if vendorRec, vErr := c.hub.db.GetVendorByID(c.ctx, r.PredictedVendorID); vErr == nil {
+					vTax, _ := fignode.EnsureVendorContext(c.ctx, c.hub.db, c.hub.llm, vendorRec)
 					if vTax.Industry != "" { industry = vTax.Industry }
 					if vTax.IndustryIcon != "" { industryIcon = vTax.IndustryIcon }
 					if vTax.VendorDescription != "" { entityDesc = vTax.VendorDescription }
@@ -418,8 +422,8 @@ func (c *Client) blastDatabaseCards(realmID string) {
 		} else {
 			entityName = r.PredictedCustomerName.String
 			if r.PredictedCustomerID.Valid {
-				if customerRec, cErr := c.hub.db.GetCustomerByID(context.Background(), r.PredictedCustomerID); cErr == nil {
-					cTax, _ := fignode.EnsureCustomerContext(context.Background(), c.hub.db, c.hub.llm, customerRec)
+				if customerRec, cErr := c.hub.db.GetCustomerByID(c.ctx, r.PredictedCustomerID); cErr == nil {
+					cTax, _ := fignode.EnsureCustomerContext(c.ctx, c.hub.db, c.hub.llm, customerRec)
 					if cTax.Industry != "" { industry = cTax.Industry }
 					if cTax.IndustryIcon != "" { industryIcon = cTax.IndustryIcon }
 					if cTax.CustomerDescription != "" { entityDesc = cTax.CustomerDescription }
@@ -480,7 +484,7 @@ func (c *Client) blastActiveWorkflows() {
 		return
 	}
 
-	workflows, err := c.hub.db.GetWorkflowsByEntityID(context.Background(), pgtype.UUID{Bytes: entityUUID, Valid: true})
+	workflows, err := c.hub.db.GetWorkflowsByEntityID(c.ctx, pgtype.UUID{Bytes: entityUUID, Valid: true})
 	if err != nil {
 		c.logger.Error("Failed to fetch active workflows", "error", err)
 		return
@@ -509,7 +513,7 @@ func (c *Client) blastActiveWorkflows() {
 			activeSteps = []string{currentStepID}
 		}
 
-		blueprintRow, err := c.hub.db.GetBlueprintByName(context.Background(), workflowDefName)
+		blueprintRow, err := c.hub.db.GetBlueprintByName(c.ctx, workflowDefName)
 		if err != nil {
 			c.logger.Warn("Failed to fetch blueprint for workflow", "name", workflowDefName, "error", err)
 			continue

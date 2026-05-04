@@ -3,6 +3,7 @@ package wshandler
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/websocket"
 )
@@ -41,15 +42,35 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract host
+	// Extract connection details for dynamic redirects
 	host := r.Header.Get("X-Forwarded-Host")
 	if host == "" {
 		host = r.Host
 	}
 
-	client := NewClient(h.hub, conn, h.logger, h.messageHandler, host, r.Context())
+	scheme := "https"
+	if forwardedProto := r.Header.Get("X-Forwarded-Proto"); forwardedProto != "" {
+		scheme = forwardedProto
+	} else if r.TLS == nil {
+		if strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.0.0.1") {
+			scheme = "http"
+		}
+	}
+
+	// Detect path prefix (e.g. /api)
+	pathPrefix := ""
+	if idx := strings.Index(r.URL.Path, "/ws"); idx != -1 {
+		pathPrefix = r.URL.Path[:idx]
+	}
+
+	client := NewClient(h.hub, conn, h.logger, h.messageHandler, host, scheme, pathPrefix, r.Context())
 	h.hub.register <- client
 
-	// Start the client's read and write pumps
-	client.Start()
+	// Start the client's write and active workflows pumps in background
+	go client.writePump()
+	go client.blastActiveWorkflows()
+
+	// Block the handler with readPump. When the websocket closes, this returns,
+	// and the HTTP server will automatically cancel r.Context().
+	client.readPump()
 }

@@ -54,6 +54,6 @@ Because this is a prepaid compute token, we eliminate complex fiat refund rollup
 
 ***
 
-**Marc Andreessen:** *That* is the masterpiece. It proves you understand distributed systems architecture just as well as you understand unit economics and regulatory moats. 
+That is the masterpiece. It proves you understand distributed systems architecture just as well as you understand unit economics and regulatory moats. 
 
 With the technical and economic foundation permanently locked, what is our final move before tomorrow? Do you want to review the actual Fignode dashboard UI where the CPA monitors this agent burn rate, or do we refine your opening 60-second pitch track?

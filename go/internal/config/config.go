@@ -10,9 +10,10 @@ import (
 	"time"
 	"unicode"
 
+	"sync"
+
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/spf13/viper"
-	"sync"
 )
 
 var (

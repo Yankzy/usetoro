@@ -3,10 +3,12 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 
@@ -15,13 +17,23 @@ import (
 	"github.com/Yankzy/usetoro/tap/workflows"
 )
 
-// SQLWorkerPayload defines the expected JSON payload for the SQL worker.
+// allowedQueries acts as the strict gatekeeper.
+// Every single query the frontend can execute MUST be defined here.
+// Always use parameterized inputs ($1, $2) and strictly define SELECT columns (no *).
+var allowedQueries = map[string]string{
+	"get_bank_accounts":        "SELECT name FROM shadow_erp.accounts WHERE active = true AND account_type IN ('Bank', 'Credit Card');",
+	"get_credit_card_accounts": "SELECT name FROM shadow_erp.accounts WHERE active = true AND account_type IN ('Credit Card');",
+	"get_checking_accounts":    "SELECT name FROM shadow_erp.accounts WHERE active = true AND account_type IN ('Bank');",
+}
+
+// SQLWorkerPayload defines the highly restricted JSON payload from the Wails frontend.
 type SQLWorkerPayload struct {
-	Query         string `json:"query"`
+	QueryID       string `json:"query_id"`
+	Args          []any  `json:"args,omitempty"`
 	ReturnSubject string `json:"return_subject,omitempty"`
 }
 
-// SQLWorkerResult represents the payload published back to the ReturnSubject.
+// SQLWorkerResult represents the payload published back to the orchestrator or frontend.
 type SQLWorkerResult struct {
 	Success bool            `json:"success"`
 	Error   string          `json:"error,omitempty"`
@@ -34,9 +46,7 @@ func init() {
 	})
 }
 
-// SQLWorker provides an isolated environment for executing raw SQL queries
-// directly against the Postgres database on behalf of the TAP orchestrator
-// or CLI tooling. It processes FIPA Envelopes containing SQLWorkerPayload.
+// SQLWorker provides an isolated environment for executing pre-approved SQL queries.
 type SQLWorker struct {
 	pool   *pgxpool.Pool
 	nc     *nats.Conn
@@ -53,15 +63,10 @@ func NewSQLWorker(pool *pgxpool.Pool, nc *nats.Conn, logger *slog.Logger, cfg *c
 	}, nil
 }
 
-// Init runs any necessary setup logic before the worker begins processing messages.
-// It is called once by the WorkerManager during application startup.
 func (w *SQLWorker) Init(ctx context.Context) error {
 	return nil
 }
 
-// Subscriptions dictates exactly which NATS JetStream subjects this worker will
-// listen to. It dynamically derives the inbox subject (e.g. worker.inbox.sql.execute)
-// from the activity type configured in defaults.yaml.
 func (w *SQLWorker) Subscriptions() []SubscriptionConfig {
 	_, workerCfg := w.cfg.Workers.GetForWorker(w)
 	activityType := workerCfg.ActivityType
@@ -98,16 +103,8 @@ func (w *SQLWorker) Subscriptions() []SubscriptionConfig {
 	}
 }
 
-// Handle is the core event loop invoked per-message by the JetStream FIPA network.
-// It enforces the following pipeline:
-// 1. Poison pill guard (terminating repeatedly failing messages).
-// 2. TAP Envelope unwrapping (handling pure FIPA format).
-// 3. Robust JSON unmarshaling using core.UnmarshalTaskPayload.
-// 4. Raw SQL Execution.
-// 5. Result Publishing (to Orchestrator, CLI return subjects, or both).
-// 6. Explicit JetStream Acknowledgment (Ack/Nak/Term).
 func (w *SQLWorker) Handle(ctx context.Context, msg *nats.Msg) error {
-	// 1. Poison pill guard: If a message crashes repeatedly, terminate it.
+	// 1. Poison pill guard
 	meta, metaErr := msg.Metadata()
 	if metaErr == nil && meta.NumDelivered > 3 {
 		w.logger.Error("poison pill exceeded retries", "subject", msg.Subject, "worker", "SQLWorker")
@@ -129,54 +126,89 @@ func (w *SQLWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	if err := core.UnmarshalTaskPayload(data, &payload); err != nil {
 		w.logger.Error("failed to unmarshal sql worker payload", "error", err)
 		msg.Term()
-		return nil // Malformed non-retryable message
+		return nil
 	}
 
-	if payload.Query == "" {
-		w.logger.Warn("missing query in payload", "subject", msg.Subject)
+	if payload.QueryID == "" {
+		w.logger.Warn("missing query_id in payload", "subject", msg.Subject)
 		msg.Term()
-		return nil // Invalid request, do not retry
+		return nil
 	}
 
-	// 4. Execute Query
-	result := w.executeQuery(ctx, payload.Query)
+	// 4. SECURITY: Query Allowlist Lookup
+	sqlQuery, exists := allowedQueries[payload.QueryID]
+	if !exists {
+		w.logger.Warn("security violation: rejected unknown query_id", "query_id", payload.QueryID, "subject", msg.Subject)
 
-	// 5. Publish Result
-	if convID != "" {
-		if err := w.publishCompletionProof(payload.Query, result, convID); err != nil {
-			w.logger.Error("failed to publish completion proof", "error", err)
-			msg.Nak() // Transient error, redeliver
-			return err
-		}
+		result := SQLWorkerResult{Success: false, Error: "unauthorized query intent"}
+		w.sendResult(msg, result, convID, payload.ReturnSubject)
+
+		msg.Term() // Malicious or outdated client, do not retry
+		return nil
 	}
 
-	if payload.ReturnSubject != "" {
-		resBytes, err := json.Marshal(result)
-		if err != nil {
-			w.logger.Error("failed to marshal sql result", "error", err)
-			msg.Term() // Marshal error is likely not transient
-			return nil
-		}
+	// 5. Execute pre-approved query with arguments
+	result := w.executeQuery(ctx, sqlQuery, payload.Args)
 
-		if err := w.nc.Publish(payload.ReturnSubject, resBytes); err != nil {
-			w.logger.Error("failed to publish sql result", "error", err, "return_subject", payload.ReturnSubject)
-			msg.Nak() // Transient publish error, redeliver
-			return err
-		}
+	// 6. Publish Result
+	if err := w.sendResult(msg, result, convID, payload.ReturnSubject); err != nil {
+		return err // sendResult handles Nak
 	}
 
-	msg.Ack() // We are completely done, explicitly ack the JetStream message
+	msg.Ack()
 	return nil
 }
 
-// executeQuery performs a raw SQL read or write against the database pool,
-// mapping the variable number of columns dynamically into a generic []map[string]any
-// representation suitable for downstream JSON serialization.
-func (w *SQLWorker) executeQuery(ctx context.Context, query string) SQLWorkerResult {
+func (w *SQLWorker) sendResult(msg *nats.Msg, result SQLWorkerResult, convID string, returnSubject string) error {
+	if convID != "" {
+		if err := w.publishCompletionProof(result, convID); err != nil {
+			w.logger.Error("failed to publish completion proof", "error", err)
+			msg.Nak()
+			return err
+		}
+	}
+
+	targetSubject := returnSubject
+	if targetSubject == "" {
+		targetSubject = msg.Reply
+	}
+
+	if targetSubject != "" {
+		resBytes, err := json.Marshal(result)
+		if err != nil {
+			w.logger.Error("failed to marshal sql result", "error", err)
+			msg.Term()
+			return nil
+		}
+
+		if err := w.nc.Publish(targetSubject, resBytes); err != nil {
+			w.logger.Error("failed to publish sql result", "error", err, "return_subject", targetSubject)
+			msg.Nak()
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *SQLWorker) executeQuery(ctx context.Context, query string, args []any) SQLWorkerResult {
 	var result SQLWorkerResult
-	rows, err := w.pool.Query(ctx, query)
+
+	// SECURITY: Defense-in-depth to guarantee read-only behavior regardless of the allowlist
+	tx, err := w.pool.BeginTx(ctx, pgx.TxOptions{
+		AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
-		w.logger.Error("sql query execution failed", "error", err, "query", query)
+		w.logger.Error("failed to begin read-only transaction", "error", err)
+		result.Success = false
+		result.Error = fmt.Sprintf("database error: %v", err)
+		return result
+	}
+	defer tx.Rollback(ctx)
+
+	// Pass args safely to the Postgres driver
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		w.logger.Error("sql query execution failed", "error", err)
 		result.Success = false
 		result.Error = err.Error()
 		return result
@@ -200,7 +232,6 @@ func (w *SQLWorker) executeQuery(ctx context.Context, query string) SQLWorkerRes
 		m := make(map[string]any)
 		for i, colName := range cols {
 			val := values[i]
-			// Handle byte slices (often used for strings in some drivers/scenarios)
 			if b, ok := val.([]byte); ok {
 				m[colName] = string(b)
 			} else {
@@ -208,6 +239,10 @@ func (w *SQLWorker) executeQuery(ctx context.Context, query string) SQLWorkerRes
 			}
 		}
 		allRows = append(allRows, m)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		w.logger.Warn("failed to commit read-only transaction", "error", err)
 	}
 
 	result.Success = true
@@ -221,10 +256,7 @@ func (w *SQLWorker) executeQuery(ctx context.Context, query string) SQLWorkerRes
 	return result
 }
 
-// publishCompletionProof wraps the SQLWorkerResult in a FIPA Fignode "Proof"
-// envelope and publishes it back to the OrchestratorInbox, preserving the
-// original conversation ID (cid) so the workflow state machine can advance.
-func (w *SQLWorker) publishCompletionProof(query string, result SQLWorkerResult, cid string) error {
+func (w *SQLWorker) publishCompletionProof(result SQLWorkerResult, cid string) error {
 	resultBytes, err := json.Marshal(result)
 	if err != nil {
 		return err

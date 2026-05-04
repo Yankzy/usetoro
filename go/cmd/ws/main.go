@@ -301,7 +301,7 @@ func main() {
 	defer workflowConsumer.Stop()
 
 	// Create message handler
-	messageHandler := wshandler.NewMessageHandler(logger, qboConfig)
+	messageHandler := wshandler.NewMessageHandler(logger, qboConfig, queueClient)
 
 	// Create WebSocket handler
 	wsHandler := wshandler.NewHandler(hub, logger, messageHandler)

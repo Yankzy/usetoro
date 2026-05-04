@@ -1,6 +1,9 @@
 package wshandler
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // MessageType represents the type of WebSocket message
 type MessageType string
@@ -14,7 +17,7 @@ const (
 
 	// MessageTypeQBOConnected is sent when QBO is successfully connected
 	MessageTypeQBOConnected MessageType = "qbo_connected"
-	
+
 	// MessageTypeWorkflowStatus is sent for real-time visualizer updates
 	MessageTypeWorkflowStatus MessageType = "workflow_status"
 
@@ -34,6 +37,12 @@ const (
 
 	// MessageTypeSwipeResult is sent by client upon categorizing a transaction
 	MessageTypeSwipeResult MessageType = "swipe_result"
+
+	// MessageTypeRequestRunSQL is sent by client to execute a generic SQL query
+	MessageTypeRequestRunSQL MessageType = "request_run_sql"
+
+	// MessageTypeSQLResult is sent when a generic SQL query result is available
+	MessageTypeSQLResult MessageType = "sql_result"
 )
 
 // Message represents a WebSocket message structure
@@ -83,6 +92,25 @@ func NewWorkflowStatusMessage(data map[string]interface{}) ([]byte, error) {
 	msg := Message{
 		Type: MessageTypeWorkflowStatus,
 		Data: data,
+	}
+	return json.Marshal(msg)
+}
+
+// NewSQLResultMessage creates a message containing the results of a SQL query.
+// It uses a rich message type in the format "sql_result.{query_id}"
+func NewSQLResultMessage(queryID string, success bool, data json.RawMessage, errorMsg string) ([]byte, error) {
+	msgType := MessageTypeSQLResult
+	if queryID != "" {
+		msgType = MessageType(fmt.Sprintf("%s.%s", MessageTypeSQLResult, queryID))
+	}
+
+	msg := Message{
+		Type: msgType,
+		Data: map[string]interface{}{
+			"success": success,
+			"data":    data,
+			"error":   errorMsg,
+		},
 	}
 	return json.Marshal(msg)
 }

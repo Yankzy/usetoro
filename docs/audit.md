@@ -82,7 +82,7 @@ According to MIT, 95% of enterprise GenAI pilots deliver zero P&L impact. Gartne
 
 ### 1. Live State Broadcasting (WebSockets)
 - **Fignode Push Hydration**: Hardened the WebSocket pipeline to bind transient Core NATS subscriptions dynamically. This bypasses structural API bottlenecks to stream Fignode JSON arrays instantaneously to the React Native frontend the precise millisecond asynchronous JetStream accounting reconciliations complete.
-- **Detached Connection Lifecycles**: Overcame native Go standard-library constraints by completely decoupling NATS subscriber contexts from standard HTTP handlers (`context.WithoutCancel`), ensuring continuous JetStream proof polling isn't silently destroyed during WebSocket TCP ascensions.
+- **Synchronized Connection Lifecycles**: Overcame native Go standard-library constraints by natively binding NATS JetStream polling contexts directly to the blocking `ServeWS` HTTP handler. This ensures that transient JetStream proof polling is elegantly terminated upon WebSocket TCP disconnect or server shutdown, strictly enforcing the daemon's fail-fast graceful exit mechanics.
 - **Mobile Notifications**: Current WebSockets notify the Fignode Apps, but Background Service Push architecture must be spun up to alert Native applications of refreshed internal queues or new QBO transaction batches instantly upon OS suspend.
 - **The "Hound Agent"**: Implementing the Twilio/webhook integration (`dispatchHoundAgent` stub) to message/chase a third-party client regarding flagged transactions.
 

@@ -3,10 +3,13 @@ package wshandler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
-	"net/url"
+	"time"
 
 	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
+	"github.com/Yankzy/usetoro/internal/queue"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/gorilla/websocket"
 )
 
@@ -14,6 +17,7 @@ import (
 type MessageHandler struct {
 	logger *slog.Logger
 	config *Config
+	queue  *queue.Client
 }
 
 // Config holds configuration for QBO credentials
@@ -25,10 +29,11 @@ type Config struct {
 }
 
 // NewMessageHandler creates a new message handler
-func NewMessageHandler(logger *slog.Logger, config *Config) *MessageHandler {
+func NewMessageHandler(logger *slog.Logger, config *Config, queue *queue.Client) *MessageHandler {
 	return &MessageHandler{
 		logger: logger,
 		config: config,
+		queue:  queue,
 	}
 }
 
@@ -53,6 +58,9 @@ func (h *MessageHandler) HandleMessage(ctx context.Context, data []byte) ([]byte
 		// These are intercepted by the WebSocket readPump core safely,
 		// or they just don't have HTTP endpoints built for them currently.
 		return nil, nil
+
+	case MessageTypeRequestRunSQL:
+		return h.handleRequestRunSQL(ctx, msg)
 
 	default:
 		h.logger.Warn("Unknown message type", "type", msg.Type)
@@ -98,23 +106,30 @@ func (h *MessageHandler) handleRequestAuthURL(ctx context.Context, msg Message) 
 		baseURL = quickbooks.DefaultAuthSandboxEndpoint
 	}
 
-	// Determine valid RedirectURI based on Host from context
+	// Determine dynamic RedirectURI from context
 	host, _ := ctx.Value("host").(string)
+	scheme, _ := ctx.Value("scheme").(string)
+	pathPrefix, _ := ctx.Value("path_prefix").(string)
 
-	chosenURI := ""
-	if host != "" {
-		for _, uri := range h.config.QBORedirectURIs {
-			u, err := url.Parse(uri)
-			if err == nil && u.Host == host {
-				chosenURI = uri
+	if scheme == "" {
+		scheme = "https"
+	}
+
+	chosenURI := fmt.Sprintf("%s://%s%s/auth/qbo/callback", scheme, host, pathPrefix)
+	h.logger.Debug("Dynamically determined RedirectURI for WebSocket", "uri", chosenURI)
+
+	// Optional: Whitelist check
+	if h.config != nil && len(h.config.QBORedirectURIs) > 0 {
+		matched := false
+		for _, configured := range h.config.QBORedirectURIs {
+			if configured == chosenURI {
+				matched = true
 				break
 			}
 		}
-	}
-
-	// Fallback
-	if chosenURI == "" && len(h.config.QBORedirectURIs) > 0 {
-		chosenURI = h.config.QBORedirectURIs[0]
+		if !matched {
+			h.logger.Warn("Dynamic WebSocket RedirectURI not in configured whitelist", "uri", chosenURI)
+		}
 	}
 
 	// Construct full auth URL using SDK helper
@@ -132,6 +147,67 @@ func (h *MessageHandler) handleRequestAuthURL(ctx context.Context, msg Message) 
 
 	h.logger.Info("Generated QBO auth URL", "url", authURL)
 	return NewAuthURLMessage(authURL)
+}
+
+// handleRequestRunSQL executes a generic SQL query via the SQL worker
+func (h *MessageHandler) handleRequestRunSQL(ctx context.Context, msg Message) ([]byte, error) {
+	h.logger.Info("Client requested SQL execution")
+
+	if h.queue == nil {
+		h.logger.Error("Queue client not initialized")
+		return NewErrorMessage("Internal server error: Queue unavailable")
+	}
+
+	queryID, ok := msg.Data["query_id"].(string)
+	if !ok || queryID == "" {
+		return NewErrorMessage("Missing or invalid 'query_id' field")
+	}
+
+	args, _ := msg.Data["args"].([]any)
+
+	// Package the SQL request using the struct that matches SQLWorkerPayload in workers/sql_worker.go
+	payload := struct {
+		QueryID string `json:"query_id"`
+		Args    []any  `json:"args,omitempty"`
+	}{
+		QueryID: queryID,
+		Args:    args,
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		h.logger.Error("Failed to marshal SQL payload", "error", err)
+		return NewErrorMessage("Failed to prepare request")
+	}
+
+	// Execute via NATS Request (Standard NATS Req/Rep)
+	// The SQL worker will receive this and publish to the Reply subject.
+	// We use the subject derived from the activity type "workers.sql.execute"
+	subject := "worker.inbox.sql.execute"
+	if derived, err := core.BuildWorkerInboxFromActivity("workers.sql.execute"); err == nil {
+		subject = derived
+	}
+
+	h.logger.Debug("Publishing SQL request to NATS", "subject", subject, "query_id", queryID)
+	respBytes, err := h.queue.Request(subject, payloadBytes, 5*time.Second)
+	if err != nil {
+		h.logger.Error("SQL NATS request failed", "error", err)
+		return NewErrorMessage("SQL execution timed out or failed")
+	}
+
+	// The response from SQL worker is a SQLWorkerResult
+	var result struct {
+		Success bool            `json:"success"`
+		Error   string          `json:"error,omitempty"`
+		Data    json.RawMessage `json:"data,omitempty"`
+	}
+
+	if err := json.Unmarshal(respBytes, &result); err != nil {
+		h.logger.Error("Failed to unmarshal SQL worker result", "error", err)
+		return NewErrorMessage("Failed to parse worker response")
+	}
+
+	return NewSQLResultMessage(queryID, result.Success, result.Data, result.Error)
 }
 
 // SendResponse sends a response message back to the client

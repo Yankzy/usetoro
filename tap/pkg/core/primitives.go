@@ -69,6 +69,7 @@ type TaskDefinition struct {
 	Complexity     TaskComplexity `json:"complexity"` // Used for NATS routing permissions
 	WorkflowSchema string         `json:"workflow_schema,omitempty"`
 	SystemPrompt   string         `json:"system_prompt,omitempty"`
+	RBACPolicy     []string       `json:"rbac_policy,omitempty"`
 
 	// The Incentive
 	Reward   int64  `json:"reward"`   // Amount in micrions
@@ -216,32 +217,41 @@ type CredentialProof struct {
 // UnmarshalTaskPayload is a protocol-aware unmarshaler that handles both
 // raw JSON payloads and payloads wrapped in FIPA 'Proof' envelopes.
 // It also transparently unwraps the Orchestrator's 'input' wrapper if present.
+// It is recursive to handle nested sub-workflows where payloads might be double-wrapped.
 func UnmarshalTaskPayload(payload []byte, target interface{}) error {
+	return unmarshalTaskPayloadRecursive(payload, target, 0)
+}
+
+func unmarshalTaskPayloadRecursive(payload []byte, target interface{}, depth int) error {
 	if len(payload) == 0 {
 		return fmt.Errorf("empty payload")
 	}
+	if depth > 5 {
+		return fmt.Errorf("payload nesting too deep")
+	}
 
-	var data []byte
+	// 1. Try to unmarshal as TaskDefinition (Orchestrator dispatch wrapper)
+	var taskDef TaskDefinition
+	if err := json.Unmarshal(payload, &taskDef); err == nil && len(taskDef.Payload) > 0 && taskDef.Domain != "" {
+		return unmarshalTaskPayloadRecursive(taskDef.Payload, target, depth+1)
+	}
 
-	// 1. Try to unmarshal as FIPA Proof
+	// 2. Try to unmarshal as FIPA Proof (Worker completion wrapper)
 	var proof Proof
 	if err := json.Unmarshal(payload, &proof); err == nil && len(proof.Data) > 0 && proof.Type != "" {
-		data = proof.Data
-	} else {
-		// 2. Fallback to direct unmarshal for backward compatibility
-		data = payload
+		return unmarshalTaskPayloadRecursive(proof.Data, target, depth+1)
 	}
 
 	// 3. Transparently unwrap Orchestrator's "input" wrapper: {"input": ..., "config": ...}
-	// We check if the data is an object containing an "input" field.
 	var wrapper struct {
 		Input json.RawMessage `json:"input"`
 	}
-	if err := json.Unmarshal(data, &wrapper); err == nil && len(wrapper.Input) > 0 {
-		return json.Unmarshal(wrapper.Input, target)
+	if err := json.Unmarshal(payload, &wrapper); err == nil && len(wrapper.Input) > 0 {
+		return unmarshalTaskPayloadRecursive(wrapper.Input, target, depth+1)
 	}
 
-	return json.Unmarshal(data, target)
+	// 4. Base Case: Final unmarshal into target
+	return json.Unmarshal(payload, target)
 }
 
 // RowString is a resilient helper to extract a string value from a row map,

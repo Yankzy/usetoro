@@ -8,6 +8,14 @@ steps:
     negotiate: true                                # Allow 3rd party bids via PROPOSE
     timeout: "60s"
     description: "Takes raw rows, maps CSV headers to canonical struct, filters invalid rows."
+    rbac_policy:
+      - "/status"
+      - "/mapped_rows"
+      - "/columns_mapped"
+      - "/is_ambiguous"
+      - "/ambiguity_reason"
+      - "/polarity_sign"
+      - "/route"
     workflow_schema: |
       {
         "type": "object",
@@ -22,8 +30,20 @@ steps:
         "required": ["status", "mapped_rows", "route"]
       }
     system_prompt: |
-      You are an expert data analyst parsing raw bank statement CSV headers. Analyze the columns and map them to standard accounting fields. You MUST reply with valid JSON.
-      The JSON must strictly conform to this schema:
+      You are an expert data analyst parsing raw CSV headers. Analyze the columns and map them strictly according to the provided schema below. Do not assume any fields outside of this schema. 
+      RFC 6902 Compliance: You MUST reply with a JSON array of RFC 6902 patches.
+      
+      Example format:
+      [
+        {"op": "add", "path": "/columns_mapped", "value": { "date_col_idx": 0, "description_col_idx": 1, ... }},
+        {"op": "add", "path": "/status", "value": "COLUMNS_MAPPED"},
+        {"op": "add", "path": "/is_ambiguous", "value": false},
+        {"op": "add", "path": "/ambiguity_reason", "value": null},
+        {"op": "add", "path": "/polarity_sign", "value": "minus"},
+        {"op": "add", "path": "/route", "value": 0}
+      ]
+
+      The "value" inside the "/columns_mapped" patch must strictly conform to this schema:
       {
         "date_col_idx": <int>,
         "description_col_idx": <int>,
@@ -34,23 +54,20 @@ steps:
         "vendor_col_idx": <int or null>,
         "customer_col_idx": <int or null>,
         "custom_col_idx": <int or null>,
-        "is_expense_positive": <bool>,
         "confidence_score": <float 0 to 1>,
         "is_ambiguous": <bool>,
-        "ambiguity_reason": <string or null>,
-        "reasoning": <string explaining the mapping choices>
+        "ambiguity_reason": <string or null>
       }
 
       SPLIT AMOUNTS: If the statement uses separate Debit and Credit columns, set is_split_amount to true, provide debit_col_idx and credit_col_idx, and set amount_col_idx to null.
       NULL HANDLING: For any optional field that is NOT present, you MUST set its index to null. Do NOT use 0 as a placeholder.
 
       AMBIGUITY (Polarity): The data is ambiguous if you cannot definitively determine the cash direction (Inflow vs Outflow). This happens when there is only a single 'Amount' column with NO polarity indicators (no signs '-' or parentheses '()'). If this occurs, set is_ambiguous to true and provide an ambiguity_reason using precise language (e.g., 'cannot distinguish Cash Inflow from Outflow').
+      NOTE: Do not try to infer polarity from the descriptions, like 'Uber is always expense' fallacy. This may be an incorrect assumption. Plus the input data is just a sample to help you map the columns, it may not be representative of the entire dataset.
+      Use our precise internal language (not accounting terms): refer to cash flow directions as "Cash Inflow" and "Cash Outflow", never as "Income" or "Expense". Flag ambiguity if inflow vs outflow cannot be distinguished.
 
-      Use precise accounting language: refer to cash flow directions as "Cash Inflow" and "Cash Outflow", never as "Income" or "Expense". Flag ambiguity if inflow vs outflow cannot be distinguished.
-
-      Crucially, determine the sign convention (is_expense_positive). Look at obvious outflows (like 'AMZN', 'AWS', 'Starbucks', 'Uber', or rent/tax payments). If these outflows are represented by positive numbers, set is_expense_positive to true. If they are negative, set it to false.
-    suspend_routes: [1]
-    suspension_reason_path: "ambiguity_reason"
+    # suspend_routes: [1]
+    # suspension_reason_path: "ambiguity_reason"
 
   - id: commit_mapped_columns
     activity_type: workers.database.insert_rows
@@ -59,9 +76,9 @@ steps:
     description: "Inserts the mapped rows into Postgres DB as PENDING."
     depends_on:
       - map_columns
-    route_condition:
-      step_id: map_columns
-      values: [0]
+    # route_condition:
+    #   step_id: map_columns
+    #   values: [0]
 
   - id: run_enrichment
     activity_type: workers.database.enrich_rows

@@ -76,10 +76,6 @@ According to MIT, 95% of enterprise GenAI pilots deliver zero P&L impact. Gartne
 
 ---
 
-## 4. Phase II: Enterprise Hardening & Scale.
-
- funding will immediately unblock replacing robust local logic with high-throughput production data pipes. The following milestones represent the roadmap:
-
 ### 1. Live State Broadcasting (WebSockets)
 - **Fignode Push Hydration**: Hardened the WebSocket pipeline to bind transient Core NATS subscriptions dynamically. This bypasses structural API bottlenecks to stream Fignode JSON arrays instantaneously to the React Native frontend the precise millisecond asynchronous JetStream accounting reconciliations complete.
 - **Synchronized Connection Lifecycles**: Overcame native Go standard-library constraints by natively binding NATS JetStream polling contexts directly to the blocking `ServeWS` HTTP handler. This ensures that transient JetStream proof polling is elegantly terminated upon WebSocket TCP disconnect or server shutdown, strictly enforcing the daemon's fail-fast graceful exit mechanics.

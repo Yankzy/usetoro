@@ -86,7 +86,7 @@ func (s *SwitchWorkerService) Handle(ctx context.Context, msg *nats.Msg) error {
 		return nil
 	}
 
-	if env.Performative != core.ACCEPT_PROPOSAL && env.Performative != core.CFP && env.Performative != core.REQUEST {
+	if env.Performative != core.REQUEST {
 		return nil
 	}
 

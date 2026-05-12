@@ -3,7 +3,6 @@ package workers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -13,17 +12,17 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/workflows"
 )
 
-// allowedQueries acts as the strict gatekeeper.
-// Every single query the frontend can execute MUST be defined here.
-// Always use parameterized inputs ($1, $2) and strictly define SELECT columns (no *).
-var allowedQueries = map[string]string{
-	"get_bank_accounts":        "SELECT name FROM shadow_erp.accounts WHERE active = true AND account_type IN ('Bank', 'Credit Card');",
-	"get_credit_card_accounts": "SELECT name FROM shadow_erp.accounts WHERE active = true AND account_type IN ('Credit Card');",
-	"get_checking_accounts":    "SELECT name FROM shadow_erp.accounts WHERE active = true AND account_type IN ('Bank');",
+type SQLWorker struct {
+	pool   *pgxpool.Pool
+	db     database.Querier // Add this field
+	nc     *nats.Conn
+	logger *slog.Logger
+	cfg    *config.Config
 }
 
 // SQLWorkerPayload defines the highly restricted JSON payload from the Wails frontend.
@@ -46,17 +45,10 @@ func init() {
 	})
 }
 
-// SQLWorker provides an isolated environment for executing pre-approved SQL queries.
-type SQLWorker struct {
-	pool   *pgxpool.Pool
-	nc     *nats.Conn
-	logger *slog.Logger
-	cfg    *config.Config
-}
-
 func NewSQLWorker(pool *pgxpool.Pool, nc *nats.Conn, logger *slog.Logger, cfg *config.Config) (*SQLWorker, error) {
 	return &SQLWorker{
 		pool:   pool,
+		db:     database.New(pool),
 		nc:     nc,
 		logger: logger,
 		cfg:    cfg,
@@ -104,6 +96,8 @@ func (w *SQLWorker) Subscriptions() []SubscriptionConfig {
 }
 
 func (w *SQLWorker) Handle(ctx context.Context, msg *nats.Msg) error {
+	w.logger.Info("SQL worker received message", "subject", msg.Subject, "len", len(msg.Data))
+
 	// 1. Poison pill guard
 	meta, metaErr := msg.Metadata()
 	if metaErr == nil && meta.NumDelivered > 3 {
@@ -117,6 +111,11 @@ func (w *SQLWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	var env core.Envelope
 	convID := ""
 	if err := json.Unmarshal(data, &env); err == nil && len(env.Body) > 0 {
+		if env.Performative != core.REQUEST {
+			w.logger.Warn("sql worker: dropping message, perf mismatch", "perf_val", env.Performative)
+			msg.Term()
+			return nil
+		}
 		data = env.Body
 		convID = env.ConversationID
 	}
@@ -135,32 +134,65 @@ func (w *SQLWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return nil
 	}
 
-	// 4. SECURITY: Query Allowlist Lookup
-	sqlQuery, exists := allowedQueries[payload.QueryID]
-	if !exists {
-		w.logger.Warn("security violation: rejected unknown query_id", "query_id", payload.QueryID, "subject", msg.Subject)
+	// 4. SECURITY: Dispatch with Read-Only transaction enforcement
+	w.logger.Info("Executing SQL query via sqlc", "query_id", payload.QueryID)
 
-		result := SQLWorkerResult{Success: false, Error: "unauthorized query intent"}
-		w.sendResult(msg, result, convID, payload.ReturnSubject)
+	tx, err := w.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		w.logger.Error("failed to begin read-only transaction", "error", err)
+		return w.sendResult(msg, SQLWorkerResult{Success: false, Error: "database error"}, convID, payload.ReturnSubject)
+	}
+	defer tx.Rollback(ctx)
 
-		msg.Term() // Malicious or outdated client, do not retry
-		return nil
+	q := database.New(tx)
+	var result SQLWorkerResult
+
+	switch payload.QueryID {
+	case "get_bank_accounts":
+		res, err := q.GetBankAccounts(ctx)
+		result = w.wrapResult(res, err)
+	case "get_credit_card_accounts":
+		res, err := q.GetCreditCardAccounts(ctx)
+		result = w.wrapResult(res, err)
+	case "get_checking_accounts":
+		res, err := q.GetCheckingAccounts(ctx)
+		result = w.wrapResult(res, err)
+	default:
+		w.logger.Warn("security violation: rejected unknown query_id", "query_id", payload.QueryID)
+		result = SQLWorkerResult{Success: false, Error: "unauthorized query intent"}
 	}
 
-	// 5. Execute pre-approved query with arguments
-	result := w.executeQuery(ctx, sqlQuery, payload.Args)
-
-	// 6. Publish Result
+	// 5. Publish Result
 	if err := w.sendResult(msg, result, convID, payload.ReturnSubject); err != nil {
-		return err // sendResult handles Nak
+		return err
 	}
 
 	msg.Ack()
 	return nil
 }
 
+func (w *SQLWorker) wrapResult(names []string, err error) SQLWorkerResult {
+	if err != nil {
+		return SQLWorkerResult{Success: false, Error: err.Error()}
+	}
+
+	// Maintain compatibility: frontend expects [ { "name": "..." }, ... ]
+	rows := make([]map[string]string, 0, len(names))
+	for _, name := range names {
+		rows = append(rows, map[string]string{"name": name})
+	}
+
+	data, _ := json.Marshal(rows)
+	if len(rows) == 0 {
+		data = []byte(`[]`)
+	}
+
+	return SQLWorkerResult{Success: true, Data: data}
+}
+
 func (w *SQLWorker) sendResult(msg *nats.Msg, result SQLWorkerResult, convID string, returnSubject string) error {
-	if convID != "" {
+	// Only publish completion proof to Orchestrator if it's part of a workflow (no explicit return subject)
+	if convID != "" && returnSubject == "" {
 		if err := w.publishCompletionProof(result, convID); err != nil {
 			w.logger.Error("failed to publish completion proof", "error", err)
 			msg.Nak()
@@ -186,75 +218,11 @@ func (w *SQLWorker) sendResult(msg *nats.Msg, result SQLWorkerResult, convID str
 			msg.Nak()
 			return err
 		}
+		w.logger.Info("Published SQL result to return subject", "target", targetSubject, "res_len", len(resBytes))
 	}
 	return nil
 }
 
-func (w *SQLWorker) executeQuery(ctx context.Context, query string, args []any) SQLWorkerResult {
-	var result SQLWorkerResult
-
-	// SECURITY: Defense-in-depth to guarantee read-only behavior regardless of the allowlist
-	tx, err := w.pool.BeginTx(ctx, pgx.TxOptions{
-		AccessMode: pgx.ReadOnly,
-	})
-	if err != nil {
-		w.logger.Error("failed to begin read-only transaction", "error", err)
-		result.Success = false
-		result.Error = fmt.Sprintf("database error: %v", err)
-		return result
-	}
-	defer tx.Rollback(ctx)
-
-	// Pass args safely to the Postgres driver
-	rows, err := tx.Query(ctx, query, args...)
-	if err != nil {
-		w.logger.Error("sql query execution failed", "error", err)
-		result.Success = false
-		result.Error = err.Error()
-		return result
-	}
-	defer rows.Close()
-
-	fieldDescriptions := rows.FieldDescriptions()
-	cols := make([]string, len(fieldDescriptions))
-	for i, fd := range fieldDescriptions {
-		cols[i] = string(fd.Name)
-	}
-
-	var allRows []map[string]any
-	for rows.Next() {
-		values, err := rows.Values()
-		if err != nil {
-			w.logger.Error("failed to get row values", "error", err)
-			continue
-		}
-
-		m := make(map[string]any)
-		for i, colName := range cols {
-			val := values[i]
-			if b, ok := val.([]byte); ok {
-				m[colName] = string(b)
-			} else {
-				m[colName] = val
-			}
-		}
-		allRows = append(allRows, m)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		w.logger.Warn("failed to commit read-only transaction", "error", err)
-	}
-
-	result.Success = true
-	if len(allRows) > 0 {
-		b, _ := json.Marshal(allRows)
-		result.Data = b
-	} else {
-		result.Data = []byte(`[]`)
-	}
-
-	return result
-}
 
 func (w *SQLWorker) publishCompletionProof(result SQLWorkerResult, cid string) error {
 	resultBytes, err := json.Marshal(result)

@@ -3,23 +3,34 @@
 -- =========================================================================
 
 -- name: CreateCleanupSession :one
-INSERT INTO fignode.staging_sessions (realm_id, created_by, file_name, row_count, status)
-VALUES (sqlc.narg('realm_id'), $1, $2, $3, 'PENDING')
-RETURNING id, realm_id, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at;
+INSERT INTO fignode.staging_sessions (realm_id, bank_account_id, kind, created_by, file_name, row_count, status)
+VALUES (sqlc.narg('realm_id'), sqlc.narg('bank_account_id'), 'CSV', $1, $2, $3, 'PENDING')
+RETURNING id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at;
 
 -- name: GetCleanupSession :one
-SELECT id, realm_id, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
+SELECT id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
 FROM fignode.staging_sessions
 WHERE id = $1;
 
 -- name: ListCleanupSessions :many
--- Returns sessions for a realm (when realm_id is provided) OR sessions created by a user
--- (when realm_id is NULL). Exactly one of the two filters will be non-null per call.
-SELECT id, realm_id, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
+-- Returns CSV sessions for a realm (when realm_id is provided) OR CSV sessions created by a user
+-- (when realm_id is NULL). Excludes SYSTEM/PLAID sessions which are not user-facing.
+SELECT id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
 FROM fignode.staging_sessions
-WHERE (sqlc.narg('realm_id')::TEXT IS NULL OR realm_id = sqlc.narg('realm_id')::TEXT)
+WHERE kind = 'CSV'
+  AND (sqlc.narg('realm_id')::TEXT IS NULL OR realm_id = sqlc.narg('realm_id')::TEXT)
   AND (sqlc.narg('created_by')::UUID IS NULL OR created_by = sqlc.narg('created_by')::UUID)
 ORDER BY created_at DESC;
+
+-- name: GetOrCreateSystemSession :one
+-- Returns the SYSTEM session for a given realm, creating it if it does not exist.
+-- Used by non-CSV transaction stagers (rule engine, Plaid webhooks) to satisfy the
+-- session_id linkage now that realm_id has been removed from staging_transactions.
+INSERT INTO fignode.staging_sessions (realm_id, kind, status)
+VALUES ($1, 'SYSTEM', 'ACTIVE')
+ON CONFLICT (realm_id) WHERE kind = 'SYSTEM' AND realm_id IS NOT NULL
+DO UPDATE SET updated_at = NOW()
+RETURNING id;
 
 -- name: UpdateCleanupSessionStatus :exec
 UPDATE fignode.staging_sessions
@@ -36,32 +47,37 @@ UPDATE fignode.staging_sessions
 SET row_count = $2, updated_at = NOW()
 WHERE id = $1;
 
+-- name: UpdateCleanupSessionBankAccount :exec
+UPDATE fignode.staging_sessions
+SET bank_account_id = $2, updated_at = NOW()
+WHERE id = $1;
+
 -- name: InsertCleanupRow :one
 INSERT INTO fignode.staging_transactions (
-    session_id, row_index, realm_id, source_type, raw_description, raw_amount, raw_date, status,
+    session_id, row_index, source_type, raw_description, raw_amount, raw_date, status,
     predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name,
     confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
     human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id,
-    erp_transaction_id, error_message, plaid_transaction_id, bank_account_id,
-    merchant_name, logo_url, plaid_category, is_pending
+    erp_transaction_id, error_message, transaction_id, pending_transaction_id,
+    merchant_name, logo_url, category, is_pending
 )
 VALUES (
-    $1, sqlc.narg('row_index'), sqlc.narg('realm_id'), $2, $3, $4, $5, COALESCE(sqlc.narg('status'), 'PENDING'),
+    $1, sqlc.narg('row_index'), $2, $3, $4, $5, COALESCE(sqlc.narg('status'), 'PENDING'),
     sqlc.narg('predicted_vendor_id'), sqlc.narg('predicted_vendor_name'), sqlc.narg('predicted_customer_id'), sqlc.narg('predicted_customer_name'), sqlc.narg('predicted_account_id'), sqlc.narg('predicted_account_name'),
     sqlc.narg('confidence_score'), sqlc.narg('ai_reasoning'), sqlc.narg('duplicate_of'), COALESCE(sqlc.narg('is_recurring'), FALSE), sqlc.narg('split_suggestion'),
     sqlc.narg('human_action'), sqlc.narg('swiped_by'), sqlc.narg('swiped_at'), sqlc.narg('override_vendor_id'), sqlc.narg('override_customer_id'), sqlc.narg('override_account_id'),
-    sqlc.narg('erp_transaction_id'), sqlc.narg('error_message'), sqlc.narg('plaid_transaction_id'), sqlc.narg('bank_account_id'),
-    sqlc.narg('merchant_name'), sqlc.narg('logo_url'), sqlc.narg('plaid_category'), COALESCE(sqlc.narg('is_pending'), FALSE)
+    sqlc.narg('erp_transaction_id'), sqlc.narg('error_message'), sqlc.narg('transaction_id'), sqlc.narg('pending_transaction_id'),
+    sqlc.narg('merchant_name'), sqlc.narg('logo_url'), sqlc.narg('category'), COALESCE(sqlc.narg('is_pending'), FALSE)
 )
 RETURNING id;
 
 -- name: GetPendingSessionRows :many
-SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
-       cs.merchant_name, cs.plaid_category,
+       cs.merchant_name, cs.category,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
        COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
        COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
@@ -71,6 +87,7 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        oc.display_name AS override_customer_name,
        oa.name         AS override_account_name
 FROM fignode.staging_transactions cs
+LEFT JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
 LEFT JOIN shadow_erp.vendors  v  ON v.id  = cs.predicted_vendor_id
 LEFT JOIN shadow_erp.customers c ON c.id  = cs.predicted_customer_id
 LEFT JOIN shadow_erp.accounts a  ON a.id  = cs.predicted_account_id
@@ -81,12 +98,12 @@ WHERE cs.session_id = $1 AND cs.status = 'PENDING'
 ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC;
 
 -- name: GetPendingRealmRows :many
-SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
-       cs.merchant_name, cs.plaid_category,
+       cs.merchant_name, cs.category,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
        COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
        COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
@@ -96,23 +113,24 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        oc.display_name AS override_customer_name,
        oa.name         AS override_account_name
 FROM fignode.staging_transactions cs
+JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
 LEFT JOIN shadow_erp.vendors  v  ON v.id  = cs.predicted_vendor_id
 LEFT JOIN shadow_erp.customers c ON c.id  = cs.predicted_customer_id
 LEFT JOIN shadow_erp.accounts a  ON a.id  = cs.predicted_account_id
 LEFT JOIN shadow_erp.vendors  ov ON ov.id = cs.override_vendor_id
 LEFT JOIN shadow_erp.customers oc ON oc.id = cs.override_customer_id
 LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
-WHERE cs.realm_id = $1 AND cs.status = 'PENDING'
+WHERE ss.realm_id = $1 AND cs.status = 'PENDING'
 ORDER BY cs.raw_date ASC NULLS LAST
 LIMIT $2;
 
 -- name: GetSessionRows :many
-SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
-       cs.merchant_name, cs.plaid_category,
+       cs.merchant_name, cs.category,
        cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
        COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
        COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
@@ -122,6 +140,7 @@ SELECT cs.id, cs.session_id, cs.realm_id, cs.source_type, cs.raw_description, cs
        oc.display_name AS override_customer_name,
        oa.name         AS override_account_name
 FROM fignode.staging_transactions cs
+LEFT JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
 LEFT JOIN shadow_erp.vendors  v  ON v.id  = cs.predicted_vendor_id
 LEFT JOIN shadow_erp.customers c ON c.id  = cs.predicted_customer_id
 LEFT JOIN shadow_erp.accounts a  ON a.id  = cs.predicted_account_id
@@ -133,15 +152,16 @@ WHERE cs.session_id = $1
 ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC;
 
 -- name: GetCleanupRow :one
-SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date,
-       predicted_vendor_id, predicted_customer_id, predicted_account_id,
-       confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
-       override_vendor_id, override_customer_id, override_account_id, 
-       merchant_name, plaid_category,
-       status, erp_transaction_id,
-       created_at, updated_at
-FROM fignode.staging_transactions
-WHERE id = $1;
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+       cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
+       cs.confidence_score, cs.ai_reasoning, cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
+       cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
+       cs.merchant_name, cs.category,
+       cs.status, cs.erp_transaction_id,
+       cs.created_at, cs.updated_at
+FROM fignode.staging_transactions cs
+LEFT JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
+WHERE cs.id = $1;
 
 -- name: UpdateRowEnrichment :exec
 UPDATE fignode.staging_transactions
@@ -158,20 +178,25 @@ SET
     is_recurring            = $11,
     split_suggestion        = $12,
     merchant_name           = $13,
-    plaid_category          = $14,
+    category                = $14,
     status                  = 'ENRICHED',
     updated_at              = NOW()
 WHERE id = $1;
 
 -- name: ApproveCleanupRow :one
-UPDATE fignode.staging_transactions
-SET status = 'APPROVED', updated_at = NOW()
-WHERE id = $1
-RETURNING id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date,
-          predicted_vendor_id, predicted_customer_id, predicted_account_id,
-          confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
-          override_vendor_id, override_customer_id, override_account_id, status, erp_transaction_id,
-          created_at, updated_at;
+WITH updated AS (
+    UPDATE fignode.staging_transactions
+    SET status = 'APPROVED', updated_at = NOW()
+    WHERE fignode.staging_transactions.id = $1
+    RETURNING *
+)
+SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
+        updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
+        updated.confidence_score, updated.ai_reasoning, updated.duplicate_of, updated.is_recurring, updated.split_suggestion,
+        updated.override_vendor_id, updated.override_customer_id, updated.override_account_id, updated.status, updated.erp_transaction_id,
+        updated.created_at, updated.updated_at
+FROM updated
+LEFT JOIN fignode.staging_sessions ss ON ss.id = updated.session_id;
 
 -- name: RejectCleanupRow :exec
 UPDATE fignode.staging_transactions
@@ -179,19 +204,24 @@ SET status = 'REJECTED', updated_at = NOW()
 WHERE id = $1;
 
 -- name: OverrideCleanupRow :one
-UPDATE fignode.staging_transactions
-SET
-    override_vendor_id   = sqlc.narg('override_vendor_id'),
-    override_customer_id = sqlc.narg('override_customer_id'),
-    override_account_id  = sqlc.narg('override_account_id'),
-    status               = 'APPROVED',
-    updated_at           = NOW()
-WHERE id = $1
-RETURNING id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date,
-          predicted_vendor_id, predicted_customer_id, predicted_account_id,
-          confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
-          override_vendor_id, override_customer_id, override_account_id, status, erp_transaction_id,
-          created_at, updated_at;
+WITH updated AS (
+    UPDATE fignode.staging_transactions
+    SET
+        override_vendor_id   = sqlc.narg('override_vendor_id'),
+        override_customer_id = sqlc.narg('override_customer_id'),
+        override_account_id  = sqlc.narg('override_account_id'),
+        status               = 'APPROVED',
+        updated_at           = NOW()
+    WHERE fignode.staging_transactions.id = $1
+    RETURNING *
+)
+SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
+        updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
+        updated.confidence_score, updated.ai_reasoning, updated.duplicate_of, updated.is_recurring, updated.split_suggestion,
+        updated.override_vendor_id, updated.override_customer_id, updated.override_account_id, updated.status, updated.erp_transaction_id,
+        updated.created_at, updated.updated_at
+FROM updated
+LEFT JOIN fignode.staging_sessions ss ON ss.id = updated.session_id;
 
 -- name: BulkApproveByVendor :many
 UPDATE fignode.staging_transactions
@@ -202,14 +232,15 @@ WHERE session_id = $1
 RETURNING id;
 
 -- name: GetApprovedRows :many
-SELECT id, session_id, realm_id, source_type, raw_description, raw_amount, raw_date,
-       predicted_vendor_id, predicted_customer_id, predicted_account_id,
-       confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
-       override_vendor_id, override_customer_id, override_account_id, status, erp_transaction_id,
-       created_at, updated_at
-FROM fignode.staging_transactions
-WHERE session_id = $1 AND status = 'APPROVED'
-ORDER BY raw_date ASC NULLS LAST, id ASC;
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+       cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
+       cs.confidence_score, cs.ai_reasoning, cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
+       cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.status, cs.erp_transaction_id,
+       cs.created_at, cs.updated_at
+FROM fignode.staging_transactions cs
+LEFT JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
+WHERE cs.session_id = $1 AND cs.status = 'APPROVED'
+ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC;
 
 -- name: MarkRowPosted :exec
 UPDATE fignode.staging_transactions
@@ -238,3 +269,13 @@ WHERE realm_id = $1
   AND correction_type = $3
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- name: GetRealmIDFromEntity :one
+SELECT erp_tenant_id 
+FROM toro_core.entities 
+WHERE id = $1 AND erp_provider = 'qbo';
+
+-- name: GetRealmIDFromSession :one
+SELECT realm_id 
+FROM fignode.staging_sessions 
+WHERE id = $1;

@@ -230,12 +230,11 @@ type LLMColumnMapping struct {
 	VendorColIdx      *int    `json:"vendor_col_idx"`
 	CustomerColIdx    *int    `json:"customer_col_idx"`
 	CustomColIdx      *int    `json:"custom_col_idx"`
-	IsExpensePositive bool    `json:"is_expense_positive"`
 	ConfidenceScore   float64 `json:"confidence_score"`
 	IsAmbiguous       bool    `json:"is_ambiguous"`
 	AmbiguityReason   string  `json:"ambiguity_reason"`
 	PolaritySign      string  `json:"polarity_sign"`
-	Reasoning         string  `json:"reasoning"`
+	SourceAccount     string  `json:"source_account"`
 }
 
 type CSVMappingTaskPayload struct {
@@ -259,9 +258,6 @@ type CSVMappingAgent struct {
 	RT      *agent.Runtime
 	Queries *database.Queries
 }
-
-// defaultMappingSchema preserves legacy behaviour when no workflow-scoped schema is provided.
-const defaultMappingSchema = `{"type": "object", "properties": {"status": {"type": "string"}, "mapped_rows": {"type": "object"}}}`
 
 const AgentName = "csv-mapping-agent"
 
@@ -296,7 +292,7 @@ func NewAgent(env core.Environment) core.Runnable {
 				msg.Term()
 				return
 			}
-			
+
 			// Parse original envelope again to reply gracefully
 			var origEnv core.Envelope
 			if envErr := json.Unmarshal(msg.Data, &origEnv); envErr == nil {
@@ -362,7 +358,7 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		a.Logger.Error("Failed to parse task payload", "error", err)
 	}
 
-	a.Logger.Info("🧠 [DEBUG] csv_mapping executeTask started", 
+	a.Logger.Info("🧠 [DEBUG] csv_mapping executeTask started",
 		"session_id", payload.SessionID,
 		"realm_id", payload.RealmID,
 		"input_rows", len(payload.Rows),
@@ -396,15 +392,12 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 	if strings.TrimSpace(schema) == "" {
 		schema = a.Cfg.WorkflowSchema
 	}
-	if strings.TrimSpace(schema) == "" {
-		schema = defaultMappingSchema
-	}
 
 	wfCfg := agent.WorkflowConfig{
 		SchemaString: schema,
 		RBAC: redux.RBACPolicy{
 			AllowedPrefixes: map[string][]string{
-				a.Cfg.DID: {"/status", "/mapped_rows", "/is_ambiguous", "/ambiguity_reason", "/polarity_sign"},
+				a.Cfg.DID: task.RBACPolicy,
 			},
 		},
 	}
@@ -420,34 +413,47 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		_ = json.Unmarshal(baseState, &stateObj)
 		var patches []json.RawMessage
 
+		// Optimistic Concurrency Control (OCC)
 		if statusVal, exists := stateObj["status"]; exists {
 			b, _ := json.Marshal(statusVal)
 			patches = append(patches, []byte(fmt.Sprintf(`{"op": "test", "path": "/status", "value": %s}`, string(b))))
 		}
 
-		mapping, err := a.MapRowsUsingLLM(context.Background(), payload.Rows)
+		llmPatches, err := a.MapRowsUsingLLM(context.Background(), task, payload.Rows)
 		if err != nil {
 			return nil, err
 		}
-		ApplyStructuralAmbiguityFallback(payload.Rows, mapping)
 
-		a.Logger.Info("🧠 [DEBUG] LLM Mapping Result", 
-			"is_ambiguous", mapping.IsAmbiguous,
-			"polarity_sign", mapping.PolaritySign,
-			"reasoning", mapping.Reasoning,
-		)
+		a.Logger.Info("🧠 [DEBUG] LLM Patches Result", "patch_count", len(llmPatches))
+
+		// Find /columns_mapped patch to run ParseRows
+		var mapping *LLMColumnMapping
+		for _, p := range llmPatches {
+			var patchObj struct {
+				Path  string          `json:"path"`
+				Value json.RawMessage `json:"value"`
+			}
+			if err := json.Unmarshal(p, &patchObj); err == nil {
+				if patchObj.Path == "/columns_mapped" {
+					mapping = &LLMColumnMapping{}
+					if err := json.Unmarshal(patchObj.Value, mapping); err != nil {
+						return nil, fmt.Errorf("failed to parse /columns_mapped value: %w", err)
+					}
+					break
+				}
+			}
+		}
+
+		if mapping == nil {
+			return nil, fmt.Errorf("LLM did not provide a /columns_mapped patch")
+		}
 
 		finalRows := ParseRows(payload, mapping)
 		finalRowsJSON, _ := json.Marshal(finalRows)
+		mappedRowsPatch := []byte(fmt.Sprintf(`{"op": "add", "path": "/mapped_rows", "value": %s}`, string(finalRowsJSON)))
 
-		patch1 := `{"op": "add", "path": "/status", "value": "COLUMNS_MAPPED"}`
-		patch2 := fmt.Sprintf(`{"op": "add", "path": "/mapped_rows", "value": %s}`, string(finalRowsJSON))
-		patch3 := fmt.Sprintf(`{"op": "add", "path": "/is_ambiguous", "value": %t}`, mapping.IsAmbiguous)
-		escapedReason := strings.ReplaceAll(mapping.AmbiguityReason, `"`, `\"`)
-		patch4 := fmt.Sprintf(`{"op": "add", "path": "/ambiguity_reason", "value": "%s"}`, escapedReason)
-		patch5 := fmt.Sprintf(`{"op": "add", "path": "/polarity_sign", "value": "%s"}`, mapping.PolaritySign)
-
-		patches = append(patches, []byte(patch1), []byte(patch2), []byte(patch3), []byte(patch4), []byte(patch5))
+		patches = append(patches, llmPatches...)
+		patches = append(patches, mappedRowsPatch)
 
 		return patches, nil
 	}
@@ -539,27 +545,38 @@ func ParseRows(payload CSVMappingTaskPayload, mapping *LLMColumnMapping) map[str
 	return finalRows
 }
 
-func (a *CSVMappingAgent) MapRowsUsingLLM(ctx context.Context, task core.TaskDefinition, rows [][]string) (*LLMColumnMapping, error) {
+func (a *CSVMappingAgent) MapRowsUsingLLM(ctx context.Context, task core.TaskDefinition, rows [][]string) ([]json.RawMessage, error) {
 	prompt := BuildUserPrompt(rows)
 
 	respText, err := a.RT.ExecWithPaging(ctx, prompt, task.SystemPrompt, nil, nil)
+	a.Logger.Info("🧠 [DEBUG] LLM Mapping Response Received",
+		"workflow_id", task.ID,
+		"response", respText,
+		"error", err,
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	return ExtractJSONToMapping(respText)
+	return ExtractJSONPatches(respText)
 }
 
-func ExtractJSONToMapping(respText string) (*LLMColumnMapping, error) {
-	firstIdx := strings.Index(respText, "{")
-	lastIdx := strings.LastIndex(respText, "}")
-	if firstIdx != -1 && lastIdx != -1 && lastIdx > firstIdx {
-		respText = respText[firstIdx : lastIdx+1]
+func ExtractJSONPatches(respText string) ([]json.RawMessage, error) {
+	firstIdx := strings.Index(respText, "[")
+	lastIdx := strings.LastIndex(respText, "]")
+
+	if firstIdx == -1 || lastIdx == -1 || lastIdx <= firstIdx {
+		return nil, fmt.Errorf("no valid JSON array found in LLM response (first=[ at %d, last=] at %d)", firstIdx, lastIdx)
 	}
 
-	var mapping LLMColumnMapping
-	err := json.Unmarshal([]byte(respText), &mapping)
-	return &mapping, err
+	extracted := strings.TrimSpace(respText[firstIdx : lastIdx+1])
+
+	var patches []json.RawMessage
+	if err := json.Unmarshal([]byte(extracted), &patches); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal extracted JSON array: %w", err)
+	}
+
+	return patches, nil
 }
 
 func fieldAt(rec []string, idx int) string {
@@ -572,53 +589,6 @@ func fieldAt(rec []string, idx int) string {
 func cleanArtifacts(val string) string {
 	cleaned := strings.ReplaceAll(val, "*", "")
 	return strings.TrimSpace(cleaned)
-}
-
-func ApplyStructuralAmbiguityFallback(rows [][]string, mapping *LLMColumnMapping) {
-	if mapping == nil || mapping.IsSplitAmount {
-		return
-	}
-
-	amountIdx, ok := resolveAmountColumnIndex(rows, mapping)
-	if !ok {
-		return
-	}
-
-	hasAmountValue := false
-	hasMinusSign := false
-	hasBrackets := false
-
-	for i := 1; i < len(rows); i++ { // Skip header row
-		val := cleanArtifacts(fieldAt(rows[i], amountIdx))
-		if val == "" {
-			continue
-		}
-
-		hasAmountValue = true
-		if strings.Contains(val, "-") {
-			hasMinusSign = true
-		}
-		if strings.Contains(val, "(") && strings.Contains(val, ")") {
-			hasBrackets = true
-		}
-
-		if hasMinusSign || hasBrackets {
-			return
-		}
-	}
-
-	if !hasAmountValue {
-		return
-	}
-
-	mapping.IsAmbiguous = true
-	if mapping.AmountColIdx == nil {
-		mapping.AmountColIdx = &amountIdx
-	}
-	if strings.TrimSpace(mapping.AmbiguityReason) == "" {
-		mapping.AmbiguityReason = "structural ambiguity: single amount column has no polarity indicators"
-	}
-	mapping.PolaritySign = "none"
 }
 
 func resolveAmountColumnIndex(rows [][]string, mapping *LLMColumnMapping) (int, bool) {
@@ -748,14 +718,18 @@ func BuildUserPrompt(rows [][]string) string {
 	sb.WriteString("3. Set `amount_col_idx` to null (or -1 if strictly required by the schema, but null is preferred).\n\n")
 	sb.WriteString("NULL HANDLING: For any optional field (debit, credit, vendor, customer, custom) that is NOT present, you MUST set its index to `null` in the JSON response. Do NOT use 0 as a placeholder for null.\n\n")
 	sb.WriteString("AMBIGUITY (Polarity): The data is AMBIGUOUS if the numeric columns lack clear indicators (minus signs, brackets, or separate Debit/Credit columns). This happens even if a 'Category' or 'Type' column exists.\n")
-	sb.WriteString("1. Mark `is_ambiguous: true` if there is only a single 'Amount' column with NO minus signs '-' and NO parentheses '()'.\n")
-	sb.WriteString("2. Typical inflows (Refunds, Deposits, Zelle from, Tax Ref) and typical outflows (Uber, Starbucks, Rent, Fees) appear with the same sign/direction.\n")
+	sb.WriteString("Mark `is_ambiguous: true` if there is only a single 'Amount' column with NO minus signs '-' and NO parentheses '()'.\n")
 	sb.WriteString("CRITICAL: Ignore 'Category', 'Status', or 'Account' columns when determining structural ambiguity. If the numbers themselves are all positive without a separate 'Type' signifier, it is AMBIGUOUS.\n")
 	sb.WriteString("If this occurs, set `is_ambiguous` to true and explain it in `ambiguity_reason` (e.g., 'structural ambiguity: all amounts are positive without polarity indicators').\n\n")
+	sb.WriteString("DO NOT USE DISCRIPTION TO DETERMINE AMBIGUITY. YOU MUST STRICTLY USE THE NUMBERS SIGNS, PARENTHESES, OR DEBIT/CREDIT COLUMNS.\n")
 	sb.WriteString("POLARITY SIGN: Determine how expenses/outflows are indicated. Set `polarity_sign` to one of:\n")
 	sb.WriteString("- `minus`: Expenses have a negative sign (e.g., -10.00).\n")
 	sb.WriteString("- `brackets`: Expenses are in parentheses (e.g., (10.00)).\n")
 	sb.WriteString("- `none`: There are no indicators (all numbers are positive).\n\n")
+	sb.WriteString("- If polarity is none, then set `is_ambiguous` to true and explain it in `ambiguity_reason` (e.g., 'structural ambiguity: all amounts are positive without polarity indicators').\n\n")
+	sb.WriteString("If you can determine the source account (the bank or credit card used), set `source_account` to its name.\n\n")
+	sb.WriteString("If there's no bank account but you can clearly the csv is from Shopify or Stripe set the `source_account` to 'Shopify' or 'Stripe'.\n\n")
+
 	sb.WriteString("Sample Data (Up to 20 valid rows):\n")
 
 	var validRows int
@@ -826,7 +800,6 @@ Template:
         "vendor_col_idx": <int or null>,
         "customer_col_idx": <int or null>,
         "custom_col_idx": <int or null>,
-        "is_expense_positive": <bool>,
         "confidence_score": <float 0 to 1>,
         "is_ambiguous": <bool>,
         "ambiguity_reason": <string or null>,

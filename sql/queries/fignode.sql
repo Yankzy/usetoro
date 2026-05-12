@@ -244,6 +244,7 @@ LIMIT 10;
 -- =========================================================================
 
 -- name: GetInitialEnrichedTransactionsByRealm :many
-SELECT * FROM fignode.staging_transactions
-WHERE status = 'ENRICHED' AND realm_id = $1 AND duplicate_of IS NULL
-ORDER BY created_at DESC LIMIT 50;
+SELECT cs.* FROM fignode.staging_transactions cs
+JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
+WHERE cs.status = 'ENRICHED' AND ss.realm_id = $1 AND cs.duplicate_of IS NULL
+ORDER BY cs.created_at DESC LIMIT 50;

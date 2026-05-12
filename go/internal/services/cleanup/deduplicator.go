@@ -7,26 +7,26 @@ import (
 
 // EnrichedRow is an in-memory representation used during enrichment and dedup.
 type EnrichedRow struct {
-	ID                  string
-	SessionID           string
-	RealmID             string
-	RawDescription      string
-	RawAmount           float64
-	RawDate             time.Time
-	RawVendorName       string
-	RawCustomerName     string
-	PredictedVendorID   string // empty = unresolved
-	PredictedCustomerID string // empty = unresolved
-	PredictedAccountID  string // empty = unresolved
+	ID                   string
+	SessionID            string
+	RealmID              string
+	RawDescription       string
+	RawAmount            float64
+	RawDate              time.Time
+	RawVendorName        string
+	RawCustomerName      string
+	PredictedVendorID    string // empty = unresolved
+	PredictedCustomerID  string // empty = unresolved
+	PredictedAccountID   string // empty = unresolved
 	PredictedAccountName string
-	NormalizedVendor    string
-	NormalizedCustomer  string
-	MerchantName        string
-	PlaidCategory       string
-	ConfidenceScore     float64
-	AIReasoning         string
-	IsRecurring         bool
-	SplitSuggestion     []SplitLine
+	NormalizedVendor     string
+	NormalizedCustomer   string
+	MerchantName         string
+	Category             string
+	ConfidenceScore      float64
+	AIReasoning          string
+	IsRecurring          bool
+	SplitSuggestion      []SplitLine
 	// Set by dedup pass:
 	DuplicateOf string // ID of the canonical row, empty if not a duplicate
 }

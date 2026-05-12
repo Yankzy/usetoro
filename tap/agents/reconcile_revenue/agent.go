@@ -204,7 +204,7 @@ func (e *RevenueReconciliationAgent) handleEnrichmentProof(ctx context.Context, 
 				isRecurring:   row.IsRecurring,
 				split:         row.SplitSuggestion,
 				merchantName:  row.MerchantName,
-				plaidCategory: row.PlaidCategory,
+				plaidCategory: row.Category,
 			}
 			return nil
 		})
@@ -230,7 +230,7 @@ func (e *RevenueReconciliationAgent) handleEnrichmentProof(ctx context.Context, 
 			IsRecurring:           er.isRecurring,
 			SplitSuggestion:       er.split,
 			MerchantName:          er.merchantName,
-			PlaidCategory:         er.plaidCategory,
+			Category:              er.plaidCategory,
 		})
 		if err != nil {
 			e.Logger.Error("revenue reconcile: persist row failed", "err", err)

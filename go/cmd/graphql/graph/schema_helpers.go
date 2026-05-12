@@ -226,19 +226,52 @@ func mapSessionToModel(s database.FignodeStagingSession) *model.FignodeSession {
 	return out
 }
 
-func mapListCleanupSessionsRowToModel(s database.FignodeStagingSession) *model.FignodeSession {
-	return mapSessionToModel(s)
-}
-
-func mapGetCleanupSessionRowToModel(s database.FignodeStagingSession) *model.FignodeSession {
-	return mapSessionToModel(s)
-}
-
-func mapStagingRowToModel(r database.FignodeStagingTransaction) *model.FignodeStagingRow {
-	realmID := ""
-	if r.RealmID.Valid {
-		realmID = r.RealmID.String
+func mapListCleanupSessionsRowToModel(s database.ListCleanupSessionsRow) *model.FignodeSession {
+	out := &model.FignodeSession{
+		ID:          uuid.UUID(s.ID.Bytes).String(),
+		RowCount:    int32(s.RowCount),
+		IsAmbiguous: s.IsAmbiguous,
+		Status:      s.Status,
+		CreatedAt:   s.CreatedAt.Time,
+		UpdatedAt:   s.UpdatedAt.Time,
 	}
+	if s.RealmID.Valid {
+		out.RealmID = &s.RealmID.String
+	}
+	if s.FileName.Valid {
+		out.FileName = &s.FileName.String
+	}
+	if s.AmbiguityReason.Valid {
+		out.AmbiguityReason = &s.AmbiguityReason.String
+	}
+	return out
+}
+
+func mapGetCleanupSessionRowToModel(s database.GetCleanupSessionRow) *model.FignodeSession {
+	out := &model.FignodeSession{
+		ID:          uuid.UUID(s.ID.Bytes).String(),
+		RowCount:    int32(s.RowCount),
+		IsAmbiguous: s.IsAmbiguous,
+		Status:      s.Status,
+		CreatedAt:   s.CreatedAt.Time,
+		UpdatedAt:   s.UpdatedAt.Time,
+	}
+	if s.RealmID.Valid {
+		out.RealmID = &s.RealmID.String
+	}
+	if s.FileName.Valid {
+		out.FileName = &s.FileName.String
+	}
+	if s.AmbiguityReason.Valid {
+		out.AmbiguityReason = &s.AmbiguityReason.String
+	}
+	return out
+}
+
+// mapStagingRowToModel maps the bare FignodeStagingTransaction. RealmID is no
+// longer on the row — callers that need it should override out.RealmID after
+// calling, sourcing the value from the parent staging_session.
+func mapStagingRowToModel(r database.FignodeStagingTransaction) *model.FignodeStagingRow {
 	var sessionID *string
 	if r.SessionID.Valid {
 		sid := uuid.UUID(r.SessionID.Bytes).String()
@@ -247,7 +280,6 @@ func mapStagingRowToModel(r database.FignodeStagingTransaction) *model.FignodeSt
 	out := &model.FignodeStagingRow{
 		ID:          uuid.UUID(r.ID.Bytes).String(),
 		SessionID:   sessionID,
-		RealmID:     &realmID,
 		SourceType:  r.SourceType,
 		RawAmount:   parseDirtyStringAmount(r.RawAmount),
 		IsDuplicate: r.DuplicateOf.Valid,
@@ -838,7 +870,6 @@ func (r *mutationResolver) postCleanupSessionHelper(ctx context.Context, session
 			fignodeTx := database.FignodeStagingTransaction{
 				ID:                 row.ID,
 				SessionID:          row.SessionID,
-				RealmID:            row.RealmID,
 				RawDescription:     row.RawDescription,
 				RawAmount:          row.RawAmount,
 				RawDate:            row.RawDate,

@@ -173,7 +173,7 @@ func TestHandleGetQBOAuthURL(t *testing.T) {
 			host:       "localhost:8080",
 			qboConfig: &QBOConfig{
 				ClientID:     "test-client-id",
-				RedirectURIs: []string{"http://localhost:8080/auth/qbo/callback"},
+				RedirectURIs: []string{"http://localhost:8080/api/auth/qbo/callback"},
 				IsProduction: false,
 			},
 			expectedCode: http.StatusOK,
@@ -185,7 +185,7 @@ func TestHandleGetQBOAuthURL(t *testing.T) {
 			host:       "localhost:8080",
 			qboConfig: &QBOConfig{
 				ClientID:     "test-client-id",
-				RedirectURIs: []string{"http://localhost:8080/auth/qbo/callback"},
+				RedirectURIs: []string{"http://localhost:8080/api/auth/qbo/callback"},
 				IsProduction: false,
 			},
 			expectedCode: http.StatusUnauthorized,

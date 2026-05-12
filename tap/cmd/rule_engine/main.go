@@ -30,7 +30,7 @@ type editableMockTransaction struct {
 	RawAmount      string
 	RawDescription string
 	MerchantName   string
-	PlaidCategory  string
+	Category       string
 	SourceAccount  string // 🚨 NEW: To match the double-entry rule requirement
 }
 
@@ -39,28 +39,28 @@ var editableTransactions = []editableMockTransaction{
 		RawAmount:      "-68.17",
 		RawDescription: "Fuel and service stopper",
 		MerchantName:   "Chin's Gas and Oil",
-		PlaidCategory:  "General",
+		Category:       "General",
 		SourceAccount:  "Checking", // Should match Rule #1
 	},
 	{
 		RawAmount:      "-68.17",
 		RawDescription: "Fuel and service stopper",
 		MerchantName:   "Chin's Gas and Oil",
-		PlaidCategory:  "General",
+		Category:       "General",
 		SourceAccount:  "Mastercard", // Should match Rule #2
 	},
 	{
 		RawAmount:      "-142.40",
 		RawDescription: "Plants and landscaping supplies",
 		MerchantName:   "Tania's Nursery",
-		PlaidCategory:  "General",
+		Category:       "General",
 		SourceAccount:  "Checking", // Should match Rule #4
 	},
 	{
 		RawAmount:      "-33.50",
 		RawDescription: "Team lunch",
 		MerchantName:   "Bob's Burger Joint",
-		PlaidCategory:  "Food and Drink",
+		Category:       "Food and Drink",
 		SourceAccount:  "Checking", // Should match Rule #6
 	},
 }
@@ -165,6 +165,8 @@ type mockStagingStore struct {
 	logger       *slog.Logger
 	transactions []database.FignodeStagingTransaction
 	updates      []database.UpdateStagingTransactionWithRuleParams
+	realmID      string
+	sessionID    pgtype.UUID
 }
 
 func newMockStagingStore(logger *slog.Logger, sessionID pgtype.UUID, realmID string, count int) *mockStagingStore {
@@ -178,7 +180,7 @@ func newMockStagingStore(logger *slog.Logger, sessionID pgtype.UUID, realmID str
 	for i := 0; i < limit; i++ {
 		txns = append(txns, newMockTransaction(sessionID, realmID, source[i]))
 	}
-	return &mockStagingStore{logger: logger, transactions: txns}
+	return &mockStagingStore{logger: logger, transactions: txns, realmID: realmID, sessionID: sessionID}
 }
 
 // These methods satisfy the interface your Worker expects from `database.Queries`
@@ -196,17 +198,22 @@ func (s *mockStagingStore) UpdateStagingTransactionWithRule(ctx context.Context,
 	return nil
 }
 
+func (s *mockStagingStore) GetCleanupSession(ctx context.Context, id pgtype.UUID) (database.GetCleanupSessionRow, error) {
+	return database.GetCleanupSessionRow{
+		ID:      s.sessionID,
+		RealmID: pgtype.Text{String: s.realmID, Valid: s.realmID != ""},
+	}, nil
+}
+
 func newMockTransaction(sessionID pgtype.UUID, realmID string, tx editableMockTransaction) database.FignodeStagingTransaction {
 	return database.FignodeStagingTransaction{
 		ID:             randomUUID(),
 		SessionID:      sessionID,
-		RealmID:        pgtype.Text{String: realmID, Valid: true},
 		RawAmount:      tx.RawAmount,
 		RawDescription: pgtype.Text{String: tx.RawDescription, Valid: true},
 		RawDate:        pgtype.Date{Time: time.Now().UTC(), Valid: true},
 		MerchantName:   pgtype.Text{String: tx.MerchantName, Valid: true},
-		PlaidCategory:  pgtype.Text{String: tx.PlaidCategory, Valid: true},
-		BankAccountID:  pgtype.Text{String: tx.SourceAccount, Valid: true}, // Hijacking to pass the Account Name for the test
+		Category:       pgtype.Text{String: tx.Category, Valid: true},
 	}
 }
 

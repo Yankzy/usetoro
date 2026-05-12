@@ -420,11 +420,12 @@ WHERE realm_id = $1
 LIMIT 1;
 
 -- name: GetAmbiguousProposals :many
-SELECT * FROM fignode.staging_transactions
-WHERE realm_id = $1
-  AND confidence_score < $2
-  AND status = 'PENDING'
-ORDER BY created_at DESC;
+SELECT cs.* FROM fignode.staging_transactions cs
+JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
+WHERE ss.realm_id = $1
+  AND cs.confidence_score < $2
+  AND cs.status = 'PENDING'
+ORDER BY cs.created_at DESC;
 
 -- name: GetVendor :one
 SELECT * FROM shadow_erp.vendors
@@ -437,6 +438,14 @@ WHERE realm_id = $1 AND erp_id = $2;
 -- name: GetAccountByERPID :one
 SELECT * FROM shadow_erp.accounts
 WHERE realm_id = $1 AND erp_id = $2;
+
+-- name: GetAccountByName :one
+SELECT * FROM shadow_erp.accounts
+WHERE realm_id = $1 AND name = $2 
+  AND active = true 
+  AND account_type IN ('Bank', 'Credit Card')
+  AND deleted_at IS NULL
+LIMIT 1;
 
 -- name: GetCustomerByERPID :one
 SELECT * FROM shadow_erp.customers
@@ -517,16 +526,18 @@ WHERE i.realm_id = $1
 ORDER BY txn_date DESC, created_at DESC;
 
 -- name: GetProposedTransactionByValues :one
-SELECT * FROM fignode.staging_transactions
-WHERE realm_id = $1
-  AND predicted_vendor_id = $2
-  AND raw_date = $3
-  AND raw_amount = $4
+SELECT cs.* FROM fignode.staging_transactions cs
+JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
+WHERE ss.realm_id = $1
+  AND cs.predicted_vendor_id = $2
+  AND cs.raw_date = $3
+  AND cs.raw_amount = $4
 LIMIT 1;
 
 -- name: CreateProposedTransaction :one
+-- session_id must point at a per-realm SYSTEM session (see GetOrCreateSystemSession).
 INSERT INTO fignode.staging_transactions (
-    realm_id, source_type, raw_amount, raw_date, raw_description,
+    session_id, source_type, raw_amount, raw_date, raw_description,
     predicted_vendor_id, predicted_account_id, confidence_score,
     ai_reasoning, status, created_at, updated_at
 )
@@ -554,8 +565,10 @@ WHERE id = $1
 RETURNING *;
 
 -- name: UpsertStagingTransaction :exec
+-- $1 is the session_id (typically a SYSTEM session for the realm).
+-- $2 is realm_id, used only for the vendor/account lookups (joined via session at read time).
 INSERT INTO fignode.staging_transactions (
-    realm_id,
+    session_id,
     erp_transaction_id,
     source_type,
     raw_amount,
@@ -566,12 +579,12 @@ INSERT INTO fignode.staging_transactions (
     status
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6,
-    (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.erp_id = $7 AND shadow_erp.vendors.realm_id = $1),
-    (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.erp_id = $8 AND shadow_erp.accounts.realm_id = $1),
-    $9
+    $1, $3, $4, $5, $6, $7,
+    (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.erp_id = $8 AND shadow_erp.vendors.realm_id = $2),
+    (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.erp_id = $9 AND shadow_erp.accounts.realm_id = $2),
+    $10
 )
-ON CONFLICT (realm_id, erp_transaction_id) DO UPDATE SET
+ON CONFLICT (erp_transaction_id) WHERE erp_transaction_id IS NOT NULL DO UPDATE SET
     source_type = EXCLUDED.source_type,
     raw_amount = EXCLUDED.raw_amount,
     raw_date = EXCLUDED.raw_date,

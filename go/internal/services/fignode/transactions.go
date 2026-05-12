@@ -58,7 +58,7 @@ func (h *Handler) HandleGetTransactionsBatch(w http.ResponseWriter, r *http.Requ
 			ClientContext:     ClientContext{},
 			Amount:            amountVal,
 			Date:              dateStr,
-			AiSuggestion:      t.PlaidCategory.String,
+			AiSuggestion:      t.Category.String,
 			AiConfidence:      aiConf,
 			Status:            t.Status,
 			AccountType:       "Credit Card",

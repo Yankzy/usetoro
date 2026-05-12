@@ -6,9 +6,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestSwitch_SenderMode_Expression(t *testing.T) {
+func TestSwitch_RouterMode_Expression(t *testing.T) {
 	config := SwitchConfig{
-		NodeMode:       "sender",
+		NodeMode:       "router",
 		Mode:           "expression",
 		Output:         5,
 		FallbackOutput: -1,
@@ -40,9 +40,9 @@ func TestSwitch_SenderMode_Expression(t *testing.T) {
 	})
 }
 
-func TestSwitch_SenderMode_Rules_Boolean(t *testing.T) {
+func TestSwitch_RouterMode_Rules_Boolean(t *testing.T) {
 	config := SwitchConfig{
-		NodeMode:       "sender",
+		NodeMode:       "router",
 		Mode:           "rules",
 		DataType:       "boolean",
 		Value1Path:     "active",
@@ -73,9 +73,9 @@ func TestSwitch_SenderMode_Rules_Boolean(t *testing.T) {
 	}
 }
 
-func TestSwitch_SenderMode_Rules_Number(t *testing.T) {
+func TestSwitch_RouterMode_Rules_Number(t *testing.T) {
 	config := SwitchConfig{
-		NodeMode:       "sender",
+		NodeMode:       "router",
 		Mode:           "rules",
 		DataType:       "number",
 		Value1Path:     "amount",
@@ -109,7 +109,7 @@ func TestSwitch_SenderMode_Rules_Number(t *testing.T) {
 	}
 }
 
-func TestSwitch_SenderMode_Rules_String(t *testing.T) {
+func TestSwitch_RouterMode_Rules_String(t *testing.T) {
 	tests := []struct {
 		name      string
 		operation string
@@ -129,7 +129,7 @@ func TestSwitch_SenderMode_Rules_String(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			config := SwitchConfig{
-				NodeMode:       "sender",
+				NodeMode:       "router",
 				Mode:           "rules",
 				DataType:       "string",
 				Value1Path:     "name",
@@ -160,9 +160,9 @@ func TestSwitch_SenderMode_Rules_String(t *testing.T) {
 	}
 }
 
-func TestSwitch_SenderMode_Rules_DateTime(t *testing.T) {
+func TestSwitch_RouterMode_Rules_DateTime(t *testing.T) {
 	config := SwitchConfig{
-		NodeMode:       "sender",
+		NodeMode:       "router",
 		Mode:           "rules",
 		DataType:       "dateTime",
 		Value1Path:     "created_at",
@@ -188,9 +188,9 @@ func TestSwitch_SenderMode_Rules_DateTime(t *testing.T) {
 	}
 }
 
-func TestSwitch_SenderMode_Fallback(t *testing.T) {
+func TestSwitch_RouterMode_Fallback(t *testing.T) {
 	config := SwitchConfig{
-		NodeMode:       "sender",
+		NodeMode:       "router",
 		Mode:           "rules",
 		DataType:       "number",
 		Value1Path:     "val",
@@ -214,9 +214,9 @@ func TestSwitch_SenderMode_Fallback(t *testing.T) {
 	}
 }
 
-func TestSwitch_ReceiverMode(t *testing.T) {
+func TestSwitch_FilterMode(t *testing.T) {
 	config := SwitchConfig{
-		NodeMode:   "receiver",
+		NodeMode:   "filter",
 		RouteIndex: 1,
 	}
 
@@ -242,7 +242,7 @@ func TestSwitch_ReceiverMode(t *testing.T) {
 
 func TestSwitch_NestedPaths(t *testing.T) {
 	config := SwitchConfig{
-		NodeMode:       "sender",
+		NodeMode:       "router",
 		Mode:           "rules",
 		DataType:       "string",
 		Value1Path:     "user.profile.role",

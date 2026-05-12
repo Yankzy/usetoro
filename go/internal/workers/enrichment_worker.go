@@ -132,26 +132,18 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		return nil
 	}
 
-	if env.Performative != core.INFORM && env.Performative != core.ACCEPT_PROPOSAL {
+	if env.Performative != core.REQUEST {
 		return nil
 	}
 
 	bodyBytes := env.Body
 	var workflowID string
 
-	switch env.Performative {
-	case core.ACCEPT_PROPOSAL:
-		var taskDef core.TaskDefinition
-		if err := json.Unmarshal(env.Body, &taskDef); err == nil {
-			workflowID = taskDef.ID
-			if len(taskDef.Payload) > 0 {
-				bodyBytes = taskDef.Payload
-			}
-		}
-	case core.INFORM:
-		var proof core.Proof
-		if err := json.Unmarshal(env.Body, &proof); err == nil {
-			workflowID = proof.TaskID
+	var taskDef core.TaskDefinition
+	if err := json.Unmarshal(env.Body, &taskDef); err == nil {
+		workflowID = taskDef.ID
+		if len(taskDef.Payload) > 0 {
+			bodyBytes = taskDef.Payload
 		}
 	}
 
@@ -564,7 +556,7 @@ func (e *EnrichmentWorker) persistEnrichedRow(ctx context.Context, er cleanup.En
 		IsRecurring:           er.IsRecurring,
 		SplitSuggestion:       splitJSON,
 		MerchantName:          pgtype.Text{String: er.MerchantName, Valid: er.MerchantName != ""},
-		PlaidCategory:         pgtype.Text{String: er.PlaidCategory, Valid: er.PlaidCategory != ""},
+		Category:              pgtype.Text{String: er.Category, Valid: er.Category != ""},
 	})
 }
 
@@ -584,7 +576,7 @@ type reduxEnrichedTraceRow struct {
 	NormalizedVendor     string                       `json:"normalized_vendor,omitempty"`
 	NormalizedCustomer   string                       `json:"normalized_customer,omitempty"`
 	MerchantName         string                       `json:"merchant_name,omitempty"`
-	PlaidCategory        string                       `json:"plaid_category,omitempty"`
+	Category             string                       `json:"category,omitempty"`
 	ConfidenceScore      float64                      `json:"confidence_score,omitempty"`
 	AIReasoning          string                       `json:"ai_reasoning,omitempty"`
 	IsRecurring          bool                         `json:"is_recurring,omitempty"`
@@ -609,7 +601,7 @@ func buildReduxEnrichedTraceRow(ptr *cleanup.EnrichedRow) reduxEnrichedTraceRow 
 		NormalizedVendor:     ptr.NormalizedVendor,
 		NormalizedCustomer:   ptr.NormalizedCustomer,
 		MerchantName:         ptr.MerchantName,
-		PlaidCategory:        ptr.PlaidCategory,
+		Category:             ptr.Category,
 		ConfidenceScore:      ptr.ConfidenceScore,
 		AIReasoning:          ptr.AIReasoning,
 		IsRecurring:          ptr.IsRecurring,
@@ -630,8 +622,8 @@ func splitSuggestionTraceMap(suggestions []cleanup.SplitLine) map[string]cleanup
 }
 
 type EnrichmentExtract struct {
-	MerchantName  string `json:"merchant_name"`
-	PlaidCategory string `json:"plaid_category"`
+	MerchantName string `json:"merchant_name"`
+	Category     string `json:"category"`
 }
 
 func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row database.GetPendingSessionRowsRow) (cleanup.EnrichedRow, error) {
@@ -654,18 +646,18 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 	}
 
 	// NATIVE LLM EXTRACTION
-	if e.llm != nil {
-		systemPrompt := "You are a financial data categorization engine. Given a raw bank transaction description, extract the pure merchant/customer name and a generalized physical industry category (e.g. 'Software', 'Food and Drink'). Return exactly the JSON format requested."
-		userPrompt := fmt.Sprintf("Analyze this raw bank transaction: \"%s\"", er.RawDescription)
+	// if e.llm != nil {
+	// 	systemPrompt := "You are a financial data categorization engine. Given a raw bank transaction description, extract the pure merchant/customer name and a generalized physical industry category (e.g. 'Software', 'Food and Drink'). Return exactly the JSON format requested."
+	// 	userPrompt := fmt.Sprintf("Analyze this raw bank transaction: \"%s\"", er.RawDescription)
 
-		var extract EnrichmentExtract
-		if err := e.llm.GenerateJSON(ctx, systemPrompt, userPrompt, &extract); err == nil {
-			er.MerchantName = extract.MerchantName
-			er.PlaidCategory = extract.PlaidCategory
-		} else {
-			e.logger.Warn("Failed LLM extraction", "err", err)
-		}
-	}
+	// 	var extract EnrichmentExtract
+	// 	if err := e.llm.GenerateJSON(ctx, systemPrompt, userPrompt, &extract); err == nil {
+	// 		er.MerchantName = extract.MerchantName
+	// 		er.Category = extract.Category
+	// 	} else {
+	// 		e.logger.Warn("Failed LLM extraction", "err", err)
+	// 	}
+	// }
 
 	er.ConfidenceScore = 1.0
 	return er, nil

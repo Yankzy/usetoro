@@ -21,6 +21,10 @@ func logger() *slog.Logger {
 
 type mockTransactionRepository struct{}
 
+func (m *mockTransactionRepository) GetOrCreateSystemSession(ctx context.Context, realmID pgtype.Text) (pgtype.UUID, error) {
+	return pgtype.UUID{}, nil
+}
+
 func (m *mockTransactionRepository) GetProposedTransactionByValues(ctx context.Context, arg database.GetProposedTransactionByValuesParams) (database.FignodeStagingTransaction, error) {
 	return database.FignodeStagingTransaction{}, errors.New("not found")
 }

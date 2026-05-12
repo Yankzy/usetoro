@@ -39,10 +39,12 @@ type FignodeLeaderboardSnapshot struct {
 type FignodeStagingSession struct {
 	ID              pgtype.UUID
 	RealmID         pgtype.Text
+	Kind            string
 	CreatedBy       pgtype.UUID
 	FileName        pgtype.Text
 	RowCount        int32
 	Status          string
+	BankAccountID   pgtype.UUID
 	IsAmbiguous     bool
 	AmbiguityReason pgtype.Text
 	CreatedAt       pgtype.Timestamptz
@@ -52,17 +54,20 @@ type FignodeStagingSession struct {
 type FignodeStagingTransaction struct {
 	ID                    pgtype.UUID
 	SessionID             pgtype.UUID
-	RealmID               pgtype.Text
 	RowIndex              pgtype.Int4
 	SourceType            string
 	RawDescription        pgtype.Text
 	RawAmount             string
 	RawDate               pgtype.Date
-	PlaidTransactionID    pgtype.Text
-	BankAccountID         pgtype.Text
+	CashDirection         pgtype.Text
+	IsoCurrencyCode       pgtype.Text
+	TransactionHash       pgtype.Text
+	ErpTransactionID      pgtype.Text
+	TransactionID         pgtype.Text
+	PendingTransactionID  pgtype.Text
 	MerchantName          pgtype.Text
 	LogoUrl               pgtype.Text
-	PlaidCategory         pgtype.Text
+	Category              pgtype.Text
 	IsPending             pgtype.Bool
 	PredictedVendorID     pgtype.UUID
 	PredictedVendorName   pgtype.Text
@@ -82,15 +87,12 @@ type FignodeStagingTransaction struct {
 	IsRecurring           bool
 	SplitSuggestion       []byte
 	Status                string
-	ErpTransactionID      pgtype.Text
 	ErrorMessage          pgtype.Text
 	ReconciledAt          pgtype.Timestamptz
 	ReconciledBy          pgtype.UUID
 	RuleGroupID           pgtype.Int4
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
-	IsAmbiguous           bool
-	AmbiguityReason       pgtype.Text
 }
 
 type MarketingLeadForm struct {

@@ -10,7 +10,9 @@ import (
 	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/nats-io/nats.go"
 )
 
 // MessageHandler handles incoming WebSocket messages
@@ -166,20 +168,16 @@ func (h *MessageHandler) handleRequestRunSQL(ctx context.Context, msg Message) (
 	args, _ := msg.Data["args"].([]any)
 
 	// Package the SQL request using the struct that matches SQLWorkerPayload in workers/sql_worker.go
+	returnSubj := nats.NewInbox()
 	payload := struct {
-		QueryID string `json:"query_id"`
-		Args    []any  `json:"args,omitempty"`
+		QueryID       string `json:"query_id"`
+		Args          []any  `json:"args,omitempty"`
+		ReturnSubject string `json:"return_subject"`
 	}{
-		QueryID: queryID,
-		Args:    args,
+		QueryID:       queryID,
+		Args:          args,
+		ReturnSubject: returnSubj,
 	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		h.logger.Error("Failed to marshal SQL payload", "error", err)
-		return NewErrorMessage("Failed to prepare request")
-	}
-
 	// Execute via NATS Request (Standard NATS Req/Rep)
 	// The SQL worker will receive this and publish to the Reply subject.
 	// We use the subject derived from the activity type "workers.sql.execute"
@@ -189,11 +187,45 @@ func (h *MessageHandler) handleRequestRunSQL(ctx context.Context, msg Message) (
 	}
 
 	h.logger.Debug("Publishing SQL request to NATS", "subject", subject, "query_id", queryID)
-	respBytes, err := h.queue.Request(subject, payloadBytes, 5*time.Second)
+
+	// Wrap in a TAP Envelope for standardized worker routing and proof tracking.
+	// We use the REQUEST performative for direct worker execution.
+	convID := uuid.New().String()
+	env, err := core.NewEnvelope(uuid.New().String(), "did:toro:ws-sidecar", "did:toro:sql-worker", convID, core.REQUEST, payload)
 	if err != nil {
-		h.logger.Error("SQL NATS request failed", "error", err)
-		return NewErrorMessage("SQL execution timed out or failed")
+		h.logger.Error("Failed to create SQL request envelope", "error", err)
+		return NewErrorMessage("Internal protocol error")
 	}
+
+	envBytes, err := json.Marshal(env)
+	if err != nil {
+		h.logger.Error("Failed to marshal SQL request envelope", "error", err)
+		return NewErrorMessage("Internal protocol error")
+	}
+
+	// We cannot use h.queue.Request() here because the target subject is captured by JetStream.
+	// If we use Request(), JetStream will intercept the request and send a PubAck to the _INBOX reply subject,
+	// which will be interpreted as an empty response by our unmarshaler.
+	// Instead, we subscribe to the explicit ReturnSubject and publish the envelope.
+	sub, err := h.queue.Conn().SubscribeSync(returnSubj)
+	if err != nil {
+		h.logger.Error("Failed to subscribe to return subject", "error", err)
+		return NewErrorMessage("Internal protocol error")
+	}
+	defer sub.Unsubscribe()
+
+	if err := h.queue.Publish(subject, envBytes); err != nil {
+		h.logger.Error("SQL NATS publish failed", "error", err, "subject", subject)
+		return NewErrorMessage("SQL execution publish failed")
+	}
+
+	replyMsg, err := sub.NextMsg(5 * time.Second)
+	if err != nil {
+		h.logger.Error("SQL worker response timed out", "error", err, "subject", subject)
+		return NewErrorMessage("SQL execution timed out")
+	}
+	respBytes := replyMsg.Data
+	h.logger.Info("Received SQL worker response", "raw", string(respBytes))
 
 	// The response from SQL worker is a SQLWorkerResult
 	var result struct {

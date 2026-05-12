@@ -51,7 +51,11 @@ const (
 	WorkflowResumeSubject     = "workflow.resume"
 	WorkflowResumeDurable     = "orchestrator-resume-durable"
 	WorkflowResumeGroup       = "orchestrator-resume-group"
-	WorkflowAmbiguousSubject  = "workflow.events.ambiguous"
+
+	// WorkflowAdminSyncSubject is published by any service that writes a new blueprint directly to
+	// the DB (e.g. the API gateway). The Orchestrator subscribes and calls SyncBlueprints so that
+	// the in-memory cache and JetStream stream subjects are updated immediately without a restart.
+	WorkflowAdminSyncSubject = "workflow.admin.sync"
 
 	// Redelivery limits before emitting to DLQ.
 	orchestratorDeliverLimit = 5
@@ -91,6 +95,9 @@ type InstanceState struct {
 	SuspensionStep   string                     `json:"suspension_step,omitempty"`
 	SuspensionReason string                     `json:"suspension_reason,omitempty"`
 	SuspensionRoute  int                        `json:"suspension_route,omitempty"`
+	// SuspensionKind disambiguates why the workflow is paused.
+	// Values: "hitl" | "ambiguous" | "failure"
+	SuspensionKind string `json:"suspension_kind,omitempty"`
 }
 
 // NewOrchestrator initialises the central orchestrator system.
@@ -681,6 +688,18 @@ func (o *Orchestrator) Start(ctx context.Context) error {
 	}
 	o.subs = append(o.subs, blueprintSub)
 
+	// ── Admin Sync Listener ───────────────────────────────────────────────────
+	// Any service that writes a blueprint directly to the DB can publish on this
+	// subject to trigger a live SyncBlueprints() without restarting the daemon.
+	adminSyncSub, err := o.nc.Subscribe(
+		WorkflowAdminSyncSubject,
+		func(msg *nats.Msg) { o.handleAdminSync(ctx, msg) },
+	)
+	if err != nil {
+		return fmt.Errorf("orchestrator: failed to subscribe to admin sync: %w", err)
+	}
+	o.subs = append(o.subs, adminSyncSub)
+
 	o.blueprintMu.RLock()
 	loaded := len(o.blueprints)
 	o.blueprintMu.RUnlock()
@@ -747,6 +766,7 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 		CompletedSteps: make(map[string]bool),
 		Variables:      make(map[string]json.RawMessage),
 	}
+	state.Variables["TRIGGER"] = json.RawMessage(triggerPayload)
 
 	arg := database.CreateOrGetWorkflowParams{
 		ID:       pgtype.UUID{Bytes: instanceID, Valid: true},
@@ -824,6 +844,7 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 			Complexity:     step.Complexity,
 			WorkflowSchema: step.WorkflowSchema,
 			SystemPrompt:   step.SystemPrompt,
+			RBACPolicy:     step.RBACPolicy,
 		}
 		cfp, err := core.NewEnvelope(
 			uuid.New().String(),
@@ -889,13 +910,19 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 			Complexity:     step.Complexity,
 			WorkflowSchema: step.WorkflowSchema,
 			SystemPrompt:   step.SystemPrompt,
+			RBACPolicy:     step.RBACPolicy,
 		}
+		perf := core.ACCEPT_PROPOSAL
+		if strings.HasPrefix(step.ActivityType, core.PrefixWorkerActivities+".") {
+			perf = core.REQUEST
+		}
+
 		accept, err := core.NewEnvelope(
 			uuid.New().String(),
 			OrchestratorDID,
 			"", // Specific DID not strictly required for direct inbox delivery
 			convID,
-			core.ACCEPT_PROPOSAL,
+			perf,
 			taskDef,
 		)
 		if err != nil {
@@ -933,6 +960,8 @@ func (o *Orchestrator) spawnSubWorkflow(ctx context.Context, step WorkflowStep, 
 		Variables:      make(map[string]json.RawMessage),
 		ParentStepID:   step.ID,
 	}
+	childState.Variables["TRIGGER"] = json.RawMessage(payload)
+
 	if len(childDef.Steps) > 0 {
 		childState.CurrentStepID = childDef.Steps[0].ID
 	}
@@ -957,7 +986,13 @@ func (o *Orchestrator) spawnSubWorkflow(ctx context.Context, step WorkflowStep, 
 		return fmt.Errorf("orchestrator: failed to persist sub-workflow state: %w", err)
 	}
 
-	ready, err := o.scheduleReadySteps(ctx, childDef, &childState, childWf.EntityID, payload)
+	// The payload arriving here is the output of buildStepPayload — already wrapped in a
+	// Proof envelope and an "input" wrapper. Passing it directly as the child fallback would
+	// cause buildStepPayload to wrap it a second time, burying fields like "rows" too deep
+	// for UnmarshalTaskPayload to reach. Unwrap one level so the child sees a raw payload,
+	// identical to what a standalone trigger would deliver.
+	childFallback := unwrapStepPayload(payload)
+	ready, err := o.scheduleReadySteps(ctx, childDef, &childState, childWf.EntityID, childFallback)
 	if err != nil {
 		return fmt.Errorf("orchestrator: failed to dispatch sub-workflow %q: %w", childDef.Name, err)
 	}
@@ -1221,6 +1256,97 @@ func (o *Orchestrator) handleWorkflowResume(msg *nats.Msg) {
 		return
 	}
 
+	wfDef, err := o.resolveBlueprintByName(ctx, state.WorkflowDef)
+	if err != nil {
+		o.logger.Error("Orchestrator: resume target blueprint missing", "blueprint", state.WorkflowDef, "error", err)
+		msg.Term()
+		return
+	}
+
+	// ── HITL resume path ────────────────────────────────────────────────────
+	// A hitl.* gate was approved or rejected by the human.
+	if state.SuspensionKind == SuspensionKindHITL {
+		if req.Action == "rejected" {
+			// Resolve reject_action from the step config (default: abort).
+			rejectAction := "abort"
+			if step, ok := findStepByID(wfDef, stepID); ok {
+				if ra := stringFromConfig(step.Config, "reject_action"); ra != "" {
+					rejectAction = ra
+				}
+			}
+			o.logger.Info("🧑‍💻 HITL gate rejected by human",
+				"instance_id", req.InstanceID,
+				"step_id", stepID,
+				"reject_action", rejectAction,
+				"reason", req.Reason,
+			)
+			state.Suspended = true // keep suspended
+			state.SuspensionKind = "failure"
+			state.SuspensionReason = fmt.Sprintf("Human rejected at step '%s': %s", stepID, req.Reason)
+			if _, err := o.persistWorkflowState(ctx, wf, state); err != nil {
+				o.logger.Error("Orchestrator: failed to persist rejected HITL state", "error", err)
+				msg.Nak()
+				return
+			}
+			o.publishStatus(req.InstanceID, wf.EntityID, "suspended", stepID, "", wfDef, nil)
+			msg.Ack()
+			return
+		}
+
+		// action == "approved" (or empty — default to approve)
+		o.logger.Info("✅ HITL gate approved by human",
+			"instance_id", req.InstanceID,
+			"step_id", stepID,
+			"edits", len(req.Edits),
+		)
+
+		// Apply human edits: merge overrides into state.Variables so downstream
+		// steps (e.g. workers.qbo_sync) see the human's version, not the AI's.
+		for targetStepID, editBytes := range req.Edits {
+			state.Variables[targetStepID] = editBytes
+		}
+
+		// Mark the HITL step complete and clear suspension.
+		state.CompletedSteps[stepID] = true
+		delete(state.ActiveSteps, stepID)
+		state.Suspended = false
+		state.SuspensionStep = ""
+		state.SuspensionReason = ""
+		state.SuspensionRoute = 0
+		state.SuspensionKind = ""
+		// Record the approval itself as the HITL step's proof.
+		approvalProof, _ := json.Marshal(map[string]interface{}{
+			"action": "approved",
+			"edits":  req.Edits,
+			"reason": req.Reason,
+		})
+		state.Variables[stepID] = approvalProof
+		state.LastProof = approvalProof
+
+		if _, err := o.persistWorkflowState(ctx, wf, state); err != nil {
+			o.logger.Error("Orchestrator: failed to persist approved HITL state", "error", err)
+			msg.Nak()
+			return
+		}
+
+		ready, err := o.scheduleReadySteps(ctx, wfDef, &state, wf.EntityID, approvalProof)
+		if err != nil {
+			o.logger.Error("Orchestrator: HITL approval scheduling failed", "id", req.InstanceID, "error", err)
+			msg.Nak()
+			return
+		}
+		if _, err := o.persistWorkflowState(ctx, wf, state); err != nil {
+			o.logger.Error("Orchestrator: failed to persist HITL post-approval state", "id", req.InstanceID, "error", err)
+			msg.Nak()
+			return
+		}
+		nextIDs := stepIDsFromList(ready)
+		o.publishStatus(req.InstanceID, wf.EntityID, "running", stepID, "", wfDef, nextIDs)
+		msg.Ack()
+		return
+	}
+
+	// ── Legacy / route-based resume path ────────────────────────────────────
 	payload := req.Payload
 	if len(payload) == 0 {
 		existing, ok := state.Variables[stepID]
@@ -1234,13 +1360,7 @@ func (o *Orchestrator) handleWorkflowResume(msg *nats.Msg) {
 	state.SuspensionStep = ""
 	state.SuspensionReason = ""
 	state.SuspensionRoute = 0
-
-	wfDef, err := o.resolveBlueprintByName(ctx, state.WorkflowDef)
-	if err != nil {
-		o.logger.Error("Orchestrator: resume target blueprint missing", "blueprint", state.WorkflowDef, "error", err)
-		msg.Term()
-		return
-	}
+	state.SuspensionKind = ""
 
 	if _, err := o.persistWorkflowState(ctx, wf, state); err != nil {
 		o.logger.Error("Orchestrator: failed to persist state after resume", "id", req.InstanceID, "error", err)
@@ -1306,14 +1426,11 @@ func (o *Orchestrator) handleStepCompletion(ctx context.Context, wf database.Tor
 		return fmt.Errorf("orchestrator: blueprint step %q missing", stepID)
 	}
 
-	if suspended, route, reason := o.maybeSuspendInstance(step, state, proofCopy); suspended {
+	if suspended, _, _ := o.maybeSuspendInstance(step, state, proofCopy); suspended {
 		if _, err := o.persistWorkflowState(ctx, wf, *state); err != nil {
 			return err
 		}
 		o.publishStatus(instanceIDStr, wf.EntityID, "suspended", stepID, assignedDID, wfDef, nil)
-		if err := o.publishAmbiguityEvent(instanceIDStr, wf.EntityID, wfDef, step, route, reason, proofCopy); err != nil {
-			o.logger.Error("Orchestrator: failed to publish ambiguity event", "error", err, "instance", instanceIDStr)
-		}
 		return nil
 	}
 
@@ -1391,110 +1508,6 @@ func (o *Orchestrator) publishStatus(instanceID string, entityID pgtype.UUID, st
 	}
 }
 
-func (o *Orchestrator) publishAmbiguityEvent(instanceID string, entityID pgtype.UUID, blueprint WorkflowDef, step WorkflowStep, route int, reason string, proof json.RawMessage) error {
-	entity := ""
-	if entityID.Valid {
-		entity = uuid.UUID(entityID.Bytes).String()
-	}
-	evt := map[string]interface{}{
-		"instance_id":       instanceID,
-		"entity_id":         entity,
-		"status":            "ambiguous",
-		"step_id":           step.ID,
-		"route":             route,
-		"suspension_reason": reason,
-		"blueprint":         blueprint,
-	}
-	if len(proof) > 0 {
-		var parsed interface{}
-		if err := json.Unmarshal(proof, &parsed); err == nil {
-			evt["proof"] = parsed
-		} else {
-			evt["proof"] = string(proof)
-		}
-	}
-	if rid := findRealmIDInProof(proof); rid != "" {
-		evt["realm_id"] = rid
-	}
-	if session := findSessionIDInProof(proof); session != "" {
-		evt["session_id"] = session
-	}
-	data, _ := json.Marshal(evt)
-	return o.bus.Publish(WorkflowAmbiguousSubject, data)
-}
-
-func findRealmIDInProof(proof json.RawMessage) string {
-	if len(proof) == 0 {
-		return ""
-	}
-	var payload interface{}
-	if err := json.Unmarshal(proof, &payload); err != nil {
-		return ""
-	}
-	return searchForRealmID(payload)
-}
-
-func searchForRealmID(value interface{}) string {
-	switch typed := value.(type) {
-	case map[string]interface{}:
-		for _, key := range []string{"realm_id", "RealmID"} {
-			if raw, ok := typed[key]; ok {
-				if str, ok := raw.(string); ok && str != "" {
-					return str
-				}
-			}
-		}
-		for _, v := range typed {
-			if str := searchForRealmID(v); str != "" {
-				return str
-			}
-		}
-	case []interface{}:
-		for _, v := range typed {
-			if str := searchForRealmID(v); str != "" {
-				return str
-			}
-		}
-	}
-	return ""
-}
-
-func findSessionIDInProof(proof json.RawMessage) string {
-	if len(proof) == 0 {
-		return ""
-	}
-	var payload interface{}
-	if err := json.Unmarshal(proof, &payload); err != nil {
-		return ""
-	}
-	return searchForSessionID(payload)
-}
-
-func searchForSessionID(value interface{}) string {
-	switch typed := value.(type) {
-	case map[string]interface{}:
-		for _, key := range []string{"session_id", "SessionID"} {
-			if raw, ok := typed[key]; ok {
-				if str, ok := raw.(string); ok && str != "" {
-					return str
-				}
-			}
-		}
-		for _, child := range typed {
-			if result := searchForSessionID(child); result != "" {
-				return result
-			}
-		}
-	case []interface{}:
-		for _, item := range typed {
-			if result := searchForSessionID(item); result != "" {
-				return result
-			}
-		}
-	}
-	return ""
-}
-
 func stepIDsFromList(steps []WorkflowStep) []string {
 	ids := make([]string, 0, len(steps))
 	for _, step := range steps {
@@ -1529,15 +1542,30 @@ func (o *Orchestrator) scheduleReadySteps(ctx context.Context, def WorkflowDef, 
 	for _, step := range ready {
 		payload := buildStepPayload(step, *state, fallback)
 		var err error
-		if step.SubWorkflow != "" {
+		switch {
+		case strings.HasPrefix(step.ActivityType, HITLPrefixActivity):
+			// ── HITL path: suspend the DAG and notify the frontend ────────────
+			// suspendForHITL mutates state (sets Suspended=true, marks step active)
+			// but does NOT persist — that's done by the caller after this loop.
+			err = o.suspendForHITL(step, state, entityID)
+			if err == nil {
+				// Return immediately: nothing else should be dispatched once suspended.
+				return []WorkflowStep{step}, nil
+			}
+		case step.SubWorkflow != "":
 			err = o.spawnSubWorkflow(ctx, step, state, entityID, payload)
-		} else {
+			if err == nil {
+				state.ActiveSteps[step.ID] = true
+			}
+		default:
 			err = o.dispatchStep(ctx, step, state.InstancePath, payload)
+			if err == nil {
+				state.ActiveSteps[step.ID] = true
+			}
 		}
 		if err != nil {
 			return nil, err
 		}
-		state.ActiveSteps[step.ID] = true
 	}
 	return ready, nil
 }
@@ -1648,7 +1676,11 @@ func buildStepPayload(step WorkflowStep, state InstanceState, fallback []byte) [
 			payload = []byte("{}")
 		}
 	}
-	raw := wrapPayloadWithConfig(step, payload)
+	unwrapped := unwrapStepPayload(payload)
+	if step.WorkflowSchema != "" {
+		unwrapped = reshapePayloadToSchema(step.WorkflowSchema, unwrapped, state)
+	}
+	raw := wrapPayloadWithConfig(step, unwrapped)
 	proof := core.Proof{
 		Type:      core.ProofAPI,
 		Data:      raw,
@@ -1656,6 +1688,42 @@ func buildStepPayload(step WorkflowStep, state InstanceState, fallback []byte) [
 	}
 	res, _ := json.Marshal(proof)
 	return res
+}
+
+// unwrapStepPayload is the inverse of buildStepPayload.
+// buildStepPayload wraps the raw payload in two layers:
+//  1. {"input": <raw>}             (wrapPayloadWithConfig)
+//  2. Proof{Type: "proof.api", Data: ...}
+//
+// This function peels both layers off so a child workflow receives a clean,
+// unwrapped payload — identical to what it would get from a standalone trigger.
+// If the bytes don't match the expected shape they are returned unchanged.
+func unwrapStepPayload(payload []byte) []byte {
+	return unwrapStepPayloadRecursive(payload, 0)
+}
+
+func unwrapStepPayloadRecursive(payload []byte, depth int) []byte {
+	if len(payload) == 0 || depth > 5 {
+		return payload
+	}
+	// 1. Peel Proof envelope.
+	var proof core.Proof
+	if err := json.Unmarshal(payload, &proof); err == nil && proof.Type != "" && len(proof.Data) > 0 {
+		return unwrapStepPayloadRecursive(proof.Data, depth+1)
+	}
+	// 2. Peel {input: ...} wrapper.
+	var wrapper struct {
+		Input json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(payload, &wrapper); err == nil && len(wrapper.Input) > 0 {
+		return unwrapStepPayloadRecursive(wrapper.Input, depth+1)
+	}
+	// 3. Peel TaskDefinition wrapper.
+	var taskDef core.TaskDefinition
+	if err := json.Unmarshal(payload, &taskDef); err == nil && len(taskDef.Payload) > 0 && taskDef.Domain != "" {
+		return unwrapStepPayloadRecursive(taskDef.Payload, depth+1)
+	}
+	return payload
 }
 
 func wrapPayloadWithConfig(step WorkflowStep, payload []byte) []byte {
@@ -1671,6 +1739,74 @@ func wrapPayloadWithConfig(step WorkflowStep, payload []byte) []byte {
 		return payload
 	}
 	return final
+}
+
+func reshapePayloadToSchema(schemaStr string, payload []byte, state InstanceState) []byte {
+	properties := gjson.Get(schemaStr, "properties").Map()
+	if len(properties) == 0 {
+		return payload
+	}
+
+	var shapedPayload map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &shapedPayload); err != nil || shapedPayload == nil {
+		shapedPayload = make(map[string]json.RawMessage)
+	}
+
+	// Pre-convert and UNWRAP variables to strings ONCE
+	var triggerStr string
+	if trigger, ok := state.Variables["TRIGGER"]; ok {
+		// CRITICAL: Strip wrappers from the trigger
+		triggerStr = string(unwrapStepPayload(trigger))
+	}
+
+	varCache := make([]string, 0, len(state.Variables))
+	for k, v := range state.Variables {
+		if k != "TRIGGER" {
+			// CRITICAL: Strip wrappers from historical proofs so introspection sees flat keys
+			unwrappedVar := unwrapStepPayload(v)
+			varCache = append(varCache, string(unwrappedVar))
+		}
+	}
+
+	for key := range properties {
+		// If the payload already has the key, we don't overwrite it
+		if _, exists := shapedPayload[key]; exists {
+			continue
+		}
+
+		var found gjson.Result
+
+		// Priority 1: Introspection - check TRIGGER.
+		if triggerStr != "" {
+			found = gjson.Get(triggerStr, key)
+		}
+
+		// Priority 2: Search other previous step outputs.
+		if !found.Exists() {
+			for _, varStr := range varCache {
+				found = gjson.Get(varStr, key)
+				if found.Exists() {
+					break
+				}
+			}
+		}
+
+		// Inject the found value into the shaped map.
+		if found.Exists() {
+			shapedPayload[key] = json.RawMessage(found.Raw)
+		}
+	}
+
+	if len(shapedPayload) == 0 {
+		return []byte("{}")
+	}
+
+	finalBytes, err := json.Marshal(shapedPayload)
+	if err != nil {
+		return payload
+	}
+
+	return finalBytes
 }
 
 func (o *Orchestrator) maybeSuspendInstance(step WorkflowStep, state *InstanceState, proof json.RawMessage) (bool, int, string) {
@@ -1740,6 +1876,14 @@ type WorkflowResumeRequest struct {
 	Route      int             `json:"route"`
 	Payload    json.RawMessage `json:"payload,omitempty"`
 	Reason     string          `json:"reason,omitempty"`
+
+	// HITL-specific fields.
+	// Action must be "approved" or "rejected" for hitl.* gate steps.
+	Action string `json:"action,omitempty"`
+	// Edits carries the human's overrides for completed step outputs.
+	// Keys are step IDs; values are JSON-encoded override objects.
+	// Only respected when Action == "approved" and the suspended step was a hitl.* gate.
+	Edits map[string]json.RawMessage `json:"edits,omitempty"`
 }
 
 func (o *Orchestrator) maybeDeadLetter(msg *nats.Msg, dlqSubject, reason string) bool {
@@ -1784,6 +1928,18 @@ func normalizeWorkflowDef(def WorkflowDef) (WorkflowDef, bool) {
 	mutated := false
 	for i := range def.Steps {
 		step := &def.Steps[i]
+
+		// Sub-workflow and HITL steps are pure composition shims — they have no
+		// activity_type that maps to an actor, so skip normalizations that are
+		// irrelevant to them (complexity, derived depends_on).
+		if step.SubWorkflow != "" || strings.HasPrefix(step.ActivityType, HITLPrefixActivity) {
+			if step.ID == "" {
+				step.ID = fmt.Sprintf("step-%d", i)
+				mutated = true
+			}
+			continue
+		}
+
 		if step.Complexity == 0 {
 			step.Complexity = core.ComplexityEntry
 			mutated = true
@@ -1818,6 +1974,34 @@ func (o *Orchestrator) handleBlueprintQuery(msg *nats.Msg) {
 
 	res, _ := json.Marshal(def)
 	_ = msg.Respond(res)
+}
+
+// handleAdminSync is called when workflow.admin.sync is published.
+// It re-syncs the in-memory blueprint cache from the DB and reconciles the JetStream
+// stream subjects so newly registered workflows become active immediately.
+func (o *Orchestrator) handleAdminSync(ctx context.Context, msg *nats.Msg) {
+	name := strings.TrimSpace(string(msg.Data))
+	logFields := []any{"trigger", "workflow.admin.sync"}
+	if name != "" {
+		logFields = append(logFields, "workflow", name)
+	}
+	o.logger.Info("Orchestrator: admin sync requested", logFields...)
+
+	if err := o.SyncBlueprints(ctx); err != nil {
+		o.logger.Error("Orchestrator: admin sync failed", "error", err)
+		_ = msg.Respond([]byte(`{"ok":false,"error":"sync failed"}`))
+		msg.Ack()
+		return
+	}
+
+	o.blueprintMu.RLock()
+	count := len(o.blueprints)
+	o.blueprintMu.RUnlock()
+
+	o.logger.Info("Orchestrator: admin sync complete", "blueprints_loaded", count)
+	res, _ := json.Marshal(map[string]interface{}{"ok": true, "blueprints_loaded": count})
+	_ = msg.Respond(res)
+	msg.Ack()
 }
 
 // GetTaskQueues returns a mapping from ActivityType to the public TaskQueue defined in loaded workflows.

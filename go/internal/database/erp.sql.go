@@ -18,7 +18,7 @@ SET predicted_account_id = $2,
     status               = 'APPROVED',
     updated_at           = NOW()
 WHERE id = $1
-RETURNING id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason
+RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at
 `
 
 type ApproveProposedTransactionParams struct {
@@ -33,17 +33,20 @@ func (q *Queries) ApproveProposedTransaction(ctx context.Context, arg ApprovePro
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
-		&i.RealmID,
 		&i.RowIndex,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.PlaidTransactionID,
-		&i.BankAccountID,
+		&i.CashDirection,
+		&i.IsoCurrencyCode,
+		&i.TransactionHash,
+		&i.ErpTransactionID,
+		&i.TransactionID,
+		&i.PendingTransactionID,
 		&i.MerchantName,
 		&i.LogoUrl,
-		&i.PlaidCategory,
+		&i.Category,
 		&i.IsPending,
 		&i.PredictedVendorID,
 		&i.PredictedVendorName,
@@ -63,33 +66,30 @@ func (q *Queries) ApproveProposedTransaction(ctx context.Context, arg ApprovePro
 		&i.IsRecurring,
 		&i.SplitSuggestion,
 		&i.Status,
-		&i.ErpTransactionID,
 		&i.ErrorMessage,
 		&i.ReconciledAt,
 		&i.ReconciledBy,
 		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.IsAmbiguous,
-		&i.AmbiguityReason,
 	)
 	return i, err
 }
 
 const createProposedTransaction = `-- name: CreateProposedTransaction :one
 INSERT INTO fignode.staging_transactions (
-    realm_id, source_type, raw_amount, raw_date, raw_description,
+    session_id, source_type, raw_amount, raw_date, raw_description,
     predicted_vendor_id, predicted_account_id, confidence_score,
     ai_reasoning, status, created_at, updated_at
 )
 VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
 )
-RETURNING id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason
+RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at
 `
 
 type CreateProposedTransactionParams struct {
-	RealmID            pgtype.Text
+	SessionID          pgtype.UUID
 	SourceType         string
 	RawAmount          string
 	RawDate            pgtype.Date
@@ -101,9 +101,10 @@ type CreateProposedTransactionParams struct {
 	Status             string
 }
 
+// session_id must point at a per-realm SYSTEM session (see GetOrCreateSystemSession).
 func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreateProposedTransactionParams) (FignodeStagingTransaction, error) {
 	row := q.db.QueryRow(ctx, createProposedTransaction,
-		arg.RealmID,
+		arg.SessionID,
 		arg.SourceType,
 		arg.RawAmount,
 		arg.RawDate,
@@ -118,17 +119,20 @@ func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreatePropo
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
-		&i.RealmID,
 		&i.RowIndex,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.PlaidTransactionID,
-		&i.BankAccountID,
+		&i.CashDirection,
+		&i.IsoCurrencyCode,
+		&i.TransactionHash,
+		&i.ErpTransactionID,
+		&i.TransactionID,
+		&i.PendingTransactionID,
 		&i.MerchantName,
 		&i.LogoUrl,
-		&i.PlaidCategory,
+		&i.Category,
 		&i.IsPending,
 		&i.PredictedVendorID,
 		&i.PredictedVendorName,
@@ -148,15 +152,12 @@ func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreatePropo
 		&i.IsRecurring,
 		&i.SplitSuggestion,
 		&i.Status,
-		&i.ErpTransactionID,
 		&i.ErrorMessage,
 		&i.ReconciledAt,
 		&i.ReconciledBy,
 		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.IsAmbiguous,
-		&i.AmbiguityReason,
 	)
 	return i, err
 }
@@ -173,6 +174,51 @@ type GetAccountByERPIDParams struct {
 
 func (q *Queries) GetAccountByERPID(ctx context.Context, arg GetAccountByERPIDParams) (ShadowErpAccount, error) {
 	row := q.db.QueryRow(ctx, getAccountByERPID, arg.RealmID, arg.ErpID)
+	var i ShadowErpAccount
+	err := row.Scan(
+		&i.ID,
+		&i.ErpID,
+		&i.RealmID,
+		&i.Name,
+		&i.AccountType,
+		&i.AccountSubType,
+		&i.Classification,
+		&i.FullyQualifiedName,
+		&i.Active,
+		&i.SyncToken,
+		&i.Domain,
+		&i.CurrencyRefName,
+		&i.CurrencyRefValue,
+		&i.CurrentBalanceWithSubAccounts,
+		&i.Sparse,
+		&i.ErpCreatedTime,
+		&i.ErpUpdatedTime,
+		&i.CurrentBalance,
+		&i.SubAccount,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getAccountByName = `-- name: GetAccountByName :one
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
+WHERE realm_id = $1 AND name = $2 
+  AND active = true 
+  AND account_type IN ('Bank', 'Credit Card')
+  AND deleted_at IS NULL
+LIMIT 1
+`
+
+type GetAccountByNameParams struct {
+	RealmID string
+	Name    string
+}
+
+func (q *Queries) GetAccountByName(ctx context.Context, arg GetAccountByNameParams) (ShadowErpAccount, error) {
+	row := q.db.QueryRow(ctx, getAccountByName, arg.RealmID, arg.Name)
 	var i ShadowErpAccount
 	err := row.Scan(
 		&i.ID,
@@ -506,11 +552,12 @@ func (q *Queries) GetAllVendorsForRealms(ctx context.Context, realmIds []string)
 }
 
 const getAmbiguousProposals = `-- name: GetAmbiguousProposals :many
-SELECT id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason FROM fignode.staging_transactions
-WHERE realm_id = $1
-  AND confidence_score < $2
-  AND status = 'PENDING'
-ORDER BY created_at DESC
+SELECT cs.id, cs.session_id, cs.row_index, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.cash_direction, cs.iso_currency_code, cs.transaction_hash, cs.erp_transaction_id, cs.transaction_id, cs.pending_transaction_id, cs.merchant_name, cs.logo_url, cs.category, cs.is_pending, cs.predicted_vendor_id, cs.predicted_vendor_name, cs.predicted_customer_id, cs.predicted_customer_name, cs.predicted_account_id, cs.predicted_account_name, cs.confidence_score, cs.ai_reasoning, cs.human_action, cs.swiped_by, cs.swiped_at, cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.duplicate_of, cs.is_recurring, cs.split_suggestion, cs.status, cs.error_message, cs.reconciled_at, cs.reconciled_by, cs.rule_group_id, cs.created_at, cs.updated_at FROM fignode.staging_transactions cs
+JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
+WHERE ss.realm_id = $1
+  AND cs.confidence_score < $2
+  AND cs.status = 'PENDING'
+ORDER BY cs.created_at DESC
 `
 
 type GetAmbiguousProposalsParams struct {
@@ -530,17 +577,20 @@ func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousPro
 		if err := rows.Scan(
 			&i.ID,
 			&i.SessionID,
-			&i.RealmID,
 			&i.RowIndex,
 			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
-			&i.PlaidTransactionID,
-			&i.BankAccountID,
+			&i.CashDirection,
+			&i.IsoCurrencyCode,
+			&i.TransactionHash,
+			&i.ErpTransactionID,
+			&i.TransactionID,
+			&i.PendingTransactionID,
 			&i.MerchantName,
 			&i.LogoUrl,
-			&i.PlaidCategory,
+			&i.Category,
 			&i.IsPending,
 			&i.PredictedVendorID,
 			&i.PredictedVendorName,
@@ -560,15 +610,12 @@ func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousPro
 			&i.IsRecurring,
 			&i.SplitSuggestion,
 			&i.Status,
-			&i.ErpTransactionID,
 			&i.ErrorMessage,
 			&i.ReconciledAt,
 			&i.ReconciledBy,
 			&i.RuleGroupID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.IsAmbiguous,
-			&i.AmbiguityReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1515,7 +1562,7 @@ func (q *Queries) GetOrphanedPurchases(ctx context.Context, realmID string) ([]G
 }
 
 const getProposedTransactionByID = `-- name: GetProposedTransactionByID :one
-SELECT id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason FROM fignode.staging_transactions WHERE id = $1
+SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at FROM fignode.staging_transactions WHERE id = $1
 `
 
 func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID) (FignodeStagingTransaction, error) {
@@ -1524,17 +1571,20 @@ func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
-		&i.RealmID,
 		&i.RowIndex,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.PlaidTransactionID,
-		&i.BankAccountID,
+		&i.CashDirection,
+		&i.IsoCurrencyCode,
+		&i.TransactionHash,
+		&i.ErpTransactionID,
+		&i.TransactionID,
+		&i.PendingTransactionID,
 		&i.MerchantName,
 		&i.LogoUrl,
-		&i.PlaidCategory,
+		&i.Category,
 		&i.IsPending,
 		&i.PredictedVendorID,
 		&i.PredictedVendorName,
@@ -1554,25 +1604,23 @@ func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID
 		&i.IsRecurring,
 		&i.SplitSuggestion,
 		&i.Status,
-		&i.ErpTransactionID,
 		&i.ErrorMessage,
 		&i.ReconciledAt,
 		&i.ReconciledBy,
 		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.IsAmbiguous,
-		&i.AmbiguityReason,
 	)
 	return i, err
 }
 
 const getProposedTransactionByValues = `-- name: GetProposedTransactionByValues :one
-SELECT id, session_id, realm_id, row_index, source_type, raw_description, raw_amount, raw_date, plaid_transaction_id, bank_account_id, merchant_name, logo_url, plaid_category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, erp_transaction_id, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, is_ambiguous, ambiguity_reason FROM fignode.staging_transactions
-WHERE realm_id = $1
-  AND predicted_vendor_id = $2
-  AND raw_date = $3
-  AND raw_amount = $4
+SELECT cs.id, cs.session_id, cs.row_index, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.cash_direction, cs.iso_currency_code, cs.transaction_hash, cs.erp_transaction_id, cs.transaction_id, cs.pending_transaction_id, cs.merchant_name, cs.logo_url, cs.category, cs.is_pending, cs.predicted_vendor_id, cs.predicted_vendor_name, cs.predicted_customer_id, cs.predicted_customer_name, cs.predicted_account_id, cs.predicted_account_name, cs.confidence_score, cs.ai_reasoning, cs.human_action, cs.swiped_by, cs.swiped_at, cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.duplicate_of, cs.is_recurring, cs.split_suggestion, cs.status, cs.error_message, cs.reconciled_at, cs.reconciled_by, cs.rule_group_id, cs.created_at, cs.updated_at FROM fignode.staging_transactions cs
+JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
+WHERE ss.realm_id = $1
+  AND cs.predicted_vendor_id = $2
+  AND cs.raw_date = $3
+  AND cs.raw_amount = $4
 LIMIT 1
 `
 
@@ -1594,17 +1642,20 @@ func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetPro
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
-		&i.RealmID,
 		&i.RowIndex,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
-		&i.PlaidTransactionID,
-		&i.BankAccountID,
+		&i.CashDirection,
+		&i.IsoCurrencyCode,
+		&i.TransactionHash,
+		&i.ErpTransactionID,
+		&i.TransactionID,
+		&i.PendingTransactionID,
 		&i.MerchantName,
 		&i.LogoUrl,
-		&i.PlaidCategory,
+		&i.Category,
 		&i.IsPending,
 		&i.PredictedVendorID,
 		&i.PredictedVendorName,
@@ -1624,15 +1675,12 @@ func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetPro
 		&i.IsRecurring,
 		&i.SplitSuggestion,
 		&i.Status,
-		&i.ErpTransactionID,
 		&i.ErrorMessage,
 		&i.ReconciledAt,
 		&i.ReconciledBy,
 		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.IsAmbiguous,
-		&i.AmbiguityReason,
 	)
 	return i, err
 }
@@ -3029,7 +3077,7 @@ func (q *Queries) UpsertPurchase(ctx context.Context, arg UpsertPurchaseParams) 
 
 const upsertStagingTransaction = `-- name: UpsertStagingTransaction :exec
 INSERT INTO fignode.staging_transactions (
-    realm_id,
+    session_id,
     erp_transaction_id,
     source_type,
     raw_amount,
@@ -3040,12 +3088,12 @@ INSERT INTO fignode.staging_transactions (
     status
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6,
-    (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.erp_id = $7 AND shadow_erp.vendors.realm_id = $1),
-    (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.erp_id = $8 AND shadow_erp.accounts.realm_id = $1),
-    $9
+    $1, $3, $4, $5, $6, $7,
+    (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.erp_id = $8 AND shadow_erp.vendors.realm_id = $2),
+    (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.erp_id = $9 AND shadow_erp.accounts.realm_id = $2),
+    $10
 )
-ON CONFLICT (realm_id, erp_transaction_id) DO UPDATE SET
+ON CONFLICT (erp_transaction_id) WHERE erp_transaction_id IS NOT NULL DO UPDATE SET
     source_type = EXCLUDED.source_type,
     raw_amount = EXCLUDED.raw_amount,
     raw_date = EXCLUDED.raw_date,
@@ -3057,7 +3105,8 @@ ON CONFLICT (realm_id, erp_transaction_id) DO UPDATE SET
 `
 
 type UpsertStagingTransactionParams struct {
-	RealmID          pgtype.Text
+	SessionID        pgtype.UUID
+	RealmID          string
 	ErpTransactionID pgtype.Text
 	SourceType       string
 	RawAmount        string
@@ -3068,8 +3117,11 @@ type UpsertStagingTransactionParams struct {
 	Status           string
 }
 
+// $1 is the session_id (typically a SYSTEM session for the realm).
+// $2 is realm_id, used only for the vendor/account lookups (joined via session at read time).
 func (q *Queries) UpsertStagingTransaction(ctx context.Context, arg UpsertStagingTransactionParams) error {
 	_, err := q.db.Exec(ctx, upsertStagingTransaction,
+		arg.SessionID,
 		arg.RealmID,
 		arg.ErpTransactionID,
 		arg.SourceType,

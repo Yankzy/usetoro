@@ -58,8 +58,8 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Detect path prefix (e.g. /api)
-	pathPrefix := ""
-	if idx := strings.Index(r.URL.Path, "/ws"); idx != -1 {
+	pathPrefix := "/api"
+	if idx := strings.Index(r.URL.Path, "/ws"); idx != -1 && idx > 0 {
 		pathPrefix = r.URL.Path[:idx]
 	}
 

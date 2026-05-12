@@ -11,6 +11,7 @@ import (
 	"github.com/Yankzy/usetoro/tap/pkg/lookup"
 )
 
+
 // HandleListActors returns the list of all active Agents and Workers discovered via the Almanac.
 // GET /v1/system/actors
 func (h *Handler) HandleListActors(w http.ResponseWriter, r *http.Request) {

@@ -5,6 +5,7 @@ x-nats-common: &nats-common
 
 services:
   db:
+    image: yankz/usetoro-db:latest
     build:
       context: ../
       dockerfile: container/postgres/postgres.prod.Dockerfile
@@ -28,6 +29,7 @@ services:
       - toro-net
 
   gate:
+    image: yankz/usetoro-gate:latest
     build:
       context: ../
       dockerfile: container/gate/gate.prod.Dockerfile
@@ -54,21 +56,23 @@ services:
     networks:
       - toro-net
 
-  python-worker:
-    build:
-      context: ../
-      dockerfile: python-worker/Dockerfile
-    restart: always
-    environment:
-      # Use the cluster URL list so it knows all nodes
-      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
-    depends_on:
-      nats-1:
-        condition: service_healthy
-    networks:
-      - toro-net
+  # python-worker:
+  #   image: yankz/usetoro-python-worker:latest
+  #   build:
+  #     context: ../
+  #     dockerfile: python-worker/Dockerfile
+  #   restart: always
+  #   environment:
+  #     # Use the cluster URL list so it knows all nodes
+  #     NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+  #   depends_on:
+  #     nats-1:
+  #       condition: service_healthy
+  #   networks:
+  #     - toro-net
 
   protocol:
+    image: yankz/usetoro-protocol:latest
     build:
       context: ../
       dockerfile: container/protocol/protocol.prod.Dockerfile
@@ -100,6 +104,7 @@ services:
       - toro-net
 
   sync:
+    image: yankz/usetoro-sync:latest
     build:
       context: ../
       dockerfile: container/sync/Dockerfile
@@ -126,6 +131,7 @@ services:
       - toro-net
 
   cdc-worker:
+    image: yankz/usetoro-cdc-worker:latest
     build:
       context: ../
       dockerfile: container/cdc-worker/Dockerfile
@@ -143,6 +149,7 @@ services:
       - toro-net
 
   ws:
+    image: yankz/usetoro-ws:latest
     build:
       context: ../
       dockerfile: container/ws/ws.prod.Dockerfile
@@ -259,6 +266,7 @@ services:
   #     - toro-net
 
   fignode:
+    image: yankz/usetoro-fignode:latest
     build:
       context: ../
       dockerfile: container/fignode/fignode.prod.Dockerfile
@@ -285,6 +293,7 @@ services:
       - toro-net
 
   graphql:
+    image: yankz/usetoro-graphql:latest
     build:
       context: ../
       dockerfile: container/graphql/graphql.prod.Dockerfile
@@ -318,6 +327,7 @@ services:
       - toro-net
 
   nginx:
+    image: yankz/usetoro-nginx:latest
     build:
       context: ../
       dockerfile: container/nginx/nginx.prod.Dockerfile
@@ -343,6 +353,7 @@ services:
       - toro-net
 
   migrator:
+    image: yankz/usetoro-migrator:latest
     build:
       context: ../
       dockerfile: container/migrator/migrator.prod.Dockerfile
@@ -354,24 +365,23 @@ services:
         condition: service_healthy
     networks:
       - toro-net
-
-  neo4j:
-    image: neo4j:5
-    restart: always
-    environment:
-      NEO4J_AUTH: neo4j/toro_password
-      NEO4J_apoc_export_file_enabled: "true"
-      NEO4J_apoc_import_file_enabled: "true"
-      NEO4J_apoc_import_file_use__neo4j__config: "true"
-      NEO4J_PLUGINS: '["apoc"]'
-      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    volumes:
-      - neo4j_data:/data
-    networks:
-      - toro-net
+  # neo4j:
+  #   image: neo4j:5
+  #   restart: always
+  #   environment:
+  #     NEO4J_AUTH: neo4j/toro_password
+  #     NEO4J_apoc_export_file_enabled: "true"
+  #     NEO4J_apoc_import_file_enabled: "true"
+  #     NEO4J_apoc_import_file_use__neo4j__config: "true"
+  #     NEO4J_PLUGINS: '["apoc"]'
+  #     NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+  #   ports:
+  #     - "7474:7474"
+  #     - "7687:7687"
+  #   volumes:
+  #     - neo4j_data:/data
+  #   networks:
+  #     - toro-net
 
 volumes:
   db_data:

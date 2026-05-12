@@ -137,14 +137,6 @@ func searchStringValue(value interface{}, keys ...string) string {
 	return ""
 }
 
-func findSessionIDFromProof(data []byte) string {
-	var payload interface{}
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return ""
-	}
-	return searchStringValue(payload, "session_id", "SessionID", "entity_id", "upload_id")
-}
-
 // RawRow matches the struct output by the TAP Cleanup Agent
 type RawRow struct {
 	SessionID   string `json:"SessionID"`
@@ -173,7 +165,7 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 		e.logger.Warn("csv mapping worker: dropping message, invalid performative", "perf_val", env["perf"])
 		return nil
 	}
-	if perf != core.INFORM && perf != core.ACCEPT_PROPOSAL {
+	if perf != core.REQUEST {
 		e.logger.Warn("csv mapping worker: dropping message, perf mismatch", "perf_val", env["perf"])
 		return nil
 	}
@@ -268,7 +260,6 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 		_, err := e.db.InsertCleanupRow(ctx, database.InsertCleanupRowParams{
 			SessionID:             pgSessionID,
 			RowIndex:              pgtype.Int4{Int32: int32(i), Valid: true}, // Uniquely identifies the row position to prevent dupe inserts on retry
-			RealmID:               pgtype.Text{String: realmID, Valid: realmID != ""},
 			SourceType:            "CSV",
 			RawDescription:        pgtype.Text{String: rawDescription, Valid: rawDescription != ""},
 			RawAmount:             rawAmount,

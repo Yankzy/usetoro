@@ -120,7 +120,11 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 	var uploadID string
 	var realmIDStr string
 
-	if domain == "accounting" && (taskType == "cleanup" || taskType == "csv_mapping") {
+	if domain == "accounting" {
+		// Extract optional bank_account_name from the request
+		bankAccountName := r.FormValue("bank_account_name")
+		var bankAccountID pgtype.UUID
+
 		// Fetch the realm_id for this user's entity
 		entityUUID := pgtype.UUID{Bytes: claims.EntityID, Valid: true}
 		var realmID pgtype.Text
@@ -131,13 +135,27 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 		}
 		realmIDStr = realmID.String
 
+		// If a bank account name was provided, resolve it to an ID for this realm.
+		if bankAccountName != "" && realmIDStr != "" {
+			acc, err := h.DB.GetAccountByName(ctx, database.GetAccountByNameParams{
+				RealmID: realmIDStr,
+				Name:    bankAccountName,
+			})
+			if err == nil {
+				bankAccountID = acc.ID
+			} else {
+				h.Logger.Warn("file ingestion: bank account not found", "name", bankAccountName, "realm", realmIDStr, "error", err)
+			}
+		}
+
 		// Create a persistent session in the database
 		pgUserID := pgtype.UUID{Bytes: claims.UserID, Valid: true}
 		session, err := h.DB.CreateCleanupSession(ctx, database.CreateCleanupSessionParams{
-			CreatedBy: pgUserID,
-			FileName:  pgtype.Text{String: header.Filename, Valid: true},
-			RowCount:  int32(len(rows)),
-			RealmID:   realmID,
+			CreatedBy:     pgUserID,
+			FileName:      pgtype.Text{String: header.Filename, Valid: true},
+			RowCount:      int32(len(rows)),
+			RealmID:       realmID,
+			BankAccountID: bankAccountID,
 		})
 		if err != nil {
 			h.Logger.Error("file ingestion: create cleanup session", "error", err)
@@ -174,13 +192,13 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 	kp, _ := identity.KeyPairFromSeed("gateway")
 	gateDID := identity.CreateDID(kp.Public)
 
-	// Use INFORM performative because the gateway is just announcing a fact, not asking for bids yet.
+	// Use REQUEST performative because the gateway is just announcing a fact, not asking for bids yet.
 	informEnv, err := core.NewEnvelope(
 		uuid.New().String(),
 		gateDID,
 		"",
 		uuid.New().String(),
-		core.INFORM,
+		core.REQUEST,
 		taskDef,
 	)
 	if err != nil {

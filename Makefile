@@ -4,14 +4,17 @@ PY := $(ENV) && python manage.py
 PACKAGE ?= $(shell bash -c 'read -p "Package name: " package; echo $$package')
 BRANCH ?= $(shell bash -c 'read -p "Branch name: " branch; echo $$package')
 MSG ?= $(shell bash -c 'read -p "What is the commit message?: " commit message; echo $$commit message')
+# PRODUCTION_SERVER := 0
 ENVIRONMENT := $(if $(PRODUCTION_SERVER),prod,dev)
-PROJECT_NAME := be_voxprofit
+PROJECT_NAME := usetoro
 
 ifeq ($(ENVIRONMENT),prod)
-	DOCKER_COMPOSE := docker-compose -f container/docker-compose.prod.yml
+	DOCKER_COMPOSE := docker compose -f container/docker-compose.prod.yml
 else
 	DOCKER_COMPOSE := docker-compose -f container/docker-compose.yml
 endif
+
+DOCKER_CONTEXT := docker --context droplet compose -f container/docker-compose.prod.yml
 
 # App Services
 SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker fignode protocol
@@ -94,6 +97,7 @@ up: create_networks
 	$(DOCKER_COMPOSE) up --remove-orphans $(SERVICES)
 upd: create_networks
 	$(DOCKER_COMPOSE) up -d --build --remove-orphans $(SERVICES)
+	$(MAKE) logs
 
 getlogs:
 	@echo "Enter the service name: "; \
@@ -211,9 +215,21 @@ ingest-messy:
 nats_consumers:
 	./container/scripts/list-nats-consumers.sh 
 
-docker_context_prod_up:
-	COMPOSE_PARALLEL_LIMIT=1 docker --context droplet compose -f container/docker-compose.prod.yml build
-	docker --context droplet compose -f container/docker-compose.prod.yml up -d
-docker_context_prod_down:
-	docker --context droplet compose -f container/docker-compose.prod.yml down
 
+docker_context_prod_push:
+	docker compose -f container/docker-compose.prod.yml push
+
+docker_context_prod_up:
+	$(DOCKER_CONTEXT) pull
+	$(DOCKER_CONTEXT) up -d
+docker_context_prod_down:
+	$(DOCKER_CONTEXT) down
+	$(MAKE) docker_context_prod_prune
+
+docker_context_prod_delete_db:
+	$(DOCKER_CONTEXT) down -v
+	$(MAKE) docker_context_prod_prune
+
+docker_context_prod_prune:
+	docker --context droplet builder prune -f
+	docker --context droplet system prune --volumes -f

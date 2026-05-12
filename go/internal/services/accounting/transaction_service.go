@@ -18,6 +18,7 @@ import (
 
 // TransactionRepository defines the data access methods needed for idempotency and audit logging
 type TransactionRepository interface {
+	GetOrCreateSystemSession(ctx context.Context, realmID pgtype.Text) (pgtype.UUID, error)
 	GetProposedTransactionByValues(ctx context.Context, arg database.GetProposedTransactionByValuesParams) (database.FignodeStagingTransaction, error)
 	CreateProposedTransaction(ctx context.Context, arg database.CreateProposedTransactionParams) (database.FignodeStagingTransaction, error)
 	UpdateProposedTransactionSyncStatus(ctx context.Context, arg database.UpdateProposedTransactionSyncStatusParams) error
@@ -114,8 +115,15 @@ func (s *TransactionService) postExpense(
 			}, nil
 		}
 
+		// Resolve the per-realm SYSTEM session that owns non-CSV staged rows.
+		systemSessionID, err := s.repo.GetOrCreateSystemSession(ctx, realmID)
+		if err != nil {
+			s.logger.Warn("Failed to resolve system session for realm", "error", err, "realm_id", input.RealmID)
+			return nil, err
+		}
+
 		proposed, err := s.repo.CreateProposedTransaction(ctx, database.CreateProposedTransactionParams{
-			RealmID:         realmID,
+			SessionID:       systemSessionID,
 			SourceType:      sourceType,
 			RawAmount:       amountStr,
 			RawDate:         pgtype.Date{Time: txnDate, Valid: true},

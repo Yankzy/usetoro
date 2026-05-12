@@ -1,12 +1,20 @@
 name: Bookkeeping Workflow
 version: "1.0"
-trigger_topic: events.accounting.bookkeeping
+trigger_topic: events.accounting.1.bookkeeping
 steps:
-  - id: run_rule_engine
+  - id: run_cleanup
+    sub_workflow: "CSV Cleaner Pipeline"
+    negotiate: false
+    timeout: "300s"
+    description: "Runs the CSV cleanup and enrichment pipeline as a sub-workflow. When it completes the orchestrator automatically continues this DAG."
+
+  - id: bootstrap_rule_engine
     activity_type: workers.rule_bootstrap
     negotiate: false
     timeout: "300s"
     description: "Bootstraps the rule engine so historical vendor rules are seeded before the bookkeeping steps run."
+    depends_on:
+      - run_cleanup
     workflow_schema: |
       {
         "type": "object",
@@ -15,146 +23,177 @@ steps:
         },
         "required": ["realm_id"]
       }
-  - id: classify_transaction
-    activity_type: agents.accounting.classify_outflow
-    complexity: 1
+
+  - id: run_rule_engine
+    activity_type: workers.rule_evaluation
     negotiate: false
-    timeout: "60s"
-    description: "Assigns a transaction to ASSET, LIABILITY, EQUITY, INCOME, or EXPENSE"
+    timeout: "300s"
+    description: "Evaluates transactions against the rule engine to automatically approve or categorize based on historical patterns."
     depends_on:
-      - run_rule_engine
+      - bootstrap_rule_engine
     workflow_schema: |
       {
         "type": "object",
         "properties": {
-          "macro_class": { "type": "string", "enum": ["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"] },
-          "reasoning": { "type": "string" }
+          "session_id": { "type": "string" }
         },
-        "required": ["macro_class", "reasoning"]
+        "required": ["session_id"]
       }
-    system_prompt: |
-      You are an expert CPA acting as a macro-classification router. Your job is to assign a single bank transaction to one of the following macro accounting classes: ASSET, LIABILITY, EQUITY, INCOME, or EXPENSE.
+  # - id: classify_transaction
+  #   activity_type: agents.accounting.classify_outflow
+  #   complexity: 1
+  #   negotiate: false
+  #   timeout: "60s"
+  #   description: "Assigns a transaction to ASSET, LIABILITY, EQUITY, INCOME, or EXPENSE"
+  #   depends_on:
+  #     - run_rule_engine
+  #   workflow_schema: |
+  #     {
+  #       "type": "object",
+  #       "properties": {
+  #         "macro_class": { "type": "string", "enum": ["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"] },
+  #         "reasoning": { "type": "string" }
+  #       },
+  #       "required": ["macro_class", "reasoning"]
+  #     }
+  #   system_prompt: |
+  #     You are an expert CPA acting as a macro-classification router. Your job is to assign a single bank transaction to one of the following macro accounting classes: ASSET, LIABILITY, EQUITY, INCOME, or EXPENSE.
       
-      ### TRANSACTION DATA
-      - Description: {normalized_description}
-      - Cash Direction: OUTFLOW (Money is leaving the business)
-      - Amount: ${amount}
-      - User's Known Liability/Debt Accounts: {json_list_of_liability_accounts}
-      - User's Known Bank Accounts: {json_list_of_bank_accounts}
-      - Business Industry/Description: {company_industry_description}
+  #     ### TRANSACTION DATA
+  #     - Description: {normalized_description}
+  #     - Cash Direction: OUTFLOW (Money is leaving the business)
+  #     - Amount: ${amount}
+  #     - User's Known Liability/Debt Accounts: {json_list_of_liability_accounts}
+  #     - User's Known Bank Accounts: {json_list_of_bank_accounts}
+  #     - Business Industry/Description: {company_industry_description}
 
-      ### CLASSIFICATION RULES (STRICT ORDER OF OPERATIONS)
-      Evaluate the description in consideration of the amount against these rules sequentially. Stop at the FIRST match.
+  #     ### CLASSIFICATION RULES (STRICT ORDER OF OPERATIONS)
+  #     Evaluate the description in consideration of the amount against these rules sequentially. Stop at the FIRST match.
 
-      1. INTERNAL TRANSFER (ASSET): Does the description indicate money moving between the company's own bank accounts (e.g., "Transfer to Savings", "Online Banking Transfer", or matching a known bank account)? If yes, STOP. Categorize as ASSET.
-      2. EQUITY: Does the description explicitly indicate owner movement? ("Draw", "Transfer to Owner", "Shareholder"). If yes, STOP. Categorize as EQUITY.
-      3. LIABILITY (HIGHEST PRIORITY DEBT): Does the description contain debt markers ("Payment", "Card", "Amex", "Capital One", "Loan") OR match any of the User's Known Liability Accounts? If yes, STOP. Categorize as LIABILITY. (Example: "Apple Card" for $3,500 is a Liability payment, not an Asset).
-      4. REFUND (INCOME): Does the description indicate a refund given back to a customer (e.g., "Refund", "Return", "Stripe Reversal")? If yes, STOP. Categorize as INCOME.
-      5. ASSET: Is it a purchase of physical equipment, vehicles, or machinery > $2,500? If yes, STOP. Categorize as ASSET.
-      6. EXPENSE: Everything else that bypassed Rules 1-5 (Standard business purchases, software, supplies, payroll).
+  #     1. INTERNAL TRANSFER (ASSET): Does the description indicate money moving between the company's own bank accounts (e.g., "Transfer to Savings", "Online Banking Transfer", or matching a known bank account)? If yes, STOP. Categorize as ASSET.
+  #     2. EQUITY: Does the description explicitly indicate owner movement? ("Draw", "Transfer to Owner", "Shareholder"). If yes, STOP. Categorize as EQUITY.
+  #     3. LIABILITY (HIGHEST PRIORITY DEBT): Does the description contain debt markers ("Payment", "Card", "Amex", "Capital One", "Loan") OR match any of the User's Known Liability Accounts? If yes, STOP. Categorize as LIABILITY. (Example: "Apple Card" for $3,500 is a Liability payment, not an Asset).
+  #     4. REFUND (INCOME): Does the description indicate a refund given back to a customer (e.g., "Refund", "Return", "Stripe Reversal")? If yes, STOP. Categorize as INCOME.
+  #     5. ASSET: Is it a purchase of physical equipment, vehicles, or machinery > $2,500? If yes, STOP. Categorize as ASSET.
+  #     6. EXPENSE: Everything else that bypassed Rules 1-5 (Standard business purchases, software, supplies, payroll).
 
-      ### OUTPUT FORMAT
-      Return strictly valid JSON:
-  - id: classify_inflow
-    activity_type: agents.accounting.classify_inflow
-    complexity: 1
-    negotiate: false
-    timeout: "60s"
-    description: "Assigns a bank inflow to ASSET, LIABILITY, EQUITY, or INCOME"
-    depends_on:
-      - run_rule_engine
-    workflow_schema: |
-      {
-        "type": "object",
-        "properties": {
-          "macro_class": { "type": "string", "enum": ["ASSET", "LIABILITY", "EQUITY", "INCOME"] },
-          "reasoning": { "type": "string" }
-        },
-        "required": ["macro_class", "reasoning"]
-      }
-    system_prompt: |
-      You are an expert CPA acting as a macro-classification router. Your job is to assign a single bank transaction to one of the following macro accounting classes: ASSET, LIABILITY, EQUITY, or INCOME.
+  #     ### OUTPUT FORMAT
+  #     Return strictly valid JSON:
+  # - id: classify_inflow
+  #   activity_type: agents.accounting.classify_inflow
+  #   complexity: 1
+  #   negotiate: false
+  #   timeout: "60s"
+  #   description: "Assigns a bank inflow to ASSET, LIABILITY, EQUITY, or INCOME"
+  #   depends_on:
+  #     - run_rule_engine
+  #   workflow_schema: |
+  #     {
+  #       "type": "object",
+  #       "properties": {
+  #         "macro_class": { "type": "string", "enum": ["ASSET", "LIABILITY", "EQUITY", "INCOME"] },
+  #         "reasoning": { "type": "string" }
+  #       },
+  #       "required": ["macro_class", "reasoning"]
+  #     }
+  #   system_prompt: |
+  #     You are an expert CPA acting as a macro-classification router. Your job is to assign a single bank transaction to one of the following macro accounting classes: ASSET, LIABILITY, EQUITY, or INCOME.
 
-      ### TRANSACTION DATA
-      - Description: {normalized_description}
-      - Cash Direction: INFLOW (Money is entering the business)
-      - Amount: ${amount}
-      - User's Known Liability/Debt Accounts: {json_list_of_liability_accounts}
-      - User's Known Bank Accounts: {json_list_of_bank_accounts}
+  #     ### TRANSACTION DATA
+  #     - Description: {normalized_description}
+  #     - Cash Direction: INFLOW (Money is entering the business)
+  #     - Amount: ${amount}
+  #     - User's Known Liability/Debt Accounts: {json_list_of_liability_accounts}
+  #     - User's Known Bank Accounts: {json_list_of_bank_accounts}
 
-      ### CLASSIFICATION RULES (STRICT ORDER OF OPERATIONS)
-      Evaluate the description against these rules sequentially. Stop at the FIRST match.
+  #     ### CLASSIFICATION RULES (STRICT ORDER OF OPERATIONS)
+  #     Evaluate the description against these rules sequentially. Stop at the FIRST match.
 
-      1. INTERNAL TRANSFER (ASSET): Does the description indicate money moving between the company's own bank accounts (e.g., "Transfer from Savings", "Online Banking Transfer", or matching a known bank account)? If yes, STOP. Categorize as ASSET.
-      2. EQUITY (OWNER INVESTMENT): Does the description explicitly indicate the owner putting personal money into the business? ("Owner Contribution", "Transfer from Owner", "Shareholder Investment"). If yes, STOP. Categorize as EQUITY.
-      3. LIABILITY (LOAN PROCEEDS): Does the description indicate the business is receiving loan funds or a cash advance? ("SBA Proceeds", "Loan Funding", "Fundbox", "Capital Advance") OR does it match a Known Liability Account? If yes, STOP. Categorize as LIABILITY. (Example: Receiving $50,000 from "SBA" is a Liability increase, not Revenue).
-      4. VENDOR REFUND (EXPENSE): Does the description indicate getting money back from a previous purchase? ("Amazon Refund", "Delta Return", "Cashback"). If yes, STOP. Categorize as EXPENSE (this acts as a contra-expense to reduce previous spending).
-      5. ASSET SALE (ASSET): Does the description explicitly state the sale of a large physical asset, vehicle, or machinery rather than a normal good/service? If yes, STOP. Categorize as ASSET.
-      6. INCOME (DEFAULT REVENUE): Everything else that bypassed Rules 1-5. This includes standard business revenue, customer deposits, payment processors ("Stripe", "Shopify", "Square"), and general sales.
+  #     1. INTERNAL TRANSFER (ASSET): Does the description indicate money moving between the company's own bank accounts (e.g., "Transfer from Savings", "Online Banking Transfer", or matching a known bank account)? If yes, STOP. Categorize as ASSET.
+  #     2. EQUITY (OWNER INVESTMENT): Does the description explicitly indicate the owner putting personal money into the business? ("Owner Contribution", "Transfer from Owner", "Shareholder Investment"). If yes, STOP. Categorize as EQUITY.
+  #     3. LIABILITY (LOAN PROCEEDS): Does the description indicate the business is receiving loan funds or a cash advance? ("SBA Proceeds", "Loan Funding", "Fundbox", "Capital Advance") OR does it match a Known Liability Account? If yes, STOP. Categorize as LIABILITY. (Example: Receiving $50,000 from "SBA" is a Liability increase, not Revenue).
+  #     4. VENDOR REFUND (EXPENSE): Does the description indicate getting money back from a previous purchase? ("Amazon Refund", "Delta Return", "Cashback"). If yes, STOP. Categorize as EXPENSE (this acts as a contra-expense to reduce previous spending).
+  #     5. ASSET SALE (ASSET): Does the description explicitly state the sale of a large physical asset, vehicle, or machinery rather than a normal good/service? If yes, STOP. Categorize as ASSET.
+  #     6. INCOME (DEFAULT REVENUE): Everything else that bypassed Rules 1-5. This includes standard business revenue, customer deposits, payment processors ("Stripe", "Shopify", "Square"), and general sales.
 
-      ### OUTPUT FORMAT
-      Return strictly valid JSON:
-      {
-        "macro_class": "ASSET | LIABILITY | EQUITY | INCOME | EXPENSE",
-        "reasoning": "Brief explanation of your choice."
-      }
+  #     ### OUTPUT FORMAT
+  #     Return strictly valid JSON:
+  #     {
+  #       "macro_class": "ASSET | LIABILITY | EQUITY | INCOME | EXPENSE",
+  #       "reasoning": "Brief explanation of your choice."
+  #     }
 
-  - id: select_account_type
-    activity_type: agents.accounting.select_account_type
-    negotiate: true
-    timeout: "60s"
-    description: "Assigns the specific QBO AccountType (Micro-class)."
-    depends_on:
-      - classify_transaction
-      - classify_inflow
-    workflow_schema: |
-      {
-        "type": "object",
-        "properties": {
-          "account_type": { "type": "string" },
-          "reasoning": { "type": "string" }
-        },
-        "required": ["account_type", "reasoning"]
-      }
-    system_prompt: |
-      You are the Account Type Selection agent. You take a macro-class (e.g., EXPENSE), a clean entity name, and a transaction description, and select the most logically correct QuickBooks Online 'AccountType' (e.g., 'TravelMeals', 'OfficeGeneralAdministrativeExpenses'). 
-      You will be provided with a subset of allowed AccountTypes for the given macro-class. Respond ONLY with the selected AccountType and your reasoning in valid JSON.
+  # - id: select_account_type
+  #   activity_type: agents.accounting.select_account_type
+  #   negotiate: true
+  #   timeout: "60s"
+  #   description: "Assigns the specific QBO AccountType (Micro-class)."
+  #   depends_on:
+  #     - classify_transaction
+  #     - classify_inflow
+  #   workflow_schema: |
+  #     {
+  #       "type": "object",
+  #       "properties": {
+  #         "account_type": { "type": "string" },
+  #         "reasoning": { "type": "string" }
+  #       },
+  #       "required": ["account_type", "reasoning"]
+  #     }
+  #   system_prompt: |
+  #     You are the Account Type Selection agent. You take a macro-class (e.g., EXPENSE), a clean entity name, and a transaction description, and select the most logically correct QuickBooks Online 'AccountType' (e.g., 'TravelMeals', 'OfficeGeneralAdministrativeExpenses'). 
+  #     You will be provided with a subset of allowed AccountTypes for the given macro-class. Respond ONLY with the selected AccountType and your reasoning in valid JSON.
 
-  - id: select_entity
-    activity_type: agents.accounting.select_entity
-    negotiate: true
-    timeout: "60s"
-    description: "Identifies the most likely Customer or Vendor from the database."
-    depends_on:
-      - select_account_type
-    workflow_schema: |
-      {
-        "type": "object",
-        "properties": {
-          "entity_id": { "type": ["string", "null"] },
-          "new_clean_name": { "type": "string" },
-          "match_confidence": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] }
-        },
-        "required": ["entity_id", "new_clean_name", "match_confidence"]
-      }
-    system_prompt: |
-      You are the Entity Selection agent. Your task is to look at a raw bank transaction description and identify the true merchant (Vendor) or customer (Customer) name by matching it against a provided JSON list of existing entities from our database. If no match is found, you should provide a 'cleaned' version of the raw name. Respond ONLY in valid JSON.
+  # - id: select_entity
+  #   activity_type: agents.accounting.select_entity
+  #   negotiate: true
+  #   timeout: "60s"
+  #   description: "Identifies the most likely Customer or Vendor from the database."
+  #   depends_on:
+  #     - select_account_type
+  #   workflow_schema: |
+  #     {
+  #       "type": "object",
+  #       "properties": {
+  #         "entity_id": { "type": ["string", "null"] },
+  #         "new_clean_name": { "type": "string" },
+  #         "match_confidence": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] }
+  #       },
+  #       "required": ["entity_id", "new_clean_name", "match_confidence"]
+  #     }
+  #   system_prompt: |
+  #     You are the Entity Selection agent. Your task is to look at a raw bank transaction description and identify the true merchant (Vendor) or customer (Customer) name by matching it against a provided JSON list of existing entities from our database. If no match is found, you should provide a 'cleaned' version of the raw name. Respond ONLY in valid JSON.
 
-  - id: select_account
-    activity_type: agents.accounting.select_account
-    negotiate: true
-    timeout: "60s"
-    description: "Selects the final specific Account ID from the QBO chart of accounts."
-    depends_on:
-      - select_entity
-    workflow_schema: |
-      {
-        "type": "object",
-        "properties": {
-          "account_id": { "type": "string" },
-          "reasoning": { "type": "string" }
-        },
-        "required": ["account_id", "reasoning"]
-      }
-    system_prompt: |
-      You are the Account Selection agent. Your final task in the enrichment pipeline is to pick the EXACT QuickBooks Online Account ID from a list of filtered accounts that match the already-determined AccountType. You must use the transaction context (merchant name, amount, industry) to make the most accurate choice. Respond ONLY in valid JSON.
+  # - id: select_account
+  #   activity_type: agents.accounting.select_account
+  #   negotiate: true
+  #   timeout: "60s"
+  #   description: "Selects the final specific Account ID from the QBO chart of accounts."
+  #   depends_on:
+  #     - select_entity
+  #   workflow_schema: |
+  #     {
+  #       "type": "object",
+  #       "properties": {
+  #         "account_id": { "type": "string" },
+  #         "reasoning": { "type": "string" }
+  #       },
+  #       "required": ["account_id", "reasoning"]
+  #     }
+  #   system_prompt: |
+  #     You are the Account Selection agent. Your final task in the enrichment pipeline is to pick the EXACT QuickBooks Online Account ID from a list of filtered accounts that match the already-determined AccountType. You must use the transaction context (merchant name, amount, industry) to make the most accurate choice. Respond ONLY in valid JSON.
+
+  # - id: human_review
+  #   activity_type: hitl.review
+  #   depends_on:
+  #     - select_account
+  #   timeout: "86400s"
+  #   config:
+  #     scope: "session"
+  #     prompt: "Review categorizations before syncing to QuickBooks."
+  #     allow_edits: true
+  #     reject_action: "abort"
+
+  # - id: sync_to_qbo
+  #   activity_type: workers.qbo_sync
+  #   depends_on: [human_review]   # ← blocked until human approves

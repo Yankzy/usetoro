@@ -17,19 +17,22 @@ type ActorType string
 const (
 	ActorTypeAgent  ActorType = "agent"
 	ActorTypeWorker ActorType = "worker"
+	// ActorTypeHITL is a built-in Orchestrator primitive — no external dispatch.
+	ActorTypeHITL ActorType = "hitl"
 )
 
 // WorkflowStep defines a single execution stage in the pipeline.
 type WorkflowStep struct {
 	ID             string              `yaml:"id" json:"id" mapstructure:"id"`
 	ActivityType   string              `yaml:"activity_type" json:"activity_type" mapstructure:"activity_type"` // e.g., agents.accounting.map_csv
-	TaskQueue      string              `yaml:"task_queue" json:"task_queue" mapstructure:"task_queue"`       // The public NATS topic or private Inbox for CFPs
+	TaskQueue      string              `yaml:"task_queue" json:"task_queue" mapstructure:"task_queue"`          // The public NATS topic or private Inbox for CFPs
 	Complexity     core.TaskComplexity `yaml:"complexity" json:"complexity" mapstructure:"complexity"`
 	Negotiate      bool                `yaml:"negotiate" json:"negotiate" mapstructure:"negotiate"` // If true, Orchestrator publishes CFP and accepts bids
-	Timeout        string              `yaml:"timeout" json:"timeout" mapstructure:"timeout"`     // Duration string (e.g. "60s")
+	Timeout        string              `yaml:"timeout" json:"timeout" mapstructure:"timeout"`       // Duration string (e.g. "60s")
 	Description    string              `yaml:"description,omitempty" json:"description,omitempty" mapstructure:"description"`
 	WorkflowSchema string              `yaml:"workflow_schema,omitempty" json:"workflow_schema,omitempty" mapstructure:"workflow_schema"` // Optional JSON schema hint scoped to this step
-	SystemPrompt   string              `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty" mapstructure:"system_prompt"`     // Optional system prompt override
+	SystemPrompt   string              `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty" mapstructure:"system_prompt"`       // Optional system prompt override
+	RBACPolicy     []string            `yaml:"rbac_policy,omitempty" json:"rbac_policy,omitempty" mapstructure:"rbac_policy"`             // Allowed Redux path prefixes
 
 	// DAG fields — allow branching, fan-in, and nested workflows.
 	DependsOn   []string `yaml:"depends_on,omitempty" json:"depends_on,omitempty" mapstructure:"depends_on"`

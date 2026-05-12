@@ -132,12 +132,25 @@ func (w *TransactionWorker) handleEvent(ctx context.Context, msg *nats.Msg) {
 		return
 	}
 
+	// Realm now lives on the parent session, not on the staging transaction.
+	var realmID string
+	if tx.SessionID.Valid {
+		if sess, sErr := w.queries.GetCleanupSession(ctx, tx.SessionID); sErr == nil {
+			realmID = sess.RealmID.String
+		}
+	}
+	if realmID == "" {
+		w.logger.Warn("ProposedTransaction has no resolvable realm; skipping", "id", idStr)
+		msg.Ack()
+		return
+	}
+
 	switch status {
 	case "PENDING_CLASSIFICATION":
-		w.categorizeTransaction(ctx, tx)
+		w.categorizeTransaction(ctx, tx, realmID)
 		msg.Ack()
 	case "PENDING_SYNC":
-		w.syncToERP(ctx, tx)
+		w.syncToERP(ctx, tx, realmID)
 		msg.Ack()
 	default:
 		// Nothing to do for this status
@@ -145,7 +158,7 @@ func (w *TransactionWorker) handleEvent(ctx context.Context, msg *nats.Msg) {
 	}
 }
 
-func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx database.FignodeStagingTransaction) {
+func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx database.FignodeStagingTransaction, realmID string) {
 	w.logger.Info("Categorizing transaction", "id", tx.ID)
 
 	var vendorID, accountID string
@@ -153,7 +166,7 @@ func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx databa
 
 	// 1. Entity Resolver
 	if w.entityResolver != nil && description != "" {
-		match, err := w.entityResolver.ResolveEntity(ctx, tx.RealmID.String, "vendor", description)
+		match, err := w.entityResolver.ResolveEntity(ctx, realmID, "vendor", description)
 		if err == nil && match != nil {
 			vendorID = match.ID
 		}
@@ -161,7 +174,7 @@ func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx databa
 
 	// 2. CoA Mapper
 	if w.coaMapper != nil && description != "" {
-		matches, err := w.coaMapper.MapDescriptionToAccount(ctx, tx.RealmID.String, description, 1)
+		matches, err := w.coaMapper.MapDescriptionToAccount(ctx, realmID, description, 1)
 		if err == nil && len(matches) > 0 {
 			accountID = matches[0].AccountID
 		}
@@ -169,14 +182,14 @@ func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx databa
 
 	var vendorPgUUID pgtype.UUID
 	if vendorID != "" {
-		if v, err := w.queries.GetVendorByERPID(ctx, database.GetVendorByERPIDParams{RealmID: tx.RealmID.String, ErpID: vendorID}); err == nil {
+		if v, err := w.queries.GetVendorByERPID(ctx, database.GetVendorByERPIDParams{RealmID: realmID, ErpID: vendorID}); err == nil {
 			vendorPgUUID = v.ID
 		}
 	}
 
 	var accountPgUUID pgtype.UUID
 	if accountID != "" {
-		if a, err := w.queries.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{RealmID: tx.RealmID.String, ErpID: accountID}); err == nil {
+		if a, err := w.queries.GetAccountByERPID(ctx, database.GetAccountByERPIDParams{RealmID: realmID, ErpID: accountID}); err == nil {
 			accountPgUUID = a.ID
 		}
 	}
@@ -204,10 +217,10 @@ func (w *TransactionWorker) categorizeTransaction(ctx context.Context, tx databa
 	}
 }
 
-func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.FignodeStagingTransaction) {
+func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.FignodeStagingTransaction, realmID string) {
 	w.logger.Info("Syncing transaction to ERP", "id", tx.ID)
 
-	provider, err := w.factory.GetProviderForRealm(ctx, "quickbooks_online", tx.RealmID.String)
+	provider, err := w.factory.GetProviderForRealm(ctx, "quickbooks_online", realmID)
 	if err != nil {
 		w.markError(ctx, tx.ID, err.Error())
 		return
@@ -216,7 +229,7 @@ func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.FignodeSt
 	// Resolve ERP IDs for the vendor and account
 	var vendorErpID, accountErpID string
 	if tx.PredictedVendorID.Valid {
-		if v, err := w.queries.GetVendor(ctx, database.GetVendorParams{RealmID: tx.RealmID.String, ID: tx.PredictedVendorID}); err == nil {
+		if v, err := w.queries.GetVendor(ctx, database.GetVendorParams{RealmID: realmID, ID: tx.PredictedVendorID}); err == nil {
 			vendorErpID = v.ErpID
 		}
 	}
@@ -234,7 +247,7 @@ func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.FignodeSt
 	}
 
 	input := erp.ExpenseInput{
-		RealmID:     tx.RealmID.String,
+		RealmID:     realmID,
 		Amount:      amt,
 		TxnDate:     tx.RawDate.Time,
 		Description: tx.RawDescription.String,

@@ -5,42 +5,42 @@ import (
 	"testing"
 )
 
-func TestExtractJSONToMapping(t *testing.T) {
+func TestExtractJSONPatches(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       string
-		wantErr     bool
-		expectedCol int
+		name          string
+		input         string
+		wantErr       bool
+		expectedCount int
 	}{
 		{
-			name:        "Pure JSON",
-			input:       `{"date_col_idx": 1, "description_col_idx": 2, "amount_col_idx": 3, "is_split_amount": false, "polarity_sign": "minus", "confidence_score": 95.0, "reasoning": "Clear headers present"}`,
-			wantErr:     false,
-			expectedCol: 2,
+			name:          "Pure JSON Array",
+			input:         `[{"op": "add", "path": "/status", "value": "COLUMNS_MAPPED"}]`,
+			wantErr:       false,
+			expectedCount: 1,
 		},
 		{
-			name:        "JSON with markdown blocks",
-			input:       "```json\n" + `{"date_col_idx": 1, "description_col_idx": 2, "amount_col_idx": 3, "is_split_amount": false, "polarity_sign": "minus", "confidence_score": 95.0, "reasoning": "Clear headers present"}` + "\n```",
-			wantErr:     false,
-			expectedCol: 2,
+			name:          "JSON with markdown blocks",
+			input:         "```json\n" + `[{"op": "add", "path": "/columns_mapped", "value": {"date_col_idx": 1}}, {"op": "add", "path": "/status", "value": "COLUMNS_MAPPED"}]` + "\n```",
+			wantErr:       false,
+			expectedCount: 2,
 		},
 		{
-			name:        "JSON with conversational text",
-			input:       "Here is the mapping you requested:\n```json\n" + `{"date_col_idx": 0, "description_col_idx": 1, "amount_col_idx": 2, "is_split_amount": false, "polarity_sign": "none", "confidence_score": 88.5, "reasoning": "Standard structure"}` + "\n```\nLet me know if you need anything else.",
-			wantErr:     false,
-			expectedCol: 1,
+			name:          "JSON with conversational text",
+			input:         "Here is the mapping you requested:\n```json\n" + `[{"op": "add", "path": "/status", "value": "COLUMNS_MAPPED"}]` + "\n```\nLet me know if you need anything else.",
+			wantErr:       false,
+			expectedCount: 1,
 		},
 		{
-			name:        "Invalid JSON format",
-			input:       `{"date_col_idx": 1, "description_col_idx": 2`,
-			wantErr:     true,
-			expectedCol: 0,
+			name:          "Invalid JSON format",
+			input:         `[{"op": "add", "path": "/status"`, // Missing closing bracket and value
+			wantErr:       true,
+			expectedCount: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mapping, err := ExtractJSONToMapping(tt.input)
+			patches, err := ExtractJSONPatches(tt.input)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("expected error but got none")
@@ -50,8 +50,8 @@ func TestExtractJSONToMapping(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if mapping.DescriptionColIdx != tt.expectedCol {
-				t.Errorf("expected DescriptionColIdx %d, got %d", tt.expectedCol, mapping.DescriptionColIdx)
+			if len(patches) != tt.expectedCount {
+				t.Errorf("expected %d patches, got %d", tt.expectedCount, len(patches))
 			}
 		})
 	}
@@ -79,9 +79,7 @@ func TestBuildUserPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "Row 3: 2026-01-01 | AMZN Mktp US | -14.99") {
 		t.Errorf("expected row 3 to be included")
 	}
-	if !strings.Contains(prompt, "Typical inflows (Refunds, Deposits, Zelle from, Tax Ref)") {
-		t.Errorf("expected mixed-signal instruction in prompt")
-	}
+
 	if !strings.Contains(prompt, "POLARITY SIGN") {
 		t.Errorf("expected POLARITY SIGN instruction in prompt")
 	}

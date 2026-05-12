@@ -8,10 +8,18 @@ import (
 // HandleIngressWorker is a super simple ingress handler that reads the HTTP body
 // and publishes it directly to NATS JetStream. It takes an optional "subject" query parameter.
 func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
+	claims, err := h.extractUserClaims(r)
+	if err != nil || claims == nil {
+		h.Logger.Error("ingress: unauthorized")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	subject := r.URL.Query().Get("subject")
 	if subject == "" {
-		// Provide a default subject if none is provided via query params
-		subject = "toro.ingress.events"
+		h.Logger.Error("ingress: no subject provided")
+		http.Error(w, "no subject provided", http.StatusBadRequest)
+		return
 	}
 
 	body, err := io.ReadAll(r.Body)
@@ -35,7 +43,7 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.Logger.Info("ingress: successfully published to NATS", "subject", subject, "size", len(body))
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"published"}`))

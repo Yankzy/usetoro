@@ -17,7 +17,7 @@ import (
 
 // SwitchConfig
 type SwitchConfig struct {
-	NodeMode   string `json:"nodeMode"`   // "sender" or "receiver"
+	NodeMode   string `json:"nodeMode"`   // "router" or "filter"
 	RouteIndex int    `json:"routeIndex"` // Used if receiver
 	Mode       string `json:"mode"`       // "expression" or "rules"
 	Output     int    `json:"output"`     // Used if mode == "expression"
@@ -47,9 +47,9 @@ func Switch(payload []byte, config SwitchConfig) ([]byte, error) {
 	var results []string
 
 	// ==========================================
-	// RECEIVER MODE
+	// FILTER MODE
 	// ==========================================
-	if config.NodeMode == "receiver" {
+	if config.NodeMode == "filter" {
 		items.ForEach(func(_, item gjson.Result) bool {
 			route := item.Get("route")
 			if route.Exists() && int(route.Int()) == config.RouteIndex {
@@ -65,9 +65,9 @@ func Switch(payload []byte, config SwitchConfig) ([]byte, error) {
 	}
 
 	// ==========================================
-	// SENDER MODE
+	// ROUTER MODE
 	// ==========================================
-	if config.NodeMode == "sender" {
+	if config.NodeMode == "router" {
 		items.ForEach(func(_, item gjson.Result) bool {
 			var routedOutput int
 			matched := false

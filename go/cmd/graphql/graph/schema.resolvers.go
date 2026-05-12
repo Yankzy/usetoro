@@ -752,7 +752,6 @@ func (r *mutationResolver) FignodeCategorize(ctx context.Context, rowID string, 
 	fignodeTx := database.FignodeStagingTransaction{
 		ID:                 row.ID,
 		SessionID:          row.SessionID,
-		RealmID:            row.RealmID,
 		SourceType:         row.SourceType,
 		RawDescription:     row.RawDescription,
 		RawAmount:          row.RawAmount,
@@ -779,7 +778,12 @@ func (r *mutationResolver) FignodeCategorize(ctx context.Context, rowID string, 
 		// e.g. r.LeaderboardService.Increment(ctx, userID, 1)
 	}
 
-	return mapStagingRowToModel(fignodeTx), nil
+	out := mapStagingRowToModel(fignodeTx)
+	if row.RealmID.Valid {
+		realm := row.RealmID.String
+		out.RealmID = &realm
+	}
+	return out, nil
 }
 
 // ApproveAllByVendor bulk-approves all ENRICHED rows for a given vendor within a session.

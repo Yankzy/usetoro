@@ -15,7 +15,7 @@ Worker Specification
   [Describe what this worker does and what side effects it owns.]
 - Primary input source:
   `[ORCHESTRATOR_ENVELOPE | PROOF_EVENT | CDC_EVENT | CUSTOM_JSON]`
-- If orchestrator-driven, expected performative(s): `[accept-proposal|inform|both]`
+- If orchestrator-driven, expected performative(s): `request` ONLY.
 - Subscription source config key(s):
   [No longer needed, workers use `cfg.Workers.GetForWorker(w)` directly]
 - Dependencies needed from `workers.Dependencies`:
@@ -142,8 +142,6 @@ Notes:
 
 6. Completion signaling (when this worker is a workflow step)
 
-If this worker is expected to advance orchestrator flow, publish an `INFORM` envelope to `workflows.OrchestratorInbox` and preserve the incoming `cid`.
-
 Typical reply envelope:
 - `src`: worker DID-like identifier string
 - `dst`: `workflows.OrchestratorDID`
@@ -183,7 +181,7 @@ func (w *CSVMappingWorker) Subscriptions() []SubscriptionConfig {
 
 func (w *CSVMappingWorker) Handle(ctx context.Context, msg *nats.Msg) error {
     // parse envelope-like payload
-    // accept both INFORM and ACCEPT_PROPOSAL paths using core.UnmarshalTaskPayload
+    // accept ONLY REQUEST performative using core.UnmarshalTaskPayload
     // write DB side effects
     // if transient error:
     //     msg.Nak()
@@ -195,7 +193,7 @@ func (w *CSVMappingWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 ```
 
 Critical behaviors to copy from this one-shot:
-- Robustly handle envelope variants (`INFORM` proof vs `ACCEPT_PROPOSAL` task payload wrapping proof-like data).
+- Strictly handle ONLY the `REQUEST` performative.
 - Use `ExtractRows(...)` style normalization when payload can be map-or-array.
 - Keep poison-pill termination local (`msg.Term()` + return `nil`).
 - Return transient DB/API failures as `error` so manager can `Nak()`.

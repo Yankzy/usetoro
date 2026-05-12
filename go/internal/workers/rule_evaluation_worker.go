@@ -34,6 +34,7 @@ func init() {
 type RuleEvaluationStore interface {
 	GetPendingStagingTransactions(context.Context, pgtype.UUID) ([]database.FignodeStagingTransaction, error)
 	UpdateStagingTransactionWithRule(context.Context, database.UpdateStagingTransactionWithRuleParams) error
+	GetCleanupSession(context.Context, pgtype.UUID) (database.GetCleanupSessionRow, error)
 }
 
 type RuleEvaluationEngine interface {
@@ -120,7 +121,14 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 
 	w.logger.Info("evaluating rules for session", "session_id", payload.SessionID)
 
-	// 2. Fetch pending transactions
+	// 2. Fetch the session so we can resolve realm_id (now sourced from session, not transaction).
+	session, err := w.store.GetCleanupSession(ctx, sessionUUID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch session for rule evaluation: %w", err)
+	}
+	realmID := session.RealmID.String
+
+	// 3. Fetch pending transactions
 	txns, err := w.store.GetPendingStagingTransactions(ctx, sessionUUID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch pending staging txns: %w", err)
@@ -187,7 +195,7 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 			}
 
 			// Persist the audit log for compliance
-			w.ruleEngine.PersistAuditLog(ctx, stx.RealmID.String, stx.ID, result)
+			w.ruleEngine.PersistAuditLog(ctx, realmID, stx.ID, result)
 		}
 	}
 
@@ -213,7 +221,7 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 			} else if err := w.queue.Publish(replyEnv.ReceiverDID, replyBytes); err != nil {
 				w.logger.Warn("failed to publish completion inform", "error", err, "cid", env.ConversationID, "subject", replyEnv.ReceiverDID)
 			} else {
-				w.logger.Info("signaling workflow completion", "cid", env.ConversationID, "subject", replyEnv.ReceiverDID)
+				w.logger.Info("signaling rule engine completion", "cid", env.ConversationID, "subject", replyEnv.ReceiverDID)
 			}
 		}
 	}
@@ -244,15 +252,12 @@ func (w *RuleEvaluationWorker) mapStagingToRuleTransaction(stx database.FignodeS
 
 	return ruleEngine.Transaction{
 		ID:          fmt.Sprintf("%v", stx.ID.Bytes),
-		EntityID:    stx.RealmID.String,
 		Amount:      amt,
 		Direction:   direction,
 		Date:        stx.RawDate.Time,
 		Description: stx.RawDescription.String,
 		Vendor:      vendorName,
 		Customer:    vendorName, // Let the rule condition dictate which field it checks
-		Category:    stx.PlaidCategory.String,
-		// TODO: PASS THE BANK ACCOUNT NAME, NOT THE ACCOUNT ID
-		SourceAccount: stx.BankAccountID.String, // 🚨 NEW: Pass the bank account name to the engine
+		Category:    stx.Category.String,
 	}, nil
 }

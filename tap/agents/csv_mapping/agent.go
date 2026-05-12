@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +29,6 @@ type LLMColumnMapping struct {
 	VendorColIdx      *int    `json:"vendor_col_idx"`
 	CustomerColIdx    *int    `json:"customer_col_idx"`
 	CustomColIdx      *int    `json:"custom_col_idx"`
-	IsExpensePositive bool    `json:"is_expense_positive"`
 	ConfidenceScore   float64 `json:"confidence_score"`
 	IsAmbiguous       bool    `json:"is_ambiguous"`
 	AmbiguityReason   string  `json:"ambiguity_reason"`
@@ -175,15 +173,18 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		}
 	}
 
-	// IMPORTANT:
-	// - `task.ID` is the Orchestrator workflow instance UUID (row id in toro_core.workflows).
-	// - `payload.SessionID` is business context (upload/session id) carried inside the payload.
 	// Redux tracing + Rollup must use the workflow instance UUID, not the session id.
 	a.Logger.Info("🧠 Processing AI mapping via Redux global wrapper",
 		"workflow_id", task.ID,
 		"session_id", payload.SessionID,
 		"rows", len(payload.Rows),
 	)
+
+	if len(payload.Rows) <= 1 {
+		err := fmt.Errorf("insufficient rows in payload: expected at least 1 data row, got %d total rows", len(payload.Rows))
+		a.Logger.Error("Aborting mapping task", "error", err)
+		return err
+	}
 
 	var workflowID pgtype.UUID
 	_ = workflowID.Scan(task.ID)
@@ -198,7 +199,7 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		SchemaString: schema,
 		RBAC: redux.RBACPolicy{
 			AllowedPrefixes: map[string][]string{
-				a.Cfg.DID: {"/status", "/mapped_rows", "/is_ambiguous", "/ambiguity_reason", "/polarity_sign", "/route"},
+				a.Cfg.DID: task.RBACPolicy,
 			},
 		},
 	}
@@ -214,46 +215,65 @@ func (a *CSVMappingAgent) executeTask(cfpEnv core.Envelope) error {
 		_ = json.Unmarshal(baseState, &stateObj)
 		var patches []json.RawMessage
 
+		// Optimistic Concurrency Control (OCC)
 		if statusVal, exists := stateObj["status"]; exists {
 			b, _ := json.Marshal(statusVal)
 			patches = append(patches, []byte(fmt.Sprintf(`{"op": "test", "path": "/status", "value": %s}`, string(b))))
 		}
 
-		mapping, err := a.MapRowsUsingLLM(context.Background(), task, payload.Rows)
+		llmPatches, err := a.MapColumnsUsingLLM(context.Background(), task, payload.Rows)
 		if err != nil {
 			return nil, err
 		}
 
-		a.Logger.Info("🧠 [DEBUG] LLM Mapping Result",
-			"is_ambiguous", mapping.IsAmbiguous,
-			"polarity_sign", mapping.PolaritySign,
-		)
+		a.Logger.Info("🧠 [DEBUG] LLM Patches Result", "patch_count", len(llmPatches))
+
+		// Find /columns_mapped patch to run ParseRows
+		var mapping *LLMColumnMapping
+		for _, p := range llmPatches {
+			var patchObj struct {
+				Path  string          `json:"path"`
+				Value json.RawMessage `json:"value"`
+			}
+			if err := json.Unmarshal(p, &patchObj); err == nil {
+				if patchObj.Path == "/columns_mapped" {
+					mapping = &LLMColumnMapping{}
+					if err := json.Unmarshal(patchObj.Value, mapping); err != nil {
+						return nil, fmt.Errorf("failed to parse /columns_mapped value: %w", err)
+					}
+					break
+				}
+			}
+		}
+
+		if mapping == nil {
+			return nil, fmt.Errorf("LLM did not provide a /columns_mapped patch")
+		}
+
+		if mapping.IsAmbiguous {
+			go func(sid string, reason string) {
+				var sidUUID pgtype.UUID
+				if err := sidUUID.Scan(sid); err != nil {
+					a.Logger.Error("Failed to parse session ID for ambiguous marking", "error", err, "sid", sid)
+					return
+				}
+				err := a.Queries.MarkCleanupSessionAmbiguous(context.Background(), database.MarkCleanupSessionAmbiguousParams{
+					ID:              sidUUID,
+					IsAmbiguous:     true,
+					AmbiguityReason: pgtype.Text{String: reason, Valid: true},
+				})
+				if err != nil {
+					a.Logger.Error("Failed to mark session as ambiguous in DB", "error", err)
+				}
+			}(payload.SessionID, mapping.AmbiguityReason)
+		}
 
 		finalRows := ParseRows(payload, mapping)
 		finalRowsJSON, _ := json.Marshal(finalRows)
+		mappedRowsPatch := []byte(fmt.Sprintf(`{"op": "add", "path": "/mapped_rows", "value": %s}`, string(finalRowsJSON)))
 
-		statusVal, _ := json.Marshal("COLUMNS_MAPPED")
-		patch1 := fmt.Sprintf(`{"op": "add", "path": "/status", "value": %s}`, string(statusVal))
-		patch2 := fmt.Sprintf(`{"op": "add", "path": "/mapped_rows", "value": %s}`, string(finalRowsJSON))
-
-		isAmbiguousVal, _ := json.Marshal(mapping.IsAmbiguous)
-		patch3 := fmt.Sprintf(`{"op": "add", "path": "/is_ambiguous", "value": %s}`, string(isAmbiguousVal))
-
-		reasonVal, _ := json.Marshal(mapping.AmbiguityReason)
-		patch4 := fmt.Sprintf(`{"op": "add", "path": "/ambiguity_reason", "value": %s}`, string(reasonVal))
-
-		polarityVal, _ := json.Marshal(mapping.PolaritySign)
-		patch5 := fmt.Sprintf(`{"op": "add", "path": "/polarity_sign", "value": %s}`, string(polarityVal))
-
-		// Route 1 = Suspended (Ambiguous), Route 0 = Proceed
-		route := 0
-		if mapping.IsAmbiguous {
-			route = 1
-		}
-		routeVal, _ := json.Marshal(route)
-		patch6 := fmt.Sprintf(`{"op": "add", "path": "/route", "value": %s}`, string(routeVal))
-
-		patches = append(patches, []byte(patch1), []byte(patch2), []byte(patch3), []byte(patch4), []byte(patch5), []byte(patch6))
+		patches = append(patches, llmPatches...)
+		patches = append(patches, mappedRowsPatch)
 
 		return patches, nil
 	}
@@ -345,7 +365,7 @@ func ParseRows(payload CSVMappingTaskPayload, mapping *LLMColumnMapping) map[str
 	return finalRows
 }
 
-func (a *CSVMappingAgent) MapRowsUsingLLM(ctx context.Context, task core.TaskDefinition, rows [][]string) (*LLMColumnMapping, error) {
+func (a *CSVMappingAgent) MapColumnsUsingLLM(ctx context.Context, task core.TaskDefinition, rows [][]string) ([]json.RawMessage, error) {
 	prompt := BuildUserPrompt(rows)
 
 	respText, err := a.RT.ExecWithPaging(ctx, prompt, task.SystemPrompt, nil, nil)
@@ -358,39 +378,25 @@ func (a *CSVMappingAgent) MapRowsUsingLLM(ctx context.Context, task core.TaskDef
 		return nil, err
 	}
 
-	return ExtractJSONToMapping(respText)
+	return ExtractJSONPatches(respText)
 }
 
-func ExtractJSONToMapping(respText string) (*LLMColumnMapping, error) {
-	// Robust extraction: find the first { and the last }
-	firstIdx := strings.Index(respText, "{")
-	lastIdx := strings.LastIndex(respText, "}")
+func ExtractJSONPatches(respText string) ([]json.RawMessage, error) {
+	firstIdx := strings.Index(respText, "[")
+	lastIdx := strings.LastIndex(respText, "]")
 
 	if firstIdx == -1 || lastIdx == -1 || lastIdx <= firstIdx {
-		return nil, fmt.Errorf("no valid JSON object found in LLM response (first={ at %d, last=} at %d)", firstIdx, lastIdx)
+		return nil, fmt.Errorf("no valid JSON array found in LLM response (first=[ at %d, last=] at %d)", firstIdx, lastIdx)
 	}
 
 	extracted := strings.TrimSpace(respText[firstIdx : lastIdx+1])
 
-	// Pre-parse validation logging
-	sampleLen := 40
-	startSample := extracted
-	if len(extracted) > sampleLen {
-		startSample = extracted[:sampleLen] + "..."
-	}
-	endSample := extracted
-	if len(extracted) > sampleLen {
-		endSample = "..." + extracted[len(extracted)-sampleLen:]
+	var patches []json.RawMessage
+	if err := json.Unmarshal([]byte(extracted), &patches); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal extracted JSON array: %w", err)
 	}
 
-	fmt.Printf("🔍 [DEBUG] Extracted JSON for Unmarshal (len=%d): %s --- %s\n", len(extracted), startSample, endSample)
-
-	var mapping LLMColumnMapping
-	if err := json.Unmarshal([]byte(extracted), &mapping); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal extracted JSON (len=%d): %w", len(extracted), err)
-	}
-
-	return &mapping, nil
+	return patches, nil
 }
 
 func fieldAt(rec []string, idx int) string {
@@ -403,124 +409,6 @@ func fieldAt(rec []string, idx int) string {
 func cleanArtifacts(val string) string {
 	cleaned := strings.ReplaceAll(val, "*", "")
 	return strings.TrimSpace(cleaned)
-}
-
-func resolveAmountColumnIndex(rows [][]string, mapping *LLMColumnMapping) (int, bool) {
-	if mapping != nil && mapping.AmountColIdx != nil {
-		return *mapping.AmountColIdx, true
-	}
-	idx, ok := inferAmountColumnIndex(rows)
-	return idx, ok
-}
-
-func inferAmountColumnIndex(rows [][]string) (int, bool) {
-	if len(rows) < 2 {
-		return 0, false
-	}
-
-	maxCols := 0
-	for _, row := range rows {
-		if len(row) > maxCols {
-			maxCols = len(row)
-		}
-	}
-	if maxCols == 0 {
-		return 0, false
-	}
-
-	nonEmptyCounts := make([]int, maxCols)
-	numericCounts := make([]int, maxCols)
-
-	for i := 1; i < len(rows); i++ { // Skip header row
-		for c := 0; c < maxCols; c++ {
-			val := cleanArtifacts(fieldAt(rows[i], c))
-			if val == "" {
-				continue
-			}
-			nonEmptyCounts[c]++
-			if looksLikeAmountValue(val) {
-				numericCounts[c]++
-			}
-		}
-	}
-
-	candidates := make([]int, 0)
-	for c := 0; c < maxCols; c++ {
-		if nonEmptyCounts[c] == 0 || numericCounts[c] == 0 {
-			continue
-		}
-		ratio := float64(numericCounts[c]) / float64(nonEmptyCounts[c])
-		if ratio >= 0.7 {
-			candidates = append(candidates, c)
-		}
-	}
-
-	if len(candidates) == 0 {
-		return 0, false
-	}
-	if len(candidates) == 1 {
-		return candidates[0], true
-	}
-
-	header := []string{}
-	if len(rows) > 0 {
-		header = rows[0]
-	}
-
-	bestIdx := -1
-	bestScore := -1
-	for _, c := range candidates {
-		score := amountHeaderScore(cleanArtifacts(fieldAt(header, c)))
-		if score > bestScore {
-			bestScore = score
-			bestIdx = c
-		}
-	}
-
-	if bestIdx >= 0 && bestScore > 0 {
-		return bestIdx, true
-	}
-
-	return 0, false
-}
-
-func amountHeaderScore(header string) int {
-	h := strings.ToLower(strings.TrimSpace(header))
-	score := 0
-	if strings.Contains(h, "amount") || strings.Contains(h, "amt") {
-		score += 3
-	}
-	if strings.Contains(h, "value") || strings.Contains(h, "sum") || strings.Contains(h, "total") {
-		score += 2
-	}
-	if strings.Contains(h, "paid") || strings.Contains(h, "payment") {
-		score += 1
-	}
-	return score
-}
-
-func looksLikeAmountValue(val string) bool {
-	s := strings.TrimSpace(val)
-	if s == "" {
-		return false
-	}
-
-	s = strings.ReplaceAll(s, ",", "")
-	s = strings.ReplaceAll(s, "$", "")
-	s = strings.ReplaceAll(s, "€", "")
-	s = strings.ReplaceAll(s, "£", "")
-	s = strings.ReplaceAll(s, " ", "")
-
-	if strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")") {
-		s = "-" + strings.TrimSuffix(strings.TrimPrefix(s, "("), ")")
-	}
-
-	if s == "" {
-		return false
-	}
-
-	_, err := strconv.ParseFloat(s, 64)
-	return err == nil
 }
 
 func BuildUserPrompt(rows [][]string) string {

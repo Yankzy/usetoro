@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/config"
@@ -109,29 +107,6 @@ func (c *WorkflowEventConsumer) handleWorkflowStatusEvent(msg *nats.Msg) {
 	}
 	// Targeted broadcast to the specific room (realm preferred, then session, then entity)
 	c.hub.BroadcastToRoom(roomID, wsMsg)
-
-	if status, ok := payload["status"].(string); ok && status == "ambiguous" {
-		if c.queries != nil {
-			if sessionID == "" {
-				c.logger.Warn("Ambiguity event missing session_id; cannot update session row", "entity_id", entityID)
-			} else if sid, err := uuid.Parse(sessionID); err == nil {
-				reason := ""
-				if r, ok := payload["suspension_reason"].(string); ok {
-					reason = r
-				}
-				err := c.queries.MarkCleanupSessionAmbiguous(context.Background(), database.MarkCleanupSessionAmbiguousParams{
-					ID:              pgtype.UUID{Bytes: sid, Valid: true},
-					IsAmbiguous:     true,
-					AmbiguityReason: pgtype.Text{String: reason, Valid: reason != ""},
-				})
-				if err != nil {
-					c.logger.Error("Failed to mark cleanup session ambiguous", "error", err, "session", sessionID)
-				}
-			} else {
-				c.logger.Error("Invalid session ID in ambiguity event", "session_id", sessionID, "error", err)
-			}
-		}
-	}
 
 	if err := msg.Ack(); err != nil {
 		c.logger.Error("Failed to acknowledge workflow NATS message", "error", err)

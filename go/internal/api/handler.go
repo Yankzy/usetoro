@@ -395,8 +395,8 @@ func (h *Handler) getRedirectURI(r *http.Request, logger *slog.Logger) string {
 	// 3. Determine Path
 	// We derive the callback path from the current request path to maintain any prefixes (like /api)
 	currentPath := r.URL.Path
-	callbackPath := "/auth/qbo/callback"
-	if idx := strings.Index(currentPath, "/auth/qbo/"); idx != -1 {
+	callbackPath := "/api/auth/qbo/callback"
+	if idx := strings.Index(currentPath, "/auth/qbo/"); idx != -1 && idx > 0 {
 		callbackPath = currentPath[:idx] + "/auth/qbo/callback"
 	}
 

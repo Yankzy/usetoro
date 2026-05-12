@@ -40,6 +40,8 @@ go.work.sum
 .env
 **/env
 .logs
+.go_cache
+**/go_cache
 **/logs
 **/keys
 **/db_data

@@ -23,6 +23,9 @@ type Hub struct {
 	// Unregister requests from clients.
 	unregister chan *Client
 
+	// Active clients tracking to prevent double-close
+	clients map[*Client]bool
+
 	// JoinRoom requests from clients.
 	joinRoom chan joinRoomRequest
 
@@ -56,10 +59,11 @@ type joinRoomRequest struct {
 func NewHub(logger *slog.Logger, queueClient *queue.Client, db *database.Queries, llm *ai.LLMClient) *Hub {
 	return &Hub{
 		broadcast:   make(chan broadcastMessage, 256),
-		register:    make(chan *Client),
-		unregister:  make(chan *Client),
-		joinRoom:    make(chan joinRoomRequest),
+		register:    make(chan *Client, 256),
+		unregister:  make(chan *Client, 256),
+		joinRoom:    make(chan joinRoomRequest, 256),
 		rooms:       make(map[string]map[*Client]bool),
+		clients:     make(map[*Client]bool),
 		logger:      logger,
 		queueClient: queueClient,
 		db:          db,
@@ -77,11 +81,18 @@ func (h *Hub) Run() {
 				h.rooms[client.entityID] = make(map[*Client]bool)
 			}
 			h.rooms[client.entityID][client] = true
+			h.clients[client] = true
 			h.mu.Unlock()
 			h.logger.Info("Client registered", "room", client.entityID, "total_clients", h.ClientCount())
 
 		case client := <-h.unregister:
 			h.mu.Lock()
+			if !h.clients[client] {
+				h.mu.Unlock()
+				continue
+			}
+			delete(h.clients, client)
+
 			// Unregister from all rooms this client might belong to
 			for roomID, room := range h.rooms {
 				if _, exists := room[client]; exists {
@@ -130,13 +141,11 @@ func (h *Hub) sendToClient(client *Client, data []byte) {
 	select {
 	case client.send <- data:
 	default:
-		close(client.send)
-		h.mu.Lock()
-		delete(h.rooms[client.entityID], client)
-		if len(h.rooms[client.entityID]) == 0 {
-			delete(h.rooms, client.entityID)
+		h.logger.Warn("Client send buffer full, unregistering", "entity_id", client.entityID)
+		select {
+		case h.unregister <- client:
+		default:
 		}
-		h.mu.Unlock()
 	}
 }
 
@@ -159,9 +168,5 @@ func (h *Hub) JoinRoom(client *Client, roomID string) {
 func (h *Hub) ClientCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	count := 0
-	for _, room := range h.rooms {
-		count += len(room)
-	}
-	return count
+	return len(h.clients)
 }

@@ -3,12 +3,13 @@ package wshandler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
-	"strings"
-	"fmt"
-	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -137,7 +138,7 @@ func (c *Client) readPump() {
 		// Intercept custom JetStream flow messages
 		var parsedMsg Message
 		jsonErr := json.Unmarshal(message, &parsedMsg)
-		
+
 		if jsonErr == nil {
 			if parsedMsg.Type == MessageTypeSubscribeCards {
 				c.unackedMu.Lock()
@@ -188,6 +189,11 @@ func (c *Client) readPump() {
 
 // cardPump pulls unlocked cards from JetStream and sends them to the client
 func (c *Client) cardPump() {
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Error("Recovered from panic in cardPump", "error", r)
+		}
+	}()
 	queueClient := c.hub.queueClient
 	if queueClient == nil {
 		c.logger.Error("QueueClient is nil, cannot start card pump")
@@ -195,14 +201,14 @@ func (c *Client) cardPump() {
 	}
 
 	js := queueClient.JetStream()
-	
+
 	subjectStr := "cards.unswiped"
 	consumerName := "junior_accountants"
 	// Hydrate immediately from DB if allowed
 	if entityID, ok := c.ctx.Value(auth.EntityIDKey).(uuid.UUID); ok {
 		subjectStr = fmt.Sprintf("cards.unswiped.%s", entityID.String())
 		consumerName = fmt.Sprintf("junior_accountants_%s", strings.ReplaceAll(entityID.String(), "-", "_"))
-		
+
 		// --- Secondary DB Trigger (Seed Initial Connectivity payload immediately upon connection) ---
 		if c.hub != nil && c.hub.db != nil {
 			var entityUUID pgtype.UUID
@@ -297,6 +303,8 @@ func (c *Client) cardPump() {
 				b, _ := json.Marshal(resp)
 
 				select {
+				case <-c.ctx.Done():
+					return
 				case c.send <- b:
 				case <-time.After(500 * time.Millisecond):
 					// Client buffer failed
@@ -356,9 +364,12 @@ func (c *Client) writePump() {
 	}
 }
 
-
-
 func (c *Client) blastDatabaseCards(realmID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Error("Recovered from panic in blastDatabaseCards", "error", r)
+		}
+	}()
 	if c.hub == nil || c.hub.db == nil {
 		return
 	}
@@ -381,21 +392,33 @@ func (c *Client) blastDatabaseCards(realmID string) {
 	for _, r := range rows {
 		amtVal := 0.0
 		if r.RawAmount != "" {
-			if parsed, e := strconv.ParseFloat(r.RawAmount, 64); e == nil { amtVal = parsed }
+			if parsed, e := strconv.ParseFloat(r.RawAmount, 64); e == nil {
+				amtVal = parsed
+			}
 		}
 
 		txType := "expense"
-		if amtVal > 0 { txType = "revenue" }
+		if amtVal > 0 {
+			txType = "revenue"
+		}
 
 		dateStr := ""
-		if r.RawDate.Valid { dateStr = r.RawDate.Time.Format("2006-01-02") }
+		if r.RawDate.Valid {
+			dateStr = r.RawDate.Time.Format("2006-01-02")
+		}
 		desc := ""
-		if r.RawDescription.Valid { desc = r.RawDescription.String }
+		if r.RawDescription.Valid {
+			desc = r.RawDescription.String
+		}
 		suggestion := ""
-		if r.PredictedAccountName.Valid { suggestion = r.PredictedAccountName.String }
+		if r.PredictedAccountName.Valid {
+			suggestion = r.PredictedAccountName.String
+		}
 
 		confVal := 0.0
-		if f, e := r.ConfidenceScore.Float64Value(); e == nil && f.Valid { confVal = f.Float64 }
+		if f, e := r.ConfidenceScore.Float64Value(); e == nil && f.Valid {
+			confVal = f.Float64
+		}
 
 		var accountType string
 		if r.PredictedAccountID.Valid {
@@ -414,9 +437,15 @@ func (c *Client) blastDatabaseCards(realmID string) {
 			if r.PredictedVendorID.Valid {
 				if vendorRec, vErr := c.hub.db.GetVendorByID(c.ctx, r.PredictedVendorID); vErr == nil {
 					vTax, _ := fignode.EnsureVendorContext(c.ctx, c.hub.db, c.hub.llm, vendorRec)
-					if vTax.Industry != "" { industry = vTax.Industry }
-					if vTax.IndustryIcon != "" { industryIcon = vTax.IndustryIcon }
-					if vTax.VendorDescription != "" { entityDesc = vTax.VendorDescription }
+					if vTax.Industry != "" {
+						industry = vTax.Industry
+					}
+					if vTax.IndustryIcon != "" {
+						industryIcon = vTax.IndustryIcon
+					}
+					if vTax.VendorDescription != "" {
+						entityDesc = vTax.VendorDescription
+					}
 				}
 			}
 		} else {
@@ -424,9 +453,15 @@ func (c *Client) blastDatabaseCards(realmID string) {
 			if r.PredictedCustomerID.Valid {
 				if customerRec, cErr := c.hub.db.GetCustomerByID(c.ctx, r.PredictedCustomerID); cErr == nil {
 					cTax, _ := fignode.EnsureCustomerContext(c.ctx, c.hub.db, c.hub.llm, customerRec)
-					if cTax.Industry != "" { industry = cTax.Industry }
-					if cTax.IndustryIcon != "" { industryIcon = cTax.IndustryIcon }
-					if cTax.CustomerDescription != "" { entityDesc = cTax.CustomerDescription }
+					if cTax.Industry != "" {
+						industry = cTax.Industry
+					}
+					if cTax.IndustryIcon != "" {
+						industryIcon = cTax.IndustryIcon
+					}
+					if cTax.CustomerDescription != "" {
+						entityDesc = cTax.CustomerDescription
+					}
 				}
 			}
 		}
@@ -462,10 +497,12 @@ func (c *Client) blastDatabaseCards(realmID string) {
 			cardData["customerDescription"] = entityDesc
 		}
 
-		resp := Message{ Type: "new_card", Data: cardData }
+		resp := Message{Type: "new_card", Data: cardData}
 		b, _ := json.Marshal(resp)
 
 		select {
+		case <-c.ctx.Done():
+			return
 		case c.send <- b:
 		case <-time.After(100 * time.Millisecond):
 			// If buffer full, skip to avoid deadlock. JS will resend.
@@ -474,6 +511,11 @@ func (c *Client) blastDatabaseCards(realmID string) {
 }
 
 func (c *Client) blastActiveWorkflows() {
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Error("Recovered from panic in blastActiveWorkflows", "error", r)
+		}
+	}()
 	if c.hub == nil || c.hub.db == nil || c.entityID == "unknown" {
 		return
 	}
@@ -484,13 +526,21 @@ func (c *Client) blastActiveWorkflows() {
 		return
 	}
 
-	workflows, err := c.hub.db.GetWorkflowsByEntityID(c.ctx, pgtype.UUID{Bytes: entityUUID, Valid: true})
+	workflows, err := c.hub.db.GetActiveWorkflowsByEntityID(c.ctx, pgtype.UUID{Bytes: entityUUID, Valid: true})
 	if err != nil {
 		c.logger.Error("Failed to fetch active workflows", "error", err)
 		return
 	}
 
+	// Local cache for blueprints within this blast to avoid redundant DB queries
+	blueprintCache := make(map[string]interface{})
+
 	for _, wf := range workflows {
+		// Stop immediately if context is done
+		if err := c.ctx.Err(); err != nil {
+			return
+		}
+
 		// Parse state
 		var state map[string]interface{}
 		if err := json.Unmarshal(wf.State, &state); err != nil {
@@ -513,15 +563,23 @@ func (c *Client) blastActiveWorkflows() {
 			activeSteps = []string{currentStepID}
 		}
 
-		blueprintRow, err := c.hub.db.GetBlueprintByName(c.ctx, workflowDefName)
-		if err != nil {
-			c.logger.Warn("Failed to fetch blueprint for workflow", "name", workflowDefName, "error", err)
-			continue
-		}
-
 		var blueprint interface{}
-		if err := json.Unmarshal(blueprintRow.Definition, &blueprint); err != nil {
-			continue
+		if cached, exists := blueprintCache[workflowDefName]; exists {
+			blueprint = cached
+		} else {
+			blueprintRow, err := c.hub.db.GetBlueprintByName(c.ctx, workflowDefName)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				c.logger.Warn("Failed to fetch blueprint for workflow", "name", workflowDefName, "error", err)
+				continue
+			}
+
+			if err := json.Unmarshal(blueprintRow.Definition, &blueprint); err != nil {
+				continue
+			}
+			blueprintCache[workflowDefName] = blueprint
 		}
 
 		evt := map[string]interface{}{
@@ -540,6 +598,8 @@ func (c *Client) blastActiveWorkflows() {
 		}
 
 		select {
+		case <-c.ctx.Done():
+			return
 		case c.send <- wsMsg:
 		case <-time.After(100 * time.Millisecond):
 		}

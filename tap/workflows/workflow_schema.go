@@ -7,8 +7,9 @@ type WorkflowDef struct {
 	Name         string         `yaml:"name" json:"name" mapstructure:"name"`
 	Version      string         `yaml:"version" json:"version" mapstructure:"version"`
 	Description  string         `yaml:"description,omitempty" json:"description,omitempty" mapstructure:"description"`
-	TriggerTopic string         `yaml:"trigger_topic" json:"trigger_topic" mapstructure:"trigger_topic"` // The NATS subject that starts this workflow
-	Steps        []WorkflowStep `yaml:"steps" json:"steps" mapstructure:"steps"`
+	TriggerTopic       string         `yaml:"trigger_topic" json:"trigger_topic" mapstructure:"trigger_topic"` // The NATS subject that starts this workflow
+	MaxDelegationDepth int            `yaml:"max_delegation_depth,omitempty" json:"max_delegation_depth,omitempty" mapstructure:"max_delegation_depth"`
+	Steps              []WorkflowStep `yaml:"steps" json:"steps" mapstructure:"steps"`
 }
 
 // ActorType specifies if the processing block is an AI Agent or a persistent DB Worker.

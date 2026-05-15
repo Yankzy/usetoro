@@ -15,9 +15,10 @@ const (
 	QUERY_REF Performative = "query-ref" // Who can do X? (Almanac lookup)
 
 	// Execution Verbs
-	REQUEST Performative = "request" // Do this specific thing now
-	REFUSE  Performative = "refuse"  // I cannot/will not do it
-	FAILURE Performative = "failure" // Something went wrong
+	REQUEST  Performative = "request"  // Do this specific thing now
+	DELEGATE Performative = "delegate" // Dynamically generate and execute a sub-workflow
+	REFUSE   Performative = "refuse"   // I cannot/will not do it
+	FAILURE  Performative = "failure"  // Something went wrong
 )
 
 var validPerformatives = map[Performative]struct{}{
@@ -28,6 +29,7 @@ var validPerformatives = map[Performative]struct{}{
 	INFORM:          {},
 	QUERY_REF:       {},
 	REQUEST:         {},
+	DELEGATE:        {},
 	REFUSE:          {},
 	FAILURE:         {},
 }

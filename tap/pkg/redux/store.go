@@ -1,26 +1,26 @@
 // Package redux implements a high-throughput, context-aware state reduction engine
-// inspired by the Redux pattern. Its primary purpose is to manage state transitions 
+// inspired by the Redux pattern. Its primary purpose is to manage state transitions
 // in a secure, validated, and idempotent way, particularly for AI agent workflows.
 //
 // Key responsibilities include:
 //
-// 1. State Transition via JSON Patch: It uses RFC 6902 (JSON Patch) to apply 
-//    modifications to a JSON state object.
+//  1. State Transition via JSON Patch: It uses RFC 6902 (JSON Patch) to apply
+//     modifications to a JSON state object.
 //
-// 2. Middleware Validation Stack: Every state change is passed through a series 
-//    of "middlewares" to ensure safety:
-//    - RBAC (Role-Based Access Control): Validates that the "Actor" (e.g., an AI Agent) 
-//      is authorized to modify specific paths in the state.
-//    - JSON Schema Validation: Ensures the resulting state after patches are 
-//      applied still conforms to a strictly defined JSON Schema.
-//    - Payload Boundaries: Prevents OOM (Out Of Memory) or performance issues 
-//      by enforcing byte limits on patches.
-//    - Idempotency: Uses monotonic sequence IDs to prevent double-delivery 
-//      of events or out-of-order execution.
+//  2. Middleware Validation Stack: Every state change is passed through a series
+//     of "middlewares" to ensure safety:
+//     - RBAC (Role-Based Access Control): Validates that the "Actor" (e.g., an AI Agent)
+//     is authorized to modify specific paths in the state.
+//     - JSON Schema Validation: Ensures the resulting state after patches are
+//     applied still conforms to a strictly defined JSON Schema.
+//     - Payload Boundaries: Prevents OOM (Out Of Memory) or performance issues
+//     by enforcing byte limits on patches.
+//     - Idempotency: Uses monotonic sequence IDs to prevent double-delivery
+//     of events or out-of-order execution.
 //
-// 3. Self-Correction for LLMs: If a patch fails validation (a "Domain Fault"), 
-//    the engine returns the specific error. This allows the calling agent (the LLM) 
-//    to receive the error feedback and generate a corrected patch in a retry loop.
+//  3. Self-Correction for LLMs: If a patch fails validation (a "Domain Fault"),
+//     the engine returns the specific error. This allows the calling agent (the LLM)
+//     to receive the error feedback and generate a corrected patch in a retry loop.
 package redux
 
 import (
@@ -35,8 +35,8 @@ import (
 )
 
 type Store struct {
-	cfg    EngineConfig       
-	schema *jsonschema.Schema 
+	cfg    EngineConfig
+	schema *jsonschema.Schema
 }
 
 func NewStore(cfg EngineConfig) (*Store, error) {
@@ -67,9 +67,9 @@ func NewStore(cfg EngineConfig) (*Store, error) {
 	return s, nil
 }
 
-// Reduce evaluates pure business logical representations of workflow bytes cleanly separated 
-// from Host-level internal boundaries (`_sys`). It checks strictly monotonic sequential orders 
-// and drops faults ephemerally directly stopping recursive LLM retry panics securely.
+// Reduce evaluates pure business logical representations of workflow bytes separated
+// from Host-level internal boundaries (`_sys`). It checks strictly monotonic sequential orders
+// and drops faults, stopping recursive LLM retry panics.
 func (s *Store) Reduce(ctx context.Context, basePayloadBytes []byte, expectedSequence uint64, events []RFC6902Event) ([]byte, uint64, []DomainFault, error) {
 	state, err := s.initializeState(basePayloadBytes)
 	if err != nil {
@@ -92,7 +92,7 @@ func (s *Store) Reduce(ctx context.Context, basePayloadBytes []byte, expectedSeq
 				EventID: event.EventID,
 				Error:   fmt.Errorf("%w: expected %d, got %d", ErrSequenceMismatch, expectedSequence, event.SequenceID).Error(),
 			})
-			// Drifted sequence immediately halts sequential transaction processing cleanly 
+			// Drifted sequence immediately halts sequential transaction processing cleanly
 			s.cfg.Metrics.RecordRuleViolation("SequenceMismatch")
 			continue
 		}

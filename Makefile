@@ -200,6 +200,7 @@ rebuild_all:
 rebuild: fix-permissions
 	@if [ -n "$(RUN_ARGS)" ]; then \
 		$(MAKE) vndr && $(DOCKER_COMPOSE) up --build -d --force-recreate $(RUN_ARGS); \
+		$(MAKE) logs ARGS="$(RUN_ARGS)"; \
 	else \
 		echo "Enter the service name: "; \
 		read SER_NAME; \

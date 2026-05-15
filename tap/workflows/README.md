@@ -176,7 +176,7 @@ loading paths.
 Protocol verbs are defined in `tap/pkg/core/verbs.go`:
 - `CFP`, `PROPOSE`, `ACCEPT_PROPOSAL`, `REJECT_PROPOSAL`
 - `INFORM`, `QUERY_REF`
-- `REQUEST`, `REFUSE`, `FAILURE`
+- `REQUEST`, `DELEGATE`, `REFUSE`, `FAILURE`
 
 `core.IsValidPerformative(...)` is enforced when creating envelopes (`core.NewEnvelope`) and on
 orchestrator/worker ingress guards.
@@ -437,6 +437,62 @@ events.accounting.bookkeeping published
 | Coupling between the two YAMLs | Only: the string `"CSV Cleaner Pipeline"` (blueprint name in DB) |
 | Concurrency safe? | Yes — child and parent are separate DB rows with separate `SequenceID` |
 | Nested sub-workflows? | Supported — `InstancePath` is a slice, `completeParentStep` walks it |
+
+### Dynamic Delegation & Pagination
+
+A step does not have to explicitly declare a `SubWorkflow` to run one. An Agent or Worker can dynamically spawn an ephemeral sub-workflow at runtime using the `DELEGATE` performative.
+
+When the Orchestrator receives a `DELEGATE` envelope, it dynamically generates an ephemeral `WorkflowDef` based on the steps provided by the agent. It enforces two safety limits:
+1. **`MaxDynamicDelegationSteps = 50`**: An agent cannot request > 50 steps at once.
+2. **`MaxDelegationDepth`**: A static primitive on the `WorkflowDef` (e.g., `max_delegation_depth: 3`). The Orchestrator rejects delegations if `len(InstancePath)` exceeds this limit.
+
+#### The Generic Delegation Worker (`workers.delegator`)
+
+To utilize Dynamic Delegation natively in YAML without writing Go code, you can use the generic delegation worker. It reads an array from the JSON payload (populated via `workflow_schema`), chunks it based on `batch_size`, and issues a `DELEGATE` to fan out execution.
+
+```yaml
+  - id: fan_out_transactions
+    activity_type: workers.delegator
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "unclassified_transactions": { "type": "array" }
+        }
+      }
+    config:
+      batch_size: 50
+      target_sub_workflow: "categorize_batch"
+```
+
+If the incoming array exceeds 2,500 items (50 steps * 50 batch size), the `delegator` worker recursively adds a final pagination step to chunk the remainder once the first batch finishes, preventing DAG bloat and enabling infinite horizontal scale.
+
+So now, There are actually two distinct ways you can trigger dynamic sub-workflows now.
+
+1. The AI/Custom Agent Way (No workers.delegator needed)
+Because the Orchestrator now natively understands the DELEGATE performative, any agent can decide to spawn a sub-workflow.
+
+For example, imagine you write a custom Go agent called a "Research Agent" that uses an LLM. The LLM decides a problem is too complex and tells your Go code to break it into 3 parts. Your Go agent can programmatically construct a DELEGATE envelope with those 3 steps and send it to the Orchestrator. In this scenario, the YAML workflow just calls your agents.research. The agent itself decides to delegate on the fly. workers.delegator is completely uninvolved here.
+
+2. The Static Array Way (Using workers.delegator)
+Sometimes you don't have an intelligent AI agent deciding what to do. You just have a massive array of 2,000 transactions, and you know you want to fan them out into parallel categorization steps.
+
+You shouldn't have to write custom Go code or invoke an LLM just to iterate over an array.
+
+This is where workers.delegator comes in. It is a "dumb", generic worker we built for convenience. You explicitly put it in your YAML, and it acts as a bridge: it takes an array from the payload, chunks it up, and automatically fires the DELEGATE envelope for you.
+
+#### The Unified Generic Batch Agent (`agents.accounting.batch_categorization`)
+
+When the Orchestrator runs a dynamic sub-workflow for chunked arrays (like the `Categorize Batch Sub-Workflow`), the sub-workflow's steps often require LLM processing on the array chunk.
+
+Instead of writing custom Go code for each specific type of batch categorization (e.g., *Macro Classification*, *Entity Selection*, *Account Type Selection*), Toro utilizes a single, powerful **Generic Batch Agent** (`tap/agents/generic_batch_agent`).
+
+This unified architecture relies heavily on Redux JSON Patch functionality:
+1. **Dynamic Prompting**: The agent does not hardcode any logic. It reads the `SystemPrompt` straight from the Orchestrator's execution context (defined entirely in your YAML workflow).
+2. **Auto-Array Detection**: It scans the `batch_payload` config injected by the `delegator` worker to find the array of transactions.
+3. **Agnostic JSON Patching**: The LLM is instructed to return an array of JSON objects (each containing an `id`). The Generic Batch Agent iterates over these results and dynamically generates index-based JSON patches mapping to the Redux state (e.g., `{"op": "add", "path": "/unclassified_transactions/0/macro_class", "value": "EXPENSE"}`). 
+
+Because the agent maps *any* keys returned by the LLM into the Redux array, you can define entirely new batch categorization agents by simply creating new steps in YAML with different `system_prompt`s, without ever compiling new Go code.
 
 ---
 

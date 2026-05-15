@@ -371,6 +371,24 @@ type ToroCoreAgentPerformanceHourly struct {
 	TotalCost     int64
 }
 
+type ToroCoreConversation struct {
+	ID           pgtype.UUID
+	EntityID     pgtype.UUID
+	Source       string
+	ExternalID   string
+	FromHandle   string
+	ToHandle     string
+	ReplyTo      pgtype.Text
+	InReplyTo    pgtype.Text
+	Subject      pgtype.Text
+	BodyText     pgtype.Text
+	BodyHtml     pgtype.Text
+	StrippedText pgtype.Text
+	Metadata     []byte
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type ToroCoreEntity struct {
 	ID          pgtype.UUID
 	ParentID    pgtype.UUID

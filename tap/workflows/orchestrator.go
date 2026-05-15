@@ -59,6 +59,9 @@ const (
 
 	// Redelivery limits before emitting to DLQ.
 	orchestratorDeliverLimit = 5
+
+	// MaxDynamicDelegationSteps limits how many parallel steps a dynamic delegation can spawn
+	MaxDynamicDelegationSteps = 50
 )
 
 var errMessageDeadLettered = errors.New("message already dead lettered")
@@ -98,6 +101,12 @@ type InstanceState struct {
 	// SuspensionKind disambiguates why the workflow is paused.
 	// Values: "hitl" | "ambiguous" | "failure"
 	SuspensionKind string `json:"suspension_kind,omitempty"`
+}
+
+// DelegationRequest is the payload expected inside a core.DELEGATE envelope.
+type DelegationRequest struct {
+	Steps   []WorkflowStep  `json:"steps"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 // NewOrchestrator initialises the central orchestrator system.
@@ -332,7 +341,7 @@ func (o *Orchestrator) SyncBlueprints(ctx context.Context) error {
 	}
 
 	if err := o.ensureWorkflowTriggerStream(subjects); err != nil {
-		return fmt.Errorf("ensure %s stream: %w", WorkflowTriggerStream, err)
+		o.logger.Error("Orchestrator: ensure WORKFLOW_TRIGGERS stream failed (continuing boot)", "error", err)
 	}
 
 	o.logger.Info("📋 Orchestrator: synced workflow blueprints from DB", "count", len(next), "trigger_topics", len(subjects))
@@ -1035,6 +1044,138 @@ func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
 		)
 		msg.Ack()
 
+	case core.DELEGATE:
+		o.logger.Info("🔀 [DEBUG] Orchestrator received DELEGATE performative",
+			"from", env.SenderDID,
+			"cid", env.ConversationID,
+		)
+		instancePath, stepID, err := parseConversationID(env.ConversationID)
+		if err != nil {
+			o.logger.Error("Orchestrator: malformed conversation ID in DELEGATE", "cid", env.ConversationID, "error", err)
+			msg.Term()
+			return
+		}
+		if len(instancePath) == 0 {
+			o.logger.Error("Orchestrator: empty instance path in DELEGATE", "cid", env.ConversationID)
+			msg.Term()
+			return
+		}
+		instanceIDStr := instancePath[len(instancePath)-1]
+		instanceID, err := uuid.Parse(instanceIDStr)
+		if err != nil {
+			o.logger.Error("Orchestrator: invalid instance ID in DELEGATE", "id", instanceIDStr, "error", err)
+			msg.Term()
+			return
+		}
+
+		wf, err := o.queries.GetWorkflow(ctx, pgtype.UUID{Bytes: instanceID, Valid: true})
+		if err != nil {
+			o.logger.Error("Orchestrator: failed to fetch workflow for DELEGATE", "id", instanceIDStr, "error", err)
+			msg.Nak()
+			return
+		}
+
+		var state InstanceState
+		if err := json.Unmarshal(wf.State, &state); err != nil {
+			o.logger.Error("Orchestrator: failed to unmarshal state in DELEGATE", "id", instanceIDStr, "error", err)
+			msg.Term()
+			return
+		}
+		ensureInstanceState(&state, instancePath)
+
+		// Unmarshal the DelegationRequest
+		var req DelegationRequest
+		if err := json.Unmarshal(env.Body, &req); err != nil {
+			o.logger.Error("Orchestrator: malformed DelegationRequest payload", "error", err)
+			o.suspendWorkflowForReview(ctx, wf, &state, stepID, fmt.Sprintf("malformed DELEGATE payload: %v", err), 0, "failure")
+			msg.Ack()
+			return
+		}
+
+		// Safety Check 1: Step Limit
+		if len(req.Steps) > MaxDynamicDelegationSteps {
+			o.logger.Warn("Orchestrator: delegation steps exceed max limit", "count", len(req.Steps), "max", MaxDynamicDelegationSteps)
+			o.suspendWorkflowForReview(ctx, wf, &state, stepID, fmt.Sprintf("delegation exceeded max steps limit (%d > %d)", len(req.Steps), MaxDynamicDelegationSteps), 0, "failure")
+			msg.Ack()
+			return
+		}
+
+		// Safety Check 2: DAG Depth Limit
+		def, err := o.resolveBlueprintByName(ctx, state.WorkflowDef)
+		if err != nil {
+			o.logger.Error("Orchestrator: failed to resolve blueprint for DELEGATE limit check", "name", state.WorkflowDef)
+		} else {
+			maxDepth := def.MaxDelegationDepth
+			if maxDepth <= 0 {
+				maxDepth = 5 // default safety limit
+			}
+			if len(state.InstancePath) > maxDepth {
+				o.logger.Warn("Orchestrator: delegation depth exceeds workflow max limit", "depth", len(state.InstancePath), "max", maxDepth)
+				o.suspendWorkflowForReview(ctx, wf, &state, stepID, fmt.Sprintf("delegation exceeded max DAG depth (%d > %d)", len(state.InstancePath), maxDepth), 0, "failure")
+				msg.Ack()
+				return
+			}
+		}
+
+		// Create dynamic workflow blueprint
+		dynamicName := fmt.Sprintf("dynamic-%s-%s", stepID, uuid.New().String()[:8])
+		dynDef := WorkflowDef{
+			Name:  dynamicName,
+			Steps: req.Steps,
+			// Inherit max delegation depth so children of this dynamic workflow respect the limit
+			MaxDelegationDepth: def.MaxDelegationDepth,
+		}
+
+		var mutated bool
+		dynDef, mutated = normalizeWorkflowDef(dynDef)
+		if mutated {
+			o.logger.Info("Orchestrator: normalized dynamic workflow graph", "name", dynamicName)
+		}
+
+		defBytes, _ := json.Marshal(dynDef)
+		_, err = o.queries.UpsertWorkflowBlueprint(ctx, database.UpsertWorkflowBlueprintParams{
+			Name:         dynamicName,
+			TriggerTopic: "",
+			Definition:   defBytes,
+		})
+		if err != nil {
+			o.logger.Error("Orchestrator: failed to upsert dynamic blueprint", "error", err)
+			msg.Nak()
+			return
+		}
+
+		// Append to in-memory cache
+		o.blueprintMu.Lock()
+		o.blueprints = append(o.blueprints, dynDef)
+		o.blueprintMu.Unlock()
+
+		o.logger.Info("Orchestrator: registered dynamic delegation blueprint", "name", dynamicName, "steps", len(req.Steps))
+
+		// Synthesize a step to invoke the new SubWorkflow
+		syntheticStep := WorkflowStep{
+			ID:          stepID,
+			SubWorkflow: dynamicName,
+		}
+
+		// Construct payload for the sub-workflow
+		payloadToPass := req.Payload
+		if len(payloadToPass) == 0 {
+			// Fallback: pass whatever the current state knows (or empty)
+			if last, ok := state.Variables[stepID]; ok {
+				payloadToPass = last
+			} else {
+				payloadToPass = []byte(`{}`)
+			}
+		}
+
+		if err := o.spawnSubWorkflow(ctx, syntheticStep, &state, wf.EntityID, payloadToPass); err != nil {
+			o.logger.Error("Orchestrator: failed to spawn dynamic SubWorkflow", "error", err)
+			msg.Nak()
+			return
+		}
+		
+		msg.Ack()
+
 	case core.INFORM:
 		o.logger.Info("📡 [DEBUG] Orchestrator received INFORM proof",
 			"from", env.SenderDID,
@@ -1514,6 +1655,26 @@ func stepIDsFromList(steps []WorkflowStep) []string {
 		ids = append(ids, step.ID)
 	}
 	return ids
+}
+
+func (o *Orchestrator) suspendWorkflowForReview(ctx context.Context, wf database.ToroCoreWorkflow, state *InstanceState, stepID string, reason string, route int, kind string) {
+	state.Suspended = true
+	state.SuspensionStep = stepID
+	state.SuspensionReason = reason
+	state.SuspensionRoute = route
+	state.SuspensionKind = kind
+
+	newStateBytes, _ := json.Marshal(state)
+	_, err := o.queries.UpdateWorkflowState(ctx, database.UpdateWorkflowStateParams{
+		ID:    wf.ID,
+		State: newStateBytes,
+	})
+	if err != nil {
+		o.logger.Error("Orchestrator: failed to persist suspended state", "error", err)
+	}
+
+	instanceIDStr := state.InstancePath[len(state.InstancePath)-1]
+	o.publishStatus(instanceIDStr, wf.EntityID, "suspended", stepID, "", WorkflowDef{}, nil)
 }
 
 func ensureInstanceState(state *InstanceState, path []string) {

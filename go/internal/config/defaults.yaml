@@ -203,65 +203,13 @@ agents:
       db_queries: true
       entity_resolver: false
 
-  - did: did:toro:agent:outflow_classification
-    name: Cash Outflow Classification Agent
+  - did: did:toro:agent:batch_categorization
+    name: Batch Categorization Agent
     model: gpt-5.4-mini
     engine: internal
-    internal_module: outflow-classification-agent
-    activity_type: agents.accounting.classify_outflow
-    task_queue: tasks.accounting.1.classify_outflow
-    dependencies:
-      database: false
-      db_queries: true
-      entity_resolver: false
-
-  - did: did:toro:agent:inflow_classification
-    name: Cash Inflow Classification Agent
-    model: gpt-5.4-mini
-    engine: internal
-    internal_module: inflow-classification-agent
-    activity_type: agents.accounting.classify_inflow
-    task_queue: tasks.accounting.1.classify_inflow
-    dependencies:
-      database: false
-      db_queries: true
-      entity_resolver: false
-
-  - did: did:toro:agent:account_type_selection
-    name: Account Type Selection Agent
-    model: gpt-5.4-mini
-    engine: internal
-    internal_module: account-type-selection-agent
-    activity_type: agents.accounting.select_account_type
-    task_queue: tasks.accounting.1.select_account_type
-    dependencies:
-      database: false
-      db_queries: true
-      entity_resolver: false
-
-
-  - did: did:toro:agent:entity_selection
-    name: Entity Selection Agent
-    model: gpt-5.4-mini
-    engine: internal
-    internal_module: entity-selection-agent
-    activity_type: agents.accounting.select_entity
-    task_queue: tasks.accounting.1.select_entity
-    dependencies:
-      database: false
-      db_queries: true
-      entity_resolver: false
- 
- 
-  - did: did:toro:agent:account_selection
-    name: Account Selection Agent
-    model: gpt-5.4-mini
-    engine: internal
-    internal_module: account-selection-agent
-    activity_type: agents.accounting.select_account
-    task_queue: tasks.accounting.1.select_account
-
-
+    internal_module: generic-batch-agent
+    activity_type: agents.accounting.batch_categorization
+    task_queue: tasks.accounting.1.batch_categorization
     dependencies:
       database: false
       db_queries: true
@@ -271,6 +219,10 @@ workers:
   csv_mapping:
     activity_type: workers.database.insert_rows
     # Leave subject empty to derive from activity type; override here if needed.
+    subject: ""
+    group: ""
+  delegator:
+    activity_type: workers.delegator
     subject: ""
     group: ""
   enrichment:
@@ -303,6 +255,10 @@ workers:
     group: ""
   sql:
     activity_type: workers.sql.execute
+    subject: ""
+    group: ""
+  postmark_inbound_email:
+    activity_type: workers.email.postmark_inbound
     subject: ""
     group: ""
   vector_sync:

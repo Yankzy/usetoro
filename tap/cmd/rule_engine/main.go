@@ -205,6 +205,11 @@ func (s *mockStagingStore) GetCleanupSession(ctx context.Context, id pgtype.UUID
 	}, nil
 }
 
+func (s *mockStagingStore) GetSessionRows(ctx context.Context, arg database.GetSessionRowsParams) ([]database.GetSessionRowsRow, error) {
+	// Simple mock implementation returning an empty slice
+	return nil, nil
+}
+
 func newMockTransaction(sessionID pgtype.UUID, realmID string, tx editableMockTransaction) database.FignodeStagingTransaction {
 	return database.FignodeStagingTransaction{
 		ID:             randomUUID(),

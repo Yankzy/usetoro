@@ -205,7 +205,10 @@ func (b *BaseAgent) Start() error {
 		"did":       b.Cfg.DID,
 		"endpoints": []string{inbox},
 		"capabilities": []map[string]interface{}{
-			{"activity_type": b.Cfg.ActivityType},
+			{
+				"type": b.Cfg.ActivityType,
+				"meta": map[string]interface{}{"activity_type": b.Cfg.ActivityType},
+			},
 		},
 		"expiry": time.Now().Add(24 * time.Hour),
 	}
@@ -291,7 +294,7 @@ func (b *BaseAgent) ReplyFailure(msg *nats.Msg, reqEnv core.Envelope, err error)
 	return msg.Ack()
 }
 
-// ExecuteLocalWorkflow executes heavily validated Redux schema evaluation steps 
+// ExecuteLocalWorkflow executes heavily validated Redux schema evaluation steps
 // entirely statelessly without forcing queries/commits against global workflow IDs.
 func (b *BaseAgent) ExecuteLocalWorkflow(
 	ctx context.Context,
@@ -302,7 +305,7 @@ func (b *BaseAgent) ExecuteLocalWorkflow(
 ) error {
 	// ----- Phase 1: Initialize Local State -----
 	b.Logger.Info("🔄 [REDUX] Phase 1: Initializing local Redux workspace seamlessly")
-	
+
 	var currentSeq uint64 = 0
 	baseState := wfCfg.InitialState
 	if len(baseState) == 0 {
@@ -369,6 +372,7 @@ func (b *BaseAgent) ExecuteLocalWorkflow(
 	// ----- Phase 4: Invoke onComplete with validated state -----
 	if onComplete != nil {
 		b.Logger.Info("✅ [REDUX] Phase 4: Invoking onComplete handler with validated local state")
+		b.Logger.Info("✅ [REDUX] Final state:", "state", string(finalState))
 		if err := onComplete(finalState); err != nil {
 			return fmt.Errorf("onComplete handler failed: %w", err)
 		}

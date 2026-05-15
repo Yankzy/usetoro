@@ -18,6 +18,12 @@ SELECT * FROM toro_core.workflows
 WHERE entity_id = $1
 ORDER BY updated_at DESC;
 
+-- name: GetActiveWorkflowsByEntityID :many
+SELECT * FROM toro_core.workflows 
+WHERE entity_id = $1 AND status IN ('open', 'processing')
+ORDER BY updated_at DESC;
+
+
 -- name: LogWorkflowHistory :one
 INSERT INTO toro_core.workflow_history (workflow_id, role, content)
 VALUES (@workflow_id, @role, @content)

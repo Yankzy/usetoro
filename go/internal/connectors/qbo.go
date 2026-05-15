@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/config"
@@ -28,14 +29,18 @@ type QBOConnector struct {
 	cfg    *config.Config
 	store  *store.Store
 	nc     *nats.Conn
+
+	mu      sync.RWMutex
+	clients map[string]*quickbooks.Client
 }
 
 func NewQBOConnector(logger *slog.Logger, cfg *config.Config, store *store.Store, nc *nats.Conn) *QBOConnector {
 	return &QBOConnector{
-		logger: logger,
-		cfg:    cfg,
-		store:  store,
-		nc:     nc,
+		logger:  logger,
+		cfg:     cfg,
+		store:   store,
+		nc:      nc,
+		clients: make(map[string]*quickbooks.Client),
 	}
 }
 
@@ -602,20 +607,30 @@ func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) 
 		realmID = conn.RealmID
 	}
 
-	// 2. Fetch decrypted tokens from the store (DB values are encrypted at rest)
-	accessToken, storedRefreshToken, expiresAt, entityID, err := c.store.GetQBOTokens(ctx, realmID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get QBO tokens: %w", err)
+	// 2. Check cache
+	c.mu.RLock()
+	client, exists := c.clients[realmID]
+	c.mu.RUnlock()
+	if exists {
+		return client, nil
 	}
 
-	// 2. Initialize QBO client with auto-refresh callback
+	// 3. Fetch decrypted tokens from the store (DB values are encrypted at rest)
+	accessToken, storedRefreshToken, expiresAt, entityID, err := c.store.GetQBOTokens(ctx, realmID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get QBO tokens for realm %s: %w", realmID, err)
+	}
+
+	c.logger.Debug("Initializing new QBO client", "realm_id", realmID, "has_refresh", storedRefreshToken != "")
+
+	// 4. Initialize QBO client with auto-refresh callback
 	effectiveEntityID := tenantID
 	if effectiveEntityID == "" {
 		// If tenantID wasn't provided (e.g. from webhook), use the one tied to the connection.
 		effectiveEntityID = entityID
 	}
 
-	client, err := quickbooks.NewClient(
+	newClient, err := quickbooks.NewClient(
 		c.cfg.QBOClientID,
 		c.cfg.QBOClientSecret,
 		realmID,
@@ -627,19 +642,23 @@ func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) 
 			Expiry:       expiresAt,
 		},
 		func(token *quickbooks.BearerToken) error {
-			c.logger.Info("Auto-refreshed QBO token", "realm_id", realmID)
+			c.logger.Info("🔄 QBO Auto-refresh triggered", "realm_id", realmID)
 
 			// Defensive check: If the SDK somehow returns an empty refresh token,
 			// fallback to the one we already have in memory from the database.
 			newRefreshToken := token.RefreshToken
 			if newRefreshToken == "" {
+				c.logger.Warn("SDK returned empty refresh token, falling back to stored one", "realm_id", realmID)
 				newRefreshToken = storedRefreshToken
 			}
 
 			// Persist encrypted at rest.
 			if err := c.store.SaveQBOTokens(ctx, effectiveEntityID, realmID, token.AccessToken, newRefreshToken, token.Expiry); err != nil {
+				c.logger.Error("Failed to persist refreshed QBO tokens", "realm_id", realmID, "error", err)
 				return err
 			}
+
+			c.logger.Info("✅ QBO tokens persisted successfully", "realm_id", realmID)
 
 			// Keep the closure's fallback token fresh for subsequent refreshes.
 			storedRefreshToken = newRefreshToken
@@ -650,7 +669,12 @@ func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) 
 		return nil, fmt.Errorf("failed to initialize QBO client: %w", err)
 	}
 
-	return client, nil
+	// Store in cache
+	c.mu.Lock()
+	c.clients[realmID] = newClient
+	c.mu.Unlock()
+
+	return newClient, nil
 }
 
 // ClientForRealm returns an authenticated QBO client for the given realmID.

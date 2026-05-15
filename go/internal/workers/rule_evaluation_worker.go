@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
@@ -16,6 +17,7 @@ import (
 	ruleEngine "github.com/Yankzy/usetoro/internal/erp/rule_engine"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/Yankzy/usetoro/tap/workflows"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -31,16 +33,23 @@ func init() {
 	})
 }
 
+// RuleEvaluationStore is the minimal database interface required by this worker.
 type RuleEvaluationStore interface {
 	GetPendingStagingTransactions(context.Context, pgtype.UUID) ([]database.FignodeStagingTransaction, error)
 	UpdateStagingTransactionWithRule(context.Context, database.UpdateStagingTransactionWithRuleParams) error
 	GetCleanupSession(context.Context, pgtype.UUID) (database.GetCleanupSessionRow, error)
+	// GetSessionRows with Status='ENRICHED' fetches rows that completed enrichment
+	// but were not matched by the rule engine — these need AI categorization.
+	GetSessionRows(context.Context, database.GetSessionRowsParams) ([]database.GetSessionRowsRow, error)
 }
 
+// RuleEvaluationEngine is the minimal rule-engine interface required by this worker.
 type RuleEvaluationEngine interface {
 	EvaluateTransaction(context.Context, ruleEngine.Transaction) (*accounting.RuleResult, error)
 	PersistAuditLog(context.Context, string, pgtype.UUID, *accounting.RuleResult)
 }
+
+// ─── RuleEvaluationWorker ────────────────────────────────────────────────────
 
 type RuleEvaluationWorker struct {
 	store      RuleEvaluationStore
@@ -121,7 +130,7 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 
 	w.logger.Info("evaluating rules for session", "session_id", payload.SessionID)
 
-	// 2. Fetch the session so we can resolve realm_id (now sourced from session, not transaction).
+	// 2. Fetch the session to resolve realm_id.
 	session, err := w.store.GetCleanupSession(ctx, sessionUUID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch session for rule evaluation: %w", err)
@@ -136,7 +145,7 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 
 	matchesFound := 0
 
-	// 3. Process through Rule Engine
+	// 4. Process through Rule Engine
 	for _, stx := range txns {
 		ruleTx, err := w.mapStagingToRuleTransaction(stx)
 		if err != nil {
@@ -150,17 +159,14 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 			continue
 		}
 
-		// 4. Update Database on Match
 		if result != nil && result.MatchedRuleGroupID != nil {
 			matchesFound++
 
-			// By default, assume 1-to-1 allocation target for the primary account
 			var predictedAccountID pgtype.UUID
 			if len(result.Allocations) > 0 {
 				predictedAccountID = result.Allocations[0].AccountID
 			}
 
-			// Assign Vendor vs Customer based on cash direction
 			var vendorID, customerID pgtype.UUID
 			if ruleTx.Direction == ruleEngine.Outflow {
 				vendorID = result.TargetEntityID
@@ -168,19 +174,14 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 				customerID = result.TargetEntityID
 			}
 
-			// Determine if it needs human review or can bypass directly to approved
 			newStatus := "READY_FOR_REVIEW"
 			if !result.RequiresReview {
 				newStatus = "SWIPED_APPROVED"
 			}
 
-			// Instantiate the pgtype.Int4 struct directly instead of using Scan()
-			ruleID := pgtype.Int4{
-				Int32: *result.MatchedRuleGroupID,
-				Valid: true,
-			}
+			ruleID := pgtype.Int4{Int32: *result.MatchedRuleGroupID, Valid: true}
 
-			updateParams := database.UpdateStagingTransactionWithRuleParams{
+			if err := w.store.UpdateStagingTransactionWithRule(ctx, database.UpdateStagingTransactionWithRuleParams{
 				ID:                  stx.ID,
 				RuleGroupID:         ruleID,
 				PredictedAccountID:  predictedAccountID,
@@ -188,49 +189,88 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 				PredictedCustomerID: customerID,
 				Status:              newStatus,
 				AiReasoning:         pgtype.Text{String: "Matched CPA Rule: " + result.Explanation.HumanReadableReason(), Valid: true},
-			}
-
-			if err := w.store.UpdateStagingTransactionWithRule(ctx, updateParams); err != nil {
+			}); err != nil {
 				w.logger.Error("failed to update matched staging txn", "txn_id", stx.ID, "error", err)
 			}
 
-			// Persist the audit log for compliance
 			w.ruleEngine.PersistAuditLog(ctx, realmID, stx.ID, result)
 		}
 	}
 
-	w.logger.Info("completed rule evaluation", "session_id", payload.SessionID, "processed", len(txns), "matches", matchesFound)
+	w.logger.Info("completed rule evaluation",
+		"session_id", payload.SessionID,
+		"processed", len(txns),
+		"matches", matchesFound,
+	)
 
-	// 5. Completion signaling (Advancing Orchestrator Flow)
-	// We return an INFORM back to the orchestrator to trigger the AI Categorization worker for the remaining unmatched rows
-	if env.SenderDID != "" && env.ConversationID != "" && w.queue != nil {
-		replyEnv, envErr := core.NewEnvelope(
-			uuid.New().String(),
-			"worker.rule_evaluation",
-			"workflows.OrchestratorInbox",
-			env.ConversationID,
-			core.INFORM,
-			env.Body,
-		)
-		if envErr != nil {
-			w.logger.Warn("failed to build completion envelope", "error", envErr, "cid", env.ConversationID)
-		} else {
-			replyBytes, err := json.Marshal(replyEnv)
-			if err != nil {
-				w.logger.Warn("failed to serialize completion envelope", "error", err, "cid", env.ConversationID)
-			} else if err := w.queue.Publish(replyEnv.ReceiverDID, replyBytes); err != nil {
-				w.logger.Warn("failed to publish completion inform", "error", err, "cid", env.ConversationID, "subject", replyEnv.ReceiverDID)
-			} else {
-				w.logger.Info("signaling rule engine completion", "cid", env.ConversationID, "subject", replyEnv.ReceiverDID)
+	// 5. Signal completion.
+	//    Fetch the rows that still need AI categorization and include them in the
+	//    proof body so the Orchestrator can thread them to the next step generically.
+	//    The Orchestrator does not interpret these fields; it just passes the proof
+	//    body through to whoever comes next.
+	if env.SenderDID == "" || env.ConversationID == "" || w.queue == nil {
+		return nil
+	}
+
+	proofData := map[string]interface{}{
+		"session_id": payload.SessionID,
+	}
+
+	unclassifiedRows, err := w.store.GetSessionRows(ctx, database.GetSessionRowsParams{
+		SessionID: sessionUUID,
+		Status:    pgtype.Text{String: "ENRICHED", Valid: true},
+	})
+	if err != nil {
+		w.logger.Warn("could not fetch unclassified rows for proof body, continuing without them", "error", err)
+	} else {
+		rows := make([]interface{}, 0, len(unclassifiedRows))
+		for _, r := range unclassifiedRows {
+			rowBytes, _ := json.Marshal(r)
+			var rowMap map[string]interface{}
+			if json.Unmarshal(rowBytes, &rowMap) == nil {
+				rows = append(rows, rowMap)
 			}
 		}
+		proofData["rows"] = rows
+		w.logger.Info("rule evaluation: attaching unclassified rows to proof", "count", len(rows))
+	}
+
+	proofDataBytes, _ := json.Marshal(proofData)
+	proof := core.Proof{
+		Type:      core.ProofAPI,
+		Timestamp: time.Now().Unix(),
+		Data:      json.RawMessage(proofDataBytes),
+	}
+
+	replyEnv, envErr := core.NewEnvelope(
+		uuid.New().String(),
+		"worker.rule_evaluation",
+		workflows.OrchestratorInbox,
+		env.ConversationID,
+		core.INFORM,
+		proof,
+	)
+	if envErr != nil {
+		w.logger.Warn("failed to build completion envelope", "error", envErr, "cid", env.ConversationID)
+		return nil
+	}
+
+	replyBytes, err := json.Marshal(replyEnv)
+	if err != nil {
+		w.logger.Warn("failed to serialize completion envelope", "error", err, "cid", env.ConversationID)
+		return nil
+	}
+
+	if err := w.queue.Publish(replyEnv.ReceiverDID, replyBytes); err != nil {
+		w.logger.Warn("failed to publish completion inform", "error", err, "cid", env.ConversationID)
+	} else {
+		w.logger.Info("signaling rule engine completion", "cid", env.ConversationID, "subject", replyEnv.ReceiverDID)
 	}
 
 	return nil
 }
 
 func (w *RuleEvaluationWorker) mapStagingToRuleTransaction(stx database.FignodeStagingTransaction) (ruleEngine.Transaction, error) {
-	// Parse Amount and Direction
 	amtStr := strings.ReplaceAll(stx.RawAmount, ",", "")
 	amt, err := strconv.ParseFloat(amtStr, 64)
 	if err != nil {
@@ -241,10 +281,9 @@ func (w *RuleEvaluationWorker) mapStagingToRuleTransaction(stx database.FignodeS
 	if amt > 0 {
 		direction = ruleEngine.Inflow
 	} else {
-		amt = -amt // Rule engine uses absolute amounts
+		amt = -amt
 	}
 
-	// Prefer Plaid's cleaned merchant name if available, fallback to raw description
 	vendorName := stx.RawDescription.String
 	if stx.MerchantName.Valid && stx.MerchantName.String != "" {
 		vendorName = stx.MerchantName.String
@@ -257,7 +296,7 @@ func (w *RuleEvaluationWorker) mapStagingToRuleTransaction(stx database.FignodeS
 		Date:        stx.RawDate.Time,
 		Description: stx.RawDescription.String,
 		Vendor:      vendorName,
-		Customer:    vendorName, // Let the rule condition dictate which field it checks
+		Customer:    vendorName,
 		Category:    stx.Category.String,
 	}, nil
 }

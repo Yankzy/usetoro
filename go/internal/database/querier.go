@@ -62,6 +62,7 @@ type Querier interface {
 	// =========================================================================
 	GetActiveRealms(ctx context.Context) ([]string, error)
 	GetActiveRuleGroupsByRealm(ctx context.Context, realmID string) ([]ShadowErpRuleGroup, error)
+	GetActiveWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error)
 	GetAiCorrectionByRawInput(ctx context.Context, arg GetAiCorrectionByRawInputParams) (GetAiCorrectionByRawInputRow, error)
 	GetAllAccountsForRealms(ctx context.Context, realmIds []string) ([]ShadowErpAccount, error)
 	GetAllActiveConnections(ctx context.Context) ([]GetAllActiveConnectionsRow, error)
@@ -107,6 +108,7 @@ type Querier interface {
 	GetEmployeeStats(ctx context.Context, userID pgtype.UUID) (GetEmployeeStatsRow, error)
 	GetEntities(ctx context.Context, arg GetEntitiesParams) ([]ToroCoreEntity, error)
 	GetEntityDescendants(ctx context.Context, id pgtype.UUID) ([]pgtype.UUID, error)
+	GetEntityIDByEmail(ctx context.Context, email string) (pgtype.UUID, error)
 	GetExpenseAccountsFromPurchases(ctx context.Context, realmID string) ([]GetExpenseAccountsFromPurchasesRow, error)
 	GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredAccountsForAIParams) ([]GetFilteredAccountsForAIRow, error)
 	// Finds the #1 most frequently used Income Account for a (customer, bank_account) pair.
@@ -213,6 +215,7 @@ type Querier interface {
 	RejectCleanupRow(ctx context.Context, id pgtype.UUID) error
 	ResetStaleStreaks(ctx context.Context) error
 	ResetTodayCleared(ctx context.Context) error
+	SaveInboundConversation(ctx context.Context, arg SaveInboundConversationParams) error
 	SetTransactionInReview(ctx context.Context, id pgtype.UUID) error
 	SoftDeleteAccount(ctx context.Context, arg SoftDeleteAccountParams) error
 	// restore if previously soft-deleted

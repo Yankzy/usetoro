@@ -22,6 +22,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/workers"
 	_ "github.com/Yankzy/usetoro/tap/agents/approval"
 	_ "github.com/Yankzy/usetoro/tap/agents/csv_mapping"
+	_ "github.com/Yankzy/usetoro/tap/agents/generic_batch_agent"
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_expense"
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_revenue"
 	_ "github.com/Yankzy/usetoro/tap/agents/stripe_processor"

@@ -48,6 +48,40 @@ func (q *Queries) DeleteWorkflowBlueprint(ctx context.Context, name string) erro
 	return err
 }
 
+const getActiveWorkflowsByEntityID = `-- name: GetActiveWorkflowsByEntityID :many
+SELECT id, entity_id, state, sequence_id, status, created_at, updated_at FROM toro_core.workflows 
+WHERE entity_id = $1 AND status IN ('open', 'processing')
+ORDER BY updated_at DESC
+`
+
+func (q *Queries) GetActiveWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error) {
+	rows, err := q.db.Query(ctx, getActiveWorkflowsByEntityID, entityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreWorkflow
+	for rows.Next() {
+		var i ToroCoreWorkflow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.State,
+			&i.SequenceID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getBlueprintByName = `-- name: GetBlueprintByName :one
 SELECT name, trigger_topic, definition, created_at, updated_at
 FROM toro_core.workflow_blueprints

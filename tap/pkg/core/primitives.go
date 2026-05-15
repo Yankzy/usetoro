@@ -250,6 +250,14 @@ func unmarshalTaskPayloadRecursive(payload []byte, target interface{}, depth int
 		return unmarshalTaskPayloadRecursive(wrapper.Input, target, depth+1)
 	}
 
+	// 3.5. Handle Double-Encoded JSON Strings
+	var strPayload string
+	if err := json.Unmarshal(payload, &strPayload); err == nil {
+		if len(strPayload) > 0 && (strPayload[0] == '{' || strPayload[0] == '[') {
+			return unmarshalTaskPayloadRecursive([]byte(strPayload), target, depth+1)
+		}
+	}
+
 	// 4. Base Case: Final unmarshal into target
 	return json.Unmarshal(payload, target)
 }

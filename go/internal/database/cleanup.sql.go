@@ -18,7 +18,7 @@ WITH updated AS (
     WHERE fignode.staging_transactions.id = $1
     RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at
 )
-SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
+SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
         updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
         updated.confidence_score, updated.ai_reasoning, updated.duplicate_of, updated.is_recurring, updated.split_suggestion,
         updated.override_vendor_id, updated.override_customer_id, updated.override_account_id, updated.status, updated.erp_transaction_id,
@@ -32,6 +32,7 @@ type ApproveCleanupRowRow struct {
 	SessionID           pgtype.UUID
 	RealmID             pgtype.Text
 	BankAccountID       pgtype.UUID
+	OutflowIs           pgtype.Text
 	SourceType          string
 	RawDescription      pgtype.Text
 	RawAmount           string
@@ -61,6 +62,7 @@ func (q *Queries) ApproveCleanupRow(ctx context.Context, id pgtype.UUID) (Approv
 		&i.SessionID,
 		&i.RealmID,
 		&i.BankAccountID,
+		&i.OutflowIs,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
@@ -120,15 +122,16 @@ func (q *Queries) BulkApproveByVendor(ctx context.Context, arg BulkApproveByVend
 
 const createCleanupSession = `-- name: CreateCleanupSession :one
 
-INSERT INTO fignode.staging_sessions (realm_id, bank_account_id, kind, created_by, file_name, row_count, status)
-VALUES ($4, $5, 'CSV', $1, $2, $3, 'PENDING')
-RETURNING id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
+INSERT INTO fignode.staging_sessions (realm_id, bank_account_id, kind, created_by, file_name, row_count, status, outflow_is)
+VALUES ($5, $6, 'CSV', $1, $2, $3, 'PENDING', $4)
+RETURNING id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, outflow_is, is_ambiguous, ambiguity_reason, created_at, updated_at
 `
 
 type CreateCleanupSessionParams struct {
 	CreatedBy     pgtype.UUID
 	FileName      pgtype.Text
 	RowCount      int32
+	OutflowIs     string
 	RealmID       pgtype.Text
 	BankAccountID pgtype.UUID
 }
@@ -142,6 +145,7 @@ type CreateCleanupSessionRow struct {
 	FileName        pgtype.Text
 	RowCount        int32
 	Status          string
+	OutflowIs       string
 	IsAmbiguous     bool
 	AmbiguityReason pgtype.Text
 	CreatedAt       pgtype.Timestamptz
@@ -156,6 +160,7 @@ func (q *Queries) CreateCleanupSession(ctx context.Context, arg CreateCleanupSes
 		arg.CreatedBy,
 		arg.FileName,
 		arg.RowCount,
+		arg.OutflowIs,
 		arg.RealmID,
 		arg.BankAccountID,
 	)
@@ -169,6 +174,7 @@ func (q *Queries) CreateCleanupSession(ctx context.Context, arg CreateCleanupSes
 		&i.FileName,
 		&i.RowCount,
 		&i.Status,
+		&i.OutflowIs,
 		&i.IsAmbiguous,
 		&i.AmbiguityReason,
 		&i.CreatedAt,
@@ -206,7 +212,7 @@ func (q *Queries) GetAiCorrectionByRawInput(ctx context.Context, arg GetAiCorrec
 }
 
 const getApprovedRows = `-- name: GetApprovedRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning, cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.status, cs.erp_transaction_id,
@@ -222,6 +228,7 @@ type GetApprovedRowsRow struct {
 	SessionID           pgtype.UUID
 	RealmID             pgtype.Text
 	BankAccountID       pgtype.UUID
+	OutflowIs           pgtype.Text
 	SourceType          string
 	RawDescription      pgtype.Text
 	RawAmount           string
@@ -257,6 +264,7 @@ func (q *Queries) GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([
 			&i.SessionID,
 			&i.RealmID,
 			&i.BankAccountID,
+			&i.OutflowIs,
 			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
@@ -288,7 +296,7 @@ func (q *Queries) GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([
 }
 
 const getCleanupRow = `-- name: GetCleanupRow :one
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning, cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
@@ -305,6 +313,7 @@ type GetCleanupRowRow struct {
 	SessionID           pgtype.UUID
 	RealmID             pgtype.Text
 	BankAccountID       pgtype.UUID
+	OutflowIs           pgtype.Text
 	SourceType          string
 	RawDescription      pgtype.Text
 	RawAmount           string
@@ -336,6 +345,7 @@ func (q *Queries) GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanup
 		&i.SessionID,
 		&i.RealmID,
 		&i.BankAccountID,
+		&i.OutflowIs,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,
@@ -362,7 +372,7 @@ func (q *Queries) GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanup
 }
 
 const getCleanupSession = `-- name: GetCleanupSession :one
-SELECT id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
+SELECT id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, outflow_is, is_ambiguous, ambiguity_reason, created_at, updated_at
 FROM fignode.staging_sessions
 WHERE id = $1
 `
@@ -376,6 +386,7 @@ type GetCleanupSessionRow struct {
 	FileName        pgtype.Text
 	RowCount        int32
 	Status          string
+	OutflowIs       string
 	IsAmbiguous     bool
 	AmbiguityReason pgtype.Text
 	CreatedAt       pgtype.Timestamptz
@@ -394,6 +405,7 @@ func (q *Queries) GetCleanupSession(ctx context.Context, id pgtype.UUID) (GetCle
 		&i.FileName,
 		&i.RowCount,
 		&i.Status,
+		&i.OutflowIs,
 		&i.IsAmbiguous,
 		&i.AmbiguityReason,
 		&i.CreatedAt,
@@ -421,7 +433,7 @@ func (q *Queries) GetOrCreateSystemSession(ctx context.Context, realmID pgtype.T
 }
 
 const getPendingRealmRows = `-- name: GetPendingRealmRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -458,6 +470,7 @@ type GetPendingRealmRowsRow struct {
 	SessionID             pgtype.UUID
 	RealmID               pgtype.Text
 	BankAccountID         pgtype.UUID
+	OutflowIs             string
 	SourceType            string
 	RawDescription        pgtype.Text
 	RawAmount             string
@@ -502,6 +515,7 @@ func (q *Queries) GetPendingRealmRows(ctx context.Context, arg GetPendingRealmRo
 			&i.SessionID,
 			&i.RealmID,
 			&i.BankAccountID,
+			&i.OutflowIs,
 			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
@@ -542,7 +556,7 @@ func (q *Queries) GetPendingRealmRows(ctx context.Context, arg GetPendingRealmRo
 }
 
 const getPendingSessionRows = `-- name: GetPendingSessionRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -573,6 +587,7 @@ type GetPendingSessionRowsRow struct {
 	SessionID             pgtype.UUID
 	RealmID               pgtype.Text
 	BankAccountID         pgtype.UUID
+	OutflowIs             pgtype.Text
 	SourceType            string
 	RawDescription        pgtype.Text
 	RawAmount             string
@@ -617,6 +632,7 @@ func (q *Queries) GetPendingSessionRows(ctx context.Context, sessionID pgtype.UU
 			&i.SessionID,
 			&i.RealmID,
 			&i.BankAccountID,
+			&i.OutflowIs,
 			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
@@ -683,7 +699,7 @@ func (q *Queries) GetRealmIDFromSession(ctx context.Context, id pgtype.UUID) (pg
 }
 
 const getSessionRows = `-- name: GetSessionRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -720,6 +736,7 @@ type GetSessionRowsRow struct {
 	SessionID             pgtype.UUID
 	RealmID               pgtype.Text
 	BankAccountID         pgtype.UUID
+	OutflowIs             pgtype.Text
 	SourceType            string
 	RawDescription        pgtype.Text
 	RawAmount             string
@@ -764,6 +781,7 @@ func (q *Queries) GetSessionRows(ctx context.Context, arg GetSessionRowsParams) 
 			&i.SessionID,
 			&i.RealmID,
 			&i.BankAccountID,
+			&i.OutflowIs,
 			&i.SourceType,
 			&i.RawDescription,
 			&i.RawAmount,
@@ -941,7 +959,7 @@ func (q *Queries) InsertCleanupRow(ctx context.Context, arg InsertCleanupRowPara
 }
 
 const listCleanupSessions = `-- name: ListCleanupSessions :many
-SELECT id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
+SELECT id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, outflow_is, is_ambiguous, ambiguity_reason, created_at, updated_at
 FROM fignode.staging_sessions
 WHERE kind = 'CSV'
   AND ($1::TEXT IS NULL OR realm_id = $1::TEXT)
@@ -963,6 +981,7 @@ type ListCleanupSessionsRow struct {
 	FileName        pgtype.Text
 	RowCount        int32
 	Status          string
+	OutflowIs       string
 	IsAmbiguous     bool
 	AmbiguityReason pgtype.Text
 	CreatedAt       pgtype.Timestamptz
@@ -989,6 +1008,7 @@ func (q *Queries) ListCleanupSessions(ctx context.Context, arg ListCleanupSessio
 			&i.FileName,
 			&i.RowCount,
 			&i.Status,
+			&i.OutflowIs,
 			&i.IsAmbiguous,
 			&i.AmbiguityReason,
 			&i.CreatedAt,
@@ -1049,7 +1069,7 @@ WITH updated AS (
     WHERE fignode.staging_transactions.id = $1
     RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at
 )
-SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
+SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
         updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
         updated.confidence_score, updated.ai_reasoning, updated.duplicate_of, updated.is_recurring, updated.split_suggestion,
         updated.override_vendor_id, updated.override_customer_id, updated.override_account_id, updated.status, updated.erp_transaction_id,
@@ -1070,6 +1090,7 @@ type OverrideCleanupRowRow struct {
 	SessionID           pgtype.UUID
 	RealmID             pgtype.Text
 	BankAccountID       pgtype.UUID
+	OutflowIs           pgtype.Text
 	SourceType          string
 	RawDescription      pgtype.Text
 	RawAmount           string
@@ -1104,6 +1125,7 @@ func (q *Queries) OverrideCleanupRow(ctx context.Context, arg OverrideCleanupRow
 		&i.SessionID,
 		&i.RealmID,
 		&i.BankAccountID,
+		&i.OutflowIs,
 		&i.SourceType,
 		&i.RawDescription,
 		&i.RawAmount,

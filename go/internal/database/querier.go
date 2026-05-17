@@ -152,6 +152,7 @@ type Querier interface {
 	GetRealmIDFromEntity(ctx context.Context, id pgtype.UUID) (pgtype.Text, error)
 	GetRealmIDFromSession(ctx context.Context, id pgtype.UUID) (pgtype.Text, error)
 	GetRealmsForEntities(ctx context.Context, authorizedEntityIds []pgtype.UUID) ([]string, error)
+	GetRecentConversations(ctx context.Context, arg GetRecentConversationsParams) ([]ToroCoreConversation, error)
 	GetRecentCorrections(ctx context.Context, arg GetRecentCorrectionsParams) ([]ShadowErpAiCorrection, error)
 	GetRefreshToken(ctx context.Context, tokenHash string) (ToroCoreRefreshToken, error)
 	GetRuleAuditLogsByTransaction(ctx context.Context, transactionID pgtype.UUID) ([]ShadowErpRuleAuditLog, error)

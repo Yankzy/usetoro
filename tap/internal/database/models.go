@@ -49,6 +49,7 @@ type FignodeStagingSession struct {
 	AmbiguityReason pgtype.Text
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	OutflowIs       string
 }
 
 type FignodeStagingTransaction struct {

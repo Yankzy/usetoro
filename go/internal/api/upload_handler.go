@@ -120,9 +120,15 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 	var uploadID string
 	var realmIDStr string
 
+	outflowIs := r.FormValue("outflow_is")
+	if domain == "accounting" && outflowIs == "" {
+		outflowIs = "NEGATIVE"
+	}
+
 	if domain == "accounting" {
 		// Extract optional bank_account_name from the request
 		bankAccountName := r.FormValue("bank_account_name")
+
 		var bankAccountID pgtype.UUID
 
 		// Fetch the realm_id for this user's entity
@@ -156,6 +162,7 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 			RowCount:      int32(len(rows)),
 			RealmID:       realmID,
 			BankAccountID: bankAccountID,
+			OutflowIs:     outflowIs,
 		})
 		if err != nil {
 			h.Logger.Error("file ingestion: create cleanup session", "error", err)
@@ -178,6 +185,7 @@ func (h *Handler) HandleFileIngestion(w http.ResponseWriter, r *http.Request) {
 		"domain":     domain, // Explicitly pass routing context to the agent
 		"task_type":  taskType,
 		"realm_id":   realmIDStr,
+		"outflow_is": outflowIs,
 		"rows":       rows,
 	}
 	payloadBytes, _ := json.Marshal(payload)

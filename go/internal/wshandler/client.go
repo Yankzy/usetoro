@@ -572,7 +572,12 @@ func (c *Client) blastActiveWorkflows() {
 				if errors.Is(err, context.Canceled) {
 					return
 				}
-				c.logger.Warn("Failed to fetch blueprint for workflow", "name", workflowDefName, "error", err)
+				// Skip logging for orphaned dynamic blueprints to reduce spam
+				if strings.HasPrefix(workflowDefName, "dynamic-") {
+					c.logger.Debug("Skipping orphaned dynamic workflow blueprint", "name", workflowDefName)
+				} else {
+					c.logger.Warn("Failed to fetch blueprint for workflow", "name", workflowDefName, "error", err)
+				}
 				continue
 			}
 

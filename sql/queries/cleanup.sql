@@ -3,19 +3,19 @@
 -- =========================================================================
 
 -- name: CreateCleanupSession :one
-INSERT INTO fignode.staging_sessions (realm_id, bank_account_id, kind, created_by, file_name, row_count, status)
-VALUES (sqlc.narg('realm_id'), sqlc.narg('bank_account_id'), 'CSV', $1, $2, $3, 'PENDING')
-RETURNING id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at;
+INSERT INTO fignode.staging_sessions (realm_id, bank_account_id, kind, created_by, file_name, row_count, status, outflow_is)
+VALUES (sqlc.narg('realm_id'), sqlc.narg('bank_account_id'), 'CSV', $1, $2, $3, 'PENDING', $4)
+RETURNING id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, outflow_is, is_ambiguous, ambiguity_reason, created_at, updated_at;
 
 -- name: GetCleanupSession :one
-SELECT id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
+SELECT id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, outflow_is, is_ambiguous, ambiguity_reason, created_at, updated_at
 FROM fignode.staging_sessions
 WHERE id = $1;
 
 -- name: ListCleanupSessions :many
 -- Returns CSV sessions for a realm (when realm_id is provided) OR CSV sessions created by a user
 -- (when realm_id is NULL). Excludes SYSTEM/PLAID sessions which are not user-facing.
-SELECT id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, is_ambiguous, ambiguity_reason, created_at, updated_at
+SELECT id, realm_id, bank_account_id, kind, created_by, file_name, row_count, status, outflow_is, is_ambiguous, ambiguity_reason, created_at, updated_at
 FROM fignode.staging_sessions
 WHERE kind = 'CSV'
   AND (sqlc.narg('realm_id')::TEXT IS NULL OR realm_id = sqlc.narg('realm_id')::TEXT)
@@ -72,7 +72,7 @@ VALUES (
 RETURNING id;
 
 -- name: GetPendingSessionRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -98,7 +98,7 @@ WHERE cs.session_id = $1 AND cs.status = 'PENDING'
 ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC;
 
 -- name: GetPendingRealmRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -125,7 +125,7 @@ ORDER BY cs.raw_date ASC NULLS LAST
 LIMIT $2;
 
 -- name: GetSessionRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -152,7 +152,7 @@ WHERE cs.session_id = $1
 ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC;
 
 -- name: GetCleanupRow :one
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning, cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
@@ -190,7 +190,7 @@ WITH updated AS (
     WHERE fignode.staging_transactions.id = $1
     RETURNING *
 )
-SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
+SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
         updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
         updated.confidence_score, updated.ai_reasoning, updated.duplicate_of, updated.is_recurring, updated.split_suggestion,
         updated.override_vendor_id, updated.override_customer_id, updated.override_account_id, updated.status, updated.erp_transaction_id,
@@ -215,7 +215,7 @@ WITH updated AS (
     WHERE fignode.staging_transactions.id = $1
     RETURNING *
 )
-SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
+SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
         updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
         updated.confidence_score, updated.ai_reasoning, updated.duplicate_of, updated.is_recurring, updated.split_suggestion,
         updated.override_vendor_id, updated.override_customer_id, updated.override_account_id, updated.status, updated.erp_transaction_id,
@@ -232,7 +232,7 @@ WHERE session_id = $1
 RETURNING id;
 
 -- name: GetApprovedRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning, cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.status, cs.erp_transaction_id,

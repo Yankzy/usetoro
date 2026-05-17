@@ -215,6 +215,19 @@ agents:
       db_queries: true
       entity_resolver: false
 
+  - did: did:toro:agent:omni_chat_1
+    name: Omni-channel Chat Agent
+    model: gpt-5.4-mini
+    engine: internal
+    internal_module: omni-chat-agent
+    activity_type: agents.communication.chat
+    task_queue: events.conversations.new
+    output_subject: proof.outgoing.chat
+    dependencies:
+      database: false
+      db_queries: true
+      entity_resolver: false
+
 workers:
   csv_mapping:
     activity_type: workers.database.insert_rows
@@ -223,6 +236,10 @@ workers:
     group: ""
   delegator:
     activity_type: workers.delegator
+    subject: ""
+    group: ""
+  direction_router:
+    activity_type: workers.direction_router
     subject: ""
     group: ""
   enrichment:
@@ -253,6 +270,10 @@ workers:
     activity_type: workers.rule_bootstrap
     subject: ""
     group: ""
+  rule_evaluation:
+    activity_type: workers.rule_evaluation
+    subject: ""
+    group: ""
   sql:
     activity_type: workers.sql.execute
     subject: ""
@@ -261,6 +282,10 @@ workers:
     activity_type: workers.email.postmark_inbound
     subject: ""
     group: ""
+  omni_chat:
+    activity_type: workers.communication.omni_chat
+    subject: proof.outgoing.chat
+    group: omni-chat-worker-group
   vector_sync:
     subjects:
       - "ledger.accounts.*"

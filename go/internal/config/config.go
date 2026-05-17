@@ -81,6 +81,9 @@ type Config struct {
 
 	// Rule Engine
 	RuleEngine RuleEngineConfig `mapstructure:"rule_engine"`
+
+	// Postmark Config
+	PostmarkServerToken string `mapstructure:"postmark_server_token"`
 }
 
 type RuleEngineConfig struct {
@@ -245,6 +248,7 @@ func Load() (*Config, *viper.Viper, error) {
 	_ = v.BindEnv("ai_threshold", "AI_THRESHOLD")
 	_ = v.BindEnv("encryption_key", "ENCRYPTION_KEY")
 	_ = v.BindEnv("workers.erp_event.subject", "NATS_ERP_EVENT_SUBJECT")
+	_ = v.BindEnv("postmark_server_token", "POSTMARK_TRANSACTIONAL_SERVER_TOKEN")
 
 	// Set defaults corresponding to the old getEnv fallbacks
 	v.SetDefault("port", "8080")

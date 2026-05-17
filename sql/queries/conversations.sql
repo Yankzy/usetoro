@@ -19,3 +19,10 @@ ON CONFLICT (external_id) DO NOTHING;
 
 -- name: GetEntityIDByEmail :one
 SELECT entity_id FROM toro_core.users WHERE email = $1 LIMIT 1;
+
+-- name: GetRecentConversations :many
+SELECT * FROM toro_core.conversations
+WHERE (from_handle = $1 AND to_handle = $2)
+   OR (from_handle = $2 AND to_handle = $1)
+ORDER BY created_at DESC
+LIMIT $3;

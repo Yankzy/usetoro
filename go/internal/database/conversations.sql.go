@@ -22,6 +22,56 @@ func (q *Queries) GetEntityIDByEmail(ctx context.Context, email string) (pgtype.
 	return entity_id, err
 }
 
+const getRecentConversations = `-- name: GetRecentConversations :many
+SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, created_at, updated_at FROM toro_core.conversations
+WHERE (from_handle = $1 AND to_handle = $2)
+   OR (from_handle = $2 AND to_handle = $1)
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type GetRecentConversationsParams struct {
+	FromHandle string
+	ToHandle   string
+	Limit      int32
+}
+
+func (q *Queries) GetRecentConversations(ctx context.Context, arg GetRecentConversationsParams) ([]ToroCoreConversation, error) {
+	rows, err := q.db.Query(ctx, getRecentConversations, arg.FromHandle, arg.ToHandle, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreConversation
+	for rows.Next() {
+		var i ToroCoreConversation
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.Source,
+			&i.ExternalID,
+			&i.FromHandle,
+			&i.ToHandle,
+			&i.ReplyTo,
+			&i.InReplyTo,
+			&i.Subject,
+			&i.BodyText,
+			&i.BodyHtml,
+			&i.StrippedText,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const saveInboundConversation = `-- name: SaveInboundConversation :exec
 INSERT INTO toro_core.conversations (
     entity_id,

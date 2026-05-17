@@ -9,6 +9,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
 )
@@ -56,6 +57,7 @@ type PostmarkInboundEmailWorker struct {
 	db     *database.Queries
 	logger *slog.Logger
 	cfg    *config.Config
+	nc     *nats.Conn
 }
 
 func init() {
@@ -64,6 +66,7 @@ func init() {
 			db:     deps.Store.Queries,
 			logger: deps.Logger,
 			cfg:    deps.Config,
+			nc:     deps.Queue,
 		}, nil
 	})
 }
@@ -183,6 +186,39 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	}
 
 	w.logger.Info("successfully saved inbound email", "message_id", payload.MessageID, "from", payload.From, "entity_id", entityID)
+
+	// 5. Publish Event to trigger OmniChatAgent directly
+	eventData := map[string]interface{}{
+		"from_handle": payload.From,
+		"to_handle":   payload.To,
+		"body_text":   payload.TextBody,
+		"source":      "email",
+	}
+	eventDataBytes, _ := json.Marshal(eventData)
+
+	task := core.TaskDefinition{
+		ID:      payload.MessageID,
+		Payload: json.RawMessage(eventDataBytes),
+	}
+	taskBytes, _ := json.Marshal(task)
+
+	// Wrap in a CFP envelope so the BaseAgent can process it
+	env, _ := core.NewEnvelope(
+		uuid.New().String(),
+		"did:toro:ingress", // Generic DID for the ingress worker
+		"",                 // Broadcast or specific agent if known
+		payload.MessageID,
+		core.CFP,
+		task,
+	)
+	// Body is the task definition
+	env.Body = taskBytes
+
+	envBytes, _ := json.Marshal(env)
+	if err := w.nc.Publish("events.conversations.new", envBytes); err != nil {
+		w.logger.Error("failed to publish conversation trigger", "error", err)
+	}
+
 	msg.Ack()
 	return nil
 }

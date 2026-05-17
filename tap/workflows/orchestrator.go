@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -817,7 +819,7 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 	return nil
 }
 
-func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, instancePath []string, payload []byte) error {
+func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, instancePath []string, payload []byte, state *InstanceState) error {
 	cid := buildConversationID(instancePath, step.ID)
 
 	o.logger.Info("🚀 [DEBUG] Orchestrator dispatching step",
@@ -829,6 +831,13 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 	}
 	instanceID := instancePath[len(instancePath)-1]
 	convID := buildConversationID(instancePath, step.ID)
+
+	// Render {placeholder} values in the system prompt from payload + prior state
+	// only when the step explicitly opts in via has_string_interpolation.
+	systemPrompt := step.SystemPrompt
+	if step.HasStringInterpolation {
+		systemPrompt = renderPrompt(step.SystemPrompt, buildPromptContext(unwrapStepPayload(payload), *state))
+	}
 
 	if step.Negotiate {
 		queue, err := core.NormalizeTaskQueueWithComplexity(step.ActivityType, step.TaskQueue, step.Complexity)
@@ -852,7 +861,7 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 			Payload:        json.RawMessage(payload),
 			Complexity:     step.Complexity,
 			WorkflowSchema: step.WorkflowSchema,
-			SystemPrompt:   step.SystemPrompt,
+			SystemPrompt:   systemPrompt,
 			RBACPolicy:     step.RBACPolicy,
 		}
 		cfp, err := core.NewEnvelope(
@@ -918,7 +927,7 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 			Payload:        payload,
 			Complexity:     step.Complexity,
 			WorkflowSchema: step.WorkflowSchema,
-			SystemPrompt:   step.SystemPrompt,
+			SystemPrompt:   systemPrompt,
 			RBACPolicy:     step.RBACPolicy,
 		}
 		perf := core.ACCEPT_PROPOSAL
@@ -1719,7 +1728,7 @@ func (o *Orchestrator) scheduleReadySteps(ctx context.Context, def WorkflowDef, 
 				state.ActiveSteps[step.ID] = true
 			}
 		default:
-			err = o.dispatchStep(ctx, step, state.InstancePath, payload)
+			err = o.dispatchStep(ctx, step, state.InstancePath, payload, state)
 			if err == nil {
 				state.ActiveSteps[step.ID] = true
 			}
@@ -1887,6 +1896,71 @@ func unwrapStepPayloadRecursive(payload []byte, depth int) []byte {
 	return payload
 }
 
+// placeholderRE matches {key} placeholders in system_prompt templates.
+var placeholderRE = regexp.MustCompile(`\{(\w+)\}`)
+
+// renderPrompt replaces {key} placeholders with values from the context map.
+// Non-string values are JSON-marshaled. Unknown keys pass through unchanged.
+func renderPrompt(tmpl string, ctx map[string]any) string {
+	if tmpl == "" || len(ctx) == 0 {
+		return tmpl
+	}
+	return placeholderRE.ReplaceAllStringFunc(tmpl, func(match string) string {
+		key := match[1 : len(match)-1]
+		v, ok := ctx[key]
+		if !ok {
+			return match
+		}
+		s, ok := v.(string)
+		if !ok {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return match
+			}
+			return string(b)
+		}
+		return s
+	})
+}
+
+// buildPromptContext builds a flat context map for prompt rendering from the
+// unwrapped step payload and prior step output variables.
+func buildPromptContext(payload []byte, state InstanceState) map[string]any {
+	ctx := make(map[string]any)
+
+	// 1. Flatten the current payload.
+	if len(payload) > 0 {
+		var m map[string]any
+		if err := json.Unmarshal(payload, &m); err == nil {
+			for k, v := range m {
+				ctx[k] = v
+			}
+		}
+	}
+
+	// 2. Add prior step outputs keyed by step ID.
+	for stepID, raw := range state.Variables {
+		unwrapped := unwrapStepPayload(raw)
+		if len(unwrapped) == 0 {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal(unwrapped, &m); err == nil {
+			// Merge top-level keys from each prior step so they're directly
+			// accessible as {key} in addition to being nested under {stepID}.
+			for k, v := range m {
+				if _, exists := ctx[k]; !exists {
+					ctx[k] = v
+				}
+			}
+		}
+		// Also store the whole step output under its step ID.
+		ctx[stepID] = json.RawMessage(unwrapped)
+	}
+
+	return ctx
+}
+
 func wrapPayloadWithConfig(step WorkflowStep, payload []byte) []byte {
 	wrapper := map[string]json.RawMessage{
 		"input": json.RawMessage(payload),
@@ -1908,30 +1982,40 @@ func reshapePayloadToSchema(schemaStr string, payload []byte, state InstanceStat
 		return payload
 	}
 
-	var shapedPayload map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &shapedPayload); err != nil || shapedPayload == nil {
-		shapedPayload = make(map[string]json.RawMessage)
+	// Parse the incoming payload so we can cherry-pick values for schema keys.
+	var inputPayload map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &inputPayload); err != nil || inputPayload == nil {
+		inputPayload = make(map[string]json.RawMessage)
 	}
 
 	// Pre-convert and UNWRAP variables to strings ONCE
 	var triggerStr string
 	if trigger, ok := state.Variables["TRIGGER"]; ok {
-		// CRITICAL: Strip wrappers from the trigger
 		triggerStr = string(unwrapStepPayload(trigger))
 	}
 
-	varCache := make([]string, 0, len(state.Variables))
-	for k, v := range state.Variables {
-		if k != "TRIGGER" {
-			// CRITICAL: Strip wrappers from historical proofs so introspection sees flat keys
-			unwrappedVar := unwrapStepPayload(v)
-			varCache = append(varCache, string(unwrappedVar))
-		}
+	// Collect prior step outputs with their IDs so we can search in a
+	// deterministic order. Without sorting, map iteration would make the
+	// resolved value for a key random when multiple prior steps output it.
+	type stepVar struct {
+		id  string
+		raw string
 	}
+	stepVars := make([]stepVar, 0, len(state.Variables))
+	for k, v := range state.Variables {
+		if k == "TRIGGER" {
+			continue
+		}
+		stepVars = append(stepVars, stepVar{id: k, raw: string(unwrapStepPayload(v))})
+	}
+	sort.Slice(stepVars, func(i, j int) bool { return stepVars[i].id < stepVars[j].id })
 
+	// Build a result map containing ONLY schema-defined keys.
+	result := make(map[string]json.RawMessage, len(properties))
 	for key := range properties {
-		// If the payload already has the key, we don't overwrite it
-		if _, exists := shapedPayload[key]; exists {
+		// Priority 0: if the payload already carries this key, keep it as-is.
+		if val, exists := inputPayload[key]; exists {
+			result[key] = val
 			continue
 		}
 
@@ -1939,30 +2023,39 @@ func reshapePayloadToSchema(schemaStr string, payload []byte, state InstanceStat
 
 		// Priority 1: Introspection - check TRIGGER.
 		if triggerStr != "" {
-			found = gjson.Get(triggerStr, key)
+			if candidate := gjson.Get(triggerStr, key); candidate.Exists() {
+				found = candidate
+			}
 		}
 
-		// Priority 2: Search other previous step outputs.
+		// Priority 2: Search other previous step outputs (deterministic order).
 		if !found.Exists() {
-			for _, varStr := range varCache {
-				found = gjson.Get(varStr, key)
-				if found.Exists() {
+			for _, sv := range stepVars {
+				if candidate := gjson.Get(sv.raw, key); candidate.Exists() {
+					found = candidate
 					break
 				}
 			}
 		}
 
-		// Inject the found value into the shaped map.
 		if found.Exists() {
-			shapedPayload[key] = json.RawMessage(found.Raw)
+			result[key] = json.RawMessage(found.Raw)
+		} else {
+			// The schema declares this key but no source provides it.
+			// The downstream step will receive incomplete data.
+			slog.Warn("reshapePayloadToSchema: field not found in any source",
+				"key", key,
+				"trigger_available", triggerStr != "",
+				"prior_steps_searched", len(stepVars),
+			)
 		}
 	}
 
-	if len(shapedPayload) == 0 {
+	if len(result) == 0 {
 		return []byte("{}")
 	}
 
-	finalBytes, err := json.Marshal(shapedPayload)
+	finalBytes, err := json.Marshal(result)
 	if err != nil {
 		return payload
 	}

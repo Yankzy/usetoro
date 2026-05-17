@@ -32,8 +32,9 @@ type WorkflowStep struct {
 	Timeout        string              `yaml:"timeout" json:"timeout" mapstructure:"timeout"`       // Duration string (e.g. "60s")
 	Description    string              `yaml:"description,omitempty" json:"description,omitempty" mapstructure:"description"`
 	WorkflowSchema string              `yaml:"workflow_schema,omitempty" json:"workflow_schema,omitempty" mapstructure:"workflow_schema"` // Optional JSON schema hint scoped to this step
-	SystemPrompt   string              `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty" mapstructure:"system_prompt"`       // Optional system prompt override
-	RBACPolicy     []string            `yaml:"rbac_policy,omitempty" json:"rbac_policy,omitempty" mapstructure:"rbac_policy"`             // Allowed Redux path prefixes
+	SystemPrompt           string              `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty" mapstructure:"system_prompt"`                         // Optional system prompt override
+	HasStringInterpolation bool                `yaml:"has_string_interpolation,omitempty" json:"has_string_interpolation,omitempty" mapstructure:"has_string_interpolation"` // If true, render {key} placeholders from payload/state before dispatch
+	RBACPolicy             []string            `yaml:"rbac_policy,omitempty" json:"rbac_policy,omitempty" mapstructure:"rbac_policy"`                                           // Allowed Redux path prefixes
 
 	// DAG fields — allow branching, fan-in, and nested workflows.
 	DependsOn   []string `yaml:"depends_on,omitempty" json:"depends_on,omitempty" mapstructure:"depends_on"`

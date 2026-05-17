@@ -41,11 +41,11 @@ steps:
       }
   
   - id: batch_categorize_transactions
-    activity_type: workers.delegator
+    activity_type: workers.direction_router
     depends_on:
       - run_rule_engine
     timeout: "600s"
-    description: "Chunks the rows array from the rule engine proof into batches of 50 and spawns parallel sub-workflows for AI categorization."
+    description: "Splits transactions by cash direction using the session's outflow_is field, chunks each direction into batches of 50, and spawns parallel sub-workflows for AI categorization."
     workflow_schema: |
       {
         "type": "object",
@@ -57,17 +57,17 @@ steps:
       batch_size: 50
       target_sub_workflow: "Categorize Batch Workflow"
 
-  - id: human_review
-    activity_type: hitl.review
-    depends_on:
-      - batch_categorize_transactions
-    timeout: "86400s"
-    config:
-      scope: "session"
-      prompt: "Review categorizations before posting to Ledger."
-      allow_edits: true
-      reject_action: "abort"
+  # - id: human_review
+  #   activity_type: hitl.review
+  #   depends_on:
+  #     - batch_categorize_transactions
+  #   timeout: "86400s"
+  #   config:
+  #     scope: "session"
+  #     prompt: "Review categorizations before posting to Ledger."
+  #     allow_edits: true
+  #     reject_action: "abort"
 
-  - id: sync_to_qbo
-    activity_type: workers.qbo_sync
-    depends_on: [human_review]
+  # - id: sync_to_qbo
+  #   activity_type: workers.qbo_sync
+  #   depends_on: [human_review]

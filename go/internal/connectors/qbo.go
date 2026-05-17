@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,11 @@ import (
 type Connector interface {
 	Fetch(ctx context.Context, tenantID string) error
 }
+
+// ErrQBOAuthRevoked is returned when QBO rejects the refresh token with
+// "invalid_grant". This is a permanent failure — the connection must be
+// re-authenticated via the OAuth flow before CDC can resume.
+var ErrQBOAuthRevoked = fmt.Errorf("QBO OAuth token revoked or expired: re-authenticate via the /api/auth/qbo/start flow")
 
 // QBOConnector integrates with QuickBooks Online.
 type QBOConnector struct {
@@ -275,6 +281,14 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 		return fmt.Errorf("failed to get connection times: %w", err)
 	}
 
+	// Evict the cached client before each CDC cycle so that we always build a
+	// fresh client from the current DB tokens. QBO rotates the refresh token on
+	// every OAuth exchange, so a client cached from a previous cycle will carry
+	// a stale refresh token and produce "invalid_grant" on the next refresh.
+	c.mu.Lock()
+	delete(c.clients, realmID)
+	c.mu.Unlock()
+
 	client, err := c.getClient(ctx, "", realmID)
 	if err != nil {
 		return err
@@ -307,7 +321,7 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 
 	resp, err := client.QueryCDC(entities, lastSync)
 	if err != nil {
-		return fmt.Errorf("CDC query failed: %w", err)
+		return c.wrapQBOError(realmID, "CDC query failed", err)
 	}
 
 	for _, group := range resp.CDCResponse {
@@ -655,6 +669,11 @@ func (c *QBOConnector) getClient(ctx context.Context, tenantID, realmID string) 
 			// Persist encrypted at rest.
 			if err := c.store.SaveQBOTokens(ctx, effectiveEntityID, realmID, token.AccessToken, newRefreshToken, token.Expiry); err != nil {
 				c.logger.Error("Failed to persist refreshed QBO tokens", "realm_id", realmID, "error", err)
+				// Evict the cached client so the next CDC cycle rebuilds from DB
+				// rather than retrying indefinitely with an un-persisted token.
+				c.mu.Lock()
+				delete(c.clients, realmID)
+				c.mu.Unlock()
 				return err
 			}
 
@@ -767,7 +786,7 @@ func (c *QBOConnector) SyncFullChartOfAccounts(ctx context.Context, tenantID, re
 
 	accounts, err := client.FindAccounts()
 	if err != nil {
-		return 0, fmt.Errorf("failed to fetch accounts: %w", err)
+		return 0, c.wrapQBOError(realmID, "failed to fetch accounts", err)
 	}
 
 	if err := c.batchUpsertAccounts(ctx, realmID, accounts); err != nil {
@@ -809,7 +828,7 @@ func (c *QBOConnector) SyncFullCustomers(ctx context.Context, tenantID, realmID 
 
 	customers, err := client.FindCustomers()
 	if err != nil {
-		return 0, fmt.Errorf("failed to fetch customers: %w", err)
+		return 0, c.wrapQBOError(realmID, "failed to fetch customers", err)
 	}
 
 	if err := c.batchUpsertCustomers(ctx, realmID, customers); err != nil {
@@ -844,7 +863,7 @@ func (c *QBOConnector) SyncFullVendors(ctx context.Context, tenantID, realmID st
 
 	vendors, err := client.FindVendors()
 	if err != nil {
-		return 0, fmt.Errorf("failed to fetch vendors: %w", err)
+		return 0, c.wrapQBOError(realmID, "failed to fetch vendors", err)
 	}
 
 	if err := c.batchUpsertVendors(ctx, realmID, vendors); err != nil {
@@ -886,7 +905,7 @@ func (c *QBOConnector) SyncFullPurchases(ctx context.Context, tenantID, realmID 
 
 	purchases, err := client.FindPurchases()
 	if err != nil {
-		return 0, fmt.Errorf("failed to fetch purchases: %w", err)
+		return 0, c.wrapQBOError(realmID, "failed to fetch purchases", err)
 	}
 
 	c.logger.Info("📥 Fetched purchases from QBO", "realm_id", realmID, "count", len(purchases))
@@ -929,7 +948,7 @@ func (c *QBOConnector) SyncFullDeposits(ctx context.Context, tenantID, realmID s
 
 	deposits, err := client.FindDeposits()
 	if err != nil {
-		return 0, fmt.Errorf("failed to fetch deposits: %w", err)
+		return 0, c.wrapQBOError(realmID, "failed to fetch deposits", err)
 	}
 
 	c.logger.Info("📥 Fetched deposits from QBO", "realm_id", realmID, "count", len(deposits))
@@ -964,7 +983,7 @@ func (c *QBOConnector) SyncCompanyInfo(ctx context.Context, tenantID, realmID st
 
 	info, err := client.FindCompanyInfoContext(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to fetch company info from QBO: %w", err)
+		return c.wrapQBOError(realmID, "failed to fetch company info from QBO", err)
 	}
 
 	// Marshal address and name-value blobs to JSONB
@@ -1618,4 +1637,13 @@ func shouldSkipSync(localToken, remoteToken string) bool {
 	}
 	// Fallback to string comparison if not parseable as int
 	return localToken == remoteToken
+}
+func (c *QBOConnector) wrapQBOError(realmID, msg string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.Error(), "invalid_grant") {
+		return fmt.Errorf("%w (realm_id=%s): %v", ErrQBOAuthRevoked, realmID, err)
+	}
+	return fmt.Errorf("%s: %w", msg, err)
 }

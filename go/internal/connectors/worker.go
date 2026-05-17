@@ -3,6 +3,7 @@ package connectors
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -151,6 +152,12 @@ func (w *Worker) Start(ctx context.Context) error {
 }
 
 func (w *Worker) processQBOEvent(msg *nats.Msg) {
+	if msg.Subject == "qbo.events.dlq" {
+		w.logger.Warn("⚠️ Received message from DLQ, acknowledging and skipping to avoid loop", "subject", msg.Subject)
+		msg.Ack()
+		return
+	}
+
 	if msg.Subject == "qbo.events.connected" {
 		w.processQBOConnected(msg)
 		return
@@ -208,12 +215,44 @@ func (w *Worker) processQBOConnected(msg *nats.Msg) {
 
 	handleSyncError := func(step string, err error) {
 		w.logger.Error(fmt.Sprintf("%s sync failed after QBO connect", step), "error", err, "realm_id", payload.RealmID)
+
+		// 1. Permanent Auth Failure - Terminate immediately
+		if errors.Is(err, ErrQBOAuthRevoked) {
+			w.logger.Warn("🚫 QBO Auth revoked, dropping connected event", "realm_id", payload.RealmID)
+			msg.Term()
+			return
+		}
+
+		// 2. Resource Not Found - Terminate immediately
 		if strings.Contains(err.Error(), "no rows in result set") {
 			w.logger.Warn("Tokens not found, dropping connected event", "realm_id", payload.RealmID)
 			msg.Term()
-		} else {
-			msg.Nak()
+			return
 		}
+
+		// 3. Handle DLQ (Dead Letter Queue) for persistent failures (e.g. Circuit Breaker open)
+		metadata, metaErr := msg.Metadata()
+		if metaErr == nil && metadata.NumDelivered > 3 {
+			w.logger.Error("🚨 QBO sync failed persistently. Moving to DLQ.", 
+				"realm_id", payload.RealmID, 
+				"step", step, 
+				"attempts", metadata.NumDelivered,
+				"error", err,
+			)
+			
+			// Move to DLQ subject
+			dlqSubject := "qbo.events.dlq"
+			if pubErr := w.q.Publish(dlqSubject, msg.Data); pubErr != nil {
+				w.logger.Error("Failed to publish to QBO DLQ", "error", pubErr)
+			}
+			
+			// Terminate the message so it doesn't retry anymore
+			msg.Term()
+			return
+		}
+
+		// 4. Otherwise, Nak for standard retry
+		msg.Nak()
 	}
 
 	if err := qboConn.SyncCompanyInfo(bgCtx, payload.EntityID, payload.RealmID); err != nil {

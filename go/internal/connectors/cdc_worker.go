@@ -2,7 +2,9 @@ package connectors
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/store"
@@ -14,15 +16,19 @@ type CDCWorker struct {
 	connector *QBOConnector
 	store     *store.Store
 	interval  time.Duration
+
+	mu             sync.RWMutex
+	revokedRealms map[string]bool
 }
 
 // NewCDCWorker creates a new CDC worker with the specified polling interval.
 func NewCDCWorker(logger *slog.Logger, connector *QBOConnector, store *store.Store, interval time.Duration) *CDCWorker {
 	return &CDCWorker{
-		logger:    logger,
-		connector: connector,
-		store:     store,
-		interval:  interval,
+		logger:         logger,
+		connector:      connector,
+		store:          store,
+		interval:       interval,
+		revokedRealms: make(map[string]bool),
 	}
 }
 
@@ -72,6 +78,15 @@ func (w *CDCWorker) runSyncCycle(ctx context.Context) error {
 	// Sync each connection
 	for _, conn := range connections {
 		realmID := conn.RealmID
+
+		// Skip if we already know this connection is revoked
+		w.mu.RLock()
+		isRevoked := w.revokedRealms[realmID]
+		w.mu.RUnlock()
+		if isRevoked {
+			continue
+		}
+
 		lastSync := conn.LastSyncTimestamp.Time
 
 		// Ensure we don't go beyond QBO's 30-day limit
@@ -86,10 +101,20 @@ func (w *CDCWorker) runSyncCycle(ctx context.Context) error {
 		}
 
 		if err := w.connector.SyncCDC(ctx, realmID, lastSync); err != nil {
-			w.logger.Error("CDC sync failed for connection",
-				"realm_id", realmID,
-				"error", err,
-			)
+			if errors.Is(err, ErrQBOAuthRevoked) {
+				w.logger.Warn("🚫 QBO Connection Revoked - Disabling sync for this realm until restart",
+					"realm_id", realmID,
+					"error", err,
+				)
+				w.mu.Lock()
+				w.revokedRealms[realmID] = true
+				w.mu.Unlock()
+			} else {
+				w.logger.Error("CDC sync failed for connection",
+					"realm_id", realmID,
+					"error", err,
+				)
+			}
 			errorCount++
 		} else {
 			successCount++

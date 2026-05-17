@@ -38,9 +38,6 @@ type RuleEvaluationStore interface {
 	GetPendingStagingTransactions(context.Context, pgtype.UUID) ([]database.FignodeStagingTransaction, error)
 	UpdateStagingTransactionWithRule(context.Context, database.UpdateStagingTransactionWithRuleParams) error
 	GetCleanupSession(context.Context, pgtype.UUID) (database.GetCleanupSessionRow, error)
-	// GetSessionRows with Status='ENRICHED' fetches rows that completed enrichment
-	// but were not matched by the rule engine — these need AI categorization.
-	GetSessionRows(context.Context, database.GetSessionRowsParams) ([]database.GetSessionRowsRow, error)
 }
 
 // RuleEvaluationEngine is the minimal rule-engine interface required by this worker.
@@ -203,36 +200,16 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 		"matches", matchesFound,
 	)
 
-	// 5. Signal completion.
-	//    Fetch the rows that still need AI categorization and include them in the
-	//    proof body so the Orchestrator can thread them to the next step generically.
-	//    The Orchestrator does not interpret these fields; it just passes the proof
-	//    body through to whoever comes next.
-	if env.SenderDID == "" || env.ConversationID == "" || w.queue == nil {
+	// 5. Signal completion with session metadata only.
+	//    The next step (direction_router) queries the rows it needs from the DB.
+	if env.ConversationID == "" || w.queue == nil {
 		return nil
 	}
 
 	proofData := map[string]interface{}{
 		"session_id": payload.SessionID,
-	}
-
-	unclassifiedRows, err := w.store.GetSessionRows(ctx, database.GetSessionRowsParams{
-		SessionID: sessionUUID,
-		Status:    pgtype.Text{String: "ENRICHED", Valid: true},
-	})
-	if err != nil {
-		w.logger.Warn("could not fetch unclassified rows for proof body, continuing without them", "error", err)
-	} else {
-		rows := make([]interface{}, 0, len(unclassifiedRows))
-		for _, r := range unclassifiedRows {
-			rowBytes, _ := json.Marshal(r)
-			var rowMap map[string]interface{}
-			if json.Unmarshal(rowBytes, &rowMap) == nil {
-				rows = append(rows, rowMap)
-			}
-		}
-		proofData["rows"] = rows
-		w.logger.Info("rule evaluation: attaching unclassified rows to proof", "count", len(rows))
+		"processed":  len(txns),
+		"matches":    matchesFound,
 	}
 
 	proofDataBytes, _ := json.Marshal(proofData)
@@ -261,10 +238,15 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 		return nil
 	}
 
-	if err := w.queue.Publish(replyEnv.ReceiverDID, replyBytes); err != nil {
+	js, err := w.queue.JetStream()
+	if err != nil {
+		w.logger.Warn("failed to get JetStream context", "error", err, "cid", env.ConversationID)
+		return nil
+	}
+	if _, err := js.Publish(workflows.OrchestratorInbox, replyBytes); err != nil {
 		w.logger.Warn("failed to publish completion inform", "error", err, "cid", env.ConversationID)
 	} else {
-		w.logger.Info("signaling rule engine completion", "cid", env.ConversationID, "subject", replyEnv.ReceiverDID)
+		w.logger.Info("signaling rule engine completion", "cid", env.ConversationID)
 	}
 
 	return nil

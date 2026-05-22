@@ -103,7 +103,7 @@ func (s *TransactionService) postExpense(
 		// Basic Idempotency check with local DB
 		existing, err := s.repo.GetProposedTransactionByValues(ctx, database.GetProposedTransactionByValuesParams{
 			RealmID:   realmID,
-			RawDate:   pgtype.Date{Time: txnDate, Valid: true},
+			RawDate:   pgtype.Text{String: txnDate.Format("2006-01-02"), Valid: true},
 			RawAmount: amountStr,
 		})
 
@@ -126,7 +126,8 @@ func (s *TransactionService) postExpense(
 			SessionID:       systemSessionID,
 			SourceType:      sourceType,
 			RawAmount:       amountStr,
-			RawDate:         pgtype.Date{Time: txnDate, Valid: true},
+			RawDate:         pgtype.Text{String: txnDate.Format("2006-01-02"), Valid: true},
+			ParsedDate:      pgtype.Date{Time: txnDate, Valid: true},
 			RawDescription:  pgtype.Text{String: input.Description, Valid: input.Description != ""},
 			ConfidenceScore: pgtype.Numeric{Valid: false},
 			AiReasoning:     pgtype.Text{Valid: false},

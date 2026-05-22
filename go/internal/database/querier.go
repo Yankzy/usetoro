@@ -24,6 +24,7 @@ type Querier interface {
 	// =========================================================================
 	ComputeAllTimeLeaderboard(ctx context.Context) ([]ComputeAllTimeLeaderboardRow, error)
 	ComputePeriodLeaderboard(ctx context.Context, since pgtype.Timestamptz) ([]ComputePeriodLeaderboardRow, error)
+	CountEnrichedTransactionsBySession(ctx context.Context, sessionID pgtype.UUID) (int64, error)
 	CountEntities(ctx context.Context) (int64, error)
 	// =========================================================================
 	// Cleanup Mode Queries (now stored in fignode schema)
@@ -75,6 +76,7 @@ type Querier interface {
 	GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousProposalsParams) ([]FignodeStagingTransaction, error)
 	GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([]GetApprovedRowsRow, error)
 	GetAttachableByERPID(ctx context.Context, arg GetAttachableByERPIDParams) (ShadowErpAttachable, error)
+	GetBankAccountName(ctx context.Context, id pgtype.UUID) (string, error)
 	GetBankAccounts(ctx context.Context) ([]string, error)
 	GetBillByERPID(ctx context.Context, arg GetBillByERPIDParams) (ShadowErpBill, error)
 	GetBlueprintByName(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
@@ -89,9 +91,19 @@ type Querier interface {
 	GetCustomerByERPID(ctx context.Context, arg GetCustomerByERPIDParams) (ShadowErpCustomer, error)
 	GetCustomerByID(ctx context.Context, id pgtype.UUID) (ShadowErpCustomer, error)
 	GetCustomerByName(ctx context.Context, arg GetCustomerByNameParams) (ShadowErpCustomer, error)
+	// Detects customers whose income account changed after a specific date.
+	// Used by bootstrap_temporal.go (Priority 95).
+	GetCustomerTemporalChanges(ctx context.Context, realmID string) ([]GetCustomerTemporalChangesRow, error)
 	GetCustomersByRealm(ctx context.Context, realmID string) ([]ShadowErpCustomer, error)
 	GetCustomersUpdatedSince(ctx context.Context, arg GetCustomersUpdatedSinceParams) ([]ShadowErpCustomer, error)
+	// Gets amount statistics per customer per income account for boundary detection.
+	// Used by bootstrap_amounts.go (Priority 90).
+	GetDepositAmountDistribution(ctx context.Context, realmID string) ([]GetDepositAmountDistributionRow, error)
 	GetDepositByERPID(ctx context.Context, arg GetDepositByERPIDParams) (ShadowErpDeposit, error)
+	// Extracts split allocation patterns from deposits with multiple income lines.
+	// Used by bootstrap_allocations.go.
+	GetDepositSplitPercentages(ctx context.Context, realmID string) ([]GetDepositSplitPercentagesRow, error)
+	GetDistinctMacroClassesUnmatched(ctx context.Context, sessionID pgtype.UUID) ([]pgtype.Text, error)
 	GetERPConnection(ctx context.Context, entityID pgtype.UUID) (ToroCoreErpConnection, error)
 	GetERPConnectionByRealm(ctx context.Context, arg GetERPConnectionByRealmParams) (ToroCoreErpConnection, error)
 	GetERPTokens(ctx context.Context, arg GetERPTokensParams) (GetERPTokensRow, error)
@@ -111,12 +123,29 @@ type Querier interface {
 	GetEntityIDByEmail(ctx context.Context, email string) (pgtype.UUID, error)
 	GetExpenseAccountsFromPurchases(ctx context.Context, realmID string) ([]GetExpenseAccountsFromPurchasesRow, error)
 	GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredAccountsForAIParams) ([]GetFilteredAccountsForAIRow, error)
+	// Finds customers with extreme variance across amounts and income accounts.
+	// Used by bootstrap_review_flags.go.
+	GetHighEntropyCustomers(ctx context.Context, realmID string) ([]GetHighEntropyCustomersRow, error)
+	// Finds vendors with extreme variance across amounts, accounts, and descriptions.
+	// Used by bootstrap_review_flags.go.
+	GetHighEntropyVendors(ctx context.Context, realmID string) ([]GetHighEntropyVendorsRow, error)
 	// Finds the #1 most frequently used Income Account for a (customer, bank_account) pair.
+	// Resolves LinkedTxn to payments/sales_receipts for customer and account extraction.
+	// Source 1: Direct DepositLineDetail with Entity + AccountRef
+	// Source 2: LinkedTxn to Payment → customer_id + deposit_to_account_id
+	// Source 3: LinkedTxn to SalesReceipt → customer_id + line item income account
 	GetHistoricalDepositConsensus(ctx context.Context, arg GetHistoricalDepositConsensusParams) ([]GetHistoricalDepositConsensusRow, error)
-	// Flags customers where >= 50% of their historical deposits were split across multiple income accounts.
+	// Flags customers where >= 50% of their historical deposits were split across
+	// multiple income accounts. Resolves LinkedTxn to payments/sales_receipts.
+	// Source 1: Direct DepositLineDetail with Entity + AccountRef
+	// Source 2: LinkedTxn to Payment → customer_id + deposit_to_account_id
+	// Source 3: LinkedTxn to SalesReceipt → customer_id + line item income account
 	GetHistoricalDepositSplitters(ctx context.Context, realmID string) ([]GetHistoricalDepositSplittersRow, error)
 	// Finds the #1 most frequently used expense account for a (vendor, source_account) pair.
 	GetHistoricalPurchaseConsensus(ctx context.Context, arg GetHistoricalPurchaseConsensusParams) ([]GetHistoricalPurchaseConsensusRow, error)
+	// Extracts split allocation patterns from purchases with multiple expense lines.
+	// Used by bootstrap_allocations.go.
+	GetHistoricalSplitPercentages(ctx context.Context, realmID string) ([]GetHistoricalSplitPercentagesRow, error)
 	// =========================================================================
 	// Rule engine Bootstrapper Queries
 	// =========================================================================
@@ -160,7 +189,20 @@ type Querier interface {
 	GetRuleGroupByRealmAndName(ctx context.Context, arg GetRuleGroupByRealmAndNameParams) (ShadowErpRuleGroup, error)
 	GetSessionRows(ctx context.Context, arg GetSessionRowsParams) ([]GetSessionRowsRow, error)
 	GetSessionSummary(ctx context.Context, sessionID pgtype.UUID) (GetSessionSummaryRow, error)
+	// =========================================================================
+	// QBO Sync Worker
+	// =========================================================================
+	GetStagingTransactionsReadyForQBO(ctx context.Context, realmID pgtype.Text) ([]FignodeStagingTransaction, error)
 	GetStalledMessagesByAgent(ctx context.Context, agentDid string) ([]ToroCoreStalledMessage, error)
+	// =========================================================================
+	// Advanced Rule Engine Bootstrap Queries (1:1 Feature Coverage)
+	// =========================================================================
+	// Finds (vendor, source_account) pairs where 100% of transactions map to a single target account.
+	// Used by bootstrap_exact_match.go (Priority 100).
+	GetStrictConsensus(ctx context.Context, arg GetStrictConsensusParams) ([]GetStrictConsensusRow, error)
+	// Finds (customer, bank_account) pairs where 100% of deposits map to a single income account.
+	// Used by bootstrap_exact_match.go (Priority 100).
+	GetStrictDepositConsensus(ctx context.Context, arg GetStrictDepositConsensusParams) ([]GetStrictDepositConsensusRow, error)
 	GetTeamInviteByToken(ctx context.Context, token string) (ToroCoreTeamInvite, error)
 	// =========================================================================
 	// Transaction Proposal & Audit
@@ -168,6 +210,8 @@ type Querier interface {
 	// Retrieves a unified view of all transactions (Bills and Invoices) for a given realm,
 	// including the vendor/customer names.
 	GetUnifiedTransactions(ctx context.Context, realmID string) ([]GetUnifiedTransactionsRow, error)
+	GetUnmatchedRowsByMacroClass(ctx context.Context, arg GetUnmatchedRowsByMacroClassParams) ([]FignodeStagingTransaction, error)
+	GetUnmatchedSessionRows(ctx context.Context, sessionID pgtype.UUID) ([]FignodeStagingTransaction, error)
 	GetUserByEmail(ctx context.Context, email string) (ToroCoreUser, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (ToroCoreUser, error)
 	GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]ToroCoreUser, error)
@@ -176,12 +220,18 @@ type Querier interface {
 	// =========================================================================
 	GetVectorSyncState(ctx context.Context, realmID string) (ShadowErpVectorSyncState, error)
 	GetVendor(ctx context.Context, arg GetVendorParams) (ShadowErpVendor, error)
+	// Gets amount statistics per vendor per target account for boundary detection.
+	// Used by bootstrap_amounts.go (Priority 90).
+	GetVendorAmountDistribution(ctx context.Context, realmID string) ([]GetVendorAmountDistributionRow, error)
 	GetVendorByERPID(ctx context.Context, arg GetVendorByERPIDParams) (ShadowErpVendor, error)
 	GetVendorByID(ctx context.Context, id pgtype.UUID) (ShadowErpVendor, error)
 	// =========================================================================
 	// Entity Read Queries
 	// =========================================================================
 	GetVendorByNameOrSynonym(ctx context.Context, arg GetVendorByNameOrSynonymParams) (ShadowErpVendor, error)
+	// Detects vendors whose target account changed after a specific date.
+	// Used by bootstrap_temporal.go (Priority 95).
+	GetVendorTemporalChanges(ctx context.Context, realmID string) ([]GetVendorTemporalChangesRow, error)
 	GetVendorsByRealm(ctx context.Context, realmID string) ([]ShadowErpVendor, error)
 	GetVendorsUpdatedSince(ctx context.Context, arg GetVendorsUpdatedSinceParams) ([]ShadowErpVendor, error)
 	GetWallet(ctx context.Context, entityID pgtype.UUID) (ToroCoreWallet, error)
@@ -208,6 +258,8 @@ type Querier interface {
 	LogWorkflowHistory(ctx context.Context, arg LogWorkflowHistoryParams) (ToroCoreWorkflowHistory, error)
 	MarkCleanupSessionAmbiguous(ctx context.Context, arg MarkCleanupSessionAmbiguousParams) error
 	MarkRowPosted(ctx context.Context, arg MarkRowPostedParams) error
+	MarkStagingTransactionFailed(ctx context.Context, arg MarkStagingTransactionFailedParams) error
+	MarkStagingTransactionSynced(ctx context.Context, arg MarkStagingTransactionSyncedParams) error
 	OverrideCleanupRow(ctx context.Context, arg OverrideCleanupRowParams) (OverrideCleanupRowRow, error)
 	// =========================================================================
 	// AI Corrections
@@ -225,7 +277,9 @@ type Querier interface {
 	SoftDeleteCustomer(ctx context.Context, arg SoftDeleteCustomerParams) error
 	SoftDeleteDeposit(ctx context.Context, arg SoftDeleteDepositParams) error
 	SoftDeleteInvoice(ctx context.Context, arg SoftDeleteInvoiceParams) error
+	SoftDeletePayment(ctx context.Context, arg SoftDeletePaymentParams) error
 	SoftDeletePurchase(ctx context.Context, arg SoftDeletePurchaseParams) error
+	SoftDeleteSalesReceipt(ctx context.Context, arg SoftDeleteSalesReceiptParams) error
 	SoftDeleteVendor(ctx context.Context, arg SoftDeleteVendorParams) error
 	UpdateCleanupSessionBankAccount(ctx context.Context, arg UpdateCleanupSessionBankAccountParams) error
 	UpdateCleanupSessionRowCount(ctx context.Context, arg UpdateCleanupSessionRowCountParams) error
@@ -244,12 +298,17 @@ type Querier interface {
 	UpdateLastWebhookCustomer(ctx context.Context, arg UpdateLastWebhookCustomerParams) error
 	UpdateLastWebhookDeposit(ctx context.Context, arg UpdateLastWebhookDepositParams) error
 	UpdateLastWebhookInvoice(ctx context.Context, arg UpdateLastWebhookInvoiceParams) error
+	UpdateLastWebhookPayment(ctx context.Context, arg UpdateLastWebhookPaymentParams) error
+	UpdateLastWebhookSalesReceipt(ctx context.Context, arg UpdateLastWebhookSalesReceiptParams) error
 	UpdateLastWebhookTransaction(ctx context.Context, arg UpdateLastWebhookTransactionParams) error
 	UpdateLastWebhookVendor(ctx context.Context, arg UpdateLastWebhookVendorParams) error
 	UpdateProposedTransactionSyncStatus(ctx context.Context, arg UpdateProposedTransactionSyncStatusParams) error
 	UpdatePurchaseRuleID(ctx context.Context, arg UpdatePurchaseRuleIDParams) error
 	UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichmentParams) error
 	UpdateRuleGroupKeywords(ctx context.Context, arg UpdateRuleGroupKeywordsParams) error
+	UpdateStagingTransactionAccountType(ctx context.Context, arg UpdateStagingTransactionAccountTypeParams) error
+	UpdateStagingTransactionCashDirection(ctx context.Context, arg UpdateStagingTransactionCashDirectionParams) error
+	UpdateStagingTransactionMacroClass(ctx context.Context, arg UpdateStagingTransactionMacroClassParams) error
 	UpdateStagingTransactionWithRule(ctx context.Context, arg UpdateStagingTransactionWithRuleParams) error
 	// =========================================================================
 	// Streak: Update & midnight reset
@@ -279,7 +338,9 @@ type Querier interface {
 	// before upserting, so the UNIQUE(entity_id) constraint never blocks a transfer.
 	UpsertERPTokens(ctx context.Context, arg UpsertERPTokensParams) error
 	UpsertInvoice(ctx context.Context, arg UpsertInvoiceParams) error
+	UpsertPayment(ctx context.Context, arg UpsertPaymentParams) error
 	UpsertPurchase(ctx context.Context, arg UpsertPurchaseParams) error
+	UpsertSalesReceipt(ctx context.Context, arg UpsertSalesReceiptParams) error
 	// $1 is the session_id (typically a SYSTEM session for the realm).
 	// $2 is realm_id, used only for the vendor/account lookups (joined via session at read time).
 	UpsertStagingTransaction(ctx context.Context, arg UpsertStagingTransactionParams) error

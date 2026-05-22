@@ -59,7 +59,7 @@ type FignodeStagingTransaction struct {
 	SourceType            string
 	RawDescription        pgtype.Text
 	RawAmount             string
-	RawDate               pgtype.Date
+	RawDate               pgtype.Text
 	CashDirection         pgtype.Text
 	IsoCurrencyCode       pgtype.Text
 	TransactionHash       pgtype.Text
@@ -94,6 +94,10 @@ type FignodeStagingTransaction struct {
 	RuleGroupID           pgtype.Int4
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	MacroClass            pgtype.Text
+	AccountType           pgtype.Text
+	ParsedDate            pgtype.Date
+	SyncedAt              pgtype.Timestamptz
 }
 
 type MarketingLeadForm struct {
@@ -263,6 +267,24 @@ type ShadowErpInvoice struct {
 	DeletedAt   pgtype.Timestamptz
 }
 
+type ShadowErpPayment struct {
+	ID                 pgtype.UUID
+	ErpID              string
+	RealmID            string
+	SyncToken          string
+	TxnDate            pgtype.Date
+	TotalAmount        pgtype.Numeric
+	UnappliedAmount    pgtype.Numeric
+	CustomerID         pgtype.Text
+	DepositToAccountID pgtype.Text
+	Lines              []byte
+	RuleID             pgtype.Int4
+	EventSource        string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	DeletedAt          pgtype.Timestamptz
+}
+
 type ShadowErpPurchase struct {
 	ID              pgtype.UUID
 	ErpID           string
@@ -318,6 +340,24 @@ type ShadowErpRuleGroup struct {
 	ParentID       pgtype.Int4
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type ShadowErpSalesReceipt struct {
+	ID                 pgtype.UUID
+	ErpID              string
+	RealmID            string
+	SyncToken          string
+	TxnDate            pgtype.Date
+	TotalAmount        pgtype.Numeric
+	CustomerID         pgtype.Text
+	DepositToAccountID pgtype.Text
+	DocNumber          pgtype.Text
+	Lines              []byte
+	RuleID             pgtype.Int4
+	EventSource        string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	DeletedAt          pgtype.Timestamptz
 }
 
 // Tracks Pinecone vector database sync state per ERP realm
@@ -424,10 +464,12 @@ type ToroCoreErpConnection struct {
 	// Timestamp of last successful Bill webhook. Used by CDC to fetch only missed events.
 	LastWebhookBill pgtype.Timestamptz
 	// Timestamp of last successful Purchase/Transaction webhook. Used by CDC to fetch only missed events.
-	LastWebhookTransaction pgtype.Timestamptz
-	CreatedAt              pgtype.Timestamptz
-	UpdatedAt              pgtype.Timestamptz
-	LastWebhookDeposit     pgtype.Timestamptz
+	LastWebhookTransaction  pgtype.Timestamptz
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	LastWebhookDeposit      pgtype.Timestamptz
+	LastWebhookPayment      pgtype.Timestamptz
+	LastWebhookSalesReceipt pgtype.Timestamptz
 }
 
 type ToroCoreRefreshToken struct {

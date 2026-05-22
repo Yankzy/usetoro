@@ -291,8 +291,8 @@ func mapStagingRowToModel(r database.FignodeStagingTransaction) *model.FignodeSt
 	if r.RawDescription.Valid {
 		out.RawDescription = &r.RawDescription.String
 	}
-	if r.RawDate.Valid {
-		out.RawDate = &r.RawDate.Time
+	if r.ParsedDate.Valid {
+		out.RawDate = &r.ParsedDate.Time
 	}
 	// Note: RawVendorName not explicitly available in FignodeStagingTransaction;
 	// it merges vendor/desc based on Fignode schema simplicity, so we omit mapping it directly from base model.
@@ -360,8 +360,8 @@ func mapSessionRowToModel(r database.GetSessionRowsRow) *model.FignodeStagingRow
 	if r.RawDescription.Valid {
 		out.RawDescription = &r.RawDescription.String
 	}
-	if r.RawDate.Valid {
-		out.RawDate = &r.RawDate.Time
+	if r.ParsedDate.Valid {
+		out.RawDate = &r.ParsedDate.Time
 	}
 
 	if r.PredictedVendorID.Valid {
@@ -442,8 +442,8 @@ func mapGetPendingSessionRowsRowToModel(r database.GetPendingSessionRowsRow) *mo
 	if r.RawDescription.Valid {
 		out.RawDescription = &r.RawDescription.String
 	}
-	if r.RawDate.Valid {
-		out.RawDate = &r.RawDate.Time
+	if r.ParsedDate.Valid {
+		out.RawDate = &r.ParsedDate.Time
 	}
 
 	if r.PredictedVendorID.Valid {
@@ -524,8 +524,8 @@ func mapGetCleanupRowRowToModel(r database.GetCleanupRowRow) *model.FignodeStagi
 	if r.RawDescription.Valid {
 		out.RawDescription = &r.RawDescription.String
 	}
-	if r.RawDate.Valid {
-		out.RawDate = &r.RawDate.Time
+	if r.ParsedDate.Valid {
+		out.RawDate = &r.ParsedDate.Time
 	}
 	if r.PredictedVendorID.Valid {
 		s := uuid.UUID(r.PredictedVendorID.Bytes).String()
@@ -590,8 +590,8 @@ func mapOverrideCleanupRowRowToModel(r database.OverrideCleanupRowRow) *model.Fi
 	if r.RawDescription.Valid {
 		out.RawDescription = &r.RawDescription.String
 	}
-	if r.RawDate.Valid {
-		out.RawDate = &r.RawDate.Time
+	if r.ParsedDate.Valid {
+		out.RawDate = &r.ParsedDate.Time
 	}
 	if r.PredictedVendorID.Valid {
 		s := uuid.UUID(r.PredictedVendorID.Bytes).String()
@@ -655,8 +655,8 @@ func buildQBOPurchase(
 		}},
 	}
 
-	if row.RawDate.Valid {
-		purchase.TxnDate = quickbooks.Date{Time: row.RawDate.Time}
+	if row.ParsedDate.Valid {
+		purchase.TxnDate = quickbooks.Date{Time: row.ParsedDate.Time}
 	}
 	if row.RawDescription.Valid {
 		purchase.PrivateNote = row.RawDescription.String
@@ -720,8 +720,8 @@ func mapGetPendingRealmRowsRowToModel(r database.GetPendingRealmRowsRow) *model.
 	if r.RawDescription.Valid {
 		out.RawDescription = &r.RawDescription.String
 	}
-	if r.RawDate.Valid {
-		out.RawDate = &r.RawDate.Time
+	if r.ParsedDate.Valid {
+		out.RawDate = &r.ParsedDate.Time
 	}
 
 	if r.PredictedVendorID.Valid {

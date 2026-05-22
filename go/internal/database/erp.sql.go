@@ -18,7 +18,7 @@ SET predicted_account_id = $2,
     status               = 'APPROVED',
     updated_at           = NOW()
 WHERE id = $1
-RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at
+RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, macro_class, account_type, parsed_date, synced_at
 `
 
 type ApproveProposedTransactionParams struct {
@@ -72,27 +72,32 @@ func (q *Queries) ApproveProposedTransaction(ctx context.Context, arg ApprovePro
 		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MacroClass,
+		&i.AccountType,
+		&i.ParsedDate,
+		&i.SyncedAt,
 	)
 	return i, err
 }
 
 const createProposedTransaction = `-- name: CreateProposedTransaction :one
 INSERT INTO fignode.staging_transactions (
-    session_id, source_type, raw_amount, raw_date, raw_description,
+    session_id, source_type, raw_amount, raw_date, parsed_date, raw_description,
     predicted_vendor_id, predicted_account_id, confidence_score,
     ai_reasoning, status, created_at, updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW()
 )
-RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at
+RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, macro_class, account_type, parsed_date, synced_at
 `
 
 type CreateProposedTransactionParams struct {
 	SessionID          pgtype.UUID
 	SourceType         string
 	RawAmount          string
-	RawDate            pgtype.Date
+	RawDate            pgtype.Text
+	ParsedDate         pgtype.Date
 	RawDescription     pgtype.Text
 	PredictedVendorID  pgtype.UUID
 	PredictedAccountID pgtype.UUID
@@ -108,6 +113,7 @@ func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreatePropo
 		arg.SourceType,
 		arg.RawAmount,
 		arg.RawDate,
+		arg.ParsedDate,
 		arg.RawDescription,
 		arg.PredictedVendorID,
 		arg.PredictedAccountID,
@@ -158,6 +164,10 @@ func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreatePropo
 		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MacroClass,
+		&i.AccountType,
+		&i.ParsedDate,
+		&i.SyncedAt,
 	)
 	return i, err
 }
@@ -552,7 +562,7 @@ func (q *Queries) GetAllVendorsForRealms(ctx context.Context, realmIds []string)
 }
 
 const getAmbiguousProposals = `-- name: GetAmbiguousProposals :many
-SELECT cs.id, cs.session_id, cs.row_index, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.cash_direction, cs.iso_currency_code, cs.transaction_hash, cs.erp_transaction_id, cs.transaction_id, cs.pending_transaction_id, cs.merchant_name, cs.logo_url, cs.category, cs.is_pending, cs.predicted_vendor_id, cs.predicted_vendor_name, cs.predicted_customer_id, cs.predicted_customer_name, cs.predicted_account_id, cs.predicted_account_name, cs.confidence_score, cs.ai_reasoning, cs.human_action, cs.swiped_by, cs.swiped_at, cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.duplicate_of, cs.is_recurring, cs.split_suggestion, cs.status, cs.error_message, cs.reconciled_at, cs.reconciled_by, cs.rule_group_id, cs.created_at, cs.updated_at FROM fignode.staging_transactions cs
+SELECT cs.id, cs.session_id, cs.row_index, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.cash_direction, cs.iso_currency_code, cs.transaction_hash, cs.erp_transaction_id, cs.transaction_id, cs.pending_transaction_id, cs.merchant_name, cs.logo_url, cs.category, cs.is_pending, cs.predicted_vendor_id, cs.predicted_vendor_name, cs.predicted_customer_id, cs.predicted_customer_name, cs.predicted_account_id, cs.predicted_account_name, cs.confidence_score, cs.ai_reasoning, cs.human_action, cs.swiped_by, cs.swiped_at, cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.duplicate_of, cs.is_recurring, cs.split_suggestion, cs.status, cs.error_message, cs.reconciled_at, cs.reconciled_by, cs.rule_group_id, cs.created_at, cs.updated_at, cs.macro_class, cs.account_type, cs.parsed_date, cs.synced_at FROM fignode.staging_transactions cs
 JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
 WHERE ss.realm_id = $1
   AND cs.confidence_score < $2
@@ -616,6 +626,10 @@ func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousPro
 			&i.RuleGroupID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MacroClass,
+			&i.AccountType,
+			&i.ParsedDate,
+			&i.SyncedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -625,6 +639,17 @@ func (q *Queries) GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousPro
 		return nil, err
 	}
 	return items, nil
+}
+
+const getBankAccountName = `-- name: GetBankAccountName :one
+SELECT name FROM shadow_erp.accounts WHERE id = $1
+`
+
+func (q *Queries) GetBankAccountName(ctx context.Context, id pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getBankAccountName, id)
+	var name string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const getBillByERPID = `-- name: GetBillByERPID :one
@@ -710,7 +735,9 @@ SELECT
     last_webhook_invoice,
     last_webhook_bill,
     last_webhook_transaction,
-    last_webhook_deposit
+    last_webhook_deposit,
+    last_webhook_payment,
+    last_webhook_sales_receipt
 FROM toro_core.erp_connections
 WHERE erp_system = $1 AND realm_id = $2
 `
@@ -721,17 +748,19 @@ type GetConnectionWithWebhookTimesParams struct {
 }
 
 type GetConnectionWithWebhookTimesRow struct {
-	ErpSystem              string
-	RealmID                string
-	EntityID               pgtype.UUID
-	LastSyncTimestamp      pgtype.Timestamptz
-	LastWebhookAccount     pgtype.Timestamptz
-	LastWebhookVendor      pgtype.Timestamptz
-	LastWebhookCustomer    pgtype.Timestamptz
-	LastWebhookInvoice     pgtype.Timestamptz
-	LastWebhookBill        pgtype.Timestamptz
-	LastWebhookTransaction pgtype.Timestamptz
-	LastWebhookDeposit     pgtype.Timestamptz
+	ErpSystem               string
+	RealmID                 string
+	EntityID                pgtype.UUID
+	LastSyncTimestamp       pgtype.Timestamptz
+	LastWebhookAccount      pgtype.Timestamptz
+	LastWebhookVendor       pgtype.Timestamptz
+	LastWebhookCustomer     pgtype.Timestamptz
+	LastWebhookInvoice      pgtype.Timestamptz
+	LastWebhookBill         pgtype.Timestamptz
+	LastWebhookTransaction  pgtype.Timestamptz
+	LastWebhookDeposit      pgtype.Timestamptz
+	LastWebhookPayment      pgtype.Timestamptz
+	LastWebhookSalesReceipt pgtype.Timestamptz
 }
 
 func (q *Queries) GetConnectionWithWebhookTimes(ctx context.Context, arg GetConnectionWithWebhookTimesParams) (GetConnectionWithWebhookTimesRow, error) {
@@ -749,6 +778,8 @@ func (q *Queries) GetConnectionWithWebhookTimes(ctx context.Context, arg GetConn
 		&i.LastWebhookBill,
 		&i.LastWebhookTransaction,
 		&i.LastWebhookDeposit,
+		&i.LastWebhookPayment,
+		&i.LastWebhookSalesReceipt,
 	)
 	return i, err
 }
@@ -844,6 +875,119 @@ func (q *Queries) GetCustomerByName(ctx context.Context, arg GetCustomerByNamePa
 	return i, err
 }
 
+const getCustomerTemporalChanges = `-- name: GetCustomerTemporalChanges :many
+WITH ExplodedLines AS (
+    SELECT
+        d.txn_date,
+        d.target_account_id AS bank_account_id,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
+),
+DirectCustomerLines AS (
+    SELECT
+        txn_date,
+        bank_account_id,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.txn_date,
+        el.bank_account_id,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.txn_date,
+        el.bank_account_id,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT bank_account_id, customer_id, income_account_id, txn_date FROM DirectCustomerLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id, txn_date FROM LinkedPaymentLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id, txn_date FROM LinkedSRLines
+),
+MonthlyAccounts AS (
+    SELECT
+        customer_id,
+        bank_account_id,
+        income_account_id,
+        MIN(txn_date) as first_seen,
+        MAX(txn_date) as last_seen,
+        COUNT(*) as usage_count
+    FROM AllLines
+    WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+    GROUP BY customer_id, bank_account_id, income_account_id
+)
+SELECT customer_id, bank_account_id, income_account_id, first_seen, last_seen, usage_count
+FROM MonthlyAccounts
+ORDER BY customer_id, bank_account_id, first_seen
+`
+
+type GetCustomerTemporalChangesRow struct {
+	CustomerID      string
+	BankAccountID   string
+	IncomeAccountID interface{}
+	FirstSeen       interface{}
+	LastSeen        interface{}
+	UsageCount      int64
+}
+
+// Detects customers whose income account changed after a specific date.
+// Used by bootstrap_temporal.go (Priority 95).
+func (q *Queries) GetCustomerTemporalChanges(ctx context.Context, realmID string) ([]GetCustomerTemporalChangesRow, error) {
+	rows, err := q.db.Query(ctx, getCustomerTemporalChanges, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetCustomerTemporalChangesRow
+	for rows.Next() {
+		var i GetCustomerTemporalChangesRow
+		if err := rows.Scan(
+			&i.CustomerID,
+			&i.BankAccountID,
+			&i.IncomeAccountID,
+			&i.FirstSeen,
+			&i.LastSeen,
+			&i.UsageCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getCustomersByRealm = `-- name: GetCustomersByRealm :many
 SELECT id, erp_id, realm_id, display_name, sync_token, event_source, created_at, updated_at, deleted_at, industry, industry_icon, customer_description, customer_url FROM shadow_erp.customers
 WHERE realm_id = $1 AND deleted_at IS NULL
@@ -929,6 +1073,103 @@ func (q *Queries) GetCustomersUpdatedSince(ctx context.Context, arg GetCustomers
 	return items, nil
 }
 
+const getDepositAmountDistribution = `-- name: GetDepositAmountDistribution :many
+WITH ExplodedLines AS (
+    SELECT
+        d.total_amount,
+        d.target_account_id AS bank_account_id,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
+),
+DirectCustomerLines AS (
+    SELECT
+        total_amount,
+        bank_account_id,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.total_amount,
+        el.bank_account_id,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.total_amount,
+        el.bank_account_id,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT bank_account_id, customer_id, income_account_id, total_amount FROM DirectCustomerLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id, total_amount FROM LinkedPaymentLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id, total_amount FROM LinkedSRLines
+)
+SELECT customer_id, bank_account_id, income_account_id, total_amount
+FROM AllLines
+WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+`
+
+type GetDepositAmountDistributionRow struct {
+	CustomerID      string
+	BankAccountID   string
+	IncomeAccountID interface{}
+	TotalAmount     pgtype.Numeric
+}
+
+// Gets amount statistics per customer per income account for boundary detection.
+// Used by bootstrap_amounts.go (Priority 90).
+func (q *Queries) GetDepositAmountDistribution(ctx context.Context, realmID string) ([]GetDepositAmountDistributionRow, error) {
+	rows, err := q.db.Query(ctx, getDepositAmountDistribution, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetDepositAmountDistributionRow
+	for rows.Next() {
+		var i GetDepositAmountDistributionRow
+		if err := rows.Scan(
+			&i.CustomerID,
+			&i.BankAccountID,
+			&i.IncomeAccountID,
+			&i.TotalAmount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDepositByERPID = `-- name: GetDepositByERPID :one
 SELECT id, erp_id, realm_id, sync_token, txn_date, total_amount, target_account_id, lines, domain, sparse, erp_created_time, erp_updated_time, rule_id, event_source, created_at, updated_at, deleted_at FROM shadow_erp.deposits
 WHERE realm_id = $1 AND erp_id = $2
@@ -964,8 +1205,118 @@ func (q *Queries) GetDepositByERPID(ctx context.Context, arg GetDepositByERPIDPa
 	return i, err
 }
 
+const getDepositSplitPercentages = `-- name: GetDepositSplitPercentages :many
+WITH ExplodedLines AS (
+    SELECT
+        d.id AS deposit_id,
+        d.total_amount,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
+),
+DirectCustomerLines AS (
+    SELECT
+        deposit_id,
+        total_amount,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS account_id,
+        (line->>'Amount')::numeric AS line_amount
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.deposit_id,
+        el.total_amount,
+        p.customer_id,
+        p.deposit_to_account_id AS account_id,
+        (el.line->>'Amount')::numeric AS line_amount
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.deposit_id,
+        el.total_amount,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS account_id,
+        (el.line->>'Amount')::numeric AS line_amount
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT customer_id, deposit_id, total_amount, account_id, line_amount FROM DirectCustomerLines
+    UNION ALL
+    SELECT customer_id, deposit_id, total_amount, account_id, line_amount FROM LinkedPaymentLines
+    UNION ALL
+    SELECT customer_id, deposit_id, total_amount, account_id, line_amount FROM LinkedSRLines
+),
+MultiLineDeposits AS (
+    SELECT deposit_id
+    FROM AllLines
+    GROUP BY deposit_id
+    HAVING COUNT(*) > 1
+)
+SELECT dl.customer_id, dl.deposit_id, dl.account_id, dl.line_amount, dl.total_amount
+FROM AllLines dl
+JOIN MultiLineDeposits mld ON dl.deposit_id = mld.deposit_id
+WHERE dl.customer_id IS NOT NULL AND dl.account_id IS NOT NULL
+ORDER BY dl.customer_id, dl.deposit_id
+`
+
+type GetDepositSplitPercentagesRow struct {
+	CustomerID  string
+	DepositID   pgtype.UUID
+	AccountID   interface{}
+	LineAmount  pgtype.Numeric
+	TotalAmount pgtype.Numeric
+}
+
+// Extracts split allocation patterns from deposits with multiple income lines.
+// Used by bootstrap_allocations.go.
+func (q *Queries) GetDepositSplitPercentages(ctx context.Context, realmID string) ([]GetDepositSplitPercentagesRow, error) {
+	rows, err := q.db.Query(ctx, getDepositSplitPercentages, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetDepositSplitPercentagesRow
+	for rows.Next() {
+		var i GetDepositSplitPercentagesRow
+		if err := rows.Scan(
+			&i.CustomerID,
+			&i.DepositID,
+			&i.AccountID,
+			&i.LineAmount,
+			&i.TotalAmount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getERPConnection = `-- name: GetERPConnection :one
-SELECT id, entity_id, erp_system, realm_id, access_token, refresh_token, expires_at, last_sync_timestamp, last_webhook_account, last_webhook_vendor, last_webhook_customer, last_webhook_invoice, last_webhook_bill, last_webhook_transaction, created_at, updated_at, last_webhook_deposit FROM toro_core.erp_connections
+SELECT id, entity_id, erp_system, realm_id, access_token, refresh_token, expires_at, last_sync_timestamp, last_webhook_account, last_webhook_vendor, last_webhook_customer, last_webhook_invoice, last_webhook_bill, last_webhook_transaction, created_at, updated_at, last_webhook_deposit, last_webhook_payment, last_webhook_sales_receipt FROM toro_core.erp_connections
 WHERE entity_id = $1
 `
 
@@ -990,12 +1341,14 @@ func (q *Queries) GetERPConnection(ctx context.Context, entityID pgtype.UUID) (T
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastWebhookDeposit,
+		&i.LastWebhookPayment,
+		&i.LastWebhookSalesReceipt,
 	)
 	return i, err
 }
 
 const getERPConnectionByRealm = `-- name: GetERPConnectionByRealm :one
-SELECT id, entity_id, erp_system, realm_id, access_token, refresh_token, expires_at, last_sync_timestamp, last_webhook_account, last_webhook_vendor, last_webhook_customer, last_webhook_invoice, last_webhook_bill, last_webhook_transaction, created_at, updated_at, last_webhook_deposit FROM toro_core.erp_connections
+SELECT id, entity_id, erp_system, realm_id, access_token, refresh_token, expires_at, last_sync_timestamp, last_webhook_account, last_webhook_vendor, last_webhook_customer, last_webhook_invoice, last_webhook_bill, last_webhook_transaction, created_at, updated_at, last_webhook_deposit, last_webhook_payment, last_webhook_sales_receipt FROM toro_core.erp_connections
 WHERE erp_system = $1 AND realm_id = $2
 `
 
@@ -1025,6 +1378,8 @@ func (q *Queries) GetERPConnectionByRealm(ctx context.Context, arg GetERPConnect
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastWebhookDeposit,
+		&i.LastWebhookPayment,
+		&i.LastWebhookSalesReceipt,
 	)
 	return i, err
 }
@@ -1137,38 +1492,258 @@ func (q *Queries) GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredA
 	return items, nil
 }
 
-const getHistoricalDepositConsensus = `-- name: GetHistoricalDepositConsensus :many
-WITH RawLines AS (
-    SELECT 
-        target_account_id AS bank_account_id,
-        jsonb_array_elements(lines) AS line
-    FROM shadow_erp.deposits
-    WHERE realm_id = $1 AND deleted_at IS NULL
+const getHighEntropyCustomers = `-- name: GetHighEntropyCustomers :many
+WITH ExplodedLines AS (
+    SELECT
+        d.total_amount,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
 ),
-DepositLines AS (
-    SELECT 
+DirectCustomerLines AS (
+    SELECT
+        total_amount,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.total_amount,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.total_amount,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT customer_id, income_account_id, total_amount FROM DirectCustomerLines
+    UNION ALL
+    SELECT customer_id, income_account_id, total_amount FROM LinkedPaymentLines
+    UNION ALL
+    SELECT customer_id, income_account_id, total_amount FROM LinkedSRLines
+),
+CustomerStats AS (
+    SELECT
+        customer_id,
+        COUNT(*) as total_txns,
+        COUNT(DISTINCT income_account_id) as distinct_accounts,
+        MIN(total_amount) as min_amount,
+        MAX(total_amount) as max_amount,
+        STDDEV(total_amount::numeric) as amount_stddev,
+        AVG(total_amount::numeric) as avg_amount
+    FROM AllLines
+    WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+    GROUP BY customer_id
+)
+SELECT customer_id, total_txns, distinct_accounts, min_amount, max_amount,
+       amount_stddev, avg_amount
+FROM CustomerStats
+WHERE distinct_accounts >= 3 OR (amount_stddev IS NOT NULL AND amount_stddev > avg_amount)
+ORDER BY distinct_accounts DESC, amount_stddev DESC NULLS LAST
+`
+
+type GetHighEntropyCustomersRow struct {
+	CustomerID       string
+	TotalTxns        int64
+	DistinctAccounts int64
+	MinAmount        interface{}
+	MaxAmount        interface{}
+	AmountStddev     float64
+	AvgAmount        float64
+}
+
+// Finds customers with extreme variance across amounts and income accounts.
+// Used by bootstrap_review_flags.go.
+func (q *Queries) GetHighEntropyCustomers(ctx context.Context, realmID string) ([]GetHighEntropyCustomersRow, error) {
+	rows, err := q.db.Query(ctx, getHighEntropyCustomers, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetHighEntropyCustomersRow
+	for rows.Next() {
+		var i GetHighEntropyCustomersRow
+		if err := rows.Scan(
+			&i.CustomerID,
+			&i.TotalTxns,
+			&i.DistinctAccounts,
+			&i.MinAmount,
+			&i.MaxAmount,
+			&i.AmountStddev,
+			&i.AvgAmount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getHighEntropyVendors = `-- name: GetHighEntropyVendors :many
+WITH ExtractedLines AS (
+    SELECT
+        p.entity_id,
+        jsonb_array_elements(p.lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id,
+        p.total_amount
+    FROM shadow_erp.purchases p
+    WHERE p.realm_id = $1 AND p.entity_id IS NOT NULL AND p.deleted_at IS NULL
+),
+VendorStats AS (
+    SELECT
+        entity_id,
+        COUNT(*) as total_txns,
+        COUNT(DISTINCT target_account_id) as distinct_accounts,
+        MIN(total_amount) as min_amount,
+        MAX(total_amount) as max_amount,
+        STDDEV(total_amount::numeric) as amount_stddev,
+        AVG(total_amount::numeric) as avg_amount
+    FROM ExtractedLines
+    WHERE target_account_id IS NOT NULL
+    GROUP BY entity_id
+)
+SELECT entity_id, total_txns, distinct_accounts, min_amount, max_amount,
+       amount_stddev, avg_amount
+FROM VendorStats
+WHERE distinct_accounts >= 3 OR (amount_stddev IS NOT NULL AND amount_stddev > avg_amount)
+ORDER BY distinct_accounts DESC, amount_stddev DESC NULLS LAST
+`
+
+type GetHighEntropyVendorsRow struct {
+	EntityID         pgtype.Text
+	TotalTxns        int64
+	DistinctAccounts int64
+	MinAmount        interface{}
+	MaxAmount        interface{}
+	AmountStddev     float64
+	AvgAmount        float64
+}
+
+// Finds vendors with extreme variance across amounts, accounts, and descriptions.
+// Used by bootstrap_review_flags.go.
+func (q *Queries) GetHighEntropyVendors(ctx context.Context, realmID string) ([]GetHighEntropyVendorsRow, error) {
+	rows, err := q.db.Query(ctx, getHighEntropyVendors, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetHighEntropyVendorsRow
+	for rows.Next() {
+		var i GetHighEntropyVendorsRow
+		if err := rows.Scan(
+			&i.EntityID,
+			&i.TotalTxns,
+			&i.DistinctAccounts,
+			&i.MinAmount,
+			&i.MaxAmount,
+			&i.AmountStddev,
+			&i.AvgAmount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getHistoricalDepositConsensus = `-- name: GetHistoricalDepositConsensus :many
+WITH ExplodedLines AS (
+    SELECT
+        d.erp_id,
+        d.target_account_id AS bank_account_id,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
+),
+DirectCustomerLines AS (
+    SELECT
         bank_account_id,
         COALESCE(
             line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
             line->'DepositLineDetail'->'Entity'->>'value'
         )::text AS customer_id,
         line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
-    FROM RawLines
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.bank_account_id,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.bank_account_id,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT bank_account_id, customer_id, income_account_id FROM DirectCustomerLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id FROM LinkedPaymentLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id FROM LinkedSRLines
 ),
 RankedMappings AS (
-    SELECT 
+    SELECT
         customer_id,
         bank_account_id,
         income_account_id,
         COUNT(*) as usage_count,
         ROW_NUMBER() OVER(PARTITION BY customer_id, bank_account_id ORDER BY COUNT(*) DESC) as rank
-    FROM DepositLines
+    FROM AllLines
     WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
     GROUP BY customer_id, bank_account_id, income_account_id
 )
 SELECT customer_id, bank_account_id, income_account_id, usage_count
 FROM RankedMappings
-WHERE rank = $2::int 
+WHERE rank = $2::int
   AND usage_count >= $3::bigint
 `
 
@@ -1186,6 +1761,10 @@ type GetHistoricalDepositConsensusRow struct {
 }
 
 // Finds the #1 most frequently used Income Account for a (customer, bank_account) pair.
+// Resolves LinkedTxn to payments/sales_receipts for customer and account extraction.
+// Source 1: Direct DepositLineDetail with Entity + AccountRef
+// Source 2: LinkedTxn to Payment → customer_id + deposit_to_account_id
+// Source 3: LinkedTxn to SalesReceipt → customer_id + line item income account
 func (q *Queries) GetHistoricalDepositConsensus(ctx context.Context, arg GetHistoricalDepositConsensusParams) ([]GetHistoricalDepositConsensusRow, error) {
 	rows, err := q.db.Query(ctx, getHistoricalDepositConsensus, arg.RealmID, arg.TargetRank, arg.MinUsageCount)
 	if err != nil {
@@ -1212,31 +1791,68 @@ func (q *Queries) GetHistoricalDepositConsensus(ctx context.Context, arg GetHist
 }
 
 const getHistoricalDepositSplitters = `-- name: GetHistoricalDepositSplitters :many
-WITH RawLines AS (
-    SELECT 
-        erp_id AS deposit_id,
-        jsonb_array_elements(lines) AS line
-    FROM shadow_erp.deposits
-    WHERE realm_id = $1 AND deleted_at IS NULL
+WITH ExplodedLines AS (
+    SELECT
+        d.erp_id AS deposit_id,
+        d.target_account_id AS bank_account_id,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
 ),
-DepositLines AS (
-    SELECT 
+DirectLines AS (
+    SELECT
         deposit_id,
         COALESCE(
             line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
             line->'DepositLineDetail'->'Entity'->>'value'
         )::text AS customer_id,
         line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
-    FROM RawLines
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.deposit_id,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.deposit_id,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT deposit_id, customer_id, income_account_id FROM DirectLines
+    UNION ALL
+    SELECT deposit_id, customer_id, income_account_id FROM LinkedPaymentLines
+    UNION ALL
+    SELECT deposit_id, customer_id, income_account_id FROM LinkedSRLines
 ),
 CustomerDepositCounts AS (
-    SELECT 
+    SELECT
         customer_id,
         COUNT(DISTINCT deposit_id) as total_txns,
         SUM(CASE WHEN lines_in_deposit > 1 THEN 1 ELSE 0 END) as split_count
     FROM (
         SELECT customer_id, deposit_id, COUNT(*) as lines_in_deposit
-        FROM DepositLines
+        FROM AllLines
         WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
         GROUP BY customer_id, deposit_id
     ) sub
@@ -1253,7 +1869,11 @@ type GetHistoricalDepositSplittersRow struct {
 	SplitCount int64
 }
 
-// Flags customers where >= 50% of their historical deposits were split across multiple income accounts.
+// Flags customers where >= 50% of their historical deposits were split across
+// multiple income accounts. Resolves LinkedTxn to payments/sales_receipts.
+// Source 1: Direct DepositLineDetail with Entity + AccountRef
+// Source 2: LinkedTxn to Payment → customer_id + deposit_to_account_id
+// Source 3: LinkedTxn to SalesReceipt → customer_id + line item income account
 func (q *Queries) GetHistoricalDepositSplitters(ctx context.Context, realmID string) ([]GetHistoricalDepositSplittersRow, error) {
 	rows, err := q.db.Query(ctx, getHistoricalDepositSplitters, realmID)
 	if err != nil {
@@ -1328,6 +1948,67 @@ func (q *Queries) GetHistoricalPurchaseConsensus(ctx context.Context, arg GetHis
 			&i.SourceAccountID,
 			&i.TargetAccountID,
 			&i.UsageCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getHistoricalSplitPercentages = `-- name: GetHistoricalSplitPercentages :many
+WITH PurchaseLines AS (
+    SELECT
+        p.entity_id,
+        p.id AS purchase_id,
+        p.total_amount,
+        line->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS account_id,
+        (line->'AccountBasedExpenseLineDetail'->>'Amount')::numeric AS line_amount
+    FROM shadow_erp.purchases p,
+         jsonb_array_elements(p.lines) AS line
+    WHERE p.realm_id = $1 AND p.entity_id IS NOT NULL AND p.deleted_at IS NULL
+),
+MultiLinePurchases AS (
+    SELECT purchase_id
+    FROM PurchaseLines
+    GROUP BY purchase_id
+    HAVING COUNT(*) > 1
+)
+SELECT pl.entity_id, pl.purchase_id, pl.account_id, pl.line_amount, pl.total_amount
+FROM PurchaseLines pl
+JOIN MultiLinePurchases mlp ON pl.purchase_id = mlp.purchase_id
+WHERE pl.account_id IS NOT NULL
+ORDER BY pl.entity_id, pl.purchase_id
+`
+
+type GetHistoricalSplitPercentagesRow struct {
+	EntityID    pgtype.Text
+	PurchaseID  pgtype.UUID
+	AccountID   interface{}
+	LineAmount  pgtype.Numeric
+	TotalAmount pgtype.Numeric
+}
+
+// Extracts split allocation patterns from purchases with multiple expense lines.
+// Used by bootstrap_allocations.go.
+func (q *Queries) GetHistoricalSplitPercentages(ctx context.Context, realmID string) ([]GetHistoricalSplitPercentagesRow, error) {
+	rows, err := q.db.Query(ctx, getHistoricalSplitPercentages, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetHistoricalSplitPercentagesRow
+	for rows.Next() {
+		var i GetHistoricalSplitPercentagesRow
+		if err := rows.Scan(
+			&i.EntityID,
+			&i.PurchaseID,
+			&i.AccountID,
+			&i.LineAmount,
+			&i.TotalAmount,
 		); err != nil {
 			return nil, err
 		}
@@ -1562,7 +2243,7 @@ func (q *Queries) GetOrphanedPurchases(ctx context.Context, realmID string) ([]G
 }
 
 const getProposedTransactionByID = `-- name: GetProposedTransactionByID :one
-SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at FROM fignode.staging_transactions WHERE id = $1
+SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, macro_class, account_type, parsed_date, synced_at FROM fignode.staging_transactions WHERE id = $1
 `
 
 func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID) (FignodeStagingTransaction, error) {
@@ -1610,12 +2291,16 @@ func (q *Queries) GetProposedTransactionByID(ctx context.Context, id pgtype.UUID
 		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MacroClass,
+		&i.AccountType,
+		&i.ParsedDate,
+		&i.SyncedAt,
 	)
 	return i, err
 }
 
 const getProposedTransactionByValues = `-- name: GetProposedTransactionByValues :one
-SELECT cs.id, cs.session_id, cs.row_index, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.cash_direction, cs.iso_currency_code, cs.transaction_hash, cs.erp_transaction_id, cs.transaction_id, cs.pending_transaction_id, cs.merchant_name, cs.logo_url, cs.category, cs.is_pending, cs.predicted_vendor_id, cs.predicted_vendor_name, cs.predicted_customer_id, cs.predicted_customer_name, cs.predicted_account_id, cs.predicted_account_name, cs.confidence_score, cs.ai_reasoning, cs.human_action, cs.swiped_by, cs.swiped_at, cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.duplicate_of, cs.is_recurring, cs.split_suggestion, cs.status, cs.error_message, cs.reconciled_at, cs.reconciled_by, cs.rule_group_id, cs.created_at, cs.updated_at FROM fignode.staging_transactions cs
+SELECT cs.id, cs.session_id, cs.row_index, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.cash_direction, cs.iso_currency_code, cs.transaction_hash, cs.erp_transaction_id, cs.transaction_id, cs.pending_transaction_id, cs.merchant_name, cs.logo_url, cs.category, cs.is_pending, cs.predicted_vendor_id, cs.predicted_vendor_name, cs.predicted_customer_id, cs.predicted_customer_name, cs.predicted_account_id, cs.predicted_account_name, cs.confidence_score, cs.ai_reasoning, cs.human_action, cs.swiped_by, cs.swiped_at, cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.duplicate_of, cs.is_recurring, cs.split_suggestion, cs.status, cs.error_message, cs.reconciled_at, cs.reconciled_by, cs.rule_group_id, cs.created_at, cs.updated_at, cs.macro_class, cs.account_type, cs.parsed_date, cs.synced_at FROM fignode.staging_transactions cs
 JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
 WHERE ss.realm_id = $1
   AND cs.predicted_vendor_id = $2
@@ -1627,7 +2312,7 @@ LIMIT 1
 type GetProposedTransactionByValuesParams struct {
 	RealmID           pgtype.Text
 	PredictedVendorID pgtype.UUID
-	RawDate           pgtype.Date
+	RawDate           pgtype.Text
 	RawAmount         string
 }
 
@@ -1681,6 +2366,10 @@ func (q *Queries) GetProposedTransactionByValues(ctx context.Context, arg GetPro
 		&i.RuleGroupID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MacroClass,
+		&i.AccountType,
+		&i.ParsedDate,
+		&i.SyncedAt,
 	)
 	return i, err
 }
@@ -1778,6 +2467,274 @@ func (q *Queries) GetRecentCorrections(ctx context.Context, arg GetRecentCorrect
 			&i.ConfidenceScore,
 			&i.EventSource,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getStagingTransactionsReadyForQBO = `-- name: GetStagingTransactionsReadyForQBO :many
+
+SELECT st.id, st.session_id, st.row_index, st.source_type, st.raw_description, st.raw_amount, st.raw_date, st.cash_direction, st.iso_currency_code, st.transaction_hash, st.erp_transaction_id, st.transaction_id, st.pending_transaction_id, st.merchant_name, st.logo_url, st.category, st.is_pending, st.predicted_vendor_id, st.predicted_vendor_name, st.predicted_customer_id, st.predicted_customer_name, st.predicted_account_id, st.predicted_account_name, st.confidence_score, st.ai_reasoning, st.human_action, st.swiped_by, st.swiped_at, st.override_vendor_id, st.override_customer_id, st.override_account_id, st.duplicate_of, st.is_recurring, st.split_suggestion, st.status, st.error_message, st.reconciled_at, st.reconciled_by, st.rule_group_id, st.created_at, st.updated_at, st.macro_class, st.account_type, st.parsed_date, st.synced_at FROM fignode.staging_transactions st
+JOIN fignode.staging_sessions ss ON ss.id = st.session_id
+WHERE ss.realm_id = $1
+  AND st.predicted_account_id IS NOT NULL
+  AND st.split_suggestion IS NULL
+  AND st.cash_direction IS NOT NULL
+  AND st.status = 'SWIPED_APPROVED'
+ORDER BY st.created_at ASC
+`
+
+// =========================================================================
+// QBO Sync Worker
+// =========================================================================
+func (q *Queries) GetStagingTransactionsReadyForQBO(ctx context.Context, realmID pgtype.Text) ([]FignodeStagingTransaction, error) {
+	rows, err := q.db.Query(ctx, getStagingTransactionsReadyForQBO, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FignodeStagingTransaction
+	for rows.Next() {
+		var i FignodeStagingTransaction
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RowIndex,
+			&i.SourceType,
+			&i.RawDescription,
+			&i.RawAmount,
+			&i.RawDate,
+			&i.CashDirection,
+			&i.IsoCurrencyCode,
+			&i.TransactionHash,
+			&i.ErpTransactionID,
+			&i.TransactionID,
+			&i.PendingTransactionID,
+			&i.MerchantName,
+			&i.LogoUrl,
+			&i.Category,
+			&i.IsPending,
+			&i.PredictedVendorID,
+			&i.PredictedVendorName,
+			&i.PredictedCustomerID,
+			&i.PredictedCustomerName,
+			&i.PredictedAccountID,
+			&i.PredictedAccountName,
+			&i.ConfidenceScore,
+			&i.AiReasoning,
+			&i.HumanAction,
+			&i.SwipedBy,
+			&i.SwipedAt,
+			&i.OverrideVendorID,
+			&i.OverrideCustomerID,
+			&i.OverrideAccountID,
+			&i.DuplicateOf,
+			&i.IsRecurring,
+			&i.SplitSuggestion,
+			&i.Status,
+			&i.ErrorMessage,
+			&i.ReconciledAt,
+			&i.ReconciledBy,
+			&i.RuleGroupID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.MacroClass,
+			&i.AccountType,
+			&i.ParsedDate,
+			&i.SyncedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getStrictConsensus = `-- name: GetStrictConsensus :many
+
+WITH ExtractedLines AS (
+    SELECT
+        entity_id,
+        source_account_id,
+        jsonb_array_elements(lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id
+    FROM shadow_erp.purchases
+    WHERE realm_id = $1 AND entity_id IS NOT NULL AND deleted_at IS NULL
+),
+AccountCounts AS (
+    SELECT
+        entity_id,
+        source_account_id,
+        target_account_id,
+        COUNT(*) as usage_count
+    FROM ExtractedLines
+    WHERE target_account_id IS NOT NULL
+    GROUP BY entity_id, source_account_id, target_account_id
+),
+DistinctCounts AS (
+    SELECT
+        entity_id,
+        source_account_id,
+        COUNT(DISTINCT target_account_id) as distinct_accounts
+    FROM AccountCounts
+    GROUP BY entity_id, source_account_id
+)
+SELECT ac.entity_id, ac.source_account_id, ac.target_account_id, ac.usage_count
+FROM AccountCounts ac
+JOIN DistinctCounts dc ON ac.entity_id = dc.entity_id AND ac.source_account_id = dc.source_account_id
+WHERE dc.distinct_accounts = 1 AND ac.usage_count >= $2::bigint
+`
+
+type GetStrictConsensusParams struct {
+	RealmID       string
+	MinUsageCount int64
+}
+
+type GetStrictConsensusRow struct {
+	EntityID        pgtype.Text
+	SourceAccountID string
+	TargetAccountID interface{}
+	UsageCount      int64
+}
+
+// =========================================================================
+// Advanced Rule Engine Bootstrap Queries (1:1 Feature Coverage)
+// =========================================================================
+// Finds (vendor, source_account) pairs where 100% of transactions map to a single target account.
+// Used by bootstrap_exact_match.go (Priority 100).
+func (q *Queries) GetStrictConsensus(ctx context.Context, arg GetStrictConsensusParams) ([]GetStrictConsensusRow, error) {
+	rows, err := q.db.Query(ctx, getStrictConsensus, arg.RealmID, arg.MinUsageCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStrictConsensusRow
+	for rows.Next() {
+		var i GetStrictConsensusRow
+		if err := rows.Scan(
+			&i.EntityID,
+			&i.SourceAccountID,
+			&i.TargetAccountID,
+			&i.UsageCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getStrictDepositConsensus = `-- name: GetStrictDepositConsensus :many
+WITH ExplodedLines AS (
+    SELECT
+        d.target_account_id AS bank_account_id,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
+),
+DirectCustomerLines AS (
+    SELECT
+        bank_account_id,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.bank_account_id,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.bank_account_id,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT bank_account_id, customer_id, income_account_id FROM DirectCustomerLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id FROM LinkedPaymentLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id FROM LinkedSRLines
+),
+AccountCounts AS (
+    SELECT customer_id, bank_account_id, income_account_id, COUNT(*) as usage_count
+    FROM AllLines
+    WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+    GROUP BY customer_id, bank_account_id, income_account_id
+),
+DistinctCounts AS (
+    SELECT customer_id, bank_account_id, COUNT(DISTINCT income_account_id) as distinct_accounts
+    FROM AllLines
+    WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+    GROUP BY customer_id, bank_account_id
+)
+SELECT ac.customer_id, ac.bank_account_id, ac.income_account_id, ac.usage_count
+FROM AccountCounts ac
+JOIN DistinctCounts dc ON ac.customer_id = dc.customer_id AND ac.bank_account_id = dc.bank_account_id
+WHERE dc.distinct_accounts = 1 AND ac.usage_count >= $2::bigint
+`
+
+type GetStrictDepositConsensusParams struct {
+	RealmID       string
+	MinUsageCount int64
+}
+
+type GetStrictDepositConsensusRow struct {
+	CustomerID      string
+	BankAccountID   string
+	IncomeAccountID interface{}
+	UsageCount      int64
+}
+
+// Finds (customer, bank_account) pairs where 100% of deposits map to a single income account.
+// Used by bootstrap_exact_match.go (Priority 100).
+func (q *Queries) GetStrictDepositConsensus(ctx context.Context, arg GetStrictDepositConsensusParams) ([]GetStrictDepositConsensusRow, error) {
+	rows, err := q.db.Query(ctx, getStrictDepositConsensus, arg.RealmID, arg.MinUsageCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStrictDepositConsensusRow
+	for rows.Next() {
+		var i GetStrictDepositConsensusRow
+		if err := rows.Scan(
+			&i.CustomerID,
+			&i.BankAccountID,
+			&i.IncomeAccountID,
+			&i.UsageCount,
 		); err != nil {
 			return nil, err
 		}
@@ -1955,6 +2912,50 @@ func (q *Queries) GetVendor(ctx context.Context, arg GetVendorParams) (ShadowErp
 	return i, err
 }
 
+const getVendorAmountDistribution = `-- name: GetVendorAmountDistribution :many
+SELECT
+    p.entity_id,
+    p.total_amount,
+    p.source_account_id,
+    jsonb_array_elements(p.lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id
+FROM shadow_erp.purchases p
+WHERE p.realm_id = $1 AND p.entity_id IS NOT NULL AND p.deleted_at IS NULL
+`
+
+type GetVendorAmountDistributionRow struct {
+	EntityID        pgtype.Text
+	TotalAmount     pgtype.Numeric
+	SourceAccountID string
+	TargetAccountID interface{}
+}
+
+// Gets amount statistics per vendor per target account for boundary detection.
+// Used by bootstrap_amounts.go (Priority 90).
+func (q *Queries) GetVendorAmountDistribution(ctx context.Context, realmID string) ([]GetVendorAmountDistributionRow, error) {
+	rows, err := q.db.Query(ctx, getVendorAmountDistribution, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetVendorAmountDistributionRow
+	for rows.Next() {
+		var i GetVendorAmountDistributionRow
+		if err := rows.Scan(
+			&i.EntityID,
+			&i.TotalAmount,
+			&i.SourceAccountID,
+			&i.TargetAccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getVendorByERPID = `-- name: GetVendorByERPID :one
 SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, event_source, created_at, updated_at, deleted_at, industry, industry_icon, vendor_description, vendor_url FROM shadow_erp.vendors
 WHERE realm_id = $1 AND erp_id = $2
@@ -2030,6 +3031,71 @@ func (q *Queries) GetVendorByNameOrSynonym(ctx context.Context, arg GetVendorByN
 		&i.VendorUrl,
 	)
 	return i, err
+}
+
+const getVendorTemporalChanges = `-- name: GetVendorTemporalChanges :many
+WITH ExtractedLines AS (
+    SELECT
+        p.entity_id,
+        p.source_account_id,
+        p.txn_date,
+        jsonb_array_elements(p.lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id
+    FROM shadow_erp.purchases p
+    WHERE p.realm_id = $1 AND p.entity_id IS NOT NULL AND p.deleted_at IS NULL
+),
+MonthlyAccounts AS (
+    SELECT
+        entity_id,
+        source_account_id,
+        target_account_id,
+        MIN(txn_date) as first_seen,
+        MAX(txn_date) as last_seen,
+        COUNT(*) as usage_count
+    FROM ExtractedLines
+    WHERE target_account_id IS NOT NULL
+    GROUP BY entity_id, source_account_id, target_account_id
+)
+SELECT entity_id, source_account_id, target_account_id, first_seen, last_seen, usage_count
+FROM MonthlyAccounts
+ORDER BY entity_id, source_account_id, first_seen
+`
+
+type GetVendorTemporalChangesRow struct {
+	EntityID        pgtype.Text
+	SourceAccountID string
+	TargetAccountID interface{}
+	FirstSeen       interface{}
+	LastSeen        interface{}
+	UsageCount      int64
+}
+
+// Detects vendors whose target account changed after a specific date.
+// Used by bootstrap_temporal.go (Priority 95).
+func (q *Queries) GetVendorTemporalChanges(ctx context.Context, realmID string) ([]GetVendorTemporalChangesRow, error) {
+	rows, err := q.db.Query(ctx, getVendorTemporalChanges, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetVendorTemporalChangesRow
+	for rows.Next() {
+		var i GetVendorTemporalChangesRow
+		if err := rows.Scan(
+			&i.EntityID,
+			&i.SourceAccountID,
+			&i.TargetAccountID,
+			&i.FirstSeen,
+			&i.LastSeen,
+			&i.UsageCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getVendorsByRealm = `-- name: GetVendorsByRealm :many
@@ -2119,6 +3185,43 @@ func (q *Queries) GetVendorsUpdatedSince(ctx context.Context, arg GetVendorsUpda
 		return nil, err
 	}
 	return items, nil
+}
+
+const markStagingTransactionFailed = `-- name: MarkStagingTransactionFailed :exec
+UPDATE fignode.staging_transactions
+SET status = 'FAILED',
+    error_message = $2,
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type MarkStagingTransactionFailedParams struct {
+	ID           pgtype.UUID
+	ErrorMessage pgtype.Text
+}
+
+func (q *Queries) MarkStagingTransactionFailed(ctx context.Context, arg MarkStagingTransactionFailedParams) error {
+	_, err := q.db.Exec(ctx, markStagingTransactionFailed, arg.ID, arg.ErrorMessage)
+	return err
+}
+
+const markStagingTransactionSynced = `-- name: MarkStagingTransactionSynced :exec
+UPDATE fignode.staging_transactions
+SET status = 'POSTED',
+    erp_transaction_id = $2,
+    synced_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type MarkStagingTransactionSyncedParams struct {
+	ID               pgtype.UUID
+	ErpTransactionID pgtype.Text
+}
+
+func (q *Queries) MarkStagingTransactionSynced(ctx context.Context, arg MarkStagingTransactionSyncedParams) error {
+	_, err := q.db.Exec(ctx, markStagingTransactionSynced, arg.ID, arg.ErpTransactionID)
+	return err
 }
 
 const recordAICorrection = `-- name: RecordAICorrection :exec
@@ -2240,6 +3343,23 @@ func (q *Queries) SoftDeleteInvoice(ctx context.Context, arg SoftDeleteInvoicePa
 	return err
 }
 
+const softDeletePayment = `-- name: SoftDeletePayment :exec
+UPDATE shadow_erp.payments
+SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
+WHERE realm_id = $2 AND erp_id = $3
+`
+
+type SoftDeletePaymentParams struct {
+	DeletedAt pgtype.Timestamptz
+	RealmID   string
+	ErpID     string
+}
+
+func (q *Queries) SoftDeletePayment(ctx context.Context, arg SoftDeletePaymentParams) error {
+	_, err := q.db.Exec(ctx, softDeletePayment, arg.DeletedAt, arg.RealmID, arg.ErpID)
+	return err
+}
+
 const softDeletePurchase = `-- name: SoftDeletePurchase :exec
 UPDATE shadow_erp.purchases
 SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
@@ -2254,6 +3374,23 @@ type SoftDeletePurchaseParams struct {
 
 func (q *Queries) SoftDeletePurchase(ctx context.Context, arg SoftDeletePurchaseParams) error {
 	_, err := q.db.Exec(ctx, softDeletePurchase, arg.DeletedAt, arg.RealmID, arg.ErpID)
+	return err
+}
+
+const softDeleteSalesReceipt = `-- name: SoftDeleteSalesReceipt :exec
+UPDATE shadow_erp.sales_receipts
+SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
+WHERE realm_id = $2 AND erp_id = $3
+`
+
+type SoftDeleteSalesReceiptParams struct {
+	DeletedAt pgtype.Timestamptz
+	RealmID   string
+	ErpID     string
+}
+
+func (q *Queries) SoftDeleteSalesReceipt(ctx context.Context, arg SoftDeleteSalesReceiptParams) error {
+	_, err := q.db.Exec(ctx, softDeleteSalesReceipt, arg.DeletedAt, arg.RealmID, arg.ErpID)
 	return err
 }
 
@@ -2487,6 +3624,40 @@ type UpdateLastWebhookInvoiceParams struct {
 
 func (q *Queries) UpdateLastWebhookInvoice(ctx context.Context, arg UpdateLastWebhookInvoiceParams) error {
 	_, err := q.db.Exec(ctx, updateLastWebhookInvoice, arg.ErpSystem, arg.RealmID, arg.LastWebhookInvoice)
+	return err
+}
+
+const updateLastWebhookPayment = `-- name: UpdateLastWebhookPayment :exec
+UPDATE toro_core.erp_connections
+SET last_webhook_payment = $3, updated_at = NOW()
+WHERE erp_system = $1 AND realm_id = $2
+`
+
+type UpdateLastWebhookPaymentParams struct {
+	ErpSystem          string
+	RealmID            string
+	LastWebhookPayment pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateLastWebhookPayment(ctx context.Context, arg UpdateLastWebhookPaymentParams) error {
+	_, err := q.db.Exec(ctx, updateLastWebhookPayment, arg.ErpSystem, arg.RealmID, arg.LastWebhookPayment)
+	return err
+}
+
+const updateLastWebhookSalesReceipt = `-- name: UpdateLastWebhookSalesReceipt :exec
+UPDATE toro_core.erp_connections
+SET last_webhook_sales_receipt = $3, updated_at = NOW()
+WHERE erp_system = $1 AND realm_id = $2
+`
+
+type UpdateLastWebhookSalesReceiptParams struct {
+	ErpSystem               string
+	RealmID                 string
+	LastWebhookSalesReceipt pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateLastWebhookSalesReceipt(ctx context.Context, arg UpdateLastWebhookSalesReceiptParams) error {
+	_, err := q.db.Exec(ctx, updateLastWebhookSalesReceipt, arg.ErpSystem, arg.RealmID, arg.LastWebhookSalesReceipt)
 	return err
 }
 
@@ -3025,6 +4196,56 @@ func (q *Queries) UpsertInvoice(ctx context.Context, arg UpsertInvoiceParams) er
 	return err
 }
 
+const upsertPayment = `-- name: UpsertPayment :exec
+INSERT INTO shadow_erp.payments (
+    erp_id, realm_id, sync_token, txn_date, total_amount, unapplied_amount,
+    customer_id, deposit_to_account_id, lines,
+    event_source, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+    'erp_sync', NOW(), NOW()
+)
+ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    sync_token           = EXCLUDED.sync_token,
+    txn_date             = EXCLUDED.txn_date,
+    total_amount         = EXCLUDED.total_amount,
+    unapplied_amount     = EXCLUDED.unapplied_amount,
+    customer_id          = EXCLUDED.customer_id,
+    deposit_to_account_id = EXCLUDED.deposit_to_account_id,
+    lines                = EXCLUDED.lines,
+    event_source         = 'erp_sync',
+    updated_at           = NOW(),
+    deleted_at           = NULL
+`
+
+type UpsertPaymentParams struct {
+	ErpID              string
+	RealmID            string
+	SyncToken          string
+	TxnDate            pgtype.Date
+	TotalAmount        pgtype.Numeric
+	UnappliedAmount    pgtype.Numeric
+	CustomerID         pgtype.Text
+	DepositToAccountID pgtype.Text
+	Lines              []byte
+}
+
+func (q *Queries) UpsertPayment(ctx context.Context, arg UpsertPaymentParams) error {
+	_, err := q.db.Exec(ctx, upsertPayment,
+		arg.ErpID,
+		arg.RealmID,
+		arg.SyncToken,
+		arg.TxnDate,
+		arg.TotalAmount,
+		arg.UnappliedAmount,
+		arg.CustomerID,
+		arg.DepositToAccountID,
+		arg.Lines,
+	)
+	return err
+}
+
 const upsertPurchase = `-- name: UpsertPurchase :exec
 INSERT INTO shadow_erp.purchases (
     erp_id, realm_id, sync_token, txn_date, total_amount, payment_type,
@@ -3075,6 +4296,56 @@ func (q *Queries) UpsertPurchase(ctx context.Context, arg UpsertPurchaseParams) 
 	return err
 }
 
+const upsertSalesReceipt = `-- name: UpsertSalesReceipt :exec
+INSERT INTO shadow_erp.sales_receipts (
+    erp_id, realm_id, sync_token, txn_date, total_amount,
+    customer_id, deposit_to_account_id, doc_number, lines,
+    event_source, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+    'erp_sync', NOW(), NOW()
+)
+ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    sync_token            = EXCLUDED.sync_token,
+    txn_date              = EXCLUDED.txn_date,
+    total_amount          = EXCLUDED.total_amount,
+    customer_id           = EXCLUDED.customer_id,
+    deposit_to_account_id = EXCLUDED.deposit_to_account_id,
+    doc_number            = EXCLUDED.doc_number,
+    lines                 = EXCLUDED.lines,
+    event_source          = 'erp_sync',
+    updated_at            = NOW(),
+    deleted_at            = NULL
+`
+
+type UpsertSalesReceiptParams struct {
+	ErpID              string
+	RealmID            string
+	SyncToken          string
+	TxnDate            pgtype.Date
+	TotalAmount        pgtype.Numeric
+	CustomerID         pgtype.Text
+	DepositToAccountID pgtype.Text
+	DocNumber          pgtype.Text
+	Lines              []byte
+}
+
+func (q *Queries) UpsertSalesReceipt(ctx context.Context, arg UpsertSalesReceiptParams) error {
+	_, err := q.db.Exec(ctx, upsertSalesReceipt,
+		arg.ErpID,
+		arg.RealmID,
+		arg.SyncToken,
+		arg.TxnDate,
+		arg.TotalAmount,
+		arg.CustomerID,
+		arg.DepositToAccountID,
+		arg.DocNumber,
+		arg.Lines,
+	)
+	return err
+}
+
 const upsertStagingTransaction = `-- name: UpsertStagingTransaction :exec
 INSERT INTO fignode.staging_transactions (
     session_id,
@@ -3082,21 +4353,23 @@ INSERT INTO fignode.staging_transactions (
     source_type,
     raw_amount,
     raw_date,
+    parsed_date,
     raw_description,
     predicted_vendor_id,
     predicted_account_id,
     status
 )
 VALUES (
-    $1, $3, $4, $5, $6, $7,
-    (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.erp_id = $8 AND shadow_erp.vendors.realm_id = $2),
-    (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.erp_id = $9 AND shadow_erp.accounts.realm_id = $2),
-    $10
+    $1, $3, $4, $5, $6, $7, $8,
+    (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.erp_id = $9 AND shadow_erp.vendors.realm_id = $2),
+    (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.erp_id = $10 AND shadow_erp.accounts.realm_id = $2),
+    $11
 )
 ON CONFLICT (erp_transaction_id) WHERE erp_transaction_id IS NOT NULL DO UPDATE SET
     source_type = EXCLUDED.source_type,
     raw_amount = EXCLUDED.raw_amount,
     raw_date = EXCLUDED.raw_date,
+    parsed_date = EXCLUDED.parsed_date,
     raw_description = EXCLUDED.raw_description,
     predicted_vendor_id = EXCLUDED.predicted_vendor_id,
     predicted_account_id = EXCLUDED.predicted_account_id,
@@ -3110,7 +4383,8 @@ type UpsertStagingTransactionParams struct {
 	ErpTransactionID pgtype.Text
 	SourceType       string
 	RawAmount        string
-	RawDate          pgtype.Date
+	RawDate          pgtype.Text
+	ParsedDate       pgtype.Date
 	RawDescription   pgtype.Text
 	ErpID            string
 	ErpID_2          string
@@ -3127,6 +4401,7 @@ func (q *Queries) UpsertStagingTransaction(ctx context.Context, arg UpsertStagin
 		arg.SourceType,
 		arg.RawAmount,
 		arg.RawDate,
+		arg.ParsedDate,
 		arg.RawDescription,
 		arg.ErpID,
 		arg.ErpID_2,

@@ -16,9 +16,9 @@ WITH updated AS (
     UPDATE fignode.staging_transactions
     SET status = 'APPROVED', updated_at = NOW()
     WHERE fignode.staging_transactions.id = $1
-    RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at
+    RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, macro_class, account_type, parsed_date, synced_at
 )
-SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
+SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date, updated.parsed_date,
         updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
         updated.confidence_score, updated.ai_reasoning, updated.duplicate_of, updated.is_recurring, updated.split_suggestion,
         updated.override_vendor_id, updated.override_customer_id, updated.override_account_id, updated.status, updated.erp_transaction_id,
@@ -36,7 +36,8 @@ type ApproveCleanupRowRow struct {
 	SourceType          string
 	RawDescription      pgtype.Text
 	RawAmount           string
-	RawDate             pgtype.Date
+	RawDate             pgtype.Text
+	ParsedDate          pgtype.Date
 	PredictedVendorID   pgtype.UUID
 	PredictedCustomerID pgtype.UUID
 	PredictedAccountID  pgtype.UUID
@@ -67,6 +68,7 @@ func (q *Queries) ApproveCleanupRow(ctx context.Context, id pgtype.UUID) (Approv
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
+		&i.ParsedDate,
 		&i.PredictedVendorID,
 		&i.PredictedCustomerID,
 		&i.PredictedAccountID,
@@ -212,7 +214,7 @@ func (q *Queries) GetAiCorrectionByRawInput(ctx context.Context, arg GetAiCorrec
 }
 
 const getApprovedRows = `-- name: GetApprovedRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning, cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.status, cs.erp_transaction_id,
@@ -220,7 +222,7 @@ SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.
 FROM fignode.staging_transactions cs
 LEFT JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
 WHERE cs.session_id = $1 AND cs.status = 'APPROVED'
-ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC
+ORDER BY cs.parsed_date ASC NULLS LAST, cs.id ASC
 `
 
 type GetApprovedRowsRow struct {
@@ -232,7 +234,8 @@ type GetApprovedRowsRow struct {
 	SourceType          string
 	RawDescription      pgtype.Text
 	RawAmount           string
-	RawDate             pgtype.Date
+	RawDate             pgtype.Text
+	ParsedDate          pgtype.Date
 	PredictedVendorID   pgtype.UUID
 	PredictedCustomerID pgtype.UUID
 	PredictedAccountID  pgtype.UUID
@@ -269,6 +272,7 @@ func (q *Queries) GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
+			&i.ParsedDate,
 			&i.PredictedVendorID,
 			&i.PredictedCustomerID,
 			&i.PredictedAccountID,
@@ -296,7 +300,7 @@ func (q *Queries) GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([
 }
 
 const getCleanupRow = `-- name: GetCleanupRow :one
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning, cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
@@ -317,7 +321,8 @@ type GetCleanupRowRow struct {
 	SourceType          string
 	RawDescription      pgtype.Text
 	RawAmount           string
-	RawDate             pgtype.Date
+	RawDate             pgtype.Text
+	ParsedDate          pgtype.Date
 	PredictedVendorID   pgtype.UUID
 	PredictedCustomerID pgtype.UUID
 	PredictedAccountID  pgtype.UUID
@@ -350,6 +355,7 @@ func (q *Queries) GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanup
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
+		&i.ParsedDate,
 		&i.PredictedVendorID,
 		&i.PredictedCustomerID,
 		&i.PredictedAccountID,
@@ -433,7 +439,7 @@ func (q *Queries) GetOrCreateSystemSession(ctx context.Context, realmID pgtype.T
 }
 
 const getPendingRealmRows = `-- name: GetPendingRealmRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -456,7 +462,7 @@ LEFT JOIN shadow_erp.vendors  ov ON ov.id = cs.override_vendor_id
 LEFT JOIN shadow_erp.customers oc ON oc.id = cs.override_customer_id
 LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
 WHERE ss.realm_id = $1 AND cs.status = 'PENDING'
-ORDER BY cs.raw_date ASC NULLS LAST
+ORDER BY cs.parsed_date ASC NULLS LAST
 LIMIT $2
 `
 
@@ -474,7 +480,8 @@ type GetPendingRealmRowsRow struct {
 	SourceType            string
 	RawDescription        pgtype.Text
 	RawAmount             string
-	RawDate               pgtype.Date
+	RawDate               pgtype.Text
+	ParsedDate            pgtype.Date
 	PredictedVendorID     pgtype.UUID
 	PredictedCustomerID   pgtype.UUID
 	PredictedAccountID    pgtype.UUID
@@ -520,6 +527,7 @@ func (q *Queries) GetPendingRealmRows(ctx context.Context, arg GetPendingRealmRo
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
+			&i.ParsedDate,
 			&i.PredictedVendorID,
 			&i.PredictedCustomerID,
 			&i.PredictedAccountID,
@@ -556,7 +564,7 @@ func (q *Queries) GetPendingRealmRows(ctx context.Context, arg GetPendingRealmRo
 }
 
 const getPendingSessionRows = `-- name: GetPendingSessionRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -579,7 +587,7 @@ LEFT JOIN shadow_erp.vendors  ov ON ov.id = cs.override_vendor_id
 LEFT JOIN shadow_erp.customers oc ON oc.id = cs.override_customer_id
 LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
 WHERE cs.session_id = $1 AND cs.status = 'PENDING'
-ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC
+ORDER BY cs.parsed_date ASC NULLS LAST, cs.id ASC
 `
 
 type GetPendingSessionRowsRow struct {
@@ -591,7 +599,8 @@ type GetPendingSessionRowsRow struct {
 	SourceType            string
 	RawDescription        pgtype.Text
 	RawAmount             string
-	RawDate               pgtype.Date
+	RawDate               pgtype.Text
+	ParsedDate            pgtype.Date
 	PredictedVendorID     pgtype.UUID
 	PredictedCustomerID   pgtype.UUID
 	PredictedAccountID    pgtype.UUID
@@ -637,6 +646,7 @@ func (q *Queries) GetPendingSessionRows(ctx context.Context, sessionID pgtype.UU
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
+			&i.ParsedDate,
 			&i.PredictedVendorID,
 			&i.PredictedCustomerID,
 			&i.PredictedAccountID,
@@ -699,7 +709,7 @@ func (q *Queries) GetRealmIDFromSession(ctx context.Context, id pgtype.UUID) (pg
 }
 
 const getSessionRows = `-- name: GetSessionRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -723,7 +733,7 @@ LEFT JOIN shadow_erp.customers oc ON oc.id = cs.override_customer_id
 LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
 WHERE cs.session_id = $1
   AND ($2::TEXT IS NULL OR cs.status = $2::TEXT)
-ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC
+ORDER BY cs.parsed_date ASC NULLS LAST, cs.id ASC
 `
 
 type GetSessionRowsParams struct {
@@ -740,7 +750,8 @@ type GetSessionRowsRow struct {
 	SourceType            string
 	RawDescription        pgtype.Text
 	RawAmount             string
-	RawDate               pgtype.Date
+	RawDate               pgtype.Text
+	ParsedDate            pgtype.Date
 	PredictedVendorID     pgtype.UUID
 	PredictedCustomerID   pgtype.UUID
 	PredictedAccountID    pgtype.UUID
@@ -786,6 +797,7 @@ func (q *Queries) GetSessionRows(ctx context.Context, arg GetSessionRowsParams) 
 			&i.RawDescription,
 			&i.RawAmount,
 			&i.RawDate,
+			&i.ParsedDate,
 			&i.PredictedVendorID,
 			&i.PredictedCustomerID,
 			&i.PredictedAccountID,
@@ -865,7 +877,7 @@ func (q *Queries) GetSessionSummary(ctx context.Context, sessionID pgtype.UUID) 
 
 const insertCleanupRow = `-- name: InsertCleanupRow :one
 INSERT INTO fignode.staging_transactions (
-    session_id, row_index, source_type, raw_description, raw_amount, raw_date, status,
+    session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, status,
     predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name,
     confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
     human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id,
@@ -873,12 +885,12 @@ INSERT INTO fignode.staging_transactions (
     merchant_name, logo_url, category, is_pending
 )
 VALUES (
-    $1, $6, $2, $3, $4, $5, COALESCE($7, 'PENDING'),
-    $8, $9, $10, $11, $12, $13,
-    $14, $15, $16, COALESCE($17, FALSE), $18,
-    $19, $20, $21, $22, $23, $24,
-    $25, $26, $27, $28,
-    $29, $30, $31, COALESCE($32, FALSE)
+    $1, $6, $2, $3, $4, $5, $7, COALESCE($8, 'PENDING'),
+    $9, $10, $11, $12, $13, $14,
+    $15, $16, $17, COALESCE($18, FALSE), $19,
+    $20, $21, $22, $23, $24, $25,
+    $26, $27, $28, $29,
+    $30, $31, $32, COALESCE($33, FALSE)
 )
 RETURNING id
 `
@@ -888,8 +900,9 @@ type InsertCleanupRowParams struct {
 	SourceType            string
 	RawDescription        pgtype.Text
 	RawAmount             string
-	RawDate               pgtype.Date
+	RawDate               pgtype.Text
 	RowIndex              pgtype.Int4
+	ParsedDate            pgtype.Date
 	Status                interface{}
 	PredictedVendorID     pgtype.UUID
 	PredictedVendorName   pgtype.Text
@@ -926,6 +939,7 @@ func (q *Queries) InsertCleanupRow(ctx context.Context, arg InsertCleanupRowPara
 		arg.RawAmount,
 		arg.RawDate,
 		arg.RowIndex,
+		arg.ParsedDate,
 		arg.Status,
 		arg.PredictedVendorID,
 		arg.PredictedVendorName,
@@ -1067,9 +1081,9 @@ WITH updated AS (
         status               = 'APPROVED',
         updated_at           = NOW()
     WHERE fignode.staging_transactions.id = $1
-    RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at
+    RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, macro_class, account_type, parsed_date, synced_at
 )
-SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
+SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date, updated.parsed_date,
         updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
         updated.confidence_score, updated.ai_reasoning, updated.duplicate_of, updated.is_recurring, updated.split_suggestion,
         updated.override_vendor_id, updated.override_customer_id, updated.override_account_id, updated.status, updated.erp_transaction_id,
@@ -1094,7 +1108,8 @@ type OverrideCleanupRowRow struct {
 	SourceType          string
 	RawDescription      pgtype.Text
 	RawAmount           string
-	RawDate             pgtype.Date
+	RawDate             pgtype.Text
+	ParsedDate          pgtype.Date
 	PredictedVendorID   pgtype.UUID
 	PredictedCustomerID pgtype.UUID
 	PredictedAccountID  pgtype.UUID
@@ -1130,6 +1145,7 @@ func (q *Queries) OverrideCleanupRow(ctx context.Context, arg OverrideCleanupRow
 		&i.RawDescription,
 		&i.RawAmount,
 		&i.RawDate,
+		&i.ParsedDate,
 		&i.PredictedVendorID,
 		&i.PredictedCustomerID,
 		&i.PredictedAccountID,
@@ -1211,44 +1227,43 @@ func (q *Queries) UpdateCleanupSessionStatus(ctx context.Context, arg UpdateClea
 const updateRowEnrichment = `-- name: UpdateRowEnrichment :exec
 UPDATE fignode.staging_transactions
 SET
-    predicted_vendor_id     = $2,
-    predicted_vendor_name   = $3,
-    predicted_customer_id   = $4,
-    predicted_customer_name = $5,
-    predicted_account_id    = $6,
-    predicted_account_name  = $7,
-    confidence_score        = $8,
-    ai_reasoning            = $9,
-    duplicate_of            = $10,
-    is_recurring            = $11,
-    split_suggestion        = $12,
-    merchant_name           = $13,
-    category                = $14,
+    predicted_vendor_id     = $1,
+    predicted_vendor_name   = COALESCE(NULLIF($2, ''), predicted_vendor_name),
+    predicted_customer_id   = $3,
+    predicted_customer_name = COALESCE(NULLIF($4, ''), predicted_customer_name),
+    predicted_account_id    = $5,
+    predicted_account_name  = COALESCE(NULLIF($6, ''), predicted_account_name),
+    confidence_score        = $7,
+    ai_reasoning            = $8,
+    duplicate_of            = $9,
+    is_recurring            = $10,
+    split_suggestion        = $11,
+    merchant_name           = COALESCE(NULLIF($12, ''), merchant_name),
+    category                = COALESCE(NULLIF($13, ''), category),
     status                  = 'ENRICHED',
     updated_at              = NOW()
-WHERE id = $1
+WHERE id = $14
 `
 
 type UpdateRowEnrichmentParams struct {
-	ID                    pgtype.UUID
 	PredictedVendorID     pgtype.UUID
-	PredictedVendorName   pgtype.Text
+	PredictedVendorName   interface{}
 	PredictedCustomerID   pgtype.UUID
-	PredictedCustomerName pgtype.Text
+	PredictedCustomerName interface{}
 	PredictedAccountID    pgtype.UUID
-	PredictedAccountName  pgtype.Text
+	PredictedAccountName  interface{}
 	ConfidenceScore       pgtype.Numeric
 	AiReasoning           pgtype.Text
 	DuplicateOf           pgtype.UUID
-	IsRecurring           bool
+	IsRecurring           pgtype.Bool
 	SplitSuggestion       []byte
-	MerchantName          pgtype.Text
-	Category              pgtype.Text
+	MerchantName          interface{}
+	Category              interface{}
+	ID                    pgtype.UUID
 }
 
 func (q *Queries) UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichmentParams) error {
 	_, err := q.db.Exec(ctx, updateRowEnrichment,
-		arg.ID,
 		arg.PredictedVendorID,
 		arg.PredictedVendorName,
 		arg.PredictedCustomerID,
@@ -1262,6 +1277,7 @@ func (q *Queries) UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichme
 		arg.SplitSuggestion,
 		arg.MerchantName,
 		arg.Category,
+		arg.ID,
 	)
 	return err
 }

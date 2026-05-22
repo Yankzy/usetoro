@@ -256,8 +256,10 @@ func (e *Exporter) ExportAuditPDF(ctx context.Context, sessionID string) ([]byte
 		}
 
 		dateStr := ""
-		if row.RawDate.Valid {
-			dateStr = row.RawDate.Time.Format("2006-01-02")
+		if row.ParsedDate.Valid {
+			dateStr = row.ParsedDate.Time.Format("2006-01-02")
+		} else if row.RawDate.Valid {
+			dateStr = row.RawDate.String
 		}
 		desc := ""
 		if row.RawDescription.Valid {
@@ -311,8 +313,10 @@ func writeSheetHeader(f *excelize.File, sheet string, headers []string, style in
 
 func writeExcelRow(f *excelize.File, sheet string, rowNum int, row database.GetSessionRowsRow) {
 	dateStr := ""
-	if row.RawDate.Valid {
-		dateStr = row.RawDate.Time.Format("2006-01-02")
+	if row.ParsedDate.Valid {
+		dateStr = row.ParsedDate.Time.Format("2006-01-02")
+	} else if row.RawDate.Valid {
+		dateStr = row.RawDate.String
 	}
 	vendor := ""
 	if row.PredictedVendorName != "" {

@@ -196,18 +196,52 @@ WHERE id = $1;
 
 -- name: GetPendingStagingTransactions :many
 SELECT * FROM fignode.staging_transactions
-WHERE session_id = $1 AND status = 'PENDING_AI';
+WHERE session_id = $1 AND status = 'ENRICHED';
 
 -- name: UpdateStagingTransactionWithRule :exec
 UPDATE fignode.staging_transactions
-SET rule_group_id = $2,
-    predicted_account_id = $3,
-    predicted_vendor_id = $4,
-    predicted_customer_id = $5,
-    status = $6,
-    ai_reasoning = $7,
+SET rule_group_id = sqlc.narg('rule_group_id'),
+    predicted_account_id = sqlc.narg('predicted_account_id'),
+    predicted_vendor_id = sqlc.narg('predicted_vendor_id'),
+    predicted_customer_id = sqlc.narg('predicted_customer_id'),
+    status = sqlc.narg('status'),
+    ai_reasoning = sqlc.narg('ai_reasoning'),
+    cash_direction = sqlc.narg('cash_direction'),
+    predicted_account_name = sqlc.narg('predicted_account_name'),
+    predicted_vendor_name = sqlc.narg('predicted_vendor_name'),
+    predicted_customer_name = sqlc.narg('predicted_customer_name'),
+    confidence_score = sqlc.narg('confidence_score'),
+    merchant_name = sqlc.narg('merchant_name'),
     updated_at = NOW()
+WHERE id = sqlc.narg('id');
+
+-- name: UpdateStagingTransactionCashDirection :exec
+UPDATE fignode.staging_transactions
+SET cash_direction = $2, updated_at = NOW()
 WHERE id = $1;
+
+-- name: UpdateStagingTransactionMacroClass :exec
+UPDATE fignode.staging_transactions
+SET macro_class = $2, ai_reasoning = $3, updated_at = NOW()
+WHERE id = $1;
+
+-- name: UpdateStagingTransactionAccountType :exec
+UPDATE fignode.staging_transactions
+SET account_type = $2, updated_at = NOW()
+WHERE id = $1;
+
+-- name: GetUnmatchedSessionRows :many
+SELECT * FROM fignode.staging_transactions
+WHERE session_id = $1 AND rule_group_id IS NULL AND status = 'ENRICHED';
+
+-- name: GetUnmatchedRowsByMacroClass :many
+SELECT * FROM fignode.staging_transactions
+WHERE session_id = $1 AND rule_group_id IS NULL AND macro_class = $2;
+
+-- name: GetDistinctMacroClassesUnmatched :many
+SELECT DISTINCT macro_class FROM fignode.staging_transactions
+WHERE session_id = $1 AND rule_group_id IS NULL AND macro_class IS NOT NULL;
+
 
 -- =========================================================================
 -- Updates
@@ -248,3 +282,7 @@ SELECT cs.* FROM fignode.staging_transactions cs
 JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
 WHERE cs.status = 'ENRICHED' AND ss.realm_id = $1 AND cs.duplicate_of IS NULL
 ORDER BY cs.created_at DESC LIMIT 50;
+
+-- name: CountEnrichedTransactionsBySession :one
+SELECT COUNT(*) FROM fignode.staging_transactions
+WHERE session_id = $1 AND status = 'ENRICHED';

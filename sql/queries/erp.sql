@@ -92,6 +92,16 @@ UPDATE toro_core.erp_connections
 SET last_webhook_deposit = $3, updated_at = NOW()
 WHERE erp_system = $1 AND realm_id = $2;
 
+-- name: UpdateLastWebhookPayment :exec
+UPDATE toro_core.erp_connections
+SET last_webhook_payment = $3, updated_at = NOW()
+WHERE erp_system = $1 AND realm_id = $2;
+
+-- name: UpdateLastWebhookSalesReceipt :exec
+UPDATE toro_core.erp_connections
+SET last_webhook_sales_receipt = $3, updated_at = NOW()
+WHERE erp_system = $1 AND realm_id = $2;
+
 -- name: GetConnectionWithWebhookTimes :one
 SELECT
     erp_system,
@@ -104,7 +114,9 @@ SELECT
     last_webhook_invoice,
     last_webhook_bill,
     last_webhook_transaction,
-    last_webhook_deposit
+    last_webhook_deposit,
+    last_webhook_payment,
+    last_webhook_sales_receipt
 FROM toro_core.erp_connections
 WHERE erp_system = $1 AND realm_id = $2;
 
@@ -294,6 +306,60 @@ WHERE realm_id = $2 AND erp_id = $3;
 
 -- name: SoftDeleteDeposit :exec
 UPDATE shadow_erp.deposits
+SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
+WHERE realm_id = $2 AND erp_id = $3;
+
+-- name: UpsertPayment :exec
+INSERT INTO shadow_erp.payments (
+    erp_id, realm_id, sync_token, txn_date, total_amount, unapplied_amount,
+    customer_id, deposit_to_account_id, lines,
+    event_source, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+    'erp_sync', NOW(), NOW()
+)
+ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    sync_token           = EXCLUDED.sync_token,
+    txn_date             = EXCLUDED.txn_date,
+    total_amount         = EXCLUDED.total_amount,
+    unapplied_amount     = EXCLUDED.unapplied_amount,
+    customer_id          = EXCLUDED.customer_id,
+    deposit_to_account_id = EXCLUDED.deposit_to_account_id,
+    lines                = EXCLUDED.lines,
+    event_source         = 'erp_sync',
+    updated_at           = NOW(),
+    deleted_at           = NULL;
+
+-- name: SoftDeletePayment :exec
+UPDATE shadow_erp.payments
+SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
+WHERE realm_id = $2 AND erp_id = $3;
+
+-- name: UpsertSalesReceipt :exec
+INSERT INTO shadow_erp.sales_receipts (
+    erp_id, realm_id, sync_token, txn_date, total_amount,
+    customer_id, deposit_to_account_id, doc_number, lines,
+    event_source, created_at, updated_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+    'erp_sync', NOW(), NOW()
+)
+ON CONFLICT (realm_id, erp_id) DO UPDATE SET
+    sync_token            = EXCLUDED.sync_token,
+    txn_date              = EXCLUDED.txn_date,
+    total_amount          = EXCLUDED.total_amount,
+    customer_id           = EXCLUDED.customer_id,
+    deposit_to_account_id = EXCLUDED.deposit_to_account_id,
+    doc_number            = EXCLUDED.doc_number,
+    lines                 = EXCLUDED.lines,
+    event_source          = 'erp_sync',
+    updated_at            = NOW(),
+    deleted_at            = NULL;
+
+-- name: SoftDeleteSalesReceipt :exec
+UPDATE shadow_erp.sales_receipts
 SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'
 WHERE realm_id = $2 AND erp_id = $3;
 
@@ -537,12 +603,12 @@ LIMIT 1;
 -- name: CreateProposedTransaction :one
 -- session_id must point at a per-realm SYSTEM session (see GetOrCreateSystemSession).
 INSERT INTO fignode.staging_transactions (
-    session_id, source_type, raw_amount, raw_date, raw_description,
+    session_id, source_type, raw_amount, raw_date, parsed_date, raw_description,
     predicted_vendor_id, predicted_account_id, confidence_score,
     ai_reasoning, status, created_at, updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW()
 )
 RETURNING *;
 
@@ -573,21 +639,23 @@ INSERT INTO fignode.staging_transactions (
     source_type,
     raw_amount,
     raw_date,
+    parsed_date,
     raw_description,
     predicted_vendor_id,
     predicted_account_id,
     status
 )
 VALUES (
-    $1, $3, $4, $5, $6, $7,
-    (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.erp_id = $8 AND shadow_erp.vendors.realm_id = $2),
-    (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.erp_id = $9 AND shadow_erp.accounts.realm_id = $2),
-    $10
+    $1, $3, $4, $5, $6, $7, $8,
+    (SELECT id FROM shadow_erp.vendors WHERE shadow_erp.vendors.erp_id = $9 AND shadow_erp.vendors.realm_id = $2),
+    (SELECT id FROM shadow_erp.accounts WHERE shadow_erp.accounts.erp_id = $10 AND shadow_erp.accounts.realm_id = $2),
+    $11
 )
 ON CONFLICT (erp_transaction_id) WHERE erp_transaction_id IS NOT NULL DO UPDATE SET
     source_type = EXCLUDED.source_type,
     raw_amount = EXCLUDED.raw_amount,
     raw_date = EXCLUDED.raw_date,
+    parsed_date = EXCLUDED.parsed_date,
     raw_description = EXCLUDED.raw_description,
     predicted_vendor_id = EXCLUDED.predicted_vendor_id,
     predicted_account_id = EXCLUDED.predicted_account_id,
@@ -709,32 +777,73 @@ WHERE rank = sqlc.arg('target_rank')::int
   AND usage_count >= sqlc.arg('min_usage_count')::bigint;
 
 -- name: GetHistoricalDepositSplitters :many
--- Flags customers where >= 50% of their historical deposits were split across multiple income accounts.
-WITH RawLines AS (
-    SELECT 
-        erp_id AS deposit_id,
-        jsonb_array_elements(lines) AS line
-    FROM shadow_erp.deposits
-    WHERE realm_id = $1 AND deleted_at IS NULL
+-- Flags customers where >= 50% of their historical deposits were split across
+-- multiple income accounts. Resolves LinkedTxn to payments/sales_receipts.
+WITH ExplodedLines AS (
+    SELECT
+        d.erp_id AS deposit_id,
+        d.target_account_id AS bank_account_id,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
 ),
-DepositLines AS (
-    SELECT 
+-- Source 1: Direct DepositLineDetail with Entity + AccountRef
+DirectLines AS (
+    SELECT
         deposit_id,
         COALESCE(
             line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
             line->'DepositLineDetail'->'Entity'->>'value'
         )::text AS customer_id,
         line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
-    FROM RawLines
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+-- Source 2: LinkedTxn to Payment → customer_id + deposit_to_account_id
+LinkedPaymentLines AS (
+    SELECT
+        el.deposit_id,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+-- Source 3: LinkedTxn to SalesReceipt → customer_id + line item income account
+LinkedSRLines AS (
+    SELECT
+        el.deposit_id,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT deposit_id, customer_id, income_account_id FROM DirectLines
+    UNION ALL
+    SELECT deposit_id, customer_id, income_account_id FROM LinkedPaymentLines
+    UNION ALL
+    SELECT deposit_id, customer_id, income_account_id FROM LinkedSRLines
 ),
 CustomerDepositCounts AS (
-    SELECT 
+    SELECT
         customer_id,
         COUNT(DISTINCT deposit_id) as total_txns,
         SUM(CASE WHEN lines_in_deposit > 1 THEN 1 ELSE 0 END) as split_count
     FROM (
         SELECT customer_id, deposit_id, COUNT(*) as lines_in_deposit
-        FROM DepositLines
+        FROM AllLines
         WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
         GROUP BY customer_id, deposit_id
     ) sub
@@ -746,38 +855,583 @@ WHERE split_count >= 2 AND (split_count::decimal / total_txns) >= 0.5;
 
 -- name: GetHistoricalDepositConsensus :many
 -- Finds the #1 most frequently used Income Account for a (customer, bank_account) pair.
-WITH RawLines AS (
-    SELECT 
-        target_account_id AS bank_account_id,
-        jsonb_array_elements(lines) AS line
-    FROM shadow_erp.deposits
-    WHERE realm_id = $1 AND deleted_at IS NULL
+-- Resolves LinkedTxn to payments/sales_receipts for customer and account extraction.
+WITH ExplodedLines AS (
+    SELECT
+        d.erp_id,
+        d.target_account_id AS bank_account_id,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
 ),
-DepositLines AS (
-    SELECT 
+-- Source 1: Direct DepositLineDetail with Entity + AccountRef
+DirectCustomerLines AS (
+    SELECT
         bank_account_id,
         COALESCE(
             line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
             line->'DepositLineDetail'->'Entity'->>'value'
         )::text AS customer_id,
         line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
-    FROM RawLines
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+-- Source 2: LinkedTxn to Payment → customer_id + deposit_to_account_id
+LinkedPaymentLines AS (
+    SELECT
+        el.bank_account_id,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+-- Source 3: LinkedTxn to SalesReceipt → customer_id + line item income account
+LinkedSRLines AS (
+    SELECT
+        el.bank_account_id,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT bank_account_id, customer_id, income_account_id FROM DirectCustomerLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id FROM LinkedPaymentLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id FROM LinkedSRLines
 ),
 RankedMappings AS (
-    SELECT 
+    SELECT
         customer_id,
         bank_account_id,
         income_account_id,
         COUNT(*) as usage_count,
         ROW_NUMBER() OVER(PARTITION BY customer_id, bank_account_id ORDER BY COUNT(*) DESC) as rank
-    FROM DepositLines
+    FROM AllLines
     WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
     GROUP BY customer_id, bank_account_id, income_account_id
 )
 SELECT customer_id, bank_account_id, income_account_id, usage_count
 FROM RankedMappings
-WHERE rank = sqlc.arg('target_rank')::int 
+WHERE rank = sqlc.arg('target_rank')::int
   AND usage_count >= sqlc.arg('min_usage_count')::bigint;
+
+-- =========================================================================
+-- Advanced Rule Engine Bootstrap Queries (1:1 Feature Coverage)
+-- =========================================================================
+
+-- name: GetStrictConsensus :many
+-- Finds (vendor, source_account) pairs where 100% of transactions map to a single target account.
+-- Used by bootstrap_exact_match.go (Priority 100).
+WITH ExtractedLines AS (
+    SELECT
+        entity_id,
+        source_account_id,
+        jsonb_array_elements(lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id
+    FROM shadow_erp.purchases
+    WHERE realm_id = $1 AND entity_id IS NOT NULL AND deleted_at IS NULL
+),
+AccountCounts AS (
+    SELECT
+        entity_id,
+        source_account_id,
+        target_account_id,
+        COUNT(*) as usage_count
+    FROM ExtractedLines
+    WHERE target_account_id IS NOT NULL
+    GROUP BY entity_id, source_account_id, target_account_id
+),
+DistinctCounts AS (
+    SELECT
+        entity_id,
+        source_account_id,
+        COUNT(DISTINCT target_account_id) as distinct_accounts
+    FROM AccountCounts
+    GROUP BY entity_id, source_account_id
+)
+SELECT ac.entity_id, ac.source_account_id, ac.target_account_id, ac.usage_count
+FROM AccountCounts ac
+JOIN DistinctCounts dc ON ac.entity_id = dc.entity_id AND ac.source_account_id = dc.source_account_id
+WHERE dc.distinct_accounts = 1 AND ac.usage_count >= sqlc.arg('min_usage_count')::bigint;
+
+-- name: GetStrictDepositConsensus :many
+-- Finds (customer, bank_account) pairs where 100% of deposits map to a single income account.
+-- Used by bootstrap_exact_match.go (Priority 100).
+WITH ExplodedLines AS (
+    SELECT
+        d.target_account_id AS bank_account_id,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
+),
+DirectCustomerLines AS (
+    SELECT
+        bank_account_id,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.bank_account_id,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.bank_account_id,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT bank_account_id, customer_id, income_account_id FROM DirectCustomerLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id FROM LinkedPaymentLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id FROM LinkedSRLines
+),
+AccountCounts AS (
+    SELECT customer_id, bank_account_id, income_account_id, COUNT(*) as usage_count
+    FROM AllLines
+    WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+    GROUP BY customer_id, bank_account_id, income_account_id
+),
+DistinctCounts AS (
+    SELECT customer_id, bank_account_id, COUNT(DISTINCT income_account_id) as distinct_accounts
+    FROM AllLines
+    WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+    GROUP BY customer_id, bank_account_id
+)
+SELECT ac.customer_id, ac.bank_account_id, ac.income_account_id, ac.usage_count
+FROM AccountCounts ac
+JOIN DistinctCounts dc ON ac.customer_id = dc.customer_id AND ac.bank_account_id = dc.bank_account_id
+WHERE dc.distinct_accounts = 1 AND ac.usage_count >= sqlc.arg('min_usage_count')::bigint;
+
+
+
+-- name: GetVendorAmountDistribution :many
+-- Gets amount statistics per vendor per target account for boundary detection.
+-- Used by bootstrap_amounts.go (Priority 90).
+SELECT
+    p.entity_id,
+    p.total_amount,
+    p.source_account_id,
+    jsonb_array_elements(p.lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id
+FROM shadow_erp.purchases p
+WHERE p.realm_id = $1 AND p.entity_id IS NOT NULL AND p.deleted_at IS NULL;
+
+-- name: GetDepositAmountDistribution :many
+-- Gets amount statistics per customer per income account for boundary detection.
+-- Used by bootstrap_amounts.go (Priority 90).
+WITH ExplodedLines AS (
+    SELECT
+        d.total_amount,
+        d.target_account_id AS bank_account_id,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
+),
+DirectCustomerLines AS (
+    SELECT
+        total_amount,
+        bank_account_id,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.total_amount,
+        el.bank_account_id,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.total_amount,
+        el.bank_account_id,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT bank_account_id, customer_id, income_account_id, total_amount FROM DirectCustomerLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id, total_amount FROM LinkedPaymentLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id, total_amount FROM LinkedSRLines
+)
+SELECT customer_id, bank_account_id, income_account_id, total_amount
+FROM AllLines
+WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL;
+
+
+
+
+
+-- name: GetVendorTemporalChanges :many
+-- Detects vendors whose target account changed after a specific date.
+-- Used by bootstrap_temporal.go (Priority 95).
+WITH ExtractedLines AS (
+    SELECT
+        p.entity_id,
+        p.source_account_id,
+        p.txn_date,
+        jsonb_array_elements(p.lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id
+    FROM shadow_erp.purchases p
+    WHERE p.realm_id = $1 AND p.entity_id IS NOT NULL AND p.deleted_at IS NULL
+),
+MonthlyAccounts AS (
+    SELECT
+        entity_id,
+        source_account_id,
+        target_account_id,
+        MIN(txn_date) as first_seen,
+        MAX(txn_date) as last_seen,
+        COUNT(*) as usage_count
+    FROM ExtractedLines
+    WHERE target_account_id IS NOT NULL
+    GROUP BY entity_id, source_account_id, target_account_id
+)
+SELECT entity_id, source_account_id, target_account_id, first_seen, last_seen, usage_count
+FROM MonthlyAccounts
+ORDER BY entity_id, source_account_id, first_seen;
+
+-- name: GetCustomerTemporalChanges :many
+-- Detects customers whose income account changed after a specific date.
+-- Used by bootstrap_temporal.go (Priority 95).
+WITH ExplodedLines AS (
+    SELECT
+        d.txn_date,
+        d.target_account_id AS bank_account_id,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
+),
+DirectCustomerLines AS (
+    SELECT
+        txn_date,
+        bank_account_id,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.txn_date,
+        el.bank_account_id,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.txn_date,
+        el.bank_account_id,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT bank_account_id, customer_id, income_account_id, txn_date FROM DirectCustomerLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id, txn_date FROM LinkedPaymentLines
+    UNION ALL
+    SELECT bank_account_id, customer_id, income_account_id, txn_date FROM LinkedSRLines
+),
+MonthlyAccounts AS (
+    SELECT
+        customer_id,
+        bank_account_id,
+        income_account_id,
+        MIN(txn_date) as first_seen,
+        MAX(txn_date) as last_seen,
+        COUNT(*) as usage_count
+    FROM AllLines
+    WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+    GROUP BY customer_id, bank_account_id, income_account_id
+)
+SELECT customer_id, bank_account_id, income_account_id, first_seen, last_seen, usage_count
+FROM MonthlyAccounts
+ORDER BY customer_id, bank_account_id, first_seen;
+
+-- name: GetHistoricalSplitPercentages :many
+-- Extracts split allocation patterns from purchases with multiple expense lines.
+-- Used by bootstrap_allocations.go.
+WITH PurchaseLines AS (
+    SELECT
+        p.entity_id,
+        p.id AS purchase_id,
+        p.total_amount,
+        line->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS account_id,
+        (line->'AccountBasedExpenseLineDetail'->>'Amount')::numeric AS line_amount
+    FROM shadow_erp.purchases p,
+         jsonb_array_elements(p.lines) AS line
+    WHERE p.realm_id = $1 AND p.entity_id IS NOT NULL AND p.deleted_at IS NULL
+),
+MultiLinePurchases AS (
+    SELECT purchase_id
+    FROM PurchaseLines
+    GROUP BY purchase_id
+    HAVING COUNT(*) > 1
+)
+SELECT pl.entity_id, pl.purchase_id, pl.account_id, pl.line_amount, pl.total_amount
+FROM PurchaseLines pl
+JOIN MultiLinePurchases mlp ON pl.purchase_id = mlp.purchase_id
+WHERE pl.account_id IS NOT NULL
+ORDER BY pl.entity_id, pl.purchase_id;
+
+-- name: GetDepositSplitPercentages :many
+-- Extracts split allocation patterns from deposits with multiple income lines.
+-- Used by bootstrap_allocations.go.
+WITH ExplodedLines AS (
+    SELECT
+        d.id AS deposit_id,
+        d.total_amount,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
+),
+DirectCustomerLines AS (
+    SELECT
+        deposit_id,
+        total_amount,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS account_id,
+        (line->>'Amount')::numeric AS line_amount
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.deposit_id,
+        el.total_amount,
+        p.customer_id,
+        p.deposit_to_account_id AS account_id,
+        (el.line->>'Amount')::numeric AS line_amount
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.deposit_id,
+        el.total_amount,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS account_id,
+        (el.line->>'Amount')::numeric AS line_amount
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT customer_id, deposit_id, total_amount, account_id, line_amount FROM DirectCustomerLines
+    UNION ALL
+    SELECT customer_id, deposit_id, total_amount, account_id, line_amount FROM LinkedPaymentLines
+    UNION ALL
+    SELECT customer_id, deposit_id, total_amount, account_id, line_amount FROM LinkedSRLines
+),
+MultiLineDeposits AS (
+    SELECT deposit_id
+    FROM AllLines
+    GROUP BY deposit_id
+    HAVING COUNT(*) > 1
+)
+SELECT dl.customer_id, dl.deposit_id, dl.account_id, dl.line_amount, dl.total_amount
+FROM AllLines dl
+JOIN MultiLineDeposits mld ON dl.deposit_id = mld.deposit_id
+WHERE dl.customer_id IS NOT NULL AND dl.account_id IS NOT NULL
+ORDER BY dl.customer_id, dl.deposit_id;
+
+-- name: GetHighEntropyVendors :many
+-- Finds vendors with extreme variance across amounts, accounts, and descriptions.
+-- Used by bootstrap_review_flags.go.
+WITH ExtractedLines AS (
+    SELECT
+        p.entity_id,
+        jsonb_array_elements(p.lines)->'AccountBasedExpenseLineDetail'->'AccountRef'->>'value' AS target_account_id,
+        p.total_amount
+    FROM shadow_erp.purchases p
+    WHERE p.realm_id = $1 AND p.entity_id IS NOT NULL AND p.deleted_at IS NULL
+),
+VendorStats AS (
+    SELECT
+        entity_id,
+        COUNT(*) as total_txns,
+        COUNT(DISTINCT target_account_id) as distinct_accounts,
+        MIN(total_amount) as min_amount,
+        MAX(total_amount) as max_amount,
+        STDDEV(total_amount::numeric) as amount_stddev,
+        AVG(total_amount::numeric) as avg_amount
+    FROM ExtractedLines
+    WHERE target_account_id IS NOT NULL
+    GROUP BY entity_id
+)
+SELECT entity_id, total_txns, distinct_accounts, min_amount, max_amount,
+       amount_stddev, avg_amount
+FROM VendorStats
+WHERE distinct_accounts >= 3 OR (amount_stddev IS NOT NULL AND amount_stddev > avg_amount)
+ORDER BY distinct_accounts DESC, amount_stddev DESC NULLS LAST;
+
+-- name: GetHighEntropyCustomers :many
+-- Finds customers with extreme variance across amounts and income accounts.
+-- Used by bootstrap_review_flags.go.
+WITH ExplodedLines AS (
+    SELECT
+        d.total_amount,
+        jsonb_array_elements(d.lines) AS line
+    FROM shadow_erp.deposits d
+    WHERE d.realm_id = $1 AND d.deleted_at IS NULL
+),
+DirectCustomerLines AS (
+    SELECT
+        total_amount,
+        COALESCE(
+            line->'DepositLineDetail'->'Entity'->'EntityRef'->>'value',
+            line->'DepositLineDetail'->'Entity'->>'value'
+        )::text AS customer_id,
+        line->'DepositLineDetail'->'AccountRef'->>'value'::text AS income_account_id
+    FROM ExplodedLines
+    WHERE line->'DepositLineDetail' IS NOT NULL
+      AND line->'DepositLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+LinkedPaymentLines AS (
+    SELECT
+        el.total_amount,
+        p.customer_id,
+        p.deposit_to_account_id AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.payments p ON p.erp_id = linked_txn->>'TxnId'
+        AND p.realm_id = $1 AND p.deleted_at IS NULL
+    WHERE linked_txn->>'TxnType' = 'Payment'
+      AND p.customer_id IS NOT NULL AND p.customer_id != ''
+      AND p.deposit_to_account_id IS NOT NULL AND p.deposit_to_account_id != ''
+),
+LinkedSRLines AS (
+    SELECT
+        el.total_amount,
+        sr.customer_id,
+        sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' AS income_account_id
+    FROM ExplodedLines el
+    CROSS JOIN LATERAL jsonb_array_elements(el.line->'LinkedTxn') AS linked_txn
+    JOIN shadow_erp.sales_receipts sr ON sr.erp_id = linked_txn->>'TxnId'
+        AND sr.realm_id = $1 AND sr.deleted_at IS NULL
+    CROSS JOIN LATERAL jsonb_array_elements(sr.lines) AS sr_line
+    WHERE linked_txn->>'TxnType' = 'SalesReceipt'
+      AND sr.customer_id IS NOT NULL AND sr.customer_id != ''
+      AND sr_line->'SalesItemLineDetail'->'AccountRef'->>'value' IS NOT NULL
+),
+AllLines AS (
+    SELECT customer_id, income_account_id, total_amount FROM DirectCustomerLines
+    UNION ALL
+    SELECT customer_id, income_account_id, total_amount FROM LinkedPaymentLines
+    UNION ALL
+    SELECT customer_id, income_account_id, total_amount FROM LinkedSRLines
+),
+CustomerStats AS (
+    SELECT
+        customer_id,
+        COUNT(*) as total_txns,
+        COUNT(DISTINCT income_account_id) as distinct_accounts,
+        MIN(total_amount) as min_amount,
+        MAX(total_amount) as max_amount,
+        STDDEV(total_amount::numeric) as amount_stddev,
+        AVG(total_amount::numeric) as avg_amount
+    FROM AllLines
+    WHERE customer_id IS NOT NULL AND income_account_id IS NOT NULL
+    GROUP BY customer_id
+)
+SELECT customer_id, total_txns, distinct_accounts, min_amount, max_amount,
+       amount_stddev, avg_amount
+FROM CustomerStats
+WHERE distinct_accounts >= 3 OR (amount_stddev IS NOT NULL AND amount_stddev > avg_amount)
+ORDER BY distinct_accounts DESC, amount_stddev DESC NULLS LAST;
+
+
 
 -- =========================================================================
 -- Rule Execution & Cleanup
@@ -816,4 +1470,36 @@ WHERE id = $1;
 -- name: UpdateDepositRuleID :exec
 UPDATE shadow_erp.deposits
 SET rule_id = $2, updated_at = NOW()
+WHERE id = $1;
+
+-- name: GetBankAccountName :one
+SELECT name FROM shadow_erp.accounts WHERE id = $1;
+
+-- =========================================================================
+-- QBO Sync Worker
+-- =========================================================================
+
+-- name: GetStagingTransactionsReadyForQBO :many
+SELECT st.* FROM fignode.staging_transactions st
+JOIN fignode.staging_sessions ss ON ss.id = st.session_id
+WHERE ss.realm_id = $1
+  AND st.predicted_account_id IS NOT NULL
+  AND st.split_suggestion IS NULL
+  AND st.cash_direction IS NOT NULL
+  AND st.status = 'SWIPED_APPROVED'
+ORDER BY st.created_at ASC;
+
+-- name: MarkStagingTransactionSynced :exec
+UPDATE fignode.staging_transactions
+SET status = 'POSTED',
+    erp_transaction_id = $2,
+    synced_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: MarkStagingTransactionFailed :exec
+UPDATE fignode.staging_transactions
+SET status = 'FAILED',
+    error_message = $2,
+    updated_at = NOW()
 WHERE id = $1;

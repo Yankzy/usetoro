@@ -29,8 +29,10 @@ func (h *Handler) HandleGetTransactionsBatch(w http.ResponseWriter, r *http.Requ
 		}
 
 		var dateStr string
-		if t.RawDate.Valid {
-			dateStr = t.RawDate.Time.Format("2006-01-02")
+		if t.ParsedDate.Valid {
+			dateStr = t.ParsedDate.Time.Format("2006-01-02")
+		} else if t.RawDate.Valid {
+			dateStr = t.RawDate.String
 		}
 
 		var aiConf float64

@@ -54,7 +54,7 @@ WHERE id = $1;
 
 -- name: InsertCleanupRow :one
 INSERT INTO fignode.staging_transactions (
-    session_id, row_index, source_type, raw_description, raw_amount, raw_date, status,
+    session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, status,
     predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name,
     confidence_score, ai_reasoning, duplicate_of, is_recurring, split_suggestion,
     human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id,
@@ -62,7 +62,7 @@ INSERT INTO fignode.staging_transactions (
     merchant_name, logo_url, category, is_pending
 )
 VALUES (
-    $1, sqlc.narg('row_index'), $2, $3, $4, $5, COALESCE(sqlc.narg('status'), 'PENDING'),
+    $1, sqlc.narg('row_index'), $2, $3, $4, $5, sqlc.narg('parsed_date'), COALESCE(sqlc.narg('status'), 'PENDING'),
     sqlc.narg('predicted_vendor_id'), sqlc.narg('predicted_vendor_name'), sqlc.narg('predicted_customer_id'), sqlc.narg('predicted_customer_name'), sqlc.narg('predicted_account_id'), sqlc.narg('predicted_account_name'),
     sqlc.narg('confidence_score'), sqlc.narg('ai_reasoning'), sqlc.narg('duplicate_of'), COALESCE(sqlc.narg('is_recurring'), FALSE), sqlc.narg('split_suggestion'),
     sqlc.narg('human_action'), sqlc.narg('swiped_by'), sqlc.narg('swiped_at'), sqlc.narg('override_vendor_id'), sqlc.narg('override_customer_id'), sqlc.narg('override_account_id'),
@@ -72,7 +72,7 @@ VALUES (
 RETURNING id;
 
 -- name: GetPendingSessionRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -95,10 +95,10 @@ LEFT JOIN shadow_erp.vendors  ov ON ov.id = cs.override_vendor_id
 LEFT JOIN shadow_erp.customers oc ON oc.id = cs.override_customer_id
 LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
 WHERE cs.session_id = $1 AND cs.status = 'PENDING'
-ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC;
+ORDER BY cs.parsed_date ASC NULLS LAST, cs.id ASC;
 
 -- name: GetPendingRealmRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -121,11 +121,11 @@ LEFT JOIN shadow_erp.vendors  ov ON ov.id = cs.override_vendor_id
 LEFT JOIN shadow_erp.customers oc ON oc.id = cs.override_customer_id
 LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
 WHERE ss.realm_id = $1 AND cs.status = 'PENDING'
-ORDER BY cs.raw_date ASC NULLS LAST
+ORDER BY cs.parsed_date ASC NULLS LAST
 LIMIT $2;
 
 -- name: GetSessionRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning,
        cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
@@ -149,10 +149,10 @@ LEFT JOIN shadow_erp.customers oc ON oc.id = cs.override_customer_id
 LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
 WHERE cs.session_id = $1
   AND (sqlc.narg('status')::TEXT IS NULL OR cs.status = sqlc.narg('status')::TEXT)
-ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC;
+ORDER BY cs.parsed_date ASC NULLS LAST, cs.id ASC;
 
 -- name: GetCleanupRow :one
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning, cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
@@ -166,22 +166,22 @@ WHERE cs.id = $1;
 -- name: UpdateRowEnrichment :exec
 UPDATE fignode.staging_transactions
 SET
-    predicted_vendor_id     = $2,
-    predicted_vendor_name   = $3,
-    predicted_customer_id   = $4,
-    predicted_customer_name = $5,
-    predicted_account_id    = $6,
-    predicted_account_name  = $7,
-    confidence_score        = $8,
-    ai_reasoning            = $9,
-    duplicate_of            = $10,
-    is_recurring            = $11,
-    split_suggestion        = $12,
-    merchant_name           = $13,
-    category                = $14,
+    predicted_vendor_id     = sqlc.narg('predicted_vendor_id'),
+    predicted_vendor_name   = COALESCE(NULLIF(sqlc.narg('predicted_vendor_name'), ''), predicted_vendor_name),
+    predicted_customer_id   = sqlc.narg('predicted_customer_id'),
+    predicted_customer_name = COALESCE(NULLIF(sqlc.narg('predicted_customer_name'), ''), predicted_customer_name),
+    predicted_account_id    = sqlc.narg('predicted_account_id'),
+    predicted_account_name  = COALESCE(NULLIF(sqlc.narg('predicted_account_name'), ''), predicted_account_name),
+    confidence_score        = sqlc.narg('confidence_score'),
+    ai_reasoning            = sqlc.narg('ai_reasoning'),
+    duplicate_of            = sqlc.narg('duplicate_of'),
+    is_recurring            = sqlc.narg('is_recurring'),
+    split_suggestion        = sqlc.narg('split_suggestion'),
+    merchant_name           = COALESCE(NULLIF(sqlc.narg('merchant_name'), ''), merchant_name),
+    category                = COALESCE(NULLIF(sqlc.narg('category'), ''), category),
     status                  = 'ENRICHED',
     updated_at              = NOW()
-WHERE id = $1;
+WHERE id = sqlc.narg('id');
 
 -- name: ApproveCleanupRow :one
 WITH updated AS (
@@ -190,7 +190,7 @@ WITH updated AS (
     WHERE fignode.staging_transactions.id = $1
     RETURNING *
 )
-SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
+SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date, updated.parsed_date,
         updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
         updated.confidence_score, updated.ai_reasoning, updated.duplicate_of, updated.is_recurring, updated.split_suggestion,
         updated.override_vendor_id, updated.override_customer_id, updated.override_account_id, updated.status, updated.erp_transaction_id,
@@ -215,7 +215,7 @@ WITH updated AS (
     WHERE fignode.staging_transactions.id = $1
     RETURNING *
 )
-SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date,
+SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date, updated.parsed_date,
         updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
         updated.confidence_score, updated.ai_reasoning, updated.duplicate_of, updated.is_recurring, updated.split_suggestion,
         updated.override_vendor_id, updated.override_customer_id, updated.override_account_id, updated.status, updated.erp_transaction_id,
@@ -232,7 +232,7 @@ WHERE session_id = $1
 RETURNING id;
 
 -- name: GetApprovedRows :many
-SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date,
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
        cs.confidence_score, cs.ai_reasoning, cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
        cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.status, cs.erp_transaction_id,
@@ -240,7 +240,7 @@ SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.
 FROM fignode.staging_transactions cs
 LEFT JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
 WHERE cs.session_id = $1 AND cs.status = 'APPROVED'
-ORDER BY cs.raw_date ASC NULLS LAST, cs.id ASC;
+ORDER BY cs.parsed_date ASC NULLS LAST, cs.id ASC;
 
 -- name: MarkRowPosted :exec
 UPDATE fignode.staging_transactions

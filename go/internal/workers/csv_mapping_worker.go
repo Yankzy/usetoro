@@ -248,14 +248,20 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 			}
 		}
 
-		rawDescription, _ := r["Description"].(string)
-		rawAmount, _ := r["Amount"].(string)
-		rawDateStr, _ := r["Date"].(string)
-		vendorName, _ := r["Vendor"].(string)
-		customerName, _ := r["Customer"].(string)
+		rawDescription := core.RowString(r, "Description", "description")
+		rawAmount := core.RowString(r, "Amount", "amount")
+		rawDateStr := core.RowString(r, "Date", "date")
+		vendorName := core.RowString(r, "Vendor", "vendor")
+		customerName := core.RowString(r, "Customer", "customer")
 
 		var dDate pgtype.Date
-		dDate.Scan(rawDateStr)
+		if rawDateStr != "" {
+			if parsedDate, err := parseCSVDate(rawDateStr); err == nil {
+				dDate = pgtype.Date{Time: parsedDate, Valid: true}
+			} else {
+				e.logger.Warn("csv mapping worker: failed to parse date, storing raw string only", "raw_date", rawDateStr, "error", err)
+			}
+		}
 
 		_, err := e.db.InsertCleanupRow(ctx, database.InsertCleanupRowParams{
 			SessionID:             pgSessionID,
@@ -263,7 +269,8 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 			SourceType:            "CSV",
 			RawDescription:        pgtype.Text{String: rawDescription, Valid: rawDescription != ""},
 			RawAmount:             rawAmount,
-			RawDate:               dDate,
+			RawDate:               pgtype.Text{String: rawDateStr, Valid: rawDateStr != ""},
+			ParsedDate:            dDate,
 			Status:                "PENDING", // Match EnrichmentWorker query
 			PredictedVendorName:   pgtype.Text{String: vendorName, Valid: vendorName != ""},
 			PredictedCustomerName: pgtype.Text{String: customerName, Valid: customerName != ""},
@@ -362,4 +369,101 @@ func searchForSessionID(value interface{}) string {
 		}
 	}
 	return ""
+}
+
+// sanitizeDateString strips invisible Unicode characters, normalizes separators,
+// and removes artifacts commonly found in bank statement CSV exports that cause
+// time.Parse to silently fail. This includes BOM markers (\uFEFF), non-breaking
+// spaces (\u00A0), zero-width spaces (\u200B), Windows carriage returns (\r),
+// and en-dash/em-dash characters used in place of hyphens.
+func sanitizeDateString(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		// Drop: BOM, zero-width spaces, direction marks
+		case r == '\uFEFF' || r == '\u200B' || r == '\u200C' || r == '\u200D' ||
+			r == '\u200E' || r == '\u200F' || r == '\u2060' ||
+			r == '\uFFFE':
+			continue
+		// Drop carriage return (Windows CSV line endings)
+		case r == '\r':
+			continue
+		// Normalize non-breaking space and other Unicode whitespace to regular space
+		case r == '\u00A0' || r == '\u2007' || r == '\u202F':
+			b.WriteByte(' ')
+		// Normalize en-dash / em-dash / minus sign / soft hyphen to ASCII hyphen
+		case r == '\u2013' || r == '\u2014' || r == '\u2212' || r == '\u00AD':
+			b.WriteByte('-')
+		// Normalize fullwidth solidus to ASCII slash
+		case r == '\uFF0F':
+			b.WriteByte('/')
+		// Normalize fullwidth period to ASCII period
+		case r == '\uFF0E':
+			b.WriteByte('.')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func parseCSVDate(dateStr string) (time.Time, error) {
+	dateStr = sanitizeDateString(dateStr)
+	if dateStr == "" {
+		return time.Time{}, fmt.Errorf("empty date string")
+	}
+
+	layouts := []string{
+		// ISO 8601 (most unambiguous — try first)
+		"2006-01-02",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05-07:00",
+		"2006-01-02T15:04:05",
+		time.RFC3339,
+		// Slash-separated (US then EU 4-digit year, then 2-digit)
+		"01/02/2006",
+		"01/02/2006 15:04:05",
+		"02/01/2006",
+		"2006/01/02",
+		"01/02/06",
+		"02/01/06",
+		"1/2/2006",
+		"2/1/2006",
+		"1/2/06",
+		"2/1/06",
+		// Dot-separated (common in European banks: DD.MM.YYYY)
+		"02.01.2006",
+		"2.1.2006",
+		"02.01.06",
+		"2006.01.02",
+		// Dash-separated numeric (MM-DD-YYYY, DD-MM-YYYY)
+		"01-02-2006",
+		"02-01-2006",
+		"1-2-2006",
+		"01-02-06",
+		// Compact
+		"20060102",
+		// Named months
+		"02-Jan-2006",
+		"02-Jan-06",
+		"Jan 02, 2006",
+		"Jan 2, 2006",
+		"Jan 02, 06",
+		"January 02, 2006",
+		"January 2, 2006",
+		"02 Jan 2006",
+		"2 Jan 2006",
+		"02 January 2006",
+		"2 January 2006",
+	}
+
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, dateStr); err == nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("unable to parse date string: %s", dateStr)
 }

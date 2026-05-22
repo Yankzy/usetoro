@@ -251,8 +251,8 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 			RawVendorName:   row.PredictedVendorName,
 			RawCustomerName: row.PredictedCustomerName,
 		}
-		if row.RawDate.Valid {
-			ptr.RawDate = row.RawDate.Time
+		if row.ParsedDate.Valid {
+			ptr.RawDate = row.ParsedDate.Time
 		}
 
 		allRows = append(allRows, ptr)
@@ -518,6 +518,8 @@ func uuidStr(u pgtype.UUID) string {
 
 func ParseDirtyAmount(amt string) float64 {
 	cleaned := strings.ReplaceAll(amt, "*", "")
+	cleaned = strings.ReplaceAll(cleaned, ",", "")
+	cleaned = strings.ReplaceAll(cleaned, "$", "")
 	cleaned = strings.TrimSpace(cleaned)
 	if cleaned == "" {
 		return 0
@@ -543,7 +545,6 @@ func (e *EnrichmentWorker) persistEnrichedRow(ctx context.Context, er cleanup.En
 	}
 
 	return e.db.UpdateRowEnrichment(ctx, database.UpdateRowEnrichmentParams{
-		ID:                    rowID,
 		PredictedVendorID:     vendorID,
 		PredictedVendorName:   pgtype.Text{String: er.NormalizedVendor, Valid: er.NormalizedVendor != ""},
 		PredictedCustomerID:   customerID,
@@ -553,10 +554,11 @@ func (e *EnrichmentWorker) persistEnrichedRow(ctx context.Context, er cleanup.En
 		ConfidenceScore:       confScore,
 		AiReasoning:           pgtype.Text{String: er.AIReasoning, Valid: er.AIReasoning != ""},
 		DuplicateOf:           dupOf,
-		IsRecurring:           er.IsRecurring,
+		IsRecurring:           pgtype.Bool{Bool: er.IsRecurring, Valid: true},
 		SplitSuggestion:       splitJSON,
 		MerchantName:          pgtype.Text{String: er.MerchantName, Valid: er.MerchantName != ""},
 		Category:              pgtype.Text{String: er.Category, Valid: er.Category != ""},
+		ID:                    rowID,
 	})
 }
 
@@ -641,8 +643,8 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 		RawVendorName:   row.PredictedVendorName,
 		RawCustomerName: row.PredictedCustomerName,
 	}
-	if row.RawDate.Valid {
-		er.RawDate = row.RawDate.Time
+	if row.ParsedDate.Valid {
+		er.RawDate = row.ParsedDate.Time
 	}
 
 	// NATIVE LLM EXTRACTION

@@ -198,6 +198,8 @@ func (d *DelegatorWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		"sub_workflow", targetSubWorkflow,
 	)
 
+	payloads := make(map[string]json.RawMessage)
+
 	for i := 0; i < len(itemsToProcess); i += batchSize {
 		end := i + batchSize
 		if end > len(itemsToProcess) {
@@ -215,13 +217,12 @@ func (d *DelegatorWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 		stepPayloadBytes, _ := json.Marshal(stepPayload)
 
+		stepID := fmt.Sprintf("chunk_%d", len(steps)+1)
 		steps = append(steps, workflows.WorkflowStep{
-			ID:          fmt.Sprintf("chunk_%d", len(steps)+1),
+			ID:          stepID,
 			SubWorkflow: targetSubWorkflow,
-			Config: map[string]interface{}{
-				"batch_payload": json.RawMessage(stepPayloadBytes),
-			},
 		})
+		payloads[stepID] = json.RawMessage(stepPayloadBytes)
 	}
 
 	// Pagination: if we couldn't fit everything, chain another delegator step
@@ -236,21 +237,24 @@ func (d *DelegatorWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 		pagePayloadBytes, _ := json.Marshal(pagePayload)
 
+		stepID := "pagination_step"
 		steps = append(steps, workflows.WorkflowStep{
-			ID:           "pagination_step",
+			ID:           stepID,
 			ActivityType: "workers.delegator",
 			Config: map[string]interface{}{
 				"batch_size":          batchSize,
 				"target_sub_workflow": targetSubWorkflow,
-				"batch_payload":       json.RawMessage(pagePayloadBytes),
 			},
 			DependsOn: getStepIDs(steps),
 		})
+		payloads[stepID] = json.RawMessage(pagePayloadBytes)
 	}
+
+	payloadsBytes, _ := json.Marshal(payloads)
 
 	d.emitDelegate(cid, workflows.DelegationRequest{
 		Steps:   steps,
-		Payload: []byte(`{}`),
+		Payload: json.RawMessage(payloadsBytes),
 	})
 	msg.Ack()
 	return nil

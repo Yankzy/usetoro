@@ -10,6 +10,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/erp"
 	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
@@ -126,6 +127,7 @@ type Dependencies struct {
 	RuleEngine      *accounting.RuleEngineService
 	LLMClient       *ai.LLMClient
 	FetchEntityFn   func(ctx context.Context, tenantID, realmID, entityType, entityID, op string) error
+	QBOConnector    *connectors.QBOConnector
 }
 
 type WorkerFactory func(deps Dependencies) (Worker, error)

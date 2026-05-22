@@ -40,12 +40,12 @@ steps:
         "required": ["session_id"]
       }
   
-  - id: batch_categorize_transactions
-    activity_type: workers.direction_router
+  - id: classify_macro
+    activity_type: workers.classification_stage
     depends_on:
       - run_rule_engine
-    timeout: "600s"
-    description: "Splits transactions by cash direction using the session's outflow_is field, chunks each direction into batches of 50, and spawns parallel sub-workflows for AI categorization."
+    timeout: "300s"
+    description: "Splits unmatched transactions by cash direction and dispatches parallel AI agents to assign macro_class."
     workflow_schema: |
       {
         "type": "object",
@@ -54,8 +54,167 @@ steps:
         }
       }
     config:
+      stage: macro_class
+      model: "deepseek-pro"
+      group_by: direction
       batch_size: 50
-      target_sub_workflow: "Categorize Batch Workflow"
+      db_filter: "rule_group_id IS NULL AND macro_class IS NULL AND status = 'ENRICHED'"
+      db_write_column: macro_class
+      db_write_reasoning: true
+      inject_context: true
+      system_prompt_template: |
+        You are an expert CPA acting as a macro-classification router inside a QuickBooks Online automated ledger engine. 
+        Your job is to assign EACH transaction to one of the following accounting classes: ASSET, LIABILITY, EQUITY, REVENUE, or EXPENSE.
+
+        ### CONTEXT
+        * Cash Direction for ALL items: {cash_direction}
+        * User's Known Bank Accounts: {json_list_of_bank_accounts}
+
+        ### CONTRA-ACCOUNTING AWARENESS
+        Bank direction alone does not determine macro class. Apply these structural rules:
+        - INFLOW transactions that are refunds from merchants (vendors) are NOT revenue — they are contra-EXPENSE (money back from a prior purchase).
+        - OUTFLOW transactions that are refunds/chargebacks to customers are NOT expenses — they are contra-REVENUE (money returned to a customer).
+        - Your macro_class assignment controls downstream entity matching: REVENUE routes to the Customers table, EXPENSE routes to the Vendors table. A wrong macro_class here will create duplicate entities in the opposing table.
+
+        ### CLASSIFICATION RULES
+        0. SYSTEM OVERRIDE RULE: If a transaction object contains a non-empty `system_forced_macro` string, you MUST immediately stop evaluating, bypass all subsequent rules, and assign the `macro_class` to match the `system_forced_macro` value exactly.
+        {classification_rules}
+
+        ### OUTPUT FORMAT
+        RFC 6902 Compliance: You MUST reply with a JSON object containing a SINGLE RFC 6902 patch that replaces the entire "/rows" OBJECT (mapped by string indices) with updated versions.
+
+        {"op": "add", "path": "/rows", "value": {"0": {"id": "tx_123", "macro_class": "EXPENSE", "reasoning": "Standard business travel."}}}
+
+  - id: classify_account_type
+    activity_type: workers.classification_stage
+    depends_on:
+      - classify_macro
+    timeout: "300s"
+    description: "Groups macro-classified transactions and dispatches parallel AI agents per class to assign the QuickBooks AccountType."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" }
+        }
+      }
+    config:
+      stage: account_type
+      model: "gpt-4o-mini"
+      group_by: macro_class
+      batch_size: 50
+      db_filter: "rule_group_id IS NULL AND macro_class IS NOT NULL AND account_type IS NULL"
+      db_write_column: account_type
+      inject_context: true
+      system_prompt_template: |
+        You are an expert CPA acting as a QBO AccountType Qualification Router inside a QuickBooks Online automated ledger engine.
+        Your job is to process bank transactions that have already been classified under {macro_class}.
+
+        ### CRITICAL STABILITY CONSTRAINT
+        You MUST assign an 'account_type' to each transaction. The value you provide MUST be an exact string match from the allowed options list below. Do not shorten, expand, or modify the capitalization.
+
+        ### ALLOWED OPTIONS FOR THIS BATCH
+        Available AccountTypes for {macro_class}: {account_type_options}
+
+        ### CONTEXT
+        * Business Industry: {company_industry_description}
+
+        ### SPECIFIC SELECTION HEURISTICS FOR {macro_class}
+        {macro_class_specific_rules}
+
+        ### OUTPUT FORMAT
+        RFC 6902 Compliance: You MUST reply with a JSON object containing a SINGLE RFC 6902 patch that replaces the entire "/rows" OBJECT.
+
+        {"op": "add", "path": "/rows", "value": {"0": {"id": "tx_123", "account_type": "INSERT_EXACT_MATCH_FROM_OPTIONS", "reasoning": "..."}}}
+
+        NOTE: Do not use the pharase "classified as..." in your reasoning, because the classification is already done.
+        Instead, use "The account type for this transaction is...", "qualified as..." or similar pharases.
+
+  - id: classify_entity
+    activity_type: workers.classification_stage
+    depends_on:
+      - classify_account_type
+    timeout: "300s"
+    description: "Identifies the vendor or customer from the raw bank description and matches against existing database entities."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" }
+        }
+      }
+    config:
+      stage: entity
+      model: "gpt-4o"
+      group_by: macro_class
+      batch_size: 50
+      db_filter: "rule_group_id IS NULL AND account_type IS NOT NULL AND merchant_name IS NULL"
+      db_write_column: new_clean_name
+      inject_context: true
+      system_prompt_template: |
+        You are an expert CPA. Your job is to process a batch of up to 50 bank transactions and identify the vendor or customer from the raw bank description.
+
+        ### CONTINUITY FROM PRIOR STAGES
+        Each row already has macro_class and account_type assigned. This batch contains only {macro_class} transactions — match against the entity list below.
+
+        ### CONTEXT
+        {entity_list}
+
+        ### RULES
+        1. Examine the Raw Description and extract the clean, core business name (e.g., "SQ * STAPLES 442" -> "Staples", "VENMO CASHOUT" -> "Venmo").
+        2. ALWAYS set 'new_clean_name' to the extracted clean business name for EVERY row, regardless of match status. Then match it against the entity list: if it matches (or is a highly likely variation of) an entity, also return its exact [id:XX] value as the entity_id.
+        3. Set match_confidence: "HIGH" if exact name match, "MEDIUM" if partial/abbreviation match, "LOW" if guessing.
+
+        ### OUTPUT FORMAT
+        RFC 6902 Compliance: You MUST reply with a JSON object containing a SINGLE RFC 6902 patch that replaces the entire "/rows" OBJECT.
+
+        {"op": "add", "path": "/rows", "value": {"0": {"id": "tx_123", "new_clean_name": "Staples", "match_confidence": "HIGH", "entity_id": "56"}}}
+        IMPORTANT: 'new_clean_name' is REQUIRED for every row. 'entity_id' is optional (only when a match is found).
+
+  - id: select_account
+    activity_type: workers.classification_stage
+    depends_on:
+      - classify_entity
+    timeout: "300s"
+    description: "Selects the exact QuickBooks Online Account ID for each transaction and flags items needing accounting splits."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" }
+        }
+      }
+    config:
+      stage: account_selection
+      model: "gpt-4o"
+      group_by: none
+      batch_size: 50
+      db_filter: "rule_group_id IS NULL AND account_type IS NOT NULL AND predicted_account_name IS NULL"
+      db_write_column: account_id
+      inject_context: true
+      system_prompt_template: |
+        You are an expert CPA. Your job is to process a batch of up to 50 transactions and select the exact QuickBooks Online Account ID for each. You must also flag any transactions that inherently require complex accounting splits.
+
+        ### CONTINUITY FROM PRIOR STAGES
+        Each row already has macro_class, account_type, and new_clean_name (vendor/customer) assigned by earlier pipeline stages. Use these to narrow your search:
+        - The account_type tells you which section of the COA to look in (sections are grouped by AccountType below).
+        - The new_clean_name tells you which vendor/customer this is, helping you pick the right sub-account within that type.
+
+        ### CONTEXT
+        * Business Industry: {company_industry_description}
+
+        ### AVAILABLE QBO ACCOUNTS (grouped by AccountType)
+        {json_list_of_all_filtered_accounts}
+
+        ### RULES
+        1. ACCOUNT SELECTION: Look in the COA section matching the row's account_type. Select the account whose name best matches the row's new_clean_name (entity), raw_description, and Business Industry. If no perfect match exists, select the closest general account within that section. NEVER select an account from a different section.
+        2. SPLIT DETECTION: If the transaction is for a Loan Payment, Payroll, or a blended merchant (like 'Gusto' or 'SBA' or 'Stripe Payouts'), you MUST flag `requires_split: true`. These inherently require separating principal/interest or gross wages/taxes.
+        3. The 'account_id' you return MUST be the exact [erp_id:XX] value from the COA listing.
+
+        ### OUTPUT FORMAT
+        RFC 6902 Compliance: You MUST reply with a JSON object containing a SINGLE RFC 6902 patch that replaces the entire "/rows" OBJECT.
+
+        {"op": "add", "path": "/rows", "value": {"0": {"id": "tx_123", "account_id": "402", "reasoning": "...", "requires_split": true}}}
 
   # - id: human_review
   #   activity_type: hitl.review
@@ -71,3 +230,6 @@ steps:
   # - id: sync_to_qbo
   #   activity_type: workers.qbo_sync
   #   depends_on: [human_review]
+
+
+

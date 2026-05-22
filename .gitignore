@@ -8,6 +8,8 @@
 *.so
 *.dylib
 # Explicitly ignore dynamically built Go binaries and extension-less executables
+/graphql
+/protocol
 go/*
 !go/*/
 !go/*.*

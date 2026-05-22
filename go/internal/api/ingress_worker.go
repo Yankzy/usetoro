@@ -7,14 +7,22 @@ import (
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
-// HandleIngressWorker is a super simple ingress handler that reads the HTTP body
-// and publishes it directly to NATS JetStream. It takes an optional "subject" query parameter.
+// HandleIngressWorker reads the HTTP body and publishes it directly to NATS.
+// Takes optional "subject" and "domain" query parameters for routing.
 func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 	subject := r.URL.Query().Get("subject")
 	domain := r.URL.Query().Get("domain")
 
-	// 1. Specialized routing logic via domain/task
 	switch domain {
+	case "general":
+		if derived, err := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress"); err == nil {
+			subject = derived
+		} else {
+			h.Logger.Error("ingress: failed to derive general agent ingress subject", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
 	case "postmark":
 		derived, err := core.BuildWorkerInboxFromActivity("workers.email.postmark_inbound")
 		if err != nil {
@@ -25,7 +33,6 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 		subject = derived
 
 	case "accounting":
-		// Restore accounting domain routing (e.g. events.accounting.1.cleanup)
 		taskType := r.URL.Query().Get("task")
 		if taskType == "" {
 			taskType = "cleanup"
@@ -59,7 +66,7 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.Logger.Info("ingress: successfully published to NATS", "subject", subject, "size", len(body))
+	h.Logger.Info("ingress: published", "subject", subject, "size", len(body))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

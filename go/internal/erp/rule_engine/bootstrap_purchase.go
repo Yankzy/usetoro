@@ -108,7 +108,7 @@ func (b *Bootstrapper) GenerateSplitReviewRules(ctx context.Context, realmID str
 					// We intentionally omit Source Account here because Gusto is complex
 					// regardless of which checking account pays it.
 					Field:    FieldVendor,
-					Operator: OpEqualsCS,
+					Operator: OpContainsCS,
 					Value:    vendor.DisplayName,
 				},
 			},
@@ -209,7 +209,7 @@ func (b *Bootstrapper) GenerateRulesFromHistory(ctx context.Context, realmID str
 			Conditions: []RuleConditionRequest{
 				{
 					Field:    FieldVendor,
-					Operator: OpEqualsCS,
+					Operator: OpContainsCS,
 					Value:    vendor.DisplayName,
 				},
 				{

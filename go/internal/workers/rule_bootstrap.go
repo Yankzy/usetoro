@@ -57,50 +57,45 @@ func NewRuleBootstrapWorker(db *database.Queries, logger *slog.Logger, cfg *conf
 // Init initializes the worker, starting the background daily cleanup process.
 func (w *RuleBootstrapWorker) Init(ctx context.Context) error {
 	// Start daily background task to process transactions that weren't caught by real-time rules.
-	// go w.runRuleEngineDaily(ctx)
+	// ticker := time.NewTicker(24 * time.Hour)
+	// defer ticker.Stop()
+
+	// // Initial run after a short delay (30s) to avoid resource contention during startup.
+	// select {
+	// case <-ctx.Done():
+	// 	return nil
+	// case <-time.After(1 * time.Minute):
+	// 	w.performCleanup(ctx)
+	// }
+
+	// for {
+	// 	select {
+	// 	case <-ctx.Done():
+	// 		return nil
+	// 	case <-ticker.C:
+	// 		w.performCleanup(ctx)
+	// 	}
+	// }
 	return nil
-}
-
-// runRuleEngineDaily manages the 24-hour cycle for transaction cleanup.
-func (w *RuleBootstrapWorker) runRuleEngineDaily(ctx context.Context) {
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-
-	// Initial run after a short delay (30s) to avoid resource contention during startup.
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(30 * time.Second):
-		w.performCleanup(ctx)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			w.performCleanup(ctx)
-		}
-	}
 }
 
 // performCleanup iterates through all active realms and triggers transaction categorization
 // for any records that lack an assigned account (orphaned transactions).
-func (w *RuleBootstrapWorker) performCleanup(ctx context.Context) {
-	w.logger.Info("📅 Running daily rule engine cleanup")
-	realms, err := w.db.GetActiveRealms(ctx)
-	if err != nil {
-		w.logger.Error("Failed to fetch active realms for cleanup", "error", err)
-		return
-	}
+// func (w *RuleBootstrapWorker) performCleanup(ctx context.Context) {
+// 	w.logger.Info("📅 Running daily rule engine cleanup")
+// 	realms, err := w.db.GetActiveRealms(ctx)
+// 	if err != nil {
+// 		w.logger.Error("Failed to fetch active realms for cleanup", "error", err)
+// 		return
+// 	}
 
-	for _, realmID := range realms {
-		// ProcessOrphanedTransactions applies current rules to transactions that haven't been categorized yet.
-		if err := w.ruleEngine.ProcessOrphanedTransactions(ctx, realmID); err != nil {
-			w.logger.Error("Failed orphaned transaction cleanup", "realm_id", realmID, "error", err)
-		}
-	}
-}
+// 	for _, realmID := range realms {
+// 		// ProcessOrphanedTransactions applies current rules to transactions that haven't been categorized yet.
+// 		if err := w.ruleEngine.ProcessOrphanedTransactions(ctx, realmID); err != nil {
+// 			w.logger.Error("Failed orphaned transaction cleanup", "realm_id", realmID, "error", err)
+// 		}
+// 	}
+// }
 
 // Subscriptions returns the NATS subscription configuration for this worker.
 // It listens on subjects defined in the worker configuration, typically related to rule bootstrapping.
@@ -179,6 +174,25 @@ func (w *RuleBootstrapWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 	w.logger.Info("starting rule engine bootstraps", "realm_id", realmID)
 
+	// Guard: Skip bootstrapping if there are no transactions to categorize.
+	// Rules are idempotent, so skipping when there's nothing to evaluate saves compute.
+	if payload.SessionID != "" {
+		var sessionUUID pgtype.UUID
+		if err := sessionUUID.Scan(payload.SessionID); err == nil {
+			count, err := w.db.CountEnrichedTransactionsBySession(ctx, sessionUUID)
+			if err == nil && count == 0 {
+				w.logger.Info("no ENRICHED transactions in session, skipping bootstrap",
+					"realm_id", realmID, "session_id", payload.SessionID)
+				if convID != "" {
+					if pubErr := w.publishCompletionProof(realmID, convID); pubErr != nil {
+						w.logger.Error("failed to publish completion proof", "error", pubErr)
+					}
+				}
+				return nil
+			}
+		}
+	}
+
 	// 6. Bootstrapper Initialization
 	bootstrapper := ruleEngine.NewBootstrapper(w.logger, w.db, w.ruleEngine)
 
@@ -187,8 +201,11 @@ func (w *RuleBootstrapWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		bootstrapper.WithConfig(currentCfg.RuleEngine.TargetRank, currentCfg.RuleEngine.MinUsageCount)
 	}
 
-	// 8. Execution
-	if err := bootstrapper.RunRuleEngineForPurchases(ctx, realmID); err != nil {
+	// 8. Execution — Run the advanced 1:1 feature-coverage pipeline
+	// RunAdvancedBootstrapWithLegacy preserves backward compatibility by running
+	// the legacy split-review + 1-to-1 consensus rules first, then layers on the
+	// advanced analyzers (exact match, amounts, temporal, regex, allocations, etc.)
+	if err := bootstrapper.RunAdvancedBootstrapWithLegacy(ctx, realmID); err != nil {
 		w.logger.Error("failed rule engine bootstrap", "realm_id", realmID, "error", err)
 		return err // NAK and retry
 	}

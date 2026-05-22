@@ -13,6 +13,7 @@ import (
 func (b *Bootstrapper) RunRuleEngineForDeposits(ctx context.Context, realmID string) error {
 	b.logger.Info("Starting Deposit rule bootstrapping", "realm_id", realmID)
 
+	// Legacy deposit-based bootstrapping (direct DepositLineDetail with Entity)
 	flaggedCustomers, err := b.GenerateDepositSplitReviewRules(ctx, realmID)
 	if err != nil {
 		return fmt.Errorf("failed generating deposit split rules: %w", err)
@@ -68,7 +69,7 @@ func (b *Bootstrapper) GenerateDepositSplitReviewRules(ctx context.Context, real
 			Conditions: []RuleConditionRequest{
 				{
 					Field:    FieldCustomer,
-					Operator: OpEqualsCS,
+					Operator: OpContainsCS,
 					Value:    customer.DisplayName,
 				},
 			},
@@ -112,7 +113,11 @@ func (b *Bootstrapper) GenerateDepositRulesFromHistory(ctx context.Context, real
 			continue
 		}
 
-		incomeAccountErpID := row.IncomeAccountID.(string)
+		incomeAccountErpID, ok := row.IncomeAccountID.(string)
+		if !ok || incomeAccountErpID == "" {
+			b.logger.Warn("DepositConsensus: income_account_id is missing or not a string, skipping", "erp_id", customerErpID)
+			continue
+		}
 
 		customer, err := b.q.GetCustomerByERPID(ctx, database.GetCustomerByERPIDParams{
 			RealmID: realmID,
@@ -164,7 +169,7 @@ func (b *Bootstrapper) GenerateDepositRulesFromHistory(ctx context.Context, real
 			Conditions: []RuleConditionRequest{
 				{
 					Field:    FieldCustomer,
-					Operator: OpEqualsCS,
+					Operator: OpContainsCS,
 					Value:    customer.DisplayName,
 				},
 				{
@@ -190,3 +195,4 @@ func (b *Bootstrapper) GenerateDepositRulesFromHistory(ctx context.Context, real
 
 	return nil
 }
+

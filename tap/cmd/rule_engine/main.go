@@ -210,13 +210,25 @@ func (s *mockStagingStore) GetSessionRows(ctx context.Context, arg database.GetS
 	return nil, nil
 }
 
+func (s *mockStagingStore) GetAccountByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpAccount, error) {
+	return database.ShadowErpAccount{}, nil
+}
+
+func (s *mockStagingStore) GetVendorByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpVendor, error) {
+	return database.ShadowErpVendor{}, nil
+}
+
+func (s *mockStagingStore) GetCustomerByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpCustomer, error) {
+	return database.ShadowErpCustomer{}, nil
+}
+
 func newMockTransaction(sessionID pgtype.UUID, realmID string, tx editableMockTransaction) database.FignodeStagingTransaction {
 	return database.FignodeStagingTransaction{
 		ID:             randomUUID(),
 		SessionID:      sessionID,
 		RawAmount:      tx.RawAmount,
 		RawDescription: pgtype.Text{String: tx.RawDescription, Valid: true},
-		RawDate:        pgtype.Date{Time: time.Now().UTC(), Valid: true},
+		RawDate:        pgtype.Text{String: time.Now().UTC().Format("2006-01-02"), Valid: true},
 		MerchantName:   pgtype.Text{String: tx.MerchantName, Valid: true},
 		Category:       pgtype.Text{String: tx.Category, Valid: true},
 	}

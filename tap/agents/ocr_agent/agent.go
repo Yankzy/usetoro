@@ -272,6 +272,7 @@ func (a *OCRAgent) extractDocumentUsingLLM(ctx context.Context, task core.TaskDe
 
 	prompt := "Extract the structured contents from the available document.\n\nUse the PAGE_IN tool to read the raw contents of the document before answering.\n\nReturn ONLY a JSON object with 'text' (full raw text), 'entities' (key-value pairs of found fields), and 'confidence' (float 0-1)."
 
+	ctx = agent.WithModel(ctx, task.Model)
 	respText, err := a.rt.ExecWithPaging(ctx, prompt, task.SystemPrompt, pages, fetcher)
 	if err != nil {
 		return nil, err

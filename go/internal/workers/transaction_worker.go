@@ -249,7 +249,7 @@ func (w *TransactionWorker) syncToERP(ctx context.Context, tx database.FignodeSt
 	input := erp.ExpenseInput{
 		RealmID:     realmID,
 		Amount:      amt,
-		TxnDate:     tx.RawDate.Time,
+		TxnDate:     tx.ParsedDate.Time,
 		Description: tx.RawDescription.String,
 		VendorHint:  vendorErpID,
 		AccountHint: accountErpID,

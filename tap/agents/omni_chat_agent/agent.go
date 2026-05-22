@@ -231,7 +231,8 @@ Example:
 			userPrompt += fmt.Sprintf("\n### PREVIOUS ERRORS (Self-Correct These)\n%s\n", string(faultsJson))
 		}
 
-		respText, err := a.RT.ExecWithPaging(context.Background(), userPrompt, systemPrompt, pages, fetcher)
+		ctx := agent.WithModel(context.Background(), task.Model)
+		respText, err := a.RT.ExecWithPaging(ctx, userPrompt, systemPrompt, pages, fetcher)
 		if err != nil {
 			return nil, err
 		}

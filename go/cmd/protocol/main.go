@@ -22,6 +22,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/workers"
 	_ "github.com/Yankzy/usetoro/tap/agents/approval"
 	_ "github.com/Yankzy/usetoro/tap/agents/csv_mapping"
+	_ "github.com/Yankzy/usetoro/tap/agents/general_agent"
 	_ "github.com/Yankzy/usetoro/tap/agents/generic_batch_agent"
 	_ "github.com/Yankzy/usetoro/tap/agents/omni_chat_agent"
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_expense"
@@ -254,6 +255,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		FetchEntityFn: func(ctx context.Context, tenantID, realmID, entityType, entityID, op string) error {
 			return qboConn.FetchEntity(ctx, realmID, entityType, entityID, op)
 		},
+		QBOConnector: qboConn,
 	}
 
 	if err := workerManager.LoadFromRegistry(workerDeps); err != nil {

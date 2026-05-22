@@ -170,8 +170,8 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 		}
 
 		dateStr := ""
-		if r.RawDate.Valid {
-			dateStr = r.RawDate.Time.Format("2006-01-02")
+		if r.ParsedDate.Valid {
+			dateStr = r.ParsedDate.Time.Format("2006-01-02")
 		}
 
 		desc := ""

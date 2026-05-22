@@ -403,8 +403,8 @@ func (c *Client) blastDatabaseCards(realmID string) {
 		}
 
 		dateStr := ""
-		if r.RawDate.Valid {
-			dateStr = r.RawDate.Time.Format("2006-01-02")
+		if r.ParsedDate.Valid {
+			dateStr = r.ParsedDate.Time.Format("2006-01-02")
 		}
 		desc := ""
 		if r.RawDescription.Valid {

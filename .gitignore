@@ -35,9 +35,13 @@ go/vendor/
 # Go workspace file
 go.work
 go.work.sum
+# NATS
+streams.json
+
 
 # env file
 .env
+.claude
 **/env
 .logs
 .go_cache

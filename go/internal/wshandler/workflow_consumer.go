@@ -90,6 +90,11 @@ func (c *WorkflowEventConsumer) handleWorkflowStatusEvent(msg *nats.Msg) {
 
 	c.logger.Debug("Received workflow status event", "entity_id", entityID, "status", payload["status"])
 
+	// Strip the blueprint from real-time events — clients already received it
+	// during blastActiveWorkflows on connect. Re-sending it on every state
+	// transition floods the WebSocket with redundant KB-sized payloads.
+	delete(payload, "blueprint")
+
 	// Create and broadcast WS message
 	wsMsg, err := NewWorkflowStatusMessage(payload)
 	if err != nil {

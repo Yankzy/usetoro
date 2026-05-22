@@ -228,6 +228,22 @@ agents:
       db_queries: true
       entity_resolver: false
 
+  - did: did:toro:agent:general_purpose_1
+    name: General Purpose Agent
+    model: gpt-5.4
+    engine: internal
+    internal_module: general-agent
+    activity_type: agents.general.purpose
+    task_queue: tasks.general.1.purpose
+    system_prompt: |
+      You are a general-purpose AI agent. You have access to tools for running shell commands, reading and editing files, searching code, fetching web content, and spawning sub-agents.
+      Before delegating specialized tasks, use the AlmanacLookup tool to discover available agents.
+      Use the Delegate tool to create dynamic workflows for specialized agents.
+    dependencies:
+      database: false
+      db_queries: false
+      entity_resolver: false
+
 workers:
   csv_mapping:
     activity_type: workers.database.insert_rows
@@ -238,8 +254,8 @@ workers:
     activity_type: workers.delegator
     subject: ""
     group: ""
-  direction_router:
-    activity_type: workers.direction_router
+  classification_stage:
+    activity_type: workers.classification_stage
     subject: ""
     group: ""
   enrichment:
@@ -286,6 +302,15 @@ workers:
     activity_type: workers.communication.omni_chat
     subject: proof.outgoing.chat
     group: omni-chat-worker-group
+  qbo_sync:
+    activity_type: workers.qbo_sync
+    subject: ""
+    group: ""
+  general_agent_ingress:
+    activity_type: workers.general_agent_ingress
+    subject: ""
+    group: ""
+
   vector_sync:
     subjects:
       - "ledger.accounts.*"

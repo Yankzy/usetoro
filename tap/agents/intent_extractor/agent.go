@@ -141,7 +141,7 @@ func (a *IntentExtractorAgent) executeTask(cfpEnv core.Envelope) error {
 
 	a.Logger.Info("🧠 Extracting intent via LLM", "workflow_id", task.ID, "phone", payload.PhoneNumber, "domain", payload.Domain, "schema_override", schema != "")
 
-	result, err := a.extractIntentUsingLLM(context.Background(), task.SystemPrompt, payload.Text, schema)
+	result, err := a.extractIntentUsingLLM(agent.WithModel(context.Background(), task.Model), task.SystemPrompt, payload.Text, schema)
 	if err != nil {
 		a.Logger.Error("Failed to extract intent from LLM", "error", err)
 		return err // Transient error → NAK + retry

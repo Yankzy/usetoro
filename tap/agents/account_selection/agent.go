@@ -142,7 +142,8 @@ func (a *AccountSelectionAgent) executeTask(cfpEnv core.Envelope) error {
 	llmCallback := func(previousFaults []redux.DomainFault, currentSeq uint64, baseState []byte) ([]json.RawMessage, error) {
 		prompt := a.buildUserPrompt(payload)
 
-		respText, err := a.RT.Exec(context.Background(), prompt, task.SystemPrompt)
+		ctx := agent.WithModel(context.Background(), task.Model)
+		respText, err := a.RT.Exec(ctx, prompt, task.SystemPrompt)
 		if err != nil {
 			return nil, err
 		}

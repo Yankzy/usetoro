@@ -96,8 +96,8 @@ build_no_cache: create_networks
 up: create_networks
 	$(DOCKER_COMPOSE) up --remove-orphans $(SERVICES)
 upd: create_networks
-	$(DOCKER_COMPOSE) up -d --build --remove-orphans $(SERVICES)
-	$(MAKE) logs
+	$(MAKE) vndr && $(DOCKER_COMPOSE) up -d --build --remove-orphans $(SERVICES) && $(MAKE) logs
+
 
 getlogs:
 	@echo "Enter the service name: "; \
@@ -199,12 +199,12 @@ rebuild_all:
 
 rebuild: fix-permissions
 	@if [ -n "$(RUN_ARGS)" ]; then \
-		$(MAKE) vndr && $(DOCKER_COMPOSE) up --build -d --force-recreate $(RUN_ARGS); \
+		$(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) up --build -d --force-recreate $(RUN_ARGS); \
 		$(MAKE) logs ARGS="$(RUN_ARGS)"; \
 	else \
 		echo "Enter the service name: "; \
 		read SER_NAME; \
-		$(MAKE) vndr && $(DOCKER_COMPOSE) up --build -d --force-recreate $$SER_NAME; \
+		$(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) up --build -d --force-recreate $$SER_NAME; \
 	fi
 
 ingest-messy:

@@ -368,6 +368,7 @@ func ParseRows(payload CSVMappingTaskPayload, mapping *LLMColumnMapping) map[str
 func (a *CSVMappingAgent) MapColumnsUsingLLM(ctx context.Context, task core.TaskDefinition, rows [][]string) ([]json.RawMessage, error) {
 	prompt := BuildUserPrompt(rows)
 
+	ctx = agent.WithModel(ctx, task.Model)
 	respText, err := a.RT.ExecWithPaging(ctx, prompt, task.SystemPrompt, nil, nil)
 	a.Logger.Info("🧠 [DEBUG] LLM Mapping Response Received",
 		"workflow_id", task.ID,

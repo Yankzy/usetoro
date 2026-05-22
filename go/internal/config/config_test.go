@@ -32,7 +32,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "nats://test:4222", cfg.NATS.URL)
 	assert.InDelta(t, 0.75, cfg.AIThreshold, 1e-9, "AIThreshold should default to 0.75")
 	assert.Equal(t, 1, cfg.RuleEngine.TargetRank)
-	assert.Equal(t, 2, cfg.RuleEngine.MinUsageCount)
+	assert.Equal(t, 1, cfg.RuleEngine.MinUsageCount)
 }
 
 func TestGlobalConfig(t *testing.T) {

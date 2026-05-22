@@ -43,6 +43,17 @@ func (b *BatchBuilder) AddUpdate(entityType string, entity interface{}) *BatchBu
 	return b
 }
 
+// AddCreateWithID adds a create operation with a specific bId for result mapping.
+func (b *BatchBuilder) AddCreateWithID(entityType string, entity interface{}, bId string) *BatchBuilder {
+	b.items = append(b.items, BatchItemRequest{
+		BId:       bId,
+		Operation: "create",
+		Entity:    entityType,
+		Payload:   entity,
+	})
+	return b
+}
+
 // AddDelete adds a delete operation
 func (b *BatchBuilder) AddDelete(entityType string, entity interface{}) *BatchBuilder {
 	b.counter++

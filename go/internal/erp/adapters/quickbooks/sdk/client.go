@@ -384,6 +384,8 @@ type QueryResponseItem struct {
 	JournalEntry []JournalEntry `json:"JournalEntry,omitempty"`
 	Purchase     []Purchase     `json:"Purchase,omitempty"`
 	Deposit      []Deposit      `json:"Deposit,omitempty"`
+	Payment      []Payment      `json:"Payment,omitempty"`
+	SalesReceipt []SalesReceipt `json:"SalesReceipt,omitempty"`
 	Attachable   []Attachable   `json:"Attachable,omitempty"`
 }
 

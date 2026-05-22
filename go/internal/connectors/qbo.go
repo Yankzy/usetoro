@@ -69,6 +69,12 @@ func (c *QBOConnector) Fetch(ctx context.Context, tenantID string) error {
 	if _, err := c.SyncFullDeposits(ctx, tenantID, ""); err != nil {
 		return fmt.Errorf("fetch deposits: %w", err)
 	}
+	if _, err := c.SyncFullPayments(ctx, tenantID, ""); err != nil {
+		c.logger.Warn("Payment sync failed, continuing", "error", err)
+	}
+	if _, err := c.SyncFullSalesReceipts(ctx, tenantID, ""); err != nil {
+		c.logger.Warn("SalesReceipt sync failed, continuing", "error", err)
+	}
 
 	// Trigger rule engine bootstrap after full sync
 	if err := c.PublishRuleBootstrapTask(ctx, tenantID); err != nil {
@@ -210,6 +216,18 @@ func (c *QBOConnector) FetchEntity(ctx context.Context, realmID, entityType, ent
 		if err2 == nil {
 			entityData = qboEntity
 		}
+	case "Payment":
+		qboEntity, err := client.FindPaymentById(entityID)
+		err2 = err
+		if err2 == nil {
+			entityData = qboEntity
+		}
+	case "SalesReceipt":
+		qboEntity, err := client.FindSalesReceiptById(entityID)
+		err2 = err
+		if err2 == nil {
+			entityData = qboEntity
+		}
 	case "Attachable":
 		qboEntity, err := client.FindAttachableById(entityID)
 		err2 = err
@@ -295,7 +313,7 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 	}
 
 	// List of entities to sync via CDC
-	entities := "Account,Vendor,Customer,Invoice,Bill,Purchase,Deposit,Attachable"
+	entities := "Account,Vendor,Customer,Invoice,Bill,Purchase,Deposit,Payment,SalesReceipt,Attachable"
 
 	// Determine the earliest timestamp to look back from
 	// QBO CDC has a 30-day limit.
@@ -311,6 +329,8 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 		conn.LastWebhookBill.Time,
 		conn.LastWebhookTransaction.Time,
 		conn.LastWebhookDeposit.Time,
+		conn.LastWebhookPayment.Time,
+		conn.LastWebhookSalesReceipt.Time,
 	}
 
 	for _, t := range timestamps {
@@ -378,6 +398,18 @@ func (c *QBOConnector) SyncCDC(ctx context.Context, realmID string, lastSync tim
 				}
 				c.updateLastWebhookTime(ctx, realmID, "Deposit", time.Now())
 			}
+			if len(item.Payment) > 0 {
+				if err := c.batchUpsertPayments(ctx, realmID, item.Payment); err != nil {
+					c.logger.Error("CDC batch upsert failed", "entity", "Payment", "error", err)
+				}
+				c.updateLastWebhookTime(ctx, realmID, "Payment", time.Now())
+			}
+			if len(item.SalesReceipt) > 0 {
+				if err := c.batchUpsertSalesReceipts(ctx, realmID, item.SalesReceipt); err != nil {
+					c.logger.Error("CDC batch upsert failed", "entity", "SalesReceipt", "error", err)
+				}
+				c.updateLastWebhookTime(ctx, realmID, "SalesReceipt", time.Now())
+			}
 			if len(item.Attachable) > 0 {
 				for _, att := range item.Attachable {
 					if err := c.upsertEntity(ctx, realmID, "Attachable", att.Id, &att); err != nil {
@@ -435,6 +467,18 @@ func (c *QBOConnector) softDeleteEntity(ctx context.Context, realmID, entityType
 		})
 	case "Deposit":
 		err = c.store.Queries.SoftDeleteDeposit(ctx, database.SoftDeleteDepositParams{
+			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
+			RealmID:   realmID,
+			ErpID:     entityID,
+		})
+	case "Payment":
+		err = c.store.Queries.SoftDeletePayment(ctx, database.SoftDeletePaymentParams{
+			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
+			RealmID:   realmID,
+			ErpID:     entityID,
+		})
+	case "SalesReceipt":
+		err = c.store.Queries.SoftDeleteSalesReceipt(ctx, database.SoftDeleteSalesReceiptParams{
 			DeletedAt: pgtype.Timestamptz{Time: now, Valid: true},
 			RealmID:   realmID,
 			ErpID:     entityID,
@@ -572,6 +616,46 @@ func (c *QBOConnector) upsertEntity(ctx context.Context, realmID, entityType, en
 			TotalAmount:     jsonNumberToNumeric(d.TotalAmt),
 			TargetAccountID: d.DepositToAccountRef.Value,
 			Lines:           linesJSON,
+		})
+
+	case "Payment":
+		p, ok := data.(*quickbooks.Payment)
+		if !ok {
+			return fmt.Errorf("invalid entity data for Payment")
+		}
+		lineBytes, _ := json.Marshal(p.Line)
+		err = c.store.Queries.UpsertPayment(ctx, database.UpsertPaymentParams{
+			ErpID:              p.Id,
+			RealmID:            realmID,
+			SyncToken:          p.SyncToken,
+			TxnDate:            pgtype.Date{Time: p.TxnDate.Time, Valid: !p.TxnDate.IsZero()},
+			TotalAmount:        jsonNumberToNumeric(json.Number(strconv.FormatFloat(p.TotalAmt, 'f', 2, 64))),
+			UnappliedAmount:    jsonNumberToNumeric(json.Number(strconv.FormatFloat(p.UnappliedAmt, 'f', 2, 64))),
+			CustomerID:         pgtype.Text{String: p.CustomerRef.Value, Valid: p.CustomerRef.Value != ""},
+			DepositToAccountID: pgtype.Text{String: p.DepositToAccountRef.Value, Valid: p.DepositToAccountRef.Value != ""},
+			Lines:              lineBytes,
+		})
+
+	case "SalesReceipt":
+		sr, ok := data.(*quickbooks.SalesReceipt)
+		if !ok {
+			return fmt.Errorf("invalid entity data for SalesReceipt")
+		}
+		lineBytes, _ := json.Marshal(sr.Line)
+		var depositToAccountID string
+		if sr.DepositToAccountRef != nil && sr.DepositToAccountRef.Value != "" {
+			depositToAccountID = sr.DepositToAccountRef.Value
+		}
+		err = c.store.Queries.UpsertSalesReceipt(ctx, database.UpsertSalesReceiptParams{
+			ErpID:              sr.Id,
+			RealmID:            realmID,
+			SyncToken:          sr.SyncToken,
+			TxnDate:            pgtype.Date{Time: sr.TxnDate.Time, Valid: !sr.TxnDate.IsZero()},
+			TotalAmount:        jsonNumberToNumeric(sr.TotalAmt),
+			CustomerID:         pgtype.Text{String: sr.CustomerRef.Value, Valid: sr.CustomerRef.Value != ""},
+			DepositToAccountID: pgtype.Text{String: depositToAccountID, Valid: depositToAccountID != ""},
+			DocNumber:          pgtype.Text{String: sr.DocNumber, Valid: sr.DocNumber != ""},
+			Lines:              lineBytes,
 		})
 
 	case "Attachable":
@@ -959,6 +1043,74 @@ func (c *QBOConnector) SyncFullDeposits(ctx context.Context, tenantID, realmID s
 
 	c.logger.Info("✅ Full Deposits sync completed", "realm_id", realmID, "count", len(deposits))
 	return len(deposits), nil
+}
+
+// SyncFullPayments performs a full Payment sync for the specified realm.
+func (c *QBOConnector) SyncFullPayments(ctx context.Context, tenantID, realmID string) (int, error) {
+	if realmID == "" && tenantID != "" {
+		conn, err := c.store.GetQBOConnection(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get QBO connection for tenant %s: %w", tenantID, err)
+		}
+		realmID = conn.RealmID
+	}
+
+	if realmID == "" {
+		return 0, fmt.Errorf("realmID is required")
+	}
+
+	c.logger.Info("🔄 Running full Payments sync", "realm_id", realmID, "tenant_id", tenantID)
+
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return 0, err
+	}
+
+	payments, err := client.FindPayments()
+	if err != nil {
+		return 0, c.wrapQBOError(realmID, "failed to fetch payments", err)
+	}
+
+	if err := c.batchUpsertPayments(ctx, realmID, payments); err != nil {
+		return 0, fmt.Errorf("failed to upsert payments: %w", err)
+	}
+
+	c.logger.Info("✅ Full Payments sync completed", "realm_id", realmID, "count", len(payments))
+	return len(payments), nil
+}
+
+// SyncFullSalesReceipts performs a full SalesReceipt sync for the specified realm.
+func (c *QBOConnector) SyncFullSalesReceipts(ctx context.Context, tenantID, realmID string) (int, error) {
+	if realmID == "" && tenantID != "" {
+		conn, err := c.store.GetQBOConnection(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get QBO connection for tenant %s: %w", tenantID, err)
+		}
+		realmID = conn.RealmID
+	}
+
+	if realmID == "" {
+		return 0, fmt.Errorf("realmID is required")
+	}
+
+	c.logger.Info("🔄 Running full SalesReceipts sync", "realm_id", realmID, "tenant_id", tenantID)
+
+	client, err := c.getClient(ctx, tenantID, realmID)
+	if err != nil {
+		return 0, err
+	}
+
+	srs, err := client.FindSalesReceipts()
+	if err != nil {
+		return 0, c.wrapQBOError(realmID, "failed to fetch sales receipts", err)
+	}
+
+	if err := c.batchUpsertSalesReceipts(ctx, realmID, srs); err != nil {
+		return 0, fmt.Errorf("failed to upsert sales receipts: %w", err)
+	}
+
+	c.logger.Info("✅ Full SalesReceipts sync completed", "realm_id", realmID, "count", len(srs))
+	return len(srs), nil
 }
 
 // SyncCompanyInfo fetches the QBO CompanyInfo for the given realm and upserts it
@@ -1379,6 +1531,78 @@ func (c *QBOConnector) batchUpsertDeposits(ctx context.Context, realmID string, 
 	return nil
 }
 
+// batchUpsertPayments uses a PostgreSQL transaction to upsert multiple payments efficiently.
+func (c *QBOConnector) batchUpsertPayments(ctx context.Context, realmID string, payments []quickbooks.Payment) error {
+	tx, err := c.store.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin tx for payment upsert: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := c.store.Queries.WithTx(tx)
+	for _, p := range payments {
+		linesJSON, err := json.Marshal(p.Line)
+		if err != nil {
+			return fmt.Errorf("marshal payment lines: %w", err)
+		}
+		if err := qtx.UpsertPayment(ctx, database.UpsertPaymentParams{
+			ErpID:              p.Id,
+			RealmID:            realmID,
+			SyncToken:          p.SyncToken,
+			TxnDate:            pgtype.Date{Time: p.TxnDate.Time, Valid: !p.TxnDate.IsZero()},
+			TotalAmount:        jsonNumberToNumeric(json.Number(strconv.FormatFloat(p.TotalAmt, 'f', 2, 64))),
+			UnappliedAmount:    jsonNumberToNumeric(json.Number(strconv.FormatFloat(p.UnappliedAmt, 'f', 2, 64))),
+			CustomerID:         pgtype.Text{String: p.CustomerRef.Value, Valid: p.CustomerRef.Value != ""},
+			DepositToAccountID: pgtype.Text{String: p.DepositToAccountRef.Value, Valid: p.DepositToAccountRef.Value != ""},
+			Lines:              linesJSON,
+		}); err != nil {
+			return fmt.Errorf("upsert payment %s: %w", p.Id, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit payment upsert: %w", err)
+	}
+	c.logger.Debug("Batch upserted payments", "realm_id", realmID, "count", len(payments))
+	return nil
+}
+
+// batchUpsertSalesReceipts uses a PostgreSQL transaction to upsert multiple sales receipts efficiently.
+func (c *QBOConnector) batchUpsertSalesReceipts(ctx context.Context, realmID string, srs []quickbooks.SalesReceipt) error {
+	tx, err := c.store.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin tx for sales receipt upsert: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := c.store.Queries.WithTx(tx)
+	for _, sr := range srs {
+		linesJSON, err := json.Marshal(sr.Line)
+		if err != nil {
+			return fmt.Errorf("marshal sales receipt lines: %w", err)
+		}
+		var depositToAccountID string
+		if sr.DepositToAccountRef != nil && sr.DepositToAccountRef.Value != "" {
+			depositToAccountID = sr.DepositToAccountRef.Value
+		}
+		if err := qtx.UpsertSalesReceipt(ctx, database.UpsertSalesReceiptParams{
+			ErpID:              sr.Id,
+			RealmID:            realmID,
+			SyncToken:          sr.SyncToken,
+			TxnDate:            pgtype.Date{Time: sr.TxnDate.Time, Valid: !sr.TxnDate.IsZero()},
+			TotalAmount:        jsonNumberToNumeric(sr.TotalAmt),
+			CustomerID:         pgtype.Text{String: sr.CustomerRef.Value, Valid: sr.CustomerRef.Value != ""},
+			DepositToAccountID: pgtype.Text{String: depositToAccountID, Valid: depositToAccountID != ""},
+			DocNumber:          pgtype.Text{String: sr.DocNumber, Valid: sr.DocNumber != ""},
+			Lines:              linesJSON,
+		}); err != nil {
+			return fmt.Errorf("upsert sales receipt %s: %w", sr.Id, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit sales receipt upsert: %w", err)
+	}
+	c.logger.Debug("Batch upserted sales receipts", "realm_id", realmID, "count", len(srs))
+	return nil
+}
+
 // updateLastWebhookTime updates the last successful webhook timestamp for the given entity type
 func (c *QBOConnector) updateLastWebhookTime(ctx context.Context, realmID, entityType string, timestamp time.Time) error {
 	ts := pgtype.Timestamptz{Time: timestamp, Valid: true}
@@ -1425,6 +1649,18 @@ func (c *QBOConnector) updateLastWebhookTime(ctx context.Context, realmID, entit
 			ErpSystem:          "quickbooks_online",
 			RealmID:            realmID,
 			LastWebhookDeposit: ts,
+		})
+	case "Payment":
+		return c.store.Queries.UpdateLastWebhookPayment(ctx, database.UpdateLastWebhookPaymentParams{
+			ErpSystem:          "quickbooks_online",
+			RealmID:            realmID,
+			LastWebhookPayment: ts,
+		})
+	case "SalesReceipt":
+		return c.store.Queries.UpdateLastWebhookSalesReceipt(ctx, database.UpdateLastWebhookSalesReceiptParams{
+			ErpSystem:                "quickbooks_online",
+			RealmID:                  realmID,
+			LastWebhookSalesReceipt:  ts,
 		})
 	default:
 		// Unsupported entity type, silently skip (no error)
@@ -1509,6 +1745,18 @@ func (c *QBOConnector) batchSendToQBO(
 		case "Invoice":
 			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Invoice),
 				func(b *quickbooks.BatchBuilder, inv quickbooks.Invoice) { b.AddCreate(entityType, inv) })
+		case "Purchase":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Purchase),
+				func(b *quickbooks.BatchBuilder, p quickbooks.Purchase) { b.AddCreate(entityType, p) })
+		case "Deposit":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Deposit),
+				func(b *quickbooks.BatchBuilder, d quickbooks.Deposit) { b.AddCreate(entityType, d) })
+		case "Payment":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Payment),
+				func(b *quickbooks.BatchBuilder, p quickbooks.Payment) { b.AddCreate(entityType, p) })
+		case "SalesReceipt":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.SalesReceipt),
+				func(b *quickbooks.BatchBuilder, sr quickbooks.SalesReceipt) { b.AddCreate(entityType, sr) })
 		default:
 			return nil, fmt.Errorf("unsupported entity type for batch create: %s", entityType)
 		}
@@ -1526,6 +1774,12 @@ func (c *QBOConnector) batchSendToQBO(
 		case "Invoice":
 			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Invoice),
 				func(b *quickbooks.BatchBuilder, inv quickbooks.Invoice) { b.AddUpdate(entityType, inv) })
+		case "Payment":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.Payment),
+				func(b *quickbooks.BatchBuilder, p quickbooks.Payment) { b.AddUpdate(entityType, p) })
+		case "SalesReceipt":
+			items, err = executeBatched(ctx, client, entityType, entities.([]quickbooks.SalesReceipt),
+				func(b *quickbooks.BatchBuilder, sr quickbooks.SalesReceipt) { b.AddUpdate(entityType, sr) })
 		default:
 			return nil, fmt.Errorf("unsupported entity type for batch update: %s", entityType)
 		}
@@ -1576,6 +1830,39 @@ func (c *QBOConnector) batchCreateToQBO(ctx context.Context, realmID, entityType
 // Large slices are automatically chunked into ≤30-item batches.
 func (c *QBOConnector) batchUpdateToQBO(ctx context.Context, realmID, entityType string, entities interface{}) (*quickbooks.BatchResponse, error) {
 	return c.batchSendToQBO(ctx, realmID, entityType, "update", entities)
+}
+
+// BatchCreateStagingTransactions sends a mixed batch of Deposits and Purchases to QBO.
+// Items are pre-built BatchItemRequest objects keyed by staging transaction UUID for
+// deterministic result mapping. Large batches are automatically chunked into 30-item groups.
+func (c *QBOConnector) BatchCreateStagingTransactions(
+	ctx context.Context,
+	realmID string,
+	items []quickbooks.BatchItemRequest,
+) ([]quickbooks.BatchItemResponse, error) {
+	client, err := c.getClient(ctx, "", realmID)
+	if err != nil {
+		return nil, err
+	}
+
+	var all []quickbooks.BatchItemResponse
+	for i := 0; i < len(items); i += quickbooks.BatchMaxSize {
+		end := min(i+quickbooks.BatchMaxSize, len(items))
+		resp, err := client.BatchContext(ctx, items[i:end])
+		if err != nil {
+			c.trackRateLimit(client, false)
+			return all, fmt.Errorf("batch chunk [%d:%d]: %w", i, end, err)
+		}
+		c.trackRateLimit(client, true)
+		all = append(all, resp.BatchItemResponse...)
+	}
+
+	c.logger.Info("Mixed batch sent to QBO",
+		"realm_id", realmID,
+		"total_items", len(items),
+		"responses", len(all),
+	)
+	return all, nil
 }
 
 // trackRateLimit logs rate limit information from the QBO client

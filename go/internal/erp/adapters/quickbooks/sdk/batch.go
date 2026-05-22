@@ -47,7 +47,10 @@ type BatchItemResponse struct {
 	Customer *Customer `json:"Customer,omitempty"`
 	Invoice  *Invoice  `json:"Invoice,omitempty"`
 	Bill     *Bill     `json:"Bill,omitempty"`
-	Purchase *Purchase `json:"Purchase,omitempty"`
+	Purchase     *Purchase     `json:"Purchase,omitempty"`
+	Deposit      *Deposit      `json:"Deposit,omitempty"`
+	Payment      *Payment      `json:"Payment,omitempty"`
+	SalesReceipt *SalesReceipt `json:"SalesReceipt,omitempty"`
 }
 
 // Fault represents an error for a specific batch item

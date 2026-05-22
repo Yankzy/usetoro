@@ -42,6 +42,9 @@ type WorkflowStep struct {
 	OnFailure   []string `yaml:"on_failure,omitempty" json:"on_failure,omitempty" mapstructure:"on_failure"`
 	SubWorkflow string   `yaml:"sub_workflow,omitempty" json:"sub_workflow,omitempty" mapstructure:"sub_workflow"`
 
+	// Per-step model override. When empty, the agent's configured model is used.
+	Model string `yaml:"model,omitempty" json:"model,omitempty" mapstructure:"model"`
+
 	// Generic routing helpers.
 	Config               map[string]interface{} `yaml:"config,omitempty" json:"config,omitempty" mapstructure:"config"`
 	IncludeHistory       bool                   `yaml:"include_history,omitempty" json:"include_history,omitempty" mapstructure:"include_history"`

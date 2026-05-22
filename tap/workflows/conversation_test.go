@@ -41,3 +41,19 @@ func TestParseConversationID(t *testing.T) {
 	}
 }
 
+func TestParseConversationID_Invalid(t *testing.T) {
+	tests := []string{
+		"",
+		"some-uuid",
+		"no_slash",
+	}
+
+	for _, cid := range tests {
+		t.Run(cid, func(t *testing.T) {
+			_, _, err := parseConversationID(cid)
+			if err == nil {
+				t.Fatalf("expected error for conversation ID %q, got nil", cid)
+			}
+		})
+	}
+}

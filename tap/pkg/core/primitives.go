@@ -69,6 +69,7 @@ type TaskDefinition struct {
 	Complexity     TaskComplexity `json:"complexity"` // Used for NATS routing permissions
 	WorkflowSchema string         `json:"workflow_schema,omitempty"`
 	SystemPrompt   string         `json:"system_prompt,omitempty"`
+	Model          string         `json:"model,omitempty"`
 	RBACPolicy     []string       `json:"rbac_policy,omitempty"`
 
 	// The Incentive

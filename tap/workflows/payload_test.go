@@ -70,6 +70,14 @@ func TestBuildStepPayload(t *testing.T) {
 			fallback:        []byte(`{"status": "ok"}`),
 			wantInsideInput: map[string]interface{}{"realm_id": "trigger_realm"},
 		},
+		{
+			name: "Step-specific payload from fallback map",
+			step: WorkflowStep{
+				ID: "outflow_chunk_1",
+			},
+			fallback:        []byte(`{"outflow_chunk_1": {"rows": ["tx1", "tx2"], "cash_direction": "OUTFLOW"}}`),
+			wantInsideInput: map[string]interface{}{"rows": []interface{}{"tx1", "tx2"}, "cash_direction": "OUTFLOW"},
+		},
 	}
 
 	for _, tt := range tests {

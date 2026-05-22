@@ -862,6 +862,7 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 			Complexity:     step.Complexity,
 			WorkflowSchema: step.WorkflowSchema,
 			SystemPrompt:   systemPrompt,
+			Model:          step.Model,
 			RBACPolicy:     step.RBACPolicy,
 		}
 		cfp, err := core.NewEnvelope(
@@ -928,6 +929,7 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 			Complexity:     step.Complexity,
 			WorkflowSchema: step.WorkflowSchema,
 			SystemPrompt:   systemPrompt,
+			Model:          step.Model,
 			RBACPolicy:     step.RBACPolicy,
 		}
 		perf := core.ACCEPT_PROPOSAL
@@ -1080,6 +1082,9 @@ func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
 		wf, err := o.queries.GetWorkflow(ctx, pgtype.UUID{Bytes: instanceID, Valid: true})
 		if err != nil {
 			o.logger.Error("Orchestrator: failed to fetch workflow for DELEGATE", "id", instanceIDStr, "error", err)
+			if o.maybeDeadLetter(msg, WorkflowInboxDLQSubject, fmt.Sprintf("failed to fetch workflow for DELEGATE: %v", err)) {
+				return
+			}
 			msg.Nak()
 			return
 		}
@@ -1149,6 +1154,9 @@ func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
 		})
 		if err != nil {
 			o.logger.Error("Orchestrator: failed to upsert dynamic blueprint", "error", err)
+			if o.maybeDeadLetter(msg, WorkflowInboxDLQSubject, fmt.Sprintf("failed to upsert dynamic blueprint: %v", err)) {
+				return
+			}
 			msg.Nak()
 			return
 		}
@@ -1179,10 +1187,13 @@ func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
 
 		if err := o.spawnSubWorkflow(ctx, syntheticStep, &state, wf.EntityID, payloadToPass); err != nil {
 			o.logger.Error("Orchestrator: failed to spawn dynamic SubWorkflow", "error", err)
+			if o.maybeDeadLetter(msg, WorkflowInboxDLQSubject, fmt.Sprintf("failed to spawn dynamic subworkflow: %v", err)) {
+				return
+			}
 			msg.Nak()
 			return
 		}
-		
+
 		msg.Ack()
 
 	case core.INFORM:
@@ -1838,12 +1849,22 @@ func buildStepPayload(step WorkflowStep, state InstanceState, fallback []byte) [
 
 	// Default/Fallback: If no history was bundled (or not requested), use the direct input (LastProof).
 	if len(payload) == 0 {
-		if len(state.LastProof) > 0 {
-			payload = state.LastProof
-		} else if len(fallback) > 0 {
-			payload = fallback
-		} else {
-			payload = []byte("{}")
+		if len(fallback) > 0 {
+			var m map[string]json.RawMessage
+			if err := json.Unmarshal(fallback, &m); err == nil && m != nil {
+				if stepPayload, ok := m[step.ID]; ok && len(stepPayload) > 0 {
+					payload = stepPayload
+				}
+			}
+		}
+		if len(payload) == 0 {
+			if len(state.LastProof) > 0 {
+				payload = state.LastProof
+			} else if len(fallback) > 0 {
+				payload = fallback
+			} else {
+				payload = []byte("{}")
+			}
 		}
 	}
 	unwrapped := unwrapStepPayload(payload)

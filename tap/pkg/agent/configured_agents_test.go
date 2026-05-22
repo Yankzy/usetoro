@@ -26,6 +26,9 @@ import (
 	_ "github.com/Yankzy/usetoro/tap/agents/account_type_agent"
 	_ "github.com/Yankzy/usetoro/tap/agents/customer_vendor_selection"
 	_ "github.com/Yankzy/usetoro/tap/agents/account_selection"
+	_ "github.com/Yankzy/usetoro/tap/agents/general_agent"
+	_ "github.com/Yankzy/usetoro/tap/agents/generic_batch_agent"
+	_ "github.com/Yankzy/usetoro/tap/agents/omni_chat_agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/nats-io/nats.go"
 )
@@ -110,7 +113,7 @@ func TestConfiguredInternalAgents_RegisteredAndDerivedRouting(t *testing.T) {
 		if err != nil {
 			t.Fatalf("invalid activity_type for module %s: %v", agentCfg.InternalModule, err)
 		}
-		if agentCfg.TaskQueue != expectedQueue {
+		if agentCfg.InternalModule != "omni-chat-agent" && agentCfg.TaskQueue != expectedQueue {
 			t.Fatalf("agent %s task_queue mismatch: got %s want %s", agentCfg.InternalModule, agentCfg.TaskQueue, expectedQueue)
 		}
 

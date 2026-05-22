@@ -372,7 +372,7 @@ func (b *BaseAgent) ExecuteLocalWorkflow(
 	// ----- Phase 4: Invoke onComplete with validated state -----
 	if onComplete != nil {
 		b.Logger.Info("✅ [REDUX] Phase 4: Invoking onComplete handler with validated local state")
-		b.Logger.Info("✅ [REDUX] Final state:", "state", string(finalState))
+		// b.Logger.Info("✅ [REDUX] Final state:", "state", string(finalState))
 		if err := onComplete(finalState); err != nil {
 			return fmt.Errorf("onComplete handler failed: %w", err)
 		}

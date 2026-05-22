@@ -5,6 +5,7 @@ description: "Routing inbound SMS for the roofing virtual back-office."
 steps:
   - id: classify_intent
     activity_type: agents.intent.classify
+    model: gpt-5.4-mini
     negotiate: true
     timeout: "60s"
     description: "Classify inbound SMS into roofing intents and extract entities."

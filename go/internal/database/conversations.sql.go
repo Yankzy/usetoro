@@ -11,6 +11,144 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getActiveSessionByParticipant = `-- name: GetActiveSessionByParticipant :one
+SELECT id, entity_id, external_id, source, participant_handle, toro_handle, subject, status, system_prompt, context_json, last_activity_at, created_at, updated_at FROM toro_core.conversation_sessions
+WHERE entity_id = $1 AND participant_handle = $2 AND status IN ('active', 'awaiting_reply')
+ORDER BY last_activity_at DESC
+LIMIT 1
+`
+
+type GetActiveSessionByParticipantParams struct {
+	EntityID          pgtype.UUID
+	ParticipantHandle string
+}
+
+func (q *Queries) GetActiveSessionByParticipant(ctx context.Context, arg GetActiveSessionByParticipantParams) (ToroCoreConversationSession, error) {
+	row := q.db.QueryRow(ctx, getActiveSessionByParticipant, arg.EntityID, arg.ParticipantHandle)
+	var i ToroCoreConversationSession
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.ExternalID,
+		&i.Source,
+		&i.ParticipantHandle,
+		&i.ToroHandle,
+		&i.Subject,
+		&i.Status,
+		&i.SystemPrompt,
+		&i.ContextJson,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getActiveSessions = `-- name: GetActiveSessions :many
+SELECT id, entity_id, external_id, source, participant_handle, toro_handle, subject, status, system_prompt, context_json, last_activity_at, created_at, updated_at FROM toro_core.conversation_sessions
+WHERE entity_id = $1 AND status IN ('active', 'awaiting_reply')
+ORDER BY last_activity_at DESC
+`
+
+func (q *Queries) GetActiveSessions(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreConversationSession, error) {
+	rows, err := q.db.Query(ctx, getActiveSessions, entityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreConversationSession
+	for rows.Next() {
+		var i ToroCoreConversationSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.ExternalID,
+			&i.Source,
+			&i.ParticipantHandle,
+			&i.ToroHandle,
+			&i.Subject,
+			&i.Status,
+			&i.SystemPrompt,
+			&i.ContextJson,
+			&i.LastActivityAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAwaitingReplySessions = `-- name: GetAwaitingReplySessions :many
+SELECT id, entity_id, external_id, source, participant_handle, toro_handle, subject, status, system_prompt, context_json, last_activity_at, created_at, updated_at FROM toro_core.conversation_sessions
+WHERE status = 'awaiting_reply'
+ORDER BY last_activity_at ASC
+`
+
+func (q *Queries) GetAwaitingReplySessions(ctx context.Context) ([]ToroCoreConversationSession, error) {
+	rows, err := q.db.Query(ctx, getAwaitingReplySessions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreConversationSession
+	for rows.Next() {
+		var i ToroCoreConversationSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.ExternalID,
+			&i.Source,
+			&i.ParticipantHandle,
+			&i.ToroHandle,
+			&i.Subject,
+			&i.Status,
+			&i.SystemPrompt,
+			&i.ContextJson,
+			&i.LastActivityAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getConversationSession = `-- name: GetConversationSession :one
+SELECT id, entity_id, external_id, source, participant_handle, toro_handle, subject, status, system_prompt, context_json, last_activity_at, created_at, updated_at FROM toro_core.conversation_sessions WHERE id = $1
+`
+
+func (q *Queries) GetConversationSession(ctx context.Context, id pgtype.UUID) (ToroCoreConversationSession, error) {
+	row := q.db.QueryRow(ctx, getConversationSession, id)
+	var i ToroCoreConversationSession
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.ExternalID,
+		&i.Source,
+		&i.ParticipantHandle,
+		&i.ToroHandle,
+		&i.Subject,
+		&i.Status,
+		&i.SystemPrompt,
+		&i.ContextJson,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getEntityIDByEmail = `-- name: GetEntityIDByEmail :one
 SELECT entity_id FROM toro_core.users WHERE email = $1 LIMIT 1
 `
@@ -23,7 +161,7 @@ func (q *Queries) GetEntityIDByEmail(ctx context.Context, email string) (pgtype.
 }
 
 const getRecentConversations = `-- name: GetRecentConversations :many
-SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, created_at, updated_at FROM toro_core.conversations
+SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, created_at, updated_at, session_id FROM toro_core.conversations
 WHERE (from_handle = $1 AND to_handle = $2)
    OR (from_handle = $2 AND to_handle = $1)
 ORDER BY created_at DESC
@@ -61,6 +199,7 @@ func (q *Queries) GetRecentConversations(ctx context.Context, arg GetRecentConve
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SessionID,
 		); err != nil {
 			return nil, err
 		}
@@ -70,6 +209,139 @@ func (q *Queries) GetRecentConversations(ctx context.Context, arg GetRecentConve
 		return nil, err
 	}
 	return items, nil
+}
+
+const getSessionConversations = `-- name: GetSessionConversations :many
+SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, created_at, updated_at, session_id FROM toro_core.conversations
+WHERE session_id = $1
+ORDER BY created_at ASC
+`
+
+func (q *Queries) GetSessionConversations(ctx context.Context, sessionID pgtype.UUID) ([]ToroCoreConversation, error) {
+	rows, err := q.db.Query(ctx, getSessionConversations, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreConversation
+	for rows.Next() {
+		var i ToroCoreConversation
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.Source,
+			&i.ExternalID,
+			&i.FromHandle,
+			&i.ToHandle,
+			&i.ReplyTo,
+			&i.InReplyTo,
+			&i.Subject,
+			&i.BodyText,
+			&i.BodyHtml,
+			&i.StrippedText,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SessionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const insertConversationSession = `-- name: InsertConversationSession :one
+INSERT INTO toro_core.conversation_sessions (
+    entity_id, source, participant_handle, toro_handle, subject, system_prompt, context_json, status
+) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+RETURNING id, entity_id, external_id, source, participant_handle, toro_handle, subject, status, system_prompt, context_json, last_activity_at, created_at, updated_at
+`
+
+type InsertConversationSessionParams struct {
+	EntityID          pgtype.UUID
+	Source            string
+	ParticipantHandle string
+	ToroHandle        string
+	Subject           pgtype.Text
+	SystemPrompt      pgtype.Text
+	ContextJson       []byte
+}
+
+func (q *Queries) InsertConversationSession(ctx context.Context, arg InsertConversationSessionParams) (ToroCoreConversationSession, error) {
+	row := q.db.QueryRow(ctx, insertConversationSession,
+		arg.EntityID,
+		arg.Source,
+		arg.ParticipantHandle,
+		arg.ToroHandle,
+		arg.Subject,
+		arg.SystemPrompt,
+		arg.ContextJson,
+	)
+	var i ToroCoreConversationSession
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.ExternalID,
+		&i.Source,
+		&i.ParticipantHandle,
+		&i.ToroHandle,
+		&i.Subject,
+		&i.Status,
+		&i.SystemPrompt,
+		&i.ContextJson,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const saveConversationSessionMessage = `-- name: SaveConversationSessionMessage :exec
+INSERT INTO toro_core.conversations (
+    entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, session_id
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+)
+ON CONFLICT (external_id) DO NOTHING
+`
+
+type SaveConversationSessionMessageParams struct {
+	EntityID     pgtype.UUID
+	Source       string
+	ExternalID   string
+	FromHandle   string
+	ToHandle     string
+	ReplyTo      pgtype.Text
+	InReplyTo    pgtype.Text
+	Subject      pgtype.Text
+	BodyText     pgtype.Text
+	BodyHtml     pgtype.Text
+	StrippedText pgtype.Text
+	Metadata     []byte
+	SessionID    pgtype.UUID
+}
+
+func (q *Queries) SaveConversationSessionMessage(ctx context.Context, arg SaveConversationSessionMessageParams) error {
+	_, err := q.db.Exec(ctx, saveConversationSessionMessage,
+		arg.EntityID,
+		arg.Source,
+		arg.ExternalID,
+		arg.FromHandle,
+		arg.ToHandle,
+		arg.ReplyTo,
+		arg.InReplyTo,
+		arg.Subject,
+		arg.BodyText,
+		arg.BodyHtml,
+		arg.StrippedText,
+		arg.Metadata,
+		arg.SessionID,
+	)
+	return err
 }
 
 const saveInboundConversation = `-- name: SaveInboundConversation :exec
@@ -121,6 +393,33 @@ func (q *Queries) SaveInboundConversation(ctx context.Context, arg SaveInboundCo
 		arg.BodyHtml,
 		arg.StrippedText,
 		arg.Metadata,
+	)
+	return err
+}
+
+const updateConversationSession = `-- name: UpdateConversationSession :exec
+UPDATE toro_core.conversation_sessions
+SET
+    status = CASE WHEN $2::text IS NOT NULL THEN $2::text ELSE status END,
+    system_prompt = COALESCE($3, system_prompt),
+    context_json = COALESCE($4, context_json),
+    last_activity_at = NOW()
+WHERE id = $1
+`
+
+type UpdateConversationSessionParams struct {
+	ID           pgtype.UUID
+	Status       pgtype.Text
+	SystemPrompt pgtype.Text
+	ContextJson  []byte
+}
+
+func (q *Queries) UpdateConversationSession(ctx context.Context, arg UpdateConversationSessionParams) error {
+	_, err := q.db.Exec(ctx, updateConversationSession,
+		arg.ID,
+		arg.Status,
+		arg.SystemPrompt,
+		arg.ContextJson,
 	)
 	return err
 }

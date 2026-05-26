@@ -55,7 +55,7 @@ steps:
       }
     config:
       stage: macro_class
-      model: "deepseek-pro"
+      model: "gpt-5.4-mini"
       group_by: direction
       batch_size: 50
       db_filter: "rule_group_id IS NULL AND macro_class IS NULL AND status = 'ENRICHED'"
@@ -83,7 +83,14 @@ steps:
         ### OUTPUT FORMAT
         RFC 6902 Compliance: You MUST reply with a JSON object containing a SINGLE RFC 6902 patch that replaces the entire "/rows" OBJECT (mapped by string indices) with updated versions.
 
-        {"op": "add", "path": "/rows", "value": {"0": {"id": "tx_123", "macro_class": "EXPENSE", "reasoning": "Standard business travel."}}}
+        {
+          "op": "add",
+          "path": "/rows",
+          "value": {
+            "0": {"id": "tx_123", "macro_class": "EXPENSE", "reasoning": "Standard business travel."},
+            "1": {"id": "tx_456", "macro_class": "ASSET", "reasoning": "Equipment purchase."}
+          }
+        }
 
   - id: classify_account_type
     activity_type: workers.classification_stage
@@ -100,7 +107,7 @@ steps:
       }
     config:
       stage: account_type
-      model: "gpt-4o-mini"
+      model: "gpt-5.4-mini"
       group_by: macro_class
       batch_size: 50
       db_filter: "rule_group_id IS NULL AND macro_class IS NOT NULL AND account_type IS NULL"
@@ -125,7 +132,14 @@ steps:
         ### OUTPUT FORMAT
         RFC 6902 Compliance: You MUST reply with a JSON object containing a SINGLE RFC 6902 patch that replaces the entire "/rows" OBJECT.
 
-        {"op": "add", "path": "/rows", "value": {"0": {"id": "tx_123", "account_type": "INSERT_EXACT_MATCH_FROM_OPTIONS", "reasoning": "..."}}}
+        {
+          "op": "add",
+          "path": "/rows",
+          "value": {
+            "0": {"id": "tx_123", "account_type": "INSERT_EXACT_MATCH_FROM_OPTIONS", "reasoning": "..."},
+            "1": {"id": "tx_456", "account_type": "INSERT_EXACT_MATCH_FROM_OPTIONS", "reasoning": "..."}
+          }
+        }
 
         NOTE: Do not use the pharase "classified as..." in your reasoning, because the classification is already done.
         Instead, use "The account type for this transaction is...", "qualified as..." or similar pharases.
@@ -145,14 +159,14 @@ steps:
       }
     config:
       stage: entity
-      model: "gpt-4o"
+      model: "gpt-5.4-mini"
       group_by: macro_class
-      batch_size: 50
+      batch_size: 15
       db_filter: "rule_group_id IS NULL AND account_type IS NOT NULL AND merchant_name IS NULL"
       db_write_column: new_clean_name
       inject_context: true
       system_prompt_template: |
-        You are an expert CPA. Your job is to process a batch of up to 50 bank transactions and identify the vendor or customer from the raw bank description.
+        You are an expert CPA. Your job is to process a batch of up to 15 bank transactions and identify the vendor or customer from the raw bank description.
 
         ### CONTINUITY FROM PRIOR STAGES
         Each row already has macro_class and account_type assigned. This batch contains only {macro_class} transactions — match against the entity list below.
@@ -168,7 +182,14 @@ steps:
         ### OUTPUT FORMAT
         RFC 6902 Compliance: You MUST reply with a JSON object containing a SINGLE RFC 6902 patch that replaces the entire "/rows" OBJECT.
 
-        {"op": "add", "path": "/rows", "value": {"0": {"id": "tx_123", "new_clean_name": "Staples", "match_confidence": "HIGH", "entity_id": "56"}}}
+        {
+          "op": "add",
+          "path": "/rows",
+          "value": {
+            "0": {"id": "tx_123", "new_clean_name": "Staples", "match_confidence": "HIGH", "entity_id": "56"},
+            "1": {"id": "tx_456", "new_clean_name": "Home Depot", "match_confidence": "MEDIUM"}
+          }
+        }
         IMPORTANT: 'new_clean_name' is REQUIRED for every row. 'entity_id' is optional (only when a match is found).
 
   - id: select_account
@@ -186,14 +207,14 @@ steps:
       }
     config:
       stage: account_selection
-      model: "gpt-4o"
+      model: "gpt-5.4-mini"
       group_by: none
-      batch_size: 50
+      batch_size: 15
       db_filter: "rule_group_id IS NULL AND account_type IS NOT NULL AND predicted_account_name IS NULL"
       db_write_column: account_id
       inject_context: true
       system_prompt_template: |
-        You are an expert CPA. Your job is to process a batch of up to 50 transactions and select the exact QuickBooks Online Account ID for each. You must also flag any transactions that inherently require complex accounting splits.
+        You are an expert CPA. Your job is to process a batch of up to 15 transactions and select the exact QuickBooks Online Account ID for each. You must also flag any transactions that inherently require complex accounting splits.
 
         ### CONTINUITY FROM PRIOR STAGES
         Each row already has macro_class, account_type, and new_clean_name (vendor/customer) assigned by earlier pipeline stages. Use these to narrow your search:
@@ -214,22 +235,38 @@ steps:
         ### OUTPUT FORMAT
         RFC 6902 Compliance: You MUST reply with a JSON object containing a SINGLE RFC 6902 patch that replaces the entire "/rows" OBJECT.
 
-        {"op": "add", "path": "/rows", "value": {"0": {"id": "tx_123", "account_id": "402", "reasoning": "...", "requires_split": true}}}
+        {
+          "op": "add",
+          "path": "/rows",
+          "value": {
+            "0": {"id": "tx_123", "account_id": "402", "reasoning": "...", "requires_split": true},
+            "1": {"id": "tx_456", "account_id": "890", "reasoning": "...", "requires_split": false}
+          }
+        }
 
-  # - id: human_review
-  #   activity_type: hitl.review
-  #   depends_on:
-  #     - batch_categorize_transactions
-  #   timeout: "86400s"
-  #   config:
-  #     scope: "session"
-  #     prompt: "Review categorizations before posting to Ledger."
-  #     allow_edits: true
-  #     reject_action: "abort"
+  - id: human_review
+    activity_type: hitl.review
+    depends_on:
+      - select_account
+    timeout: "86400s"
+    config:
+      scope: "session"
+      prompt: "Review categorizations before posting to Ledger."
+      allow_edits: true
+      reject_action: "abort"
+      message_type: "bookkeeping_review"
 
   # - id: sync_to_qbo
   #   activity_type: workers.qbo_sync
-  #   depends_on: [human_review]
-
+  #   depends_on:
+  #     - select_account
+  #   workflow_schema: |
+  #     {
+  #       "type": "object",
+  #       "properties": {
+  #         "session_id": { "type": "string" }
+  #       }
+  #     }
+      
 
 

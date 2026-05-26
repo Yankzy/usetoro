@@ -248,3 +248,18 @@ func TestReduxCircuitBreaker(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildPromptFromMessages(t *testing.T) {
+	msgs := []tools.Message{
+		{Role: "system", Content: "sys prompt"},
+		{Role: "user", Content: "user prompt"},
+		{Role: "assistant", Content: "assistant response"},
+		{Role: "tool", ToolCallID: "call_abc123", Content: "tool response"},
+	}
+	got := buildPromptFromMessages(msgs)
+	want := "SYSTEM: sys prompt\n\nUSER: user prompt\n\nASSISTANT: assistant response\n\nTOOL RESULT (call_abc123): tool response\n\n"
+	if got != want {
+		t.Errorf("buildPromptFromMessages() = %q, want %q", got, want)
+	}
+}
+

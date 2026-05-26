@@ -119,8 +119,9 @@ func (r *Runtime) Exec(ctx context.Context, prompt string, systemPrompt string) 
 	switch pc.Paradigm {
 	case ParadigmResponses:
 		resp, err := client.Responses.New(ctx, responses.ResponseNewParams{
-			Input: responses.ResponseNewParamsInputUnion{OfString: openai.String(fullPrompt)},
-			Model: shared.ChatModel(r.effectiveModel(ctx)),
+			Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String(fullPrompt)},
+			Model:           shared.ChatModel(r.effectiveModel(ctx)),
+			MaxOutputTokens: openai.Int(16384),
 		})
 		if err != nil {
 			return "", err
@@ -147,8 +148,9 @@ func (r *Runtime) execChatCompletion(ctx context.Context, userContent, systemCon
 	}
 
 	resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model:    shared.ChatModel(r.effectiveModel(ctx)),
-		Messages: messages,
+		Model:               shared.ChatModel(r.effectiveModel(ctx)),
+		Messages:            messages,
+		MaxCompletionTokens: openai.Int(16384),
 	})
 	if err != nil {
 		return "", err
@@ -228,7 +230,8 @@ func (r *Runtime) execWithPagingResponses(ctx context.Context, client openai.Cli
 
 	for attempt := 0; attempt < 10; attempt++ {
 		params := responses.ResponseNewParams{
-			Model: shared.ChatModel(r.effectiveModel(ctx)),
+			Model:           shared.ChatModel(r.effectiveModel(ctx)),
+			MaxOutputTokens: openai.Int(16384),
 			Tools: []responses.ToolUnionParam{
 				responses.ToolParamOfFunction(
 					"PAGE_IN",
@@ -362,9 +365,10 @@ func (r *Runtime) execWithPagingChat(ctx context.Context, client openai.Client, 
 
 	for attempt := 0; attempt < 10; attempt++ {
 		resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-			Model:    shared.ChatModel(r.effectiveModel(ctx)),
-			Messages: messages,
-			Tools:    tools,
+			Model:               shared.ChatModel(r.effectiveModel(ctx)),
+			Messages:            messages,
+			Tools:               tools,
+			MaxCompletionTokens: openai.Int(16384),
 		})
 		if err != nil {
 			return "", err
@@ -501,8 +505,9 @@ func (r *Runtime) execWithToolsResponses(ctx context.Context, client openai.Clie
 
 	for attempt := 0; attempt < 10; attempt++ {
 		params := responses.ResponseNewParams{
-			Model: shared.ChatModel(r.effectiveModel(ctx)),
-			Tools: rtools,
+			Model:           shared.ChatModel(r.effectiveModel(ctx)),
+			MaxOutputTokens: openai.Int(16384),
+			Tools:           rtools,
 		}
 		if attempt == 0 {
 			params.Input = responses.ResponseNewParamsInputUnion{OfString: openai.String(sysPrompt + "\n" + prompt)}
@@ -529,7 +534,9 @@ func (r *Runtime) execWithToolsResponses(ctx context.Context, client openai.Clie
 				var outputMsg string
 				switch {
 				case call.Name == "PAGE_IN":
-					var pargs struct{ LocalRef int `json:"local_ref"` }
+					var pargs struct {
+						LocalRef int `json:"local_ref"`
+					}
 					_ = json.Unmarshal([]byte(call.Arguments), &pargs)
 					if pageCount >= maxPages {
 						outputMsg = "ERROR: MAX_PAGES_PER_CYCLE reached."
@@ -616,9 +623,10 @@ func (r *Runtime) execWithToolsChat(ctx context.Context, client openai.Client, p
 
 	for attempt := 0; attempt < 10; attempt++ {
 		resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-			Model:    shared.ChatModel(r.effectiveModel(ctx)),
-			Messages: messages,
-			Tools:    chatTools,
+			Model:               shared.ChatModel(r.effectiveModel(ctx)),
+			Messages:            messages,
+			Tools:               chatTools,
+			MaxCompletionTokens: openai.Int(16384),
 		})
 		if err != nil {
 			return "", err
@@ -639,7 +647,9 @@ func (r *Runtime) execWithToolsChat(ctx context.Context, client openai.Client, p
 			var outputMsg string
 			switch {
 			case tc.Function.Name == "PAGE_IN":
-				var pargs struct{ LocalRef int `json:"local_ref"` }
+				var pargs struct {
+					LocalRef int `json:"local_ref"`
+				}
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &pargs)
 				if pageCount >= maxPages {
 					outputMsg = "ERROR: MAX_PAGES_PER_CYCLE reached."

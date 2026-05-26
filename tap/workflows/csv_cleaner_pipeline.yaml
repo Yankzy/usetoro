@@ -10,13 +10,8 @@ steps:
     timeout: "60s"
     description: "Takes raw rows, maps CSV headers to canonical struct, filters invalid rows."
     rbac_policy:
-      - "/status"
       - "/mapped_rows"
       - "/columns_mapped"
-      - "/is_ambiguous"
-      - "/ambiguity_reason"
-      - "/polarity_sign"
-      - "/route"
     workflow_schema: |
       {
         "type": "object",
@@ -24,27 +19,17 @@ steps:
           "rows": { "type": "array" },
           "session_id": { "type": "string" },
           "realm_id": { "type": "string" },
-          "status": { "type": "string" },
-          "mapped_rows": { "type": "object" },
-          "route": { "type": "integer" },
-          "is_ambiguous": { "type": "boolean" },
-          "ambiguity_reason": { "type": ["string", "null"] },
-          "polarity_sign": { "type": "string" }
+          "mapped_rows": { "type": "object" }
         },
-        "required": ["status", "mapped_rows", "route"]
+        "required": ["mapped_rows"]
       }
     system_prompt: |
       You are an expert data analyst parsing raw CSV headers. Analyze the columns and map them strictly according to the provided schema below. Do not assume any fields outside of this schema. 
-      RFC 6902 Compliance: You MUST reply with a JSON array of RFC 6902 patches.
+      RFC 6902 Compliance: You MUST reply with a JSON array containing exactly ONE RFC 6902 patch for the "/columns_mapped" path.
       
       Example format:
       [
-        {"op": "add", "path": "/columns_mapped", "value": { "date_col_idx": 0, "description_col_idx": 1, ... }},
-        {"op": "add", "path": "/status", "value": "COLUMNS_MAPPED"},
-        {"op": "add", "path": "/is_ambiguous", "value": false},
-        {"op": "add", "path": "/ambiguity_reason", "value": null},
-        {"op": "add", "path": "/polarity_sign", "value": "minus"},
-        {"op": "add", "path": "/route", "value": 0}
+        {"op": "add", "path": "/columns_mapped", "value": { "date_col_idx": 0, "description_col_idx": 1, "amount_col_idx": 2, "is_split_amount": false, "debit_col_idx": null, "credit_col_idx": null, "vendor_col_idx": null, "customer_col_idx": null, "custom_col_idx": null, "confidence_score": 1.0, "is_ambiguous": false, "ambiguity_reason": null, "polarity_sign": "minus" }}
       ]
 
       The "value" inside the "/columns_mapped" patch must strictly conform to this schema:

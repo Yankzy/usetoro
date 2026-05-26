@@ -98,6 +98,9 @@ type FignodeStagingTransaction struct {
 	AccountType           pgtype.Text
 	ParsedDate            pgtype.Date
 	SyncedAt              pgtype.Timestamptz
+	V2Status              pgtype.Text
+	V2TransferHoldReason  pgtype.Text
+	V2ErpTransactionID    pgtype.Text
 }
 
 type MarketingLeadForm struct {
@@ -428,6 +431,23 @@ type ToroCoreConversation struct {
 	Metadata     []byte
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	SessionID    pgtype.UUID
+}
+
+type ToroCoreConversationSession struct {
+	ID                pgtype.UUID
+	EntityID          pgtype.UUID
+	ExternalID        pgtype.Text
+	Source            string
+	ParticipantHandle string
+	ToroHandle        string
+	Subject           pgtype.Text
+	Status            string
+	SystemPrompt      pgtype.Text
+	ContextJson       []byte
+	LastActivityAt    pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type ToroCoreEntity struct {

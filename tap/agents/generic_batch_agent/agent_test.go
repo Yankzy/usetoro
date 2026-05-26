@@ -55,6 +55,30 @@ Have a nice day.`,
 			wantLen:   0,
 			expectErr: true,
 		},
+		{
+			name: "JSON inside ```json fence",
+			respText: "```json\n{\n  \"op\": \"add\",\n  \"path\": \"/rows\",\n  \"value\": {\n    \"0\": { \"id\": \"tx_123\", \"macro_class\": \"EXPENSE\" }\n  }\n}\n```",
+			wantLen:   1,
+			expectErr: false,
+		},
+		{
+			name: "JSON inside bare ``` fence",
+			respText: "```\n{\n  \"op\": \"add\",\n  \"path\": \"/rows\",\n  \"value\": {\n    \"0\": { \"id\": \"tx_123\", \"macro_class\": \"EXPENSE\" }\n  }\n}\n```",
+			wantLen:   1,
+			expectErr: false,
+		},
+		{
+			name: "Malformed JSON — extra trailing brace",
+			respText: "```json\n{\"op\": \"add\", \"path\": \"/rows\", \"value\": {\"0\": {\"id\": \"tx_123\", \"macro_class\": \"EXPENSE\"}}}}\n```",
+			wantLen:   0,
+			expectErr: true,
+		},
+		{
+			name: "Comma-separated objects wrapped in array fallback",
+			respText: "```json\n{\"op\": \"add\", \"path\": \"/rows\", \"value\": {\"0\": {\"id\": \"tx_1\", \"macro_class\": \"EXPENSE\"}}},\n{\"op\": \"add\", \"path\": \"/rows\", \"value\": {\"0\": {\"id\": \"tx_2\", \"macro_class\": \"REVENUE\"}}}\n```",
+			wantLen:   2,
+			expectErr: false,
+		},
 	}
 
 	for _, tt := range tests {

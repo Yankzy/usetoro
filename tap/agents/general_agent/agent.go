@@ -63,6 +63,14 @@ func NewGeneralAgent(env core.Environment) core.Runnable {
 			bus:    env.Bus,
 			logger: logger,
 		},
+		"ConversationState": &conversationStateTool{
+			bus:    env.Bus,
+			logger: logger,
+		},
+		"ScheduleReminder": &scheduleReminderTool{
+			bus:    env.Bus,
+			logger: logger,
+		},
 	}
 
 	base := agent.NewBaseAgent(logger, env.Bus, env.Config, nil)
@@ -146,7 +154,9 @@ func buildPromptFromMessages(messages []tools.Message) string {
 		case "assistant":
 			b.WriteString("ASSISTANT: ")
 		case "tool":
-			b.WriteString("TOOL RESULT (" + m.ToolCallID + "): ")
+			b.WriteString("TOOL RESULT (")
+			b.WriteString(m.ToolCallID)
+			b.WriteString("): ")
 		}
 		b.WriteString(m.Content)
 		b.WriteString("\n\n")

@@ -3,10 +3,12 @@ package workflows
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -31,11 +33,17 @@ type HITLPendingEvent struct {
 	StepID     string `json:"step_id"`
 	Status     string `json:"status"` // always "hitl_pending"
 
+	// Routing keys extracted from step outputs / trigger so the WS consumer
+	// can deliver the event to the correct room.
+	SessionID string `json:"session_id,omitempty"`
+	RealmID   string `json:"realm_id,omitempty"`
+
 	// Config fields copied from the YAML step.config block.
-	Scope        string `json:"scope,omitempty"`         // "session" | "row"
-	Prompt       string `json:"prompt,omitempty"`        // human-readable instruction
-	AllowEdits   bool   `json:"allow_edits"`             // can the reviewer override AI output?
+	Scope       string `json:"scope,omitempty"`         // "session" | "row"
+	Prompt      string `json:"prompt,omitempty"`        // human-readable instruction
+	AllowEdits  bool   `json:"allow_edits"`             // can the reviewer override AI output?
 	RejectAction string `json:"reject_action,omitempty"` // "abort" | "retry_step:<id>"
+	MessageType  string `json:"message_type,omitempty"`  // WS message type override (default: derived from activity type)
 
 	// The collected outputs from every step completed before the gate.
 	// Keys are step IDs, values are the raw proof JSON from each step.
@@ -83,10 +91,19 @@ func (o *Orchestrator) suspendForHITL(step WorkflowStep, state *InstanceState, e
 		stepOutputs[k] = v
 	}
 
-	// --- 4. Extract session_id / realm_id from any available proof ---
-	// --- 4. session_id / realm_id extraction removed (workflow-specific) ---
+	// --- 4. Extract session_id / realm_id from step outputs ---
+	sessionID, realmID := extractRoutingKeys(state)
 
-	// --- 5. Derive expiry from step timeout (best-effort) ---
+	// --- 5. Derive message_type from config or activity type suffix ---
+	messageType := stringFromConfig(step.Config, "message_type")
+	if messageType == "" {
+		// Default: "hitl.review" -> "review", "hitl.approval" -> "approval"
+		if suffix, ok := strings.CutPrefix(step.ActivityType, HITLPrefixActivity); ok {
+			messageType = suffix
+		}
+	}
+
+	// --- 6. Derive expiry from step timeout (best-effort) ---
 	expiresAt := ""
 	if step.Timeout != "" {
 		if dur, err := time.ParseDuration(step.Timeout); err == nil {
@@ -94,7 +111,7 @@ func (o *Orchestrator) suspendForHITL(step WorkflowStep, state *InstanceState, e
 		}
 	}
 
-	// --- 6. Build and publish the HITL pending event ---
+	// --- 7. Build and publish the HITL pending event ---
 	entityStr := ""
 	if entityID.Valid {
 		entityStr = uuid.UUID(entityID.Bytes).String()
@@ -110,10 +127,13 @@ func (o *Orchestrator) suspendForHITL(step WorkflowStep, state *InstanceState, e
 		EntityID:     entityStr,
 		StepID:       step.ID,
 		Status:       "hitl_pending",
+		SessionID:    sessionID,
+		RealmID:      realmID,
 		Scope:        scope,
 		Prompt:       prompt,
 		AllowEdits:   allowEdits,
 		RejectAction: rejectAction,
+		MessageType:  messageType,
 		StepOutputs:  stepOutputs,
 		ExpiresAt:    expiresAt,
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
@@ -130,6 +150,9 @@ func (o *Orchestrator) suspendForHITL(step WorkflowStep, state *InstanceState, e
 	o.logger.Info("🧑‍💻 HITL gate reached — workflow suspended for human review",
 		"instance_id", instanceID,
 		"step_id", step.ID,
+		"session_id", sessionID,
+		"realm_id", realmID,
+		"message_type", messageType,
 		"scope", scope,
 		"allow_edits", allowEdits,
 		"expires_at", expiresAt,
@@ -162,4 +185,44 @@ func boolFromConfig(cfg map[string]interface{}, key string) bool {
 		}
 	}
 	return false
+}
+
+// extractRoutingKeys pulls session_id and realm_id from state variables using
+// the same priority order as reshapePayloadToSchema:
+//  1. TRIGGER (the original workflow trigger payload)
+//  2. Step outputs (in none-deterministic order; first found wins)
+func extractRoutingKeys(state *InstanceState) (sessionID, realmID string) {
+	// Priority 1: TRIGGER
+	if raw, ok := state.Variables["TRIGGER"]; ok {
+		unwrapped := string(unwrapStepPayload(raw))
+		if v := gjson.Get(unwrapped, "session_id"); v.Exists() {
+			sessionID = v.String()
+		}
+		if v := gjson.Get(unwrapped, "realm_id"); v.Exists() {
+			realmID = v.String()
+		}
+	}
+
+	// Priority 2: search step outputs (skip TRIGGER since we already checked it)
+	for k, raw := range state.Variables {
+		if k == "TRIGGER" {
+			continue
+		}
+		unwrapped := string(unwrapStepPayload(raw))
+		if sessionID == "" {
+			if v := gjson.Get(unwrapped, "session_id"); v.Exists() {
+				sessionID = v.String()
+			}
+		}
+		if realmID == "" {
+			if v := gjson.Get(unwrapped, "realm_id"); v.Exists() {
+				realmID = v.String()
+			}
+		}
+		if sessionID != "" && realmID != "" {
+			break
+		}
+	}
+
+	return
 }

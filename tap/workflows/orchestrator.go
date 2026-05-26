@@ -814,7 +814,7 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 	}
 
 	o.logger.Info("Orchestrator: instance persisted", "id", instanceID.String())
-	o.publishStatus(instanceID.String(), entityID, "started", strings.Join(activeIDs, ","), "", def, activeIDs)
+	o.publishStatus(instanceID.String(), entityID, "started", strings.Join(activeIDs, ","), "", def, activeIDs, &state)
 
 	return nil
 }
@@ -1022,7 +1022,7 @@ func (o *Orchestrator) spawnSubWorkflow(ctx context.Context, step WorkflowStep, 
 	}
 
 	activeIDs := stepIDsFromList(ready)
-	o.publishStatus(childInstanceID.String(), childWf.EntityID, "started", strings.Join(activeIDs, ","), "", childDef, activeIDs)
+	o.publishStatus(childInstanceID.String(), childWf.EntityID, "started", strings.Join(activeIDs, ","), "", childDef, activeIDs, &childState)
 	o.logger.Info("Orchestrator: sub-workflow launched",
 		"parent_step", step.ID,
 		"child_workflow", childDef.Name,
@@ -1353,7 +1353,7 @@ func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
 		}
 
 		// Broadcast suspension to external observers (UI, notifications)
-		o.publishStatus(instanceIDStr, wf.EntityID, "suspended", stepID, env.SenderDID, wfDef, nil)
+		o.publishStatus(instanceIDStr, wf.EntityID, "suspended", stepID, env.SenderDID, wfDef, nil, &state)
 
 		msg.Ack()
 
@@ -1449,7 +1449,7 @@ func (o *Orchestrator) handleWorkflowResume(msg *nats.Msg) {
 				msg.Nak()
 				return
 			}
-			o.publishStatus(req.InstanceID, wf.EntityID, "suspended", stepID, "", wfDef, nil)
+			o.publishStatus(req.InstanceID, wf.EntityID, "suspended", stepID, "", wfDef, nil, &state)
 			msg.Ack()
 			return
 		}
@@ -1502,7 +1502,7 @@ func (o *Orchestrator) handleWorkflowResume(msg *nats.Msg) {
 			return
 		}
 		nextIDs := stepIDsFromList(ready)
-		o.publishStatus(req.InstanceID, wf.EntityID, "running", stepID, "", wfDef, nextIDs)
+		o.publishStatus(req.InstanceID, wf.EntityID, "running", stepID, "", wfDef, nextIDs, &state)
 		msg.Ack()
 		return
 	}
@@ -1546,7 +1546,7 @@ func (o *Orchestrator) handleWorkflowResume(msg *nats.Msg) {
 	if len(ready) > 0 {
 		nextIDs = stepIDsFromList(ready)
 	}
-	o.publishStatus(req.InstanceID, wf.EntityID, "running", state.CurrentStepID, "", wfDef, nextIDs)
+	o.publishStatus(req.InstanceID, wf.EntityID, "running", state.CurrentStepID, "", wfDef, nextIDs, &state)
 	msg.Ack()
 }
 
@@ -1572,7 +1572,7 @@ func (o *Orchestrator) handleStepCompletion(ctx context.Context, wf database.Tor
 		if _, err := o.persistWorkflowState(ctx, wf, *state); err != nil {
 			return err
 		}
-		o.publishStatus(instanceIDStr, wf.EntityID, "completed", "COMPLETED", assignedDID, wfDef, nil)
+		o.publishStatus(instanceIDStr, wf.EntityID, "completed", "COMPLETED", assignedDID, wfDef, nil, state)
 		if state.ParentStepID != "" && len(state.InstancePath) > 1 {
 			parentPath := state.InstancePath[:len(state.InstancePath)-1]
 			if err := o.completeParentStep(ctx, parentPath, state.ParentStepID, proofCopy); err != nil {
@@ -1591,7 +1591,7 @@ func (o *Orchestrator) handleStepCompletion(ctx context.Context, wf database.Tor
 		if _, err := o.persistWorkflowState(ctx, wf, *state); err != nil {
 			return err
 		}
-		o.publishStatus(instanceIDStr, wf.EntityID, "suspended", stepID, assignedDID, wfDef, nil)
+		o.publishStatus(instanceIDStr, wf.EntityID, "suspended", stepID, assignedDID, wfDef, nil, state)
 		return nil
 	}
 
@@ -1604,7 +1604,7 @@ func (o *Orchestrator) handleStepCompletion(ctx context.Context, wf database.Tor
 			return err
 		}
 		nextIDs := stepIDsFromList(ready)
-		o.publishStatus(instanceIDStr, wf.EntityID, "running", strings.Join(nextIDs, ","), assignedDID, wfDef, nextIDs)
+		o.publishStatus(instanceIDStr, wf.EntityID, "running", strings.Join(nextIDs, ","), assignedDID, wfDef, nextIDs, state)
 	}
 	return nil
 }
@@ -1651,7 +1651,11 @@ func sanitize(s string) string {
 	return strings.ToLower(r.Replace(s))
 }
 
-func (o *Orchestrator) publishStatus(instanceID string, entityID pgtype.UUID, status, stepID, assignedDID string, blueprint WorkflowDef, activeSteps []string) {
+func (o *Orchestrator) publishStatus(instanceID string, entityID pgtype.UUID, status, stepID, assignedDID string, blueprint WorkflowDef, activeSteps []string, state *InstanceState) {
+	sessionID, realmID := "", ""
+	if state != nil {
+		sessionID, realmID = extractRoutingKeys(state)
+	}
 	evt := map[string]interface{}{
 		"instance_id":     instanceID,
 		"entity_id":       uuid.UUID(entityID.Bytes).String(),
@@ -1660,6 +1664,8 @@ func (o *Orchestrator) publishStatus(instanceID string, entityID pgtype.UUID, st
 		"assigned_did":    assignedDID,
 		"blueprint":       blueprint,
 		"active_steps":    activeSteps,
+		"session_id":      sessionID,
+		"realm_id":        realmID,
 		"timestamp":       time.Now().UTC().Format(time.RFC3339),
 	}
 	data, _ := json.Marshal(evt)
@@ -1694,7 +1700,7 @@ func (o *Orchestrator) suspendWorkflowForReview(ctx context.Context, wf database
 	}
 
 	instanceIDStr := state.InstancePath[len(state.InstancePath)-1]
-	o.publishStatus(instanceIDStr, wf.EntityID, "suspended", stepID, "", WorkflowDef{}, nil)
+	o.publishStatus(instanceIDStr, wf.EntityID, "suspended", stepID, "", WorkflowDef{}, nil, nil)
 }
 
 func ensureInstanceState(state *InstanceState, path []string) {

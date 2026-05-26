@@ -61,6 +61,10 @@ type Config struct {
 	CDCEnabled      bool          `mapstructure:"cdc_enabled"`
 	CDCSyncInterval time.Duration `mapstructure:"cdc_sync_interval"`
 
+	// Stripe Config
+	StripeSecretKey     string `mapstructure:"stripe_secret_key"`
+	StripeWebhookSecret string `mapstructure:"stripe_webhook_secret"`
+
 	// AI/Vector Config
 	PineconeIndex       string  `mapstructure:"pinecone_index"`
 	EmbeddingModel      string  `mapstructure:"embedding_model"`
@@ -84,6 +88,18 @@ type Config struct {
 
 	// Postmark Config
 	PostmarkServerToken string `mapstructure:"postmark_server_token"`
+
+	// Twilio Config (SMS + WhatsApp)
+	TwilioAccountSID  string `mapstructure:"twilio_account_sid"`
+	TwilioAuthToken   string `mapstructure:"twilio_auth_token"`
+	TwilioSMSNumber   string `mapstructure:"twilio_sms_number"`
+	TwilioWANumber    string `mapstructure:"twilio_wa_number"`
+
+	// Telegram Config
+	TelegramBotToken string `mapstructure:"telegram_bot_token"`
+
+	// Slack Config
+	SlackBotToken string `mapstructure:"slack_bot_token"`
 }
 
 type RuleEngineConfig struct {
@@ -249,6 +265,14 @@ func Load() (*Config, *viper.Viper, error) {
 	_ = v.BindEnv("encryption_key", "ENCRYPTION_KEY")
 	_ = v.BindEnv("workers.erp_event.subject", "NATS_ERP_EVENT_SUBJECT")
 	_ = v.BindEnv("postmark_server_token", "POSTMARK_TRANSACTIONAL_SERVER_TOKEN")
+	_ = v.BindEnv("twilio_account_sid", "TWILIO_ACCOUNT_SID")
+	_ = v.BindEnv("twilio_auth_token", "TWILIO_AUTH_TOKEN")
+	_ = v.BindEnv("twilio_sms_number", "TWILIO_SMS_NUMBER")
+	_ = v.BindEnv("twilio_wa_number", "TWILIO_WA_NUMBER")
+	_ = v.BindEnv("telegram_bot_token", "TELEGRAM_BOT_TOKEN")
+	_ = v.BindEnv("slack_bot_token", "SLACK_BOT_TOKEN")
+	_ = v.BindEnv("stripe_secret_key", "STRIPE_SECRET_KEY")
+	_ = v.BindEnv("stripe_webhook_secret", "STRIPE_WEBHOOK_SECRET")
 
 	// Set defaults corresponding to the old getEnv fallbacks
 	v.SetDefault("port", "8080")

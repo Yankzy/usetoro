@@ -16,6 +16,11 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	// Generic webhook endpoint (supports all providers)
 	mux.HandleFunc("POST /webhooks/{provider}/{conn_id}", h.HandleWebhook)
 
+	// Channel webhooks for multi-channel conversational ingress
+	mux.HandleFunc("POST /webhooks/twilio/sms", h.HandleTwilioSMSWebhook)
+	mux.HandleFunc("POST /webhooks/twilio/whatsapp", h.HandleTwilioWhatsAppWebhook)
+	mux.HandleFunc("POST /webhooks/telegram/{bot_token}", h.HandleTelegramWebhook)
+
 	// QBO OAuth2 endpoints
 	mux.HandleFunc("GET /auth/qbo/callback", h.HandleQBOCallback)
 	mux.HandleFunc("GET /auth/qbo/url", h.HandleGetQBOAuthURL)
@@ -42,6 +47,8 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	// Wallet Operations (Stripe / Checks)
 	mux.HandleFunc("GET /wallet/balance", h.HandleGetWalletBalance)
 	mux.HandleFunc("POST /wallet/topup", h.HandleCreateWalletTopUp)
+	mux.HandleFunc("POST /financial-connections/sessions", h.HandleCreateStripeSession)
+	mux.HandleFunc("GET /financial-connections/accounts/{account_id}", h.HandleGetStripeAccount)
 
 	// Agent Tollbooth Endpoints (Strictly Metered)
 	agentToll := micrion.TollboothMiddleware(wm, 1616)

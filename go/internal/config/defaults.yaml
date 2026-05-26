@@ -6,6 +6,14 @@ x-jetstream-default: &jetstream-default
   allow_rollup: false
   allow_direct: true
 
+# Communication Channel Config
+twilio_account_sid: ""
+twilio_auth_token: ""
+twilio_sms_number: ""
+twilio_wa_number: ""
+telegram_bot_token: ""
+slack_bot_token: ""
+
 # CDC (Change Data Capture) Configuration
 cdc_enabled: true
 cdc_sync_interval: 1h
@@ -269,7 +277,7 @@ workers:
     subject: "ledger.shadow_erp_proposed_transactions.*"
     group: ""
   fignode_publisher:
-    subject: "proof.accounting.cleanup.reconcile.>"
+    subject: "proof.accounting.human_review"
     group: ""
   attachable:
     subject: "ledger.shadow_erp_attachables.insert"
@@ -306,8 +314,32 @@ workers:
     activity_type: workers.qbo_sync
     subject: ""
     group: ""
+  v2_push:
+    activity_type: workers.qbo_v2_orchestrator
+    subject: ""
+    group: ""
   general_agent_ingress:
     activity_type: workers.general_agent_ingress
+    subject: ""
+    group: ""
+
+  twilio_sms_inbound:
+    activity_type: workers.twilio_sms_inbound
+    subject: ""
+    group: ""
+
+  twilio_wa_inbound:
+    activity_type: workers.twilio_whatsapp_inbound
+    subject: ""
+    group: ""
+
+  telegram_inbound:
+    activity_type: workers.telegram_inbound
+    subject: ""
+    group: ""
+
+  conversation_scheduler:
+    activity_type: workers.conversation_scheduler
     subject: ""
     group: ""
 

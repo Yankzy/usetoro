@@ -26,6 +26,7 @@ func NewManager(logger *slog.Logger, cfg *config.Config, store *store.Store, nc 
 
 	// Register connectors (Factory Pattern)
 	m.connectors["qbo"] = NewQBOConnector(logger, cfg, store, nc)
+	m.connectors["stripe"] = NewStripeConnector(logger, cfg)
 	// m.connectors["plaid"] = NewPlaidConnector(logger, cfg)
 
 	return m

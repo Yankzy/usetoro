@@ -222,9 +222,9 @@ func (c *Client) cardPump() {
 					c.blastDatabaseCards(conn.RealmID)
 					c.hub.JoinRoom(c, conn.RealmID)
 
-					// Dynamically wait for reconciliation pipeline completion to instantly rehydrate the mobile websocket!
+					// Dynamically wait for human review step to instantly rehydrate the mobile websocket!
 					if c.hub.queueClient != nil && c.hub.queueClient.Conn() != nil {
-						proofTopic := "proof.accounting.cleanup.reconcile.>"
+						proofTopic := "proof.accounting.human_review"
 						c.logger.Info("Attempting to bind NATS Core subscriber to Proofs for WebSocket fast-streaming", "topic", proofTopic)
 
 						proofSub, syncErr := c.hub.queueClient.Conn().Subscribe(proofTopic, func(msg *nats.Msg) {
@@ -510,6 +510,34 @@ func (c *Client) blastDatabaseCards(realmID string) {
 	}
 }
 
+// joinRealmRoom resolves the entity's QBO realm ID and joins the corresponding
+// broadcast room so the client receives real-time workflow events immediately on
+// connect, without waiting for a subscribe_cards message.
+func (c *Client) joinRealmRoom() {
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Error("Recovered from panic in joinRealmRoom", "error", r)
+		}
+	}()
+	if c.hub == nil || c.hub.db == nil || c.entityID == "unknown" {
+		return
+	}
+	entityUUID, err := uuid.Parse(c.entityID)
+	if err != nil {
+		return
+	}
+	var entityPgUUID pgtype.UUID
+	if pgErr := entityPgUUID.Scan(entityUUID.String()); pgErr != nil {
+		return
+	}
+	conn, dbErr := c.hub.db.GetERPConnection(c.ctx, entityPgUUID)
+	if dbErr != nil || conn.RealmID == "" {
+		c.logger.Warn("joinRealmRoom: could not resolve realm ID", "entity_id", c.entityID, "error", dbErr)
+		return
+	}
+	c.hub.JoinRoom(c, conn.RealmID)
+}
+
 func (c *Client) blastActiveWorkflows() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -597,7 +625,7 @@ func (c *Client) blastActiveWorkflows() {
 			"timestamp":       time.Now().UTC().Format(time.RFC3339),
 		}
 
-		wsMsg, err := NewWorkflowStatusMessage(evt)
+		wsMsg, err := NewWorkflowStatusMessage(MessageTypeWorkflowStatus, evt)
 		if err != nil {
 			continue
 		}

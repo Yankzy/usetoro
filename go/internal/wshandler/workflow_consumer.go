@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/queue"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // WorkflowEventConsumer handles NATS subscription for Workflow status events
@@ -88,15 +92,51 @@ func (c *WorkflowEventConsumer) handleWorkflowStatusEvent(msg *nats.Msg) {
 		return
 	}
 
-	c.logger.Debug("Received workflow status event", "entity_id", entityID, "status", payload["status"])
+	c.logger.Info("📡 WS consumer: received workflow event", "entity_id", entityID, "status", payload["status"], "session_id", payload["session_id"], "realm_id", payload["realm_id"])
 
 	// Strip the blueprint from real-time events — clients already received it
 	// during blastActiveWorkflows on connect. Re-sending it on every state
 	// transition floods the WebSocket with redundant KB-sized payloads.
 	delete(payload, "blueprint")
 
-	// Create and broadcast WS message
-	wsMsg, err := NewWorkflowStatusMessage(payload)
+	// Determine the WS message type. HITL events carry their own type so the
+	// frontend can distinguish review/approval gates from generic status updates.
+	wsMsgType := MessageTypeWorkflowStatus
+	if status, _ := payload["status"].(string); status == "hitl_pending" {
+		if mt, ok := payload["message_type"].(string); ok && mt != "" {
+			wsMsgType = MessageType(mt)
+
+			if mt == "bookkeeping_review" {
+				if sessionID, ok := payload["session_id"].(string); ok && sessionID != "" {
+					var pgSessionID pgtype.UUID
+					if err := pgSessionID.Scan(sessionID); err == nil {
+						// 1. Update DB to READY_FOR_REVIEW
+						_ = c.queries.UpdateSessionTransactionsToReadyForReview(c.ctx, pgSessionID)
+
+						// 2. Publish to proof.accounting.human_review
+						envelope, err := core.NewEnvelope(
+							uuid.New().String(),
+							"did:toro:workflow-consumer",
+							"",
+							sessionID,
+							core.INFORM,
+							core.Proof{
+								TaskID:    sessionID,
+								Type:      core.ProofAPI,
+								Timestamp: time.Now().Unix(),
+							},
+						)
+						if err == nil {
+							envBytes, _ := json.Marshal(envelope)
+							_ = c.client.Conn().Publish("proof.accounting.human_review", envBytes)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	wsMsg, err := NewWorkflowStatusMessage(wsMsgType, payload)
 	if err != nil {
 		c.logger.Error("Failed to create workflow WS message", "error", err)
 		msg.Nak()
@@ -112,6 +152,7 @@ func (c *WorkflowEventConsumer) handleWorkflowStatusEvent(msg *nats.Msg) {
 	}
 	// Targeted broadcast to the specific room (realm preferred, then session, then entity)
 	c.hub.BroadcastToRoom(roomID, wsMsg)
+	c.logger.Info("📡 WS consumer: broadcast queued", "room", roomID, "msg_type", string(wsMsgType))
 
 	if err := msg.Ack(); err != nil {
 		c.logger.Error("Failed to acknowledge workflow NATS message", "error", err)

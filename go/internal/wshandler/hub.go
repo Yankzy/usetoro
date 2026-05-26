@@ -120,12 +120,16 @@ func (h *Hub) Run() {
 			if bm.roomID != "" {
 				// Targeted broadcast to a specific room (entity_id)
 				if room, ok := h.rooms[bm.roomID]; ok {
+					h.logger.Info("📡 Hub: broadcasting to room", "room", bm.roomID, "clients", len(room))
 					for client := range room {
 						h.sendToClient(client, bm.data)
 					}
+				} else {
+					h.logger.Warn("📡 Hub: room not found for broadcast", "room", bm.roomID)
 				}
 			} else {
 				// Global broadcast to everyone
+				h.logger.Info("📡 Hub: global broadcast", "rooms", len(h.rooms))
 				for _, room := range h.rooms {
 					for client := range room {
 						h.sendToClient(client, bm.data)
@@ -140,8 +144,9 @@ func (h *Hub) Run() {
 func (h *Hub) sendToClient(client *Client, data []byte) {
 	select {
 	case client.send <- data:
+		h.logger.Debug("📡 Hub: sent to client", "entity_id", client.entityID)
 	default:
-		h.logger.Warn("Client send buffer full, unregistering", "entity_id", client.entityID)
+		h.logger.Warn("📡 Hub: client send buffer full, unregistering", "entity_id", client.entityID)
 		select {
 		case h.unregister <- client:
 		default:

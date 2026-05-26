@@ -88,9 +88,9 @@ func NewQBOConnectedMessage(realmID string) ([]byte, error) {
 }
 
 // NewWorkflowStatusMessage creates a message for real-time workflow visualization
-func NewWorkflowStatusMessage(data map[string]interface{}) ([]byte, error) {
+func NewWorkflowStatusMessage(msgType MessageType, data map[string]interface{}) ([]byte, error) {
 	msg := Message{
-		Type: MessageTypeWorkflowStatus,
+		Type: msgType,
 		Data: data,
 	}
 	return json.Marshal(msg)

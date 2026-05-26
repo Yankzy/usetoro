@@ -64,9 +64,28 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := NewClient(h.hub, conn, h.logger, h.messageHandler, host, scheme, pathPrefix, r.Context())
-	h.hub.register <- client
 
-	// Start the client's write and active workflows pumps in background
+	// ── Room membership at startup ─────────────────────────────────────────
+	//
+	// A client belongs to two broadcast rooms after connect:
+	//
+	// 1. entity_id room — joined via hub.register above.
+	//    This is the auth entity UUID (e.g. 84644747-...). Used as a fallback
+	//    when workflow events lack a realm_id.
+	//
+	// 2. realm_id room — joined via joinRealmRoom below.
+	//    This is the QBO realm ID (e.g. 9341456276406470), resolved from the
+	//    erp_connections table. This is the PRIMARY room for real-time workflow
+	//    events — the WorkflowEventConsumer targets realm_id first when
+	//    broadcasting status updates.
+	//
+	// The realm_id room join MUST happen at connect time (not deferred until
+	// subscribe_cards) so the frontend receives real-time events immediately.
+	// blastActiveWorkflows sends the initial snapshot directly over the
+	// client's send channel, so it works regardless of room membership.
+	// ────────────────────────────────────────────────────────────────────────
+	h.hub.register <- client
+	go client.joinRealmRoom()
 	go client.writePump()
 	go client.blastActiveWorkflows()
 

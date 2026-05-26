@@ -19,6 +19,9 @@ import (
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
+// FignodePublisherWorker is responsible for listening to completed AI enrichment tasks
+// and publishing the enriched transaction data (as "cards") to a NATS subject for
+// real-time consumption by the frontend WebSocket clients.
 type FignodePublisherWorker struct {
 	db     *database.Queries
 	nc     *nats.Conn
@@ -55,6 +58,8 @@ func (w *FignodePublisherWorker) Init(ctx context.Context) error {
 	return nil
 }
 
+// Subscriptions defines the NATS JetStream subscriptions for this worker.
+// It uses a durable, deliver-all consumer with explicit acks.
 func (w *FignodePublisherWorker) Subscriptions() []SubscriptionConfig {
 	if w.cfg == nil {
 		w.logger.Error("fignode worker: missing config")
@@ -79,6 +84,8 @@ func (w *FignodePublisherWorker) Subscriptions() []SubscriptionConfig {
 	}
 }
 
+// Handle processes incoming NATS messages. It delegates the actual processing
+// to handleProof and logs any transient errors.
 func (w *FignodePublisherWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	w.logger.Info("📡 [DEBUG] fignode-publisher-worker received JetStream message", "topic", msg.Subject, "data_length", len(msg.Data))
 	if err := w.handleProof(ctx, msg); err != nil {
@@ -88,6 +95,10 @@ func (w *FignodePublisherWorker) Handle(ctx context.Context, msg *nats.Msg) erro
 	return nil
 }
 
+// handleProof unmarshals the NATS message envelope, verifies the performative,
+// retrieves the corresponding enriched session rows from the database, constructs
+// a rich context payload (including company, vendor, and customer taxonomies),
+// and publishes the final card data to a tenant-specific NATS subject.
 func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg) error {
 	var env core.Envelope
 	if err := json.Unmarshal(msg.Data, &env); err != nil {
@@ -127,7 +138,7 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 		return nil
 	}
 
-	status := pgtype.Text{String: "ENRICHED", Valid: true}
+	status := pgtype.Text{String: "READY_FOR_REVIEW", Valid: true}
 	rows, err := w.db.GetSessionRows(context.Background(), database.GetSessionRowsParams{
 		SessionID: pgSessionID,
 		Status:    status,

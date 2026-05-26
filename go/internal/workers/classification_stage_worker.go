@@ -141,9 +141,9 @@ func NewClassificationStageWorker(
 func buildOutflowRules(dbHints []string, intraFileHints []string) string {
 	rules := `Evaluate each description against these rules sequentially. Stop at the FIRST match.
 
-1. INTERNAL TRANSFER (ASSET): Indicates money moving between the company's own bank accounts (e.g., "Transfer to Savings", matching a known bank account).
+1. INTERNAL TRANSFER (TRANSFER): Indicates money moving between the company's own bank accounts or paying off a credit card (e.g., "Transfer to Savings", "Amex Payment", matching a known bank account/credit card).
 2. EQUITY: Explicitly indicates owner movement ("Draw", "Transfer to Owner").
-3. LIABILITY (HIGHEST PRIORITY DEBT): Contains debt markers ("Payment", "Card", "Amex", "Loan") OR matches a Known Liability Account.
+3. LIABILITY (HIGHEST PRIORITY DEBT): Contains debt markers ("Loan", "SBA") OR matches a Known Liability Account. (Do NOT use this for paying off the company's own credit card; use Rule 1).
 4. CUSTOMER REFUND / CHARGEBACK (REVENUE): Money is being returned to a customer or a transaction is disputed. Matches if: (a) description contains refund/chargeback/return keywords ("Refund", "Chargeback", "Return", "Dispute", "Reversal"), OR (b) description matches a known customer name from the database.`
 
 	if len(dbHints) > 0 {
@@ -164,7 +164,7 @@ func buildOutflowRules(dbHints []string, intraFileHints []string) string {
 func buildInflowRules(dbHints []string, intraFileHints []string) string {
 	rules := `Evaluate each description against these rules sequentially. Stop at the FIRST match.
 
-1. INTERNAL TRANSFER (ASSET): Money moving between own bank accounts.
+1. INTERNAL TRANSFER (TRANSFER): Money moving between own bank accounts or receiving payment to a credit card.
 2. EQUITY (OWNER INVESTMENT): Owner putting personal money into the business.
 3. LIABILITY (LOAN PROCEEDS): Business receiving loan funds/cash advance ("SBA Proceeds", "Fundbox").
 4. VENDOR REFUND (EXPENSE): Business is receiving money back from a previous purchase. Matches if: (a) description contains refund/cashback/reversal keywords ("Refund", "Cashback", "Reversal", "Credit"), OR (b) description matches a known vendor name from the database.`
@@ -437,7 +437,7 @@ func (w *ClassificationStageWorker) Handle(ctx context.Context, msg *nats.Msg) e
 	// Dispatch parallel agent calls per group, chunked into batch_size sub-batches.
 	batchSize := stageCfg.BatchSize
 	if batchSize <= 0 {
-		batchSize = 50
+		batchSize = 20
 	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -902,6 +902,14 @@ func (w *ClassificationStageWorker) dispatchGroup(
 		switch replyEnv.Performative {
 		case core.PROPOSE:
 			w.logger.Info("classification_stage: agent proposed", "group", groupKey)
+		case core.FAILURE:
+			var failurePayload map[string]interface{}
+			if err := json.Unmarshal(replyEnv.Body, &failurePayload); err == nil {
+				if errMsg, ok := failurePayload["error"].(string); ok {
+					return nil, fmt.Errorf("agent failed for group %s: %s", groupKey, errMsg)
+				}
+			}
+			return nil, fmt.Errorf("agent failed for group %s", groupKey)
 		case core.INFORM:
 			var proof core.Proof
 			if err := json.Unmarshal(replyEnv.Body, &proof); err != nil {

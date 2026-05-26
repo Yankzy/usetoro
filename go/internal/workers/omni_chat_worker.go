@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -116,8 +118,12 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText)
 	case "whatsapp":
 		return w.sendWhatsApp(ctx, response.ToHandle, response.BodyText)
+	case "sms":
+		return w.sendSMS(ctx, response.ToHandle, response.BodyText)
 	case "slack":
 		return w.sendSlack(ctx, response.ToHandle, response.BodyText)
+	case "telegram":
+		return w.sendTelegram(ctx, response.ToHandle, response.BodyText)
 	case "discord":
 		return w.sendDiscord(ctx, response.ToHandle, response.BodyText)
 	default:
@@ -170,13 +176,145 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body 
 	return nil
 }
 
+// sendSMS sends an outbound SMS via the Twilio Programmable SMS API.
+func (w *OmniChatWorker) sendSMS(ctx context.Context, to, body string) error {
+	if w.cfg.TwilioAccountSID == "" || w.cfg.TwilioAuthToken == "" {
+		w.logger.Warn("SMS channel not configured (missing Twilio credentials)")
+		return nil
+	}
+	if w.cfg.TwilioSMSNumber == "" {
+		w.logger.Warn("SMS channel not configured (missing twilio_sms_number)")
+		return nil
+	}
+
+	payload := map[string]interface{}{
+		"From": w.cfg.TwilioSMSNumber,
+		"To":   to,
+		"Body": body,
+	}
+	return w.twilioAPIRequest(ctx, "Messages.json", payload)
+}
+
+// sendWhatsApp sends an outbound WhatsApp message via the Twilio API.
 func (w *OmniChatWorker) sendWhatsApp(ctx context.Context, to, body string) error {
-	w.logger.Info("WhatsApp channel not yet implemented", "to", to)
+	if w.cfg.TwilioAccountSID == "" || w.cfg.TwilioAuthToken == "" {
+		w.logger.Warn("WhatsApp channel not configured (missing Twilio credentials)")
+		return nil
+	}
+	if w.cfg.TwilioWANumber == "" {
+		w.logger.Warn("WhatsApp channel not configured (missing twilio_wa_number)")
+		return nil
+	}
+
+	payload := map[string]interface{}{
+		"From": fmt.Sprintf("whatsapp:%s", w.cfg.TwilioWANumber),
+		"To":   fmt.Sprintf("whatsapp:%s", to),
+		"Body": body,
+	}
+	return w.twilioAPIRequest(ctx, "Messages.json", payload)
+}
+
+// sendTelegram sends an outbound message via the Telegram Bot API.
+func (w *OmniChatWorker) sendTelegram(ctx context.Context, chatID, body string) error {
+	if w.cfg.TelegramBotToken == "" {
+		w.logger.Warn("Telegram channel not configured (missing telegram_bot_token)")
+		return nil
+	}
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", w.cfg.TelegramBotToken)
+	payload := map[string]interface{}{
+		"chat_id": chatID,
+		"text":    body,
+	}
+
+	jsonPayload, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return fmt.Errorf("telegram: create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("telegram: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+		return fmt.Errorf("telegram: API error (status %d): %v", resp.StatusCode, errResp)
+	}
+
+	w.logger.Info("successfully sent outbound Telegram message", "chat_id", chatID)
 	return nil
 }
 
+// sendSlack sends an outbound message via the Slack Web API.
 func (w *OmniChatWorker) sendSlack(ctx context.Context, channel, body string) error {
-	w.logger.Info("Slack channel not yet implemented", "channel", channel)
+	if w.cfg.SlackBotToken == "" {
+		w.logger.Warn("Slack channel not configured (missing slack_bot_token)")
+		return nil
+	}
+
+	payload := map[string]interface{}{
+		"channel": channel,
+		"text":    body,
+	}
+
+	jsonPayload, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://slack.com/api/chat.postMessage", bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return fmt.Errorf("slack: create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", w.cfg.SlackBotToken))
+
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("slack: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+		return fmt.Errorf("slack: API error (status %d): %v", resp.StatusCode, errResp)
+	}
+
+	w.logger.Info("successfully sent outbound Slack message", "channel", channel)
+	return nil
+}
+
+// twilioAPIRequest is a helper for making Twilio API calls (SMS + WhatsApp).
+func (w *OmniChatWorker) twilioAPIRequest(ctx context.Context, path string, payload map[string]interface{}) error {
+	endpoint := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/%s", w.cfg.TwilioAccountSID, path)
+
+	formData := make(url.Values)
+	for k, v := range payload {
+		formData.Set(k, fmt.Sprintf("%v", v))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(formData.Encode()))
+	if err != nil {
+		return fmt.Errorf("twilio: create request: %w", err)
+	}
+	req.SetBasicAuth(w.cfg.TwilioAccountSID, w.cfg.TwilioAuthToken)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("twilio: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errResp map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+		return fmt.Errorf("twilio: API error (status %d): %v", resp.StatusCode, errResp)
+	}
+
+	w.logger.Info("successfully sent outbound Twilio message", "to", payload["To"])
 	return nil
 }
 

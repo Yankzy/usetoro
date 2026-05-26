@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/auth"
+	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/resilience"
@@ -78,6 +79,9 @@ type Handler struct {
 	NATS          *queue.Client
 	Exporter      Exporter
 	WalletManager *micrion.WalletManager
+
+	// Stripe Connector
+	Stripe *connectors.StripeConnector
 }
 
 // NewHandler creates a new Handler.
@@ -100,6 +104,7 @@ func NewHandler(
 	cleanupNATS *queue.Client,
 	cleanupExporter Exporter,
 	wm *micrion.WalletManager,
+	stripeConnector *connectors.StripeConnector,
 ) *Handler {
 	return &Handler{
 		Logger:             logger,
@@ -122,6 +127,7 @@ func NewHandler(
 		NATS:               cleanupNATS,
 		Exporter:           cleanupExporter,
 		WalletManager:      wm,
+		Stripe:             stripeConnector,
 	}
 }
 

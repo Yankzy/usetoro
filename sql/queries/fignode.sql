@@ -280,9 +280,14 @@ LIMIT 10;
 -- name: GetInitialEnrichedTransactionsByRealm :many
 SELECT cs.* FROM fignode.staging_transactions cs
 JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
-WHERE cs.status = 'ENRICHED' AND ss.realm_id = $1 AND cs.duplicate_of IS NULL
+WHERE cs.status = 'READY_FOR_REVIEW' AND ss.realm_id = $1 AND cs.duplicate_of IS NULL
 ORDER BY cs.created_at DESC LIMIT 50;
 
 -- name: CountEnrichedTransactionsBySession :one
 SELECT COUNT(*) FROM fignode.staging_transactions
+WHERE session_id = $1 AND status = 'ENRICHED';
+
+-- name: UpdateSessionTransactionsToReadyForReview :exec
+UPDATE fignode.staging_transactions
+SET status = 'READY_FOR_REVIEW'
 WHERE session_id = $1 AND status = 'ENRICHED';

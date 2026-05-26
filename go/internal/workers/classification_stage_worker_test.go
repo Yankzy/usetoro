@@ -94,7 +94,7 @@ func TestBuildOutflowRules(t *testing.T) {
 	})
 	t.Run("with hints", func(t *testing.T) {
 		rules := buildOutflowRules([]string{"Acme Corp", "Bob's Shop"}, nil)
-		if !strings.Contains(rules, "Known customers from database: Acme Corp, Bob's Shop.") {
+		if !strings.Contains(rules, "Known Revenue Customers Identified in this Batch: Acme Corp, Bob's Shop.") {
 			t.Errorf("missing hints in rules: %s", rules)
 		}
 	})
@@ -115,7 +115,7 @@ func TestBuildInflowRules(t *testing.T) {
 	})
 	t.Run("with hints", func(t *testing.T) {
 		rules := buildInflowRules([]string{"Amazon", "Home Depot"}, nil)
-		if !strings.Contains(rules, "Known vendors from database: Amazon, Home Depot.") {
+		if !strings.Contains(rules, "Known Expense Vendors Identified in this Batch: Amazon, Home Depot.") {
 			t.Errorf("missing hints in rules: %s", rules)
 		}
 	})

@@ -167,7 +167,8 @@ func TestHandleStripeWebhook(t *testing.T) {
 				nil,
 				nil,
 				nil,
-				nil, // Added an extra nil argument here
+				nil,
+				nil,
 			)
 
 			// Construct request

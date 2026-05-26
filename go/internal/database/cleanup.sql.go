@@ -16,7 +16,7 @@ WITH updated AS (
     UPDATE fignode.staging_transactions
     SET status = 'APPROVED', updated_at = NOW()
     WHERE fignode.staging_transactions.id = $1
-    RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, macro_class, account_type, parsed_date, synced_at
+    RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, macro_class, account_type, parsed_date, synced_at, v2_status, v2_transfer_hold_reason, v2_erp_transaction_id
 )
 SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date, updated.parsed_date,
         updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,
@@ -120,6 +120,25 @@ func (q *Queries) BulkApproveByVendor(ctx context.Context, arg BulkApproveByVend
 		return nil, err
 	}
 	return items, nil
+}
+
+const countSessionRows = `-- name: CountSessionRows :one
+SELECT COUNT(*)
+FROM fignode.staging_transactions cs
+WHERE cs.session_id = $1
+  AND ($2::TEXT IS NULL OR cs.status = $2::TEXT)
+`
+
+type CountSessionRowsParams struct {
+	SessionID pgtype.UUID
+	Status    pgtype.Text
+}
+
+func (q *Queries) CountSessionRows(ctx context.Context, arg CountSessionRowsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSessionRows, arg.SessionID, arg.Status)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createCleanupSession = `-- name: CreateCleanupSession :one
@@ -833,6 +852,139 @@ func (q *Queries) GetSessionRows(ctx context.Context, arg GetSessionRowsParams) 
 	return items, nil
 }
 
+const getSessionRowsPaginated = `-- name: GetSessionRowsPaginated :many
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
+       cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
+       cs.confidence_score, cs.ai_reasoning,
+       cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
+       cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
+       cs.merchant_name, cs.category,
+       cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
+       COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
+       COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
+       a.name         AS predicted_account_name,
+       a.account_type AS predicted_account_type,
+       ov.display_name AS override_vendor_name,
+       oc.display_name AS override_customer_name,
+       oa.name         AS override_account_name
+FROM fignode.staging_transactions cs
+LEFT JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
+LEFT JOIN shadow_erp.vendors  v  ON v.id  = cs.predicted_vendor_id
+LEFT JOIN shadow_erp.customers c ON c.id  = cs.predicted_customer_id
+LEFT JOIN shadow_erp.accounts a  ON a.id  = cs.predicted_account_id
+LEFT JOIN shadow_erp.vendors  ov ON ov.id = cs.override_vendor_id
+LEFT JOIN shadow_erp.customers oc ON oc.id = cs.override_customer_id
+LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
+WHERE cs.session_id = $1
+  AND ($4::TEXT IS NULL OR cs.status = $4::TEXT)
+ORDER BY cs.parsed_date ASC NULLS LAST, cs.id ASC
+LIMIT $2 OFFSET $3
+`
+
+type GetSessionRowsPaginatedParams struct {
+	SessionID pgtype.UUID
+	Limit     int32
+	Offset    int32
+	Status    pgtype.Text
+}
+
+type GetSessionRowsPaginatedRow struct {
+	ID                    pgtype.UUID
+	SessionID             pgtype.UUID
+	RealmID               pgtype.Text
+	BankAccountID         pgtype.UUID
+	OutflowIs             pgtype.Text
+	SourceType            string
+	RawDescription        pgtype.Text
+	RawAmount             string
+	RawDate               pgtype.Text
+	ParsedDate            pgtype.Date
+	PredictedVendorID     pgtype.UUID
+	PredictedCustomerID   pgtype.UUID
+	PredictedAccountID    pgtype.UUID
+	ConfidenceScore       pgtype.Numeric
+	AiReasoning           pgtype.Text
+	DuplicateOf           pgtype.UUID
+	IsRecurring           bool
+	SplitSuggestion       []byte
+	OverrideVendorID      pgtype.UUID
+	OverrideCustomerID    pgtype.UUID
+	OverrideAccountID     pgtype.UUID
+	MerchantName          pgtype.Text
+	Category              pgtype.Text
+	Status                string
+	ErpTransactionID      pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	PredictedVendorName   string
+	PredictedCustomerName string
+	PredictedAccountName  pgtype.Text
+	PredictedAccountType  pgtype.Text
+	OverrideVendorName    pgtype.Text
+	OverrideCustomerName  pgtype.Text
+	OverrideAccountName   pgtype.Text
+}
+
+func (q *Queries) GetSessionRowsPaginated(ctx context.Context, arg GetSessionRowsPaginatedParams) ([]GetSessionRowsPaginatedRow, error) {
+	rows, err := q.db.Query(ctx, getSessionRowsPaginated,
+		arg.SessionID,
+		arg.Limit,
+		arg.Offset,
+		arg.Status,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSessionRowsPaginatedRow
+	for rows.Next() {
+		var i GetSessionRowsPaginatedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RealmID,
+			&i.BankAccountID,
+			&i.OutflowIs,
+			&i.SourceType,
+			&i.RawDescription,
+			&i.RawAmount,
+			&i.RawDate,
+			&i.ParsedDate,
+			&i.PredictedVendorID,
+			&i.PredictedCustomerID,
+			&i.PredictedAccountID,
+			&i.ConfidenceScore,
+			&i.AiReasoning,
+			&i.DuplicateOf,
+			&i.IsRecurring,
+			&i.SplitSuggestion,
+			&i.OverrideVendorID,
+			&i.OverrideCustomerID,
+			&i.OverrideAccountID,
+			&i.MerchantName,
+			&i.Category,
+			&i.Status,
+			&i.ErpTransactionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PredictedVendorName,
+			&i.PredictedCustomerName,
+			&i.PredictedAccountName,
+			&i.PredictedAccountType,
+			&i.OverrideVendorName,
+			&i.OverrideCustomerName,
+			&i.OverrideAccountName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSessionSummary = `-- name: GetSessionSummary :one
 SELECT
     COUNT(*)                                                               AS total_rows,
@@ -1081,7 +1233,7 @@ WITH updated AS (
         status               = 'APPROVED',
         updated_at           = NOW()
     WHERE fignode.staging_transactions.id = $1
-    RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, macro_class, account_type, parsed_date, synced_at
+    RETURNING id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, created_at, updated_at, macro_class, account_type, parsed_date, synced_at, v2_status, v2_transfer_hold_reason, v2_erp_transaction_id
 )
 SELECT updated.id, updated.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, updated.source_type, updated.raw_description, updated.raw_amount, updated.raw_date, updated.parsed_date,
         updated.predicted_vendor_id, updated.predicted_customer_id, updated.predicted_account_id,

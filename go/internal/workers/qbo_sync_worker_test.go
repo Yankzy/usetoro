@@ -11,28 +11,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/database"
 	quickbooks "github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks/sdk"
-	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 // ─── mocks ───────────────────────────────────────────────────────────────────
 
 type qboSyncMockStore struct {
-	GetReadyFunc    func(context.Context, pgtype.Text) ([]database.FignodeStagingTransaction, error)
+	GetReadyFunc    func(context.Context, pgtype.UUID) ([]database.FignodeStagingTransaction, error)
 	MarkSyncedFunc  func(context.Context, database.MarkStagingTransactionSyncedParams) error
 	MarkFailedFunc  func(context.Context, database.MarkStagingTransactionFailedParams) error
 	GetSessionFunc  func(context.Context, pgtype.UUID) (database.GetCleanupSessionRow, error)
 	GetAccountFunc  func(context.Context, pgtype.UUID) (database.ShadowErpAccount, error)
 	GetVendorFunc   func(context.Context, pgtype.UUID) (database.ShadowErpVendor, error)
 	GetCustomerFunc func(context.Context, pgtype.UUID) (database.ShadowErpCustomer, error)
+	MarkTransferHoldFunc func(context.Context, pgtype.UUID) error
+	GetAccountsByRealmFunc func(context.Context, string) ([]database.ShadowErpAccount, error)
 }
 
-func (m *qboSyncMockStore) GetStagingTransactionsReadyForQBO(ctx context.Context, realmID pgtype.Text) ([]database.FignodeStagingTransaction, error) {
-	return m.GetReadyFunc(ctx, realmID)
+func (m *qboSyncMockStore) GetStagingTransactionsReadyForQBO(ctx context.Context, sessionID pgtype.UUID) ([]database.FignodeStagingTransaction, error) {
+	return m.GetReadyFunc(ctx, sessionID)
 }
 func (m *qboSyncMockStore) MarkStagingTransactionSynced(ctx context.Context, p database.MarkStagingTransactionSyncedParams) error {
 	return m.MarkSyncedFunc(ctx, p)
@@ -41,7 +43,10 @@ func (m *qboSyncMockStore) MarkStagingTransactionFailed(ctx context.Context, p d
 	return m.MarkFailedFunc(ctx, p)
 }
 func (m *qboSyncMockStore) GetCleanupSession(ctx context.Context, id pgtype.UUID) (database.GetCleanupSessionRow, error) {
-	return m.GetSessionFunc(ctx, id)
+	if m.GetSessionFunc != nil {
+		return m.GetSessionFunc(ctx, id)
+	}
+	return database.GetCleanupSessionRow{}, pgx.ErrNoRows
 }
 func (m *qboSyncMockStore) GetAccountByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpAccount, error) {
 	return m.GetAccountFunc(ctx, id)
@@ -51,6 +56,18 @@ func (m *qboSyncMockStore) GetVendorByID(ctx context.Context, id pgtype.UUID) (d
 }
 func (m *qboSyncMockStore) GetCustomerByID(ctx context.Context, id pgtype.UUID) (database.ShadowErpCustomer, error) {
 	return m.GetCustomerFunc(ctx, id)
+}
+func (m *qboSyncMockStore) MarkStagingTransactionTransferHold(ctx context.Context, id pgtype.UUID) error {
+	if m.MarkTransferHoldFunc != nil {
+		return m.MarkTransferHoldFunc(ctx, id)
+	}
+	return nil
+}
+func (m *qboSyncMockStore) GetAccountsByRealm(ctx context.Context, realmID string) ([]database.ShadowErpAccount, error) {
+	if m.GetAccountsByRealmFunc != nil {
+		return m.GetAccountsByRealmFunc(ctx, realmID)
+	}
+	return []database.ShadowErpAccount{}, nil
 }
 
 type qboSyncMockConnector struct {
@@ -157,7 +174,7 @@ func TestParseTxnDate(t *testing.T) {
 func TestFormatLineDescription(t *testing.T) {
 	t.Run("valid reasoning", func(t *testing.T) {
 		got := formatLineDescription(makeText("Matches past Starbucks purchases"))
-		if got != "Matches past Starbucks purchases" {
+		if got != "AI Reasoning: Matches past Starbucks purchases" {
 			t.Errorf("got %q, want %q", got, "Matches past Starbucks purchases")
 		}
 	})
@@ -199,33 +216,7 @@ func TestIsOAuthRevoked(t *testing.T) {
 // extractRealmID
 // =============================================================================
 
-func TestExtractRealmID(t *testing.T) {
-	t.Run("direct realm_id in payload", func(t *testing.T) {
-		w := newQboTestWorker(nil, nil)
-		data, _ := json.Marshal(map[string]string{"realm_id": "4620816365001234567"})
-		got, err := w.extractRealmID(context.Background(), data)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "4620816365001234567" {
-			t.Errorf("got %q", got)
-		}
-	})
-
-	t.Run("realm_id inside envelope", func(t *testing.T) {
-		w := newQboTestWorker(nil, nil)
-		inner, _ := json.Marshal(map[string]string{"realm_id": "env-realm"})
-		env := core.Envelope{Body: inner}
-		data, _ := json.Marshal(env)
-		got, err := w.extractRealmID(context.Background(), data)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "env-realm" {
-			t.Errorf("got %q", got)
-		}
-	})
-
+func TestExtractSessionAndRealm(t *testing.T) {
 	t.Run("session_id lookup", func(t *testing.T) {
 		store := &qboSyncMockStore{
 			GetSessionFunc: func(_ context.Context, id pgtype.UUID) (database.GetCleanupSessionRow, error) {
@@ -234,12 +225,12 @@ func TestExtractRealmID(t *testing.T) {
 		}
 		w := newQboTestWorker(store, nil)
 		data, _ := json.Marshal(map[string]string{"session_id": "550e8400-e29b-41d4-a716-446655440000"})
-		got, err := w.extractRealmID(context.Background(), data)
+		_, session, err := w.extractSessionAndRealm(context.Background(), data)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got != "session-realm" {
-			t.Errorf("got %q, want session-realm", got)
+		if session.RealmID.String != "session-realm" {
+			t.Errorf("got %q, want session-realm", session.RealmID.String)
 		}
 	})
 
@@ -251,16 +242,16 @@ func TestExtractRealmID(t *testing.T) {
 		}
 		w := newQboTestWorker(store, nil)
 		data, _ := json.Marshal(map[string]string{"session_id": "550e8400-e29b-41d4-a716-446655440000"})
-		_, err := w.extractRealmID(context.Background(), data)
+		_, _, err := w.extractSessionAndRealm(context.Background(), data)
 		if err == nil {
 			t.Fatal("expected error")
 		}
 	})
 
-	t.Run("no realm_id or session_id", func(t *testing.T) {
+	t.Run("no session_id", func(t *testing.T) {
 		w := newQboTestWorker(nil, nil)
 		data, _ := json.Marshal(map[string]string{"other": "field"})
-		_, err := w.extractRealmID(context.Background(), data)
+		_, _, err := w.extractSessionAndRealm(context.Background(), data)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -268,64 +259,12 @@ func TestExtractRealmID(t *testing.T) {
 
 	t.Run("invalid JSON", func(t *testing.T) {
 		w := newQboTestWorker(nil, nil)
-		_, err := w.extractRealmID(context.Background(), []byte("not json"))
+		_, _, err := w.extractSessionAndRealm(context.Background(), []byte("not json"))
 		if err == nil {
 			t.Fatal("expected error")
 		}
 	})
 }
-
-// =============================================================================
-// resolvePaymentAccount
-// =============================================================================
-
-func TestResolvePaymentAccount(t *testing.T) {
-	t.Run("via session bank_account_id", func(t *testing.T) {
-		sid := makeUUID("550e8400-e29b-41d4-a716-446655440000")
-		baid := makeUUID("660e8400-e29b-41d4-a716-446655440001")
-		store := &qboSyncMockStore{
-			GetSessionFunc: func(_ context.Context, id pgtype.UUID) (database.GetCleanupSessionRow, error) {
-				return database.GetCleanupSessionRow{BankAccountID: baid}, nil
-			},
-			GetAccountFunc: func(_ context.Context, id pgtype.UUID) (database.ShadowErpAccount, error) {
-				return database.ShadowErpAccount{ErpID: "bank-erp-123"}, nil
-			},
-		}
-		w := newQboTestWorker(store, nil)
-		rows := []database.FignodeStagingTransaction{{SessionID: sid}}
-		got, err := w.resolvePaymentAccount(context.Background(), "r", rows)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "bank-erp-123" {
-			t.Errorf("got %q", got)
-		}
-	})
-
-	t.Run("no session bank account returns error", func(t *testing.T) {
-		sid := makeUUID("550e8400-e29b-41d4-a716-446655440000")
-		store := &qboSyncMockStore{
-			GetSessionFunc: func(_ context.Context, id pgtype.UUID) (database.GetCleanupSessionRow, error) {
-				return database.GetCleanupSessionRow{BankAccountID: pgtype.UUID{Valid: false}}, nil
-			},
-		}
-		w := newQboTestWorker(store, nil)
-		rows := []database.FignodeStagingTransaction{{SessionID: sid}}
-		_, err := w.resolvePaymentAccount(context.Background(), "r", rows)
-		if err == nil {
-			t.Fatal("expected error")
-		}
-	})
-
-	t.Run("no rows returns error", func(t *testing.T) {
-		w := newQboTestWorker(nil, nil)
-		_, err := w.resolvePaymentAccount(context.Background(), "r", nil)
-		if err == nil {
-			t.Fatal("expected error")
-		}
-	})
-}
-
 // =============================================================================
 // resolveEntityERPID
 // =============================================================================
@@ -451,8 +390,8 @@ func TestResolveAccountERPID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got != "acct-erp-1" {
-			t.Errorf("got %q", got)
+		if got.ErpID != "acct-erp-1" {
+			t.Errorf("got %q", got.ErpID)
 		}
 	})
 
@@ -472,8 +411,8 @@ func TestResolveAccountERPID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got != "override-acct-erp" {
-			t.Errorf("got %q, want override-acct-erp", got)
+		if got.ErpID != "override-acct-erp" {
+			t.Errorf("got %q, want override-acct-erp", got.ErpID)
 		}
 	})
 
@@ -539,7 +478,7 @@ func TestHydrateBatchItems(t *testing.T) {
 			ParsedDate:          pgtype.Date{Time: time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC), Valid: true},
 			AiReasoning:         makeText("monthly stripe payout"),
 		}
-		items, itemMap, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row})
+		items, itemMap, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if len(failures) > 0 {
 			t.Fatalf("unexpected hydration failures: %v", failures)
 		}
@@ -560,7 +499,7 @@ func TestHydrateBatchItems(t *testing.T) {
 		if len(deposit.Line) != 1 {
 			t.Fatalf("expected 1 line, got %d", len(deposit.Line))
 		}
-		if deposit.Line[0].Description != "monthly stripe payout" {
+		if deposit.Line[0].Description != "AI Reasoning: monthly stripe payout" {
 			t.Errorf("line description = %q", deposit.Line[0].Description)
 		}
 		if deposit.Line[0].DepositLineDetail == nil {
@@ -584,7 +523,7 @@ func TestHydrateBatchItems(t *testing.T) {
 			ParsedDate:         pgtype.Date{Time: time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC), Valid: true},
 			AiReasoning:        makeText("uber ride expense"),
 		}
-		items, itemMap, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row})
+		items, itemMap, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if len(failures) > 0 {
 			t.Fatalf("unexpected hydration failures: %v", failures)
 		}
@@ -608,7 +547,7 @@ func TestHydrateBatchItems(t *testing.T) {
 		if len(purchase.Line) != 1 {
 			t.Fatalf("expected 1 line, got %d", len(purchase.Line))
 		}
-		if purchase.Line[0].Description != "uber ride expense" {
+		if purchase.Line[0].Description != "AI Reasoning: uber ride expense" {
 			t.Errorf("line description = %q", purchase.Line[0].Description)
 		}
 		mapping := itemMap[item.BId]
@@ -627,7 +566,7 @@ func TestHydrateBatchItems(t *testing.T) {
 			PredictedAccountID: aid,
 			RawAmount:          "-99.99",
 		}
-		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row})
+		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if len(failures) > 0 {
 			t.Fatalf("unexpected failures: %v", failures)
 		}
@@ -652,7 +591,7 @@ func TestHydrateBatchItems(t *testing.T) {
 			SessionID:    sid,
 			CashDirection: makeText("INFLOW"),
 		}
-		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row})
+		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if len(items) != 0 {
 			t.Errorf("expected 0 items, got %d", len(items))
 		}
@@ -667,7 +606,7 @@ func TestHydrateBatchItems(t *testing.T) {
 			ID:        makeUUID("00000000-0000-0000-0000-000000000001"),
 			SessionID: sid,
 		}
-		_, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row})
+		_, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if _, ok := failures[row.ID]; !ok {
 			t.Error("expected missing cash_direction failure")
 		}
@@ -680,7 +619,7 @@ func TestHydrateBatchItems(t *testing.T) {
 			SessionID:     sid,
 			CashDirection: makeText("OUTFLOW"),
 		}
-		_, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row})
+		_, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if _, ok := failures[row.ID]; !ok {
 			t.Error("expected entity resolution failure")
 		}
@@ -696,7 +635,7 @@ func TestHydrateBatchItems(t *testing.T) {
 			PredictedAccountID:  aid,
 			RawAmount:           "not-a-number",
 		}
-		_, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row})
+		_, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if _, ok := failures[row.ID]; !ok {
 			t.Error("expected amount parse failure")
 		}
@@ -712,7 +651,7 @@ func TestHydrateBatchItems(t *testing.T) {
 			PredictedAccountID:  aid,
 			RawAmount:           "50.00",
 		}
-		_, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row})
+		_, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if _, ok := failures[row.ID]; !ok {
 			t.Error("expected unknown cash_direction failure")
 		}
@@ -729,13 +668,109 @@ func TestHydrateBatchItems(t *testing.T) {
 			RawAmount:           "100.00",
 			AiReasoning:         pgtype.Text{Valid: false},
 		}
-		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row})
+		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if len(failures) > 0 {
 			t.Fatalf("unexpected failures: %v", failures)
 		}
 		deposit := items[0].Payload.(quickbooks.Deposit)
 		if deposit.Line[0].Description != "" {
 			t.Errorf("description should be empty, got %q", deposit.Line[0].Description)
+		}
+	})
+
+	t.Run("TRANSFER_HOLD intercepts OUTFLOW matching credit card name", func(t *testing.T) {
+		holdCalled := false
+		store := &qboSyncMockStore{
+			GetReadyFunc: baseStore.GetReadyFunc,
+			GetSessionFunc: baseStore.GetSessionFunc,
+			GetAccountFunc: baseStore.GetAccountFunc,
+			GetVendorFunc: baseStore.GetVendorFunc,
+			GetCustomerFunc: baseStore.GetCustomerFunc,
+			GetAccountsByRealmFunc: func(ctx context.Context, realmID string) ([]database.ShadowErpAccount, error) {
+				return []database.ShadowErpAccount{
+					{Name: "Amex Corporate", AccountType: "Credit Card"},
+				}, nil
+			},
+			MarkTransferHoldFunc: func(ctx context.Context, id pgtype.UUID) error {
+				holdCalled = true
+				return nil
+			},
+		}
+		w := newQboTestWorker(store, nil)
+		row := database.FignodeStagingTransaction{
+			ID:                 makeUUID("00000000-0000-0000-0000-000000000020"),
+			SessionID:          makeUUID("550e8400-e29b-41d4-a716-446655440000"),
+			CashDirection:      makeText("OUTFLOW"),
+			PredictedVendorID:  makeUUID("770e8400-e29b-41d4-a716-446655440002"),
+			PredictedAccountID: makeUUID("990e8400-e29b-41d4-a716-446655440004"),
+			RawAmount:          "500.00",
+			RawDescription:     makeText("Payment to amex corporate account"),
+		}
+		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
+		if len(failures) > 0 {
+			t.Fatalf("unexpected failures, got %v", failures)
+		}
+		if len(items) != 0 {
+			t.Fatalf("expected 0 items (intercepted), got %d", len(items))
+		}
+		if !holdCalled {
+			t.Errorf("expected MarkStagingTransactionTransferHold to be called")
+		}
+	})
+
+	t.Run("Deposit Guardrail blocks Accounts Receivable", func(t *testing.T) {
+		store := &qboSyncMockStore{
+			GetReadyFunc: baseStore.GetReadyFunc,
+			GetSessionFunc: baseStore.GetSessionFunc,
+			GetVendorFunc: baseStore.GetVendorFunc,
+			GetCustomerFunc: baseStore.GetCustomerFunc,
+			GetAccountFunc: func(ctx context.Context, id pgtype.UUID) (database.ShadowErpAccount, error) {
+				return database.ShadowErpAccount{ErpID: "ar-123", AccountType: "Accounts Receivable", AccountSubType: pgtype.Text{String: "AccountsReceivable", Valid: true}}, nil
+			},
+		}
+		w := newQboTestWorker(store, nil)
+		row := database.FignodeStagingTransaction{
+			ID:                 makeUUID("00000000-0000-0000-0000-000000000021"),
+			SessionID:          makeUUID("550e8400-e29b-41d4-a716-446655440000"),
+			CashDirection:      makeText("INFLOW"),
+			PredictedCustomerID: makeUUID("880e8400-e29b-41d4-a716-446655440003"),
+			PredictedAccountID: makeUUID("990e8400-e29b-41d4-a716-446655440004"),
+			RawAmount:          "100.00",
+		}
+		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
+		if len(items) != 0 {
+			t.Fatalf("expected 0 items, got %d", len(items))
+		}
+		if msg, ok := failures[row.ID]; !ok || "Direct deposits cannot hit AR. Please map to an Income account." != msg {
+			t.Errorf("expected AR guardrail failure message, got %v", failures)
+		}
+	})
+
+	t.Run("Deposit Guardrail blocks Retained Earnings", func(t *testing.T) {
+		store := &qboSyncMockStore{
+			GetReadyFunc: baseStore.GetReadyFunc,
+			GetSessionFunc: baseStore.GetSessionFunc,
+			GetVendorFunc: baseStore.GetVendorFunc,
+			GetCustomerFunc: baseStore.GetCustomerFunc,
+			GetAccountFunc: func(ctx context.Context, id pgtype.UUID) (database.ShadowErpAccount, error) {
+				return database.ShadowErpAccount{ErpID: "eq-123", AccountType: "Equity", AccountSubType: pgtype.Text{String: "RetainedEarnings", Valid: true}}, nil
+			},
+		}
+		w := newQboTestWorker(store, nil)
+		row := database.FignodeStagingTransaction{
+			ID:                 makeUUID("00000000-0000-0000-0000-000000000022"),
+			SessionID:          makeUUID("550e8400-e29b-41d4-a716-446655440000"),
+			CashDirection:      makeText("INFLOW"),
+			PredictedCustomerID: makeUUID("880e8400-e29b-41d4-a716-446655440003"),
+			PredictedAccountID: makeUUID("990e8400-e29b-41d4-a716-446655440004"),
+			RawAmount:          "100.00",
+		}
+		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
+		if len(items) != 0 {
+			t.Fatalf("expected 0 items, got %d", len(items))
+		}
+		if msg, ok := failures[row.ID]; !ok || "System Block: Intuit prohibits direct equity entries to Retained Earnings." != msg {
+			t.Errorf("expected RetainedEarnings guardrail failure message, got %v", failures)
 		}
 	})
 }
@@ -920,12 +955,12 @@ func TestHandle_InvalidJSON(t *testing.T) {
 
 func TestHandle_NoReadyRows(t *testing.T) {
 	store := &qboSyncMockStore{
-		GetReadyFunc: func(_ context.Context, realmID pgtype.Text) ([]database.FignodeStagingTransaction, error) {
+		GetReadyFunc: func(_ context.Context, sessionID pgtype.UUID) ([]database.FignodeStagingTransaction, error) {
 			return nil, nil
 		},
 	}
 	w := newQboTestWorker(store, nil)
-	payload, _ := json.Marshal(map[string]string{"realm_id": "r1"})
+	payload, _ := json.Marshal(map[string]string{"session_id": "550e8400-e29b-41d4-a716-446655440000"})
 	msg := &nats.Msg{Subject: "worker.inbox.qbo_sync", Data: payload}
 	err := w.Handle(context.Background(), msg)
 	if err != nil {
@@ -935,12 +970,12 @@ func TestHandle_NoReadyRows(t *testing.T) {
 
 func TestHandle_FetchError(t *testing.T) {
 	store := &qboSyncMockStore{
-		GetReadyFunc: func(_ context.Context, realmID pgtype.Text) ([]database.FignodeStagingTransaction, error) {
+		GetReadyFunc: func(_ context.Context, sessionID pgtype.UUID) ([]database.FignodeStagingTransaction, error) {
 			return nil, errors.New("db down")
 		},
 	}
 	w := newQboTestWorker(store, nil)
-	payload, _ := json.Marshal(map[string]string{"realm_id": "r1"})
+	payload, _ := json.Marshal(map[string]string{"session_id": "550e8400-e29b-41d4-a716-446655440000"})
 	msg := &nats.Msg{Subject: "worker.inbox.qbo_sync", Data: payload}
 	err := w.Handle(context.Background(), msg)
 	if err == nil {
@@ -951,7 +986,7 @@ func TestHandle_FetchError(t *testing.T) {
 func TestHandle_AllHydrationFailures(t *testing.T) {
 	var failedIDs []pgtype.UUID
 	store := &qboSyncMockStore{
-		GetReadyFunc: func(_ context.Context, realmID pgtype.Text) ([]database.FignodeStagingTransaction, error) {
+		GetReadyFunc: func(_ context.Context, sessionID pgtype.UUID) ([]database.FignodeStagingTransaction, error) {
 			return []database.FignodeStagingTransaction{
 				{
 					ID:                  makeUUID("00000000-0000-0000-0000-000000000001"),
@@ -971,7 +1006,7 @@ func TestHandle_AllHydrationFailures(t *testing.T) {
 		},
 	}
 	w := newQboTestWorker(store, nil)
-	payload, _ := json.Marshal(map[string]string{"realm_id": "r1"})
+	payload, _ := json.Marshal(map[string]string{"session_id": "550e8400-e29b-41d4-a716-446655440000"})
 	msg := &nats.Msg{Subject: "worker.inbox.qbo_sync", Data: payload}
 	err := w.Handle(context.Background(), msg)
 	if err != nil {
@@ -990,7 +1025,7 @@ func TestHandle_BatchPushFatal(t *testing.T) {
 
 	var failedIDs []pgtype.UUID
 	store := &qboSyncMockStore{
-		GetReadyFunc: func(_ context.Context, realmID pgtype.Text) ([]database.FignodeStagingTransaction, error) {
+		GetReadyFunc: func(_ context.Context, sessionID pgtype.UUID) ([]database.FignodeStagingTransaction, error) {
 			return []database.FignodeStagingTransaction{
 				{ID: makeUUID("00000000-0000-0000-0000-000000000001"), SessionID: sid, CashDirection: makeText("INFLOW"), PredictedCustomerID: cid, PredictedAccountID: aid, RawAmount: "100"},
 			}, nil
@@ -1015,7 +1050,7 @@ func TestHandle_BatchPushFatal(t *testing.T) {
 		},
 	}
 	w := newQboTestWorker(store, conn)
-	payload, _ := json.Marshal(map[string]string{"realm_id": "r1"})
+	payload, _ := json.Marshal(map[string]string{"session_id": "550e8400-e29b-41d4-a716-446655440000"})
 	msg := &nats.Msg{Subject: "worker.inbox.qbo_sync", Data: payload}
 	err := w.Handle(context.Background(), msg)
 	if err == nil {
@@ -1033,7 +1068,7 @@ func TestHandle_OAuthRevoked(t *testing.T) {
 	aid := makeUUID("880e8400-e29b-41d4-a716-446655440003")
 
 	store := &qboSyncMockStore{
-		GetReadyFunc: func(_ context.Context, realmID pgtype.Text) ([]database.FignodeStagingTransaction, error) {
+		GetReadyFunc: func(_ context.Context, sessionID pgtype.UUID) ([]database.FignodeStagingTransaction, error) {
 			return []database.FignodeStagingTransaction{
 				{ID: makeUUID("00000000-0000-0000-0000-000000000001"), SessionID: sid, CashDirection: makeText("INFLOW"), PredictedCustomerID: cid, PredictedAccountID: aid, RawAmount: "100"},
 			}, nil
@@ -1055,7 +1090,7 @@ func TestHandle_OAuthRevoked(t *testing.T) {
 		},
 	}
 	w := newQboTestWorker(store, conn)
-	payload, _ := json.Marshal(map[string]string{"realm_id": "r1"})
+	payload, _ := json.Marshal(map[string]string{"session_id": "550e8400-e29b-41d4-a716-446655440000"})
 	msg := &nats.Msg{Subject: "worker.inbox.qbo_sync", Data: payload}
 	err := w.Handle(context.Background(), msg)
 	if err != nil {
@@ -1072,7 +1107,7 @@ func TestHandle_FullSuccess(t *testing.T) {
 
 	var syncedCount int
 	store := &qboSyncMockStore{
-		GetReadyFunc: func(_ context.Context, realmID pgtype.Text) ([]database.FignodeStagingTransaction, error) {
+		GetReadyFunc: func(_ context.Context, sessionID pgtype.UUID) ([]database.FignodeStagingTransaction, error) {
 			return []database.FignodeStagingTransaction{
 				{ID: makeUUID("00000000-0000-0000-0000-000000000001"), SessionID: sid, CashDirection: makeText("INFLOW"), PredictedCustomerID: cid, PredictedAccountID: aid, RawAmount: "100"},
 				{ID: makeUUID("00000000-0000-0000-0000-000000000002"), SessionID: sid, CashDirection: makeText("OUTFLOW"), PredictedVendorID: vid, PredictedAccountID: aid, RawAmount: "50"},
@@ -1111,7 +1146,7 @@ func TestHandle_FullSuccess(t *testing.T) {
 		},
 	}
 	w := newQboTestWorker(store, conn)
-	payload, _ := json.Marshal(map[string]string{"realm_id": "r1"})
+	payload, _ := json.Marshal(map[string]string{"session_id": "550e8400-e29b-41d4-a716-446655440000"})
 	msg := &nats.Msg{Subject: "worker.inbox.qbo_sync", Data: payload}
 	err := w.Handle(context.Background(), msg)
 	if err != nil {
@@ -1130,7 +1165,7 @@ func TestHandle_PartialBatchFailure(t *testing.T) {
 
 	var synced, failed int
 	store := &qboSyncMockStore{
-		GetReadyFunc: func(_ context.Context, realmID pgtype.Text) ([]database.FignodeStagingTransaction, error) {
+		GetReadyFunc: func(_ context.Context, sessionID pgtype.UUID) ([]database.FignodeStagingTransaction, error) {
 			return []database.FignodeStagingTransaction{
 				{ID: makeUUID("00000000-0000-0000-0000-000000000001"), SessionID: sid, CashDirection: makeText("INFLOW"), PredictedCustomerID: cid, PredictedAccountID: aid, RawAmount: "100"},
 			}, nil
@@ -1155,7 +1190,7 @@ func TestHandle_PartialBatchFailure(t *testing.T) {
 		},
 	}
 	w := newQboTestWorker(store, conn)
-	payload, _ := json.Marshal(map[string]string{"realm_id": "r1"})
+	payload, _ := json.Marshal(map[string]string{"session_id": "550e8400-e29b-41d4-a716-446655440000"})
 	msg := &nats.Msg{Subject: "worker.inbox.qbo_sync", Data: payload}
 	err := w.Handle(context.Background(), msg)
 	if err != nil {

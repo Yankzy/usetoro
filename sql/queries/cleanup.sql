@@ -151,6 +151,40 @@ WHERE cs.session_id = $1
   AND (sqlc.narg('status')::TEXT IS NULL OR cs.status = sqlc.narg('status')::TEXT)
 ORDER BY cs.parsed_date ASC NULLS LAST, cs.id ASC;
 
+-- name: GetSessionRowsPaginated :many
+SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
+       cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,
+       cs.confidence_score, cs.ai_reasoning,
+       cs.duplicate_of, cs.is_recurring, cs.split_suggestion,
+       cs.override_vendor_id, cs.override_customer_id, cs.override_account_id,
+       cs.merchant_name, cs.category,
+       cs.status, cs.erp_transaction_id, cs.created_at, cs.updated_at,
+       COALESCE(v.display_name, cs.predicted_vendor_name, '') AS predicted_vendor_name,
+       COALESCE(c.display_name, cs.predicted_customer_name, '') AS predicted_customer_name,
+       a.name         AS predicted_account_name,
+       a.account_type AS predicted_account_type,
+       ov.display_name AS override_vendor_name,
+       oc.display_name AS override_customer_name,
+       oa.name         AS override_account_name
+FROM fignode.staging_transactions cs
+LEFT JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
+LEFT JOIN shadow_erp.vendors  v  ON v.id  = cs.predicted_vendor_id
+LEFT JOIN shadow_erp.customers c ON c.id  = cs.predicted_customer_id
+LEFT JOIN shadow_erp.accounts a  ON a.id  = cs.predicted_account_id
+LEFT JOIN shadow_erp.vendors  ov ON ov.id = cs.override_vendor_id
+LEFT JOIN shadow_erp.customers oc ON oc.id = cs.override_customer_id
+LEFT JOIN shadow_erp.accounts oa ON oa.id = cs.override_account_id
+WHERE cs.session_id = $1
+  AND (sqlc.narg('status')::TEXT IS NULL OR cs.status = sqlc.narg('status')::TEXT)
+ORDER BY cs.parsed_date ASC NULLS LAST, cs.id ASC
+LIMIT $2 OFFSET $3;
+
+-- name: CountSessionRows :one
+SELECT COUNT(*)
+FROM fignode.staging_transactions cs
+WHERE cs.session_id = $1
+  AND (sqlc.narg('status')::TEXT IS NULL OR cs.status = sqlc.narg('status')::TEXT);
+
 -- name: GetCleanupRow :one
 SELECT cs.id, cs.session_id, ss.realm_id, ss.bank_account_id, ss.outflow_is, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date,
        cs.predicted_vendor_id, cs.predicted_customer_id, cs.predicted_account_id,

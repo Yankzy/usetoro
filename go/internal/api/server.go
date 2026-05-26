@@ -80,11 +80,13 @@ func NewServer(
 	transactionService := accounting.NewTransactionService(logger, st.Queries, nil, nil, nil, nil, natsConn, "toro.erp.events.*")
 	entityService := accounting.NewEntityService(logger, st.Queries)
 
+	stripeConnector := connectors.NewStripeConnector(logger, cfg)
+
 	h := NewHandler(
 		logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig,
 		authenticator, redisClient, st.Queries, reconciler, attachableService,
 		transactionService, entityService,
-		st.Pool, st.Queries, natsClient, exporter, wm,
+		st.Pool, st.Queries, natsClient, exporter, wm, stripeConnector,
 	)
 	mux := NewRouter(h, wm)
 

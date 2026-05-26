@@ -46,6 +46,8 @@ services:
       QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION}
       AUTH_PUBLIC_KEY: ${AUTH_PUBLIC_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
 
     depends_on:
@@ -84,6 +86,8 @@ services:
       NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       PINECONE_API_KEY: ${PINECONE_API_KEY}
       PINECONE_INDEX: ${PINECONE_INDEX}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
@@ -119,6 +123,8 @@ services:
       PINECONE_API_KEY: ${PINECONE_API_KEY}
       PINECONE_INDEX: ${PINECONE_INDEX}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
@@ -169,6 +175,8 @@ services:
       NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
     depends_on:
       db:
         condition: service_healthy
@@ -281,6 +289,8 @@ services:
       AUTH_PUBLIC_KEY: ${AUTH_PUBLIC_KEY}
       PORT: 8083
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       PGOPTIONS: "-c search_path=fignode,toro_core,shadow_erp,public"
     depends_on:
       db:
@@ -309,6 +319,8 @@ services:
       PINECONE_API_KEY: ${PINECONE_API_KEY}
       PINECONE_INDEX: ${PINECONE_INDEX}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"

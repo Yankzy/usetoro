@@ -200,7 +200,7 @@ rebuild_all:
 rebuild: fix-permissions
 	@if [ -n "$(RUN_ARGS)" ]; then \
 		$(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) up --build -d --force-recreate $(RUN_ARGS); \
-		$(MAKE) logs ARGS="$(RUN_ARGS)"; \
+		$(MAKE) logs; \
 	else \
 		echo "Enter the service name: "; \
 		read SER_NAME; \
@@ -216,6 +216,9 @@ ingest-messy:
 nats_consumers:
 	./container/scripts/list-nats-consumers.sh 
 
+
+build_prod:
+	docker compose -f container/docker-compose.prod.yml build
 
 docker_context_prod_push:
 	docker compose -f container/docker-compose.prod.yml push

@@ -45,7 +45,20 @@
       "Bash(xargs ls -t)",
       "Bash(xargs cat)",
       "Bash(/tmp/extract_cmds.sh)",
-      "Read(//private/tmp/**)"
+      "Read(//private/tmp/**)",
+      "Bash(go version *)",
+      "Bash(go mod *)",
+      "Bash(go list *)",
+      "Bash(go env *)",
+      "Bash(GOPATH=$\\(go env GOPATH\\) GOPROXY=https://proxy.golang.org,direct go list -m -versions github.com/stripe/stripe-go/v85)",
+      "Bash(GOWORK=off GOPROXY=https://proxy.golang.org,direct go list -m -versions github.com/stripe/stripe-go/v85)",
+      "Bash(make vndr *)",
+      "Bash(go run *)",
+      "Bash(GOWORK=off go run -mod=vendor github.com/99designs/gqlgen generate)",
+      "Bash(~/go/bin/gqlgen generate *)",
+      "Bash(xxd /Users/Yankz/programming/usetoro/go/internal/wshandler/workflow_consumer.go)",
+      "Bash(GOWORK=off go run github.com/99designs/gqlgen generate)",
+      "Bash(GOWORK=off go run -mod=mod github.com/99designs/gqlgen generate)"
     ]
   }
 }

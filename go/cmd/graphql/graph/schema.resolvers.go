@@ -9,9 +9,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"math/big"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1214,6 +1216,100 @@ func (r *queryResolver) FignodeBatch(ctx context.Context, sessionID *string, lim
 	return out, nil
 }
 
+// StagingRowsConnection is the resolver for the stagingRowsConnection field.
+func (r *queryResolver) StagingRowsConnection(ctx context.Context, sessionID string, status *string, first *int32, after *string) (*model.FignodeStagingRowConnection, error) {
+	sessionUUID, err := uuid.Parse(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid session id")
+	}
+	pgSessionID := pgtype.UUID{Bytes: sessionUUID, Valid: true}
+
+	session, err := r.Store.Queries.GetCleanupSession(ctx, pgSessionID)
+	if err != nil {
+		r.Logger.Error("StagingRowsConnection: session not found", "session_id", sessionID, "error", err)
+		return nil, fmt.Errorf("session not found")
+	}
+
+	var pgStatus pgtype.Text
+	if status != nil {
+		pgStatus = pgtype.Text{String: *status, Valid: true}
+	}
+
+	totalCount, err := r.Store.Queries.CountSessionRows(ctx, database.CountSessionRowsParams{
+		SessionID: pgSessionID,
+		Status:    pgStatus,
+	})
+	if err != nil {
+		r.Logger.Error("StagingRowsConnection: count error", "session_id", sessionID, "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	limit := int32(50)
+	if first != nil {
+		limit = *first
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 250 {
+		limit = 250
+	}
+
+	offset := int32(0)
+	if after != nil && *after != "" {
+		decoded, decErr := base64.StdEncoding.DecodeString(*after)
+		if decErr == nil {
+			if o, parseErr := strconv.Atoi(string(decoded)); parseErr == nil {
+				offset = int32(o)
+			}
+		}
+	}
+
+	rows, err := r.Store.Queries.GetSessionRowsPaginated(ctx, database.GetSessionRowsPaginatedParams{
+		SessionID: pgSessionID,
+		Limit:     limit + 1,
+		Offset:    offset,
+		Status:    pgStatus,
+	})
+	if err != nil {
+		r.Logger.Error("StagingRowsConnection: db error", "session_id", sessionID, "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	hasNextPage := len(rows) > int(limit)
+	if hasNextPage {
+		rows = rows[:limit]
+	}
+
+	edges := make([]*model.FignodeStagingRowEdge, len(rows))
+	nodes := make([]*model.FignodeStagingRow, len(rows))
+	for i, row := range rows {
+		mapped := mapSessionRowPaginatedToModel(row)
+		nodes[i] = mapped
+		cursor := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%d", offset+int32(i)+1)))
+		edges[i] = &model.FignodeStagingRowEdge{
+			Cursor: cursor,
+			Node:   mapped,
+		}
+	}
+
+	if session.BankAccountID.Valid {
+		if bankName, err := r.Store.Queries.GetBankAccountName(ctx, session.BankAccountID); err == nil {
+			applyPaidFields(nodes, bankName)
+		}
+	}
+
+	accountNamesByType := buildAccountNamesByType(ctx, r, session)
+
+	return &model.FignodeStagingRowConnection{
+		Edges:              edges,
+		Nodes:              nodes,
+		PageInfo:           &model.PageInfo{HasNextPage: hasNextPage},
+		TotalCount:         int32(totalCount),
+		AccountNamesByType: accountNamesByType,
+	}, nil
+}
+
 // StagingRows is the resolver for the stagingRows field.
 func (r *queryResolver) StagingRows(ctx context.Context, sessionID string, status *string) ([]*model.FignodeStagingRow, error) {
 	sessionUUID, err := uuid.Parse(sessionID)
@@ -1239,6 +1335,11 @@ func (r *queryResolver) StagingRows(ctx context.Context, sessionID string, statu
 	out := make([]*model.FignodeStagingRow, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, mapSessionRowToModel(row))
+	}
+	if len(rows) > 0 && rows[0].BankAccountID.Valid {
+		if bankName, err := r.Store.Queries.GetBankAccountName(ctx, rows[0].BankAccountID); err == nil {
+			applyPaidFields(out, bankName)
+		}
 	}
 	return out, nil
 }

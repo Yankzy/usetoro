@@ -997,3 +997,97 @@ func (r *queryResolver) cleanupRowsHelper(ctx context.Context, sessionID string,
 	}
 	return out, nil
 }
+
+// mapSessionRowPaginatedToModel delegates to mapSessionRowToModel since
+// GetSessionRowsPaginatedRow has the same fields.
+func mapSessionRowPaginatedToModel(r database.GetSessionRowsPaginatedRow) *model.FignodeStagingRow {
+	return mapSessionRowToModel(database.GetSessionRowsRow{
+		ID:                    r.ID,
+		SessionID:             r.SessionID,
+		RealmID:               r.RealmID,
+		BankAccountID:         r.BankAccountID,
+		OutflowIs:             r.OutflowIs,
+		SourceType:            r.SourceType,
+		RawDescription:        r.RawDescription,
+		RawAmount:             r.RawAmount,
+		RawDate:               r.RawDate,
+		ParsedDate:            r.ParsedDate,
+		PredictedVendorID:     r.PredictedVendorID,
+		PredictedCustomerID:   r.PredictedCustomerID,
+		PredictedAccountID:    r.PredictedAccountID,
+		ConfidenceScore:       r.ConfidenceScore,
+		AiReasoning:           r.AiReasoning,
+		DuplicateOf:           r.DuplicateOf,
+		IsRecurring:           r.IsRecurring,
+		SplitSuggestion:       r.SplitSuggestion,
+		OverrideVendorID:      r.OverrideVendorID,
+		OverrideCustomerID:    r.OverrideCustomerID,
+		OverrideAccountID:     r.OverrideAccountID,
+		MerchantName:          r.MerchantName,
+		Category:              r.Category,
+		Status:                r.Status,
+		ErpTransactionID:      r.ErpTransactionID,
+		CreatedAt:             r.CreatedAt,
+		UpdatedAt:             r.UpdatedAt,
+		PredictedVendorName:   r.PredictedVendorName,
+		PredictedCustomerName: r.PredictedCustomerName,
+		PredictedAccountName:  r.PredictedAccountName,
+		PredictedAccountType:  r.PredictedAccountType,
+		OverrideVendorName:    r.OverrideVendorName,
+		OverrideCustomerName:  r.OverrideCustomerName,
+		OverrideAccountName:   r.OverrideAccountName,
+	})
+}
+
+// buildAccountNamesByType fetches the Chart of Accounts for the session's realm
+// and groups account names by their AccountType for the frontend dropdown.
+func buildAccountNamesByType(ctx context.Context, r *queryResolver, session database.GetCleanupSessionRow) []*model.AccountNamesByType {
+	if !session.RealmID.Valid || session.RealmID.String == "" {
+		return nil
+	}
+	accounts, err := r.Store.Queries.GetAccountsByRealm(ctx, session.RealmID.String)
+	if err != nil {
+		r.Logger.Error("buildAccountNamesByType: failed to fetch accounts", "error", err)
+		return nil
+	}
+	byType := make(map[string][]string)
+	for _, a := range accounts {
+		at := a.AccountType
+		if at == "" {
+			at = "Other"
+		}
+		byType[at] = append(byType[at], a.Name)
+	}
+	if len(byType) == 0 {
+		return nil
+	}
+	out := make([]*model.AccountNamesByType, 0, len(byType))
+	for accountType, names := range byType {
+		out = append(out, &model.AccountNamesByType{
+			AccountType: accountType,
+			Names:       names,
+		})
+	}
+	return out
+}
+
+// applyPaidFields sets paidWith or paidInto on each row based on transaction
+// direction derived from the raw amount sign. Negative amounts represent money
+// leaving the account (outflow) so they are "paid with" the bank account.
+// Positive amounts represent money entering (inflow) so they are "paid into"
+// the bank account.
+func applyPaidFields(rows []*model.FignodeStagingRow, bankAccountName string) {
+	if bankAccountName == "" {
+		return
+	}
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		if row.RawAmount < 0 {
+			row.PaidWith = &bankAccountName
+		} else if row.RawAmount > 0 {
+			row.PaidInto = &bankAccountName
+		}
+	}
+}

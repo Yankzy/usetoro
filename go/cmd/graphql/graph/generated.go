@@ -78,6 +78,11 @@ type ComplexityRoot struct {
 		Score     func(childComplexity int) int
 	}
 
+	AccountNamesByType struct {
+		AccountType func(childComplexity int) int
+		Names       func(childComplexity int) int
+	}
+
 	AuthPayload struct {
 		AccessToken  func(childComplexity int) int
 		ExpiresAt    func(childComplexity int) int
@@ -111,13 +116,15 @@ type ComplexityRoot struct {
 	}
 
 	FignodeSession struct {
-		CreatedAt func(childComplexity int) int
-		FileName  func(childComplexity int) int
-		ID        func(childComplexity int) int
-		RealmID   func(childComplexity int) int
-		RowCount  func(childComplexity int) int
-		Status    func(childComplexity int) int
-		UpdatedAt func(childComplexity int) int
+		AmbiguityReason func(childComplexity int) int
+		CreatedAt       func(childComplexity int) int
+		FileName        func(childComplexity int) int
+		ID              func(childComplexity int) int
+		IsAmbiguous     func(childComplexity int) int
+		RealmID         func(childComplexity int) int
+		RowCount        func(childComplexity int) int
+		Status          func(childComplexity int) int
+		UpdatedAt       func(childComplexity int) int
 	}
 
 	FignodeStagingRow struct {
@@ -134,6 +141,8 @@ type ComplexityRoot struct {
 		OverrideAccountName  func(childComplexity int) int
 		OverrideVendorID     func(childComplexity int) int
 		OverrideVendorName   func(childComplexity int) int
+		PaidInto             func(childComplexity int) int
+		PaidWith             func(childComplexity int) int
 		PredictedAccountID   func(childComplexity int) int
 		PredictedAccountName func(childComplexity int) int
 		PredictedAccountType func(childComplexity int) int
@@ -149,6 +158,19 @@ type ComplexityRoot struct {
 		SplitSuggestion      func(childComplexity int) int
 		Status               func(childComplexity int) int
 		UpdatedAt            func(childComplexity int) int
+	}
+
+	FignodeStagingRowConnection struct {
+		AccountNamesByType func(childComplexity int) int
+		Edges              func(childComplexity int) int
+		Nodes              func(childComplexity int) int
+		PageInfo           func(childComplexity int) int
+		TotalCount         func(childComplexity int) int
+	}
+
+	FignodeStagingRowEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
 	}
 
 	Mutation struct {
@@ -182,25 +204,26 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		Accounts             func(childComplexity int, realmID string, typeArg *string, active *bool) int
-		Customers            func(childComplexity int, realmID string, search *string) int
-		FignodeBatch         func(childComplexity int, sessionID *string, limit int32) int
-		FignodeSession       func(childComplexity int, sessionID string) int
-		FignodeSessions      func(childComplexity int, realmID *string) int
-		QboAccount           func(childComplexity int, realmID string) int
-		QboConnection        func(childComplexity int) int
-		QboCustomers         func(childComplexity int, realmID string) int
-		QboCustomersByTenant func(childComplexity int, tenantID string, includeChildren *bool) int
-		QboVendors           func(childComplexity int, realmID string) int
-		QboVendorsByEntity   func(childComplexity int, entityID string) int
-		QboVendorsByTenant   func(childComplexity int, tenantID string) int
-		ResolveEntity        func(childComplexity int, entityType string, name string) int
-		StagingRows          func(childComplexity int, sessionID string, status *string) int
-		SuggestAccounts      func(childComplexity int, description string) int
-		Tenants              func(childComplexity int, limit int32, offset int32) int
-		Transactions         func(childComplexity int, realmID string, status *string) int
-		User                 func(childComplexity int) int
-		Vendors              func(childComplexity int, realmID string, search *string) int
+		Accounts              func(childComplexity int, realmID string, typeArg *string, active *bool) int
+		Customers             func(childComplexity int, realmID string, search *string) int
+		FignodeBatch          func(childComplexity int, sessionID *string, limit int32) int
+		FignodeSession        func(childComplexity int, sessionID string) int
+		FignodeSessions       func(childComplexity int, realmID *string) int
+		QboAccount            func(childComplexity int, realmID string) int
+		QboConnection         func(childComplexity int) int
+		QboCustomers          func(childComplexity int, realmID string) int
+		QboCustomersByTenant  func(childComplexity int, tenantID string, includeChildren *bool) int
+		QboVendors            func(childComplexity int, realmID string) int
+		QboVendorsByEntity    func(childComplexity int, entityID string) int
+		QboVendorsByTenant    func(childComplexity int, tenantID string) int
+		ResolveEntity         func(childComplexity int, entityType string, name string) int
+		StagingRows           func(childComplexity int, sessionID string, status *string) int
+		StagingRowsConnection func(childComplexity int, sessionID string, status *string, first *int32, after *string) int
+		SuggestAccounts       func(childComplexity int, description string) int
+		Tenants               func(childComplexity int, limit int32, offset int32) int
+		Transactions          func(childComplexity int, realmID string, status *string) int
+		User                  func(childComplexity int) int
+		Vendors               func(childComplexity int, realmID string, search *string) int
 	}
 
 	Tenant struct {
@@ -285,6 +308,7 @@ type QueryResolver interface {
 	FignodeSession(ctx context.Context, sessionID string) (*model.FignodeSession, error)
 	FignodeBatch(ctx context.Context, sessionID *string, limit int32) ([]*model.FignodeStagingRow, error)
 	StagingRows(ctx context.Context, sessionID string, status *string) ([]*model.FignodeStagingRow, error)
+	StagingRowsConnection(ctx context.Context, sessionID string, status *string, first *int32, after *string) (*model.FignodeStagingRowConnection, error)
 	Transactions(ctx context.Context, realmID string, status *string) ([]*model.Transaction, error)
 	Accounts(ctx context.Context, realmID string, typeArg *string, active *bool) ([]*model.Account, error)
 	Vendors(ctx context.Context, realmID string, search *string) ([]*model.Vendor, error)
@@ -456,6 +480,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.AccountMatch.Score(childComplexity), true
 
+	case "AccountNamesByType.accountType":
+		if e.complexity.AccountNamesByType.AccountType == nil {
+			break
+		}
+
+		return e.complexity.AccountNamesByType.AccountType(childComplexity), true
+	case "AccountNamesByType.names":
+		if e.complexity.AccountNamesByType.Names == nil {
+			break
+		}
+
+		return e.complexity.AccountNamesByType.Names(childComplexity), true
+
 	case "AuthPayload.accessToken":
 		if e.complexity.AuthPayload.AccessToken == nil {
 			break
@@ -580,6 +617,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.FignodePostResult.SessionID(childComplexity), true
 
+	case "FignodeSession.ambiguityReason":
+		if e.complexity.FignodeSession.AmbiguityReason == nil {
+			break
+		}
+
+		return e.complexity.FignodeSession.AmbiguityReason(childComplexity), true
 	case "FignodeSession.createdAt":
 		if e.complexity.FignodeSession.CreatedAt == nil {
 			break
@@ -598,6 +641,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.FignodeSession.ID(childComplexity), true
+	case "FignodeSession.isAmbiguous":
+		if e.complexity.FignodeSession.IsAmbiguous == nil {
+			break
+		}
+
+		return e.complexity.FignodeSession.IsAmbiguous(childComplexity), true
 	case "FignodeSession.realmId":
 		if e.complexity.FignodeSession.RealmID == nil {
 			break
@@ -701,6 +750,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.FignodeStagingRow.OverrideVendorName(childComplexity), true
+	case "FignodeStagingRow.paidInto":
+		if e.complexity.FignodeStagingRow.PaidInto == nil {
+			break
+		}
+
+		return e.complexity.FignodeStagingRow.PaidInto(childComplexity), true
+	case "FignodeStagingRow.paidWith":
+		if e.complexity.FignodeStagingRow.PaidWith == nil {
+			break
+		}
+
+		return e.complexity.FignodeStagingRow.PaidWith(childComplexity), true
 	case "FignodeStagingRow.predictedAccountId":
 		if e.complexity.FignodeStagingRow.PredictedAccountID == nil {
 			break
@@ -791,6 +852,50 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.FignodeStagingRow.UpdatedAt(childComplexity), true
+
+	case "FignodeStagingRowConnection.accountNamesByType":
+		if e.complexity.FignodeStagingRowConnection.AccountNamesByType == nil {
+			break
+		}
+
+		return e.complexity.FignodeStagingRowConnection.AccountNamesByType(childComplexity), true
+	case "FignodeStagingRowConnection.edges":
+		if e.complexity.FignodeStagingRowConnection.Edges == nil {
+			break
+		}
+
+		return e.complexity.FignodeStagingRowConnection.Edges(childComplexity), true
+	case "FignodeStagingRowConnection.nodes":
+		if e.complexity.FignodeStagingRowConnection.Nodes == nil {
+			break
+		}
+
+		return e.complexity.FignodeStagingRowConnection.Nodes(childComplexity), true
+	case "FignodeStagingRowConnection.pageInfo":
+		if e.complexity.FignodeStagingRowConnection.PageInfo == nil {
+			break
+		}
+
+		return e.complexity.FignodeStagingRowConnection.PageInfo(childComplexity), true
+	case "FignodeStagingRowConnection.totalCount":
+		if e.complexity.FignodeStagingRowConnection.TotalCount == nil {
+			break
+		}
+
+		return e.complexity.FignodeStagingRowConnection.TotalCount(childComplexity), true
+
+	case "FignodeStagingRowEdge.cursor":
+		if e.complexity.FignodeStagingRowEdge.Cursor == nil {
+			break
+		}
+
+		return e.complexity.FignodeStagingRowEdge.Cursor(childComplexity), true
+	case "FignodeStagingRowEdge.node":
+		if e.complexity.FignodeStagingRowEdge.Node == nil {
+			break
+		}
+
+		return e.complexity.FignodeStagingRowEdge.Node(childComplexity), true
 
 	case "Mutation.approveAllByVendor":
 		if e.complexity.Mutation.ApproveAllByVendor == nil {
@@ -1150,6 +1255,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.StagingRows(childComplexity, args["sessionId"].(string), args["status"].(*string)), true
+	case "Query.stagingRowsConnection":
+		if e.complexity.Query.StagingRowsConnection == nil {
+			break
+		}
+
+		args, err := ec.field_Query_stagingRowsConnection_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.StagingRowsConnection(childComplexity, args["sessionId"].(string), args["status"].(*string), args["first"].(*int32), args["after"].(*string)), true
 	case "Query.suggestAccounts":
 		if e.complexity.Query.SuggestAccounts == nil {
 			break
@@ -1900,6 +2016,32 @@ func (ec *executionContext) field_Query_resolveEntity_args(ctx context.Context, 
 		return nil, err
 	}
 	args["name"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_stagingRowsConnection_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "sessionId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["sessionId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "status", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["status"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "first", ec.unmarshalOInt2ᚖint32)
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "after", ec.unmarshalOString2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg3
 	return args, nil
 }
 
@@ -2726,6 +2868,64 @@ func (ec *executionContext) fieldContext_AccountMatch_name(_ context.Context, fi
 	return fc, nil
 }
 
+func (ec *executionContext) _AccountNamesByType_accountType(ctx context.Context, field graphql.CollectedField, obj *model.AccountNamesByType) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AccountNamesByType_accountType,
+		func(ctx context.Context) (any, error) {
+			return obj.AccountType, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_AccountNamesByType_accountType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AccountNamesByType",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AccountNamesByType_names(ctx context.Context, field graphql.CollectedField, obj *model.AccountNamesByType) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AccountNamesByType_names,
+		func(ctx context.Context) (any, error) {
+			return obj.Names, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_AccountNamesByType_names(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AccountNamesByType",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _AuthPayload_accessToken(ctx context.Context, field graphql.CollectedField, obj *model.AuthPayload) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -3427,6 +3627,64 @@ func (ec *executionContext) fieldContext_FignodeSession_rowCount(_ context.Conte
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _FignodeSession_isAmbiguous(ctx context.Context, field graphql.CollectedField, obj *model.FignodeSession) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeSession_isAmbiguous,
+		func(ctx context.Context) (any, error) {
+			return obj.IsAmbiguous, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeSession_isAmbiguous(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeSession",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _FignodeSession_ambiguityReason(ctx context.Context, field graphql.CollectedField, obj *model.FignodeSession) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeSession_ambiguityReason,
+		func(ctx context.Context) (any, error) {
+			return obj.AmbiguityReason, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeSession_ambiguityReason(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeSession",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
 		},
 	}
 	return fc, nil
@@ -4215,6 +4473,64 @@ func (ec *executionContext) fieldContext_FignodeStagingRow_overrideAccountName(_
 	return fc, nil
 }
 
+func (ec *executionContext) _FignodeStagingRow_paidWith(ctx context.Context, field graphql.CollectedField, obj *model.FignodeStagingRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeStagingRow_paidWith,
+		func(ctx context.Context) (any, error) {
+			return obj.PaidWith, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeStagingRow_paidWith(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeStagingRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _FignodeStagingRow_paidInto(ctx context.Context, field graphql.CollectedField, obj *model.FignodeStagingRow) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeStagingRow_paidInto,
+		func(ctx context.Context) (any, error) {
+			return obj.PaidInto, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeStagingRow_paidInto(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeStagingRow",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _FignodeStagingRow_status(ctx context.Context, field graphql.CollectedField, obj *model.FignodeStagingRow) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -4326,6 +4642,351 @@ func (ec *executionContext) fieldContext_FignodeStagingRow_updatedAt(_ context.C
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _FignodeStagingRowConnection_edges(ctx context.Context, field graphql.CollectedField, obj *model.FignodeStagingRowConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeStagingRowConnection_edges,
+		func(ctx context.Context) (any, error) {
+			return obj.Edges, nil
+		},
+		nil,
+		ec.marshalNFignodeStagingRowEdge2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐFignodeStagingRowEdgeᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeStagingRowConnection_edges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeStagingRowConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "cursor":
+				return ec.fieldContext_FignodeStagingRowEdge_cursor(ctx, field)
+			case "node":
+				return ec.fieldContext_FignodeStagingRowEdge_node(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type FignodeStagingRowEdge", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _FignodeStagingRowConnection_nodes(ctx context.Context, field graphql.CollectedField, obj *model.FignodeStagingRowConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeStagingRowConnection_nodes,
+		func(ctx context.Context) (any, error) {
+			return obj.Nodes, nil
+		},
+		nil,
+		ec.marshalNFignodeStagingRow2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐFignodeStagingRowᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeStagingRowConnection_nodes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeStagingRowConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_FignodeStagingRow_id(ctx, field)
+			case "sessionId":
+				return ec.fieldContext_FignodeStagingRow_sessionId(ctx, field)
+			case "realmId":
+				return ec.fieldContext_FignodeStagingRow_realmId(ctx, field)
+			case "sourceType":
+				return ec.fieldContext_FignodeStagingRow_sourceType(ctx, field)
+			case "rawDescription":
+				return ec.fieldContext_FignodeStagingRow_rawDescription(ctx, field)
+			case "rawAmount":
+				return ec.fieldContext_FignodeStagingRow_rawAmount(ctx, field)
+			case "rawDate":
+				return ec.fieldContext_FignodeStagingRow_rawDate(ctx, field)
+			case "rawVendorName":
+				return ec.fieldContext_FignodeStagingRow_rawVendorName(ctx, field)
+			case "predictedVendorId":
+				return ec.fieldContext_FignodeStagingRow_predictedVendorId(ctx, field)
+			case "predictedVendorName":
+				return ec.fieldContext_FignodeStagingRow_predictedVendorName(ctx, field)
+			case "predictedAccountId":
+				return ec.fieldContext_FignodeStagingRow_predictedAccountId(ctx, field)
+			case "predictedAccountName":
+				return ec.fieldContext_FignodeStagingRow_predictedAccountName(ctx, field)
+			case "predictedAccountType":
+				return ec.fieldContext_FignodeStagingRow_predictedAccountType(ctx, field)
+			case "normalizedVendor":
+				return ec.fieldContext_FignodeStagingRow_normalizedVendor(ctx, field)
+			case "confidenceScore":
+				return ec.fieldContext_FignodeStagingRow_confidenceScore(ctx, field)
+			case "aiReasoning":
+				return ec.fieldContext_FignodeStagingRow_aiReasoning(ctx, field)
+			case "isDuplicate":
+				return ec.fieldContext_FignodeStagingRow_isDuplicate(ctx, field)
+			case "duplicateOf":
+				return ec.fieldContext_FignodeStagingRow_duplicateOf(ctx, field)
+			case "isRecurring":
+				return ec.fieldContext_FignodeStagingRow_isRecurring(ctx, field)
+			case "splitSuggestion":
+				return ec.fieldContext_FignodeStagingRow_splitSuggestion(ctx, field)
+			case "overrideVendorId":
+				return ec.fieldContext_FignodeStagingRow_overrideVendorId(ctx, field)
+			case "overrideVendorName":
+				return ec.fieldContext_FignodeStagingRow_overrideVendorName(ctx, field)
+			case "overrideAccountId":
+				return ec.fieldContext_FignodeStagingRow_overrideAccountId(ctx, field)
+			case "overrideAccountName":
+				return ec.fieldContext_FignodeStagingRow_overrideAccountName(ctx, field)
+			case "paidWith":
+				return ec.fieldContext_FignodeStagingRow_paidWith(ctx, field)
+			case "paidInto":
+				return ec.fieldContext_FignodeStagingRow_paidInto(ctx, field)
+			case "status":
+				return ec.fieldContext_FignodeStagingRow_status(ctx, field)
+			case "erpTransactionId":
+				return ec.fieldContext_FignodeStagingRow_erpTransactionId(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_FignodeStagingRow_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_FignodeStagingRow_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type FignodeStagingRow", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _FignodeStagingRowConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *model.FignodeStagingRowConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeStagingRowConnection_pageInfo,
+		func(ctx context.Context) (any, error) {
+			return obj.PageInfo, nil
+		},
+		nil,
+		ec.marshalNPageInfo2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐPageInfo,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeStagingRowConnection_pageInfo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeStagingRowConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "hasNextPage":
+				return ec.fieldContext_PageInfo_hasNextPage(ctx, field)
+			case "hasPreviousPage":
+				return ec.fieldContext_PageInfo_hasPreviousPage(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type PageInfo", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _FignodeStagingRowConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *model.FignodeStagingRowConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeStagingRowConnection_totalCount,
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		ec.marshalNInt2int32,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeStagingRowConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeStagingRowConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _FignodeStagingRowConnection_accountNamesByType(ctx context.Context, field graphql.CollectedField, obj *model.FignodeStagingRowConnection) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeStagingRowConnection_accountNamesByType,
+		func(ctx context.Context) (any, error) {
+			return obj.AccountNamesByType, nil
+		},
+		nil,
+		ec.marshalNAccountNamesByType2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAccountNamesByTypeᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeStagingRowConnection_accountNamesByType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeStagingRowConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "accountType":
+				return ec.fieldContext_AccountNamesByType_accountType(ctx, field)
+			case "names":
+				return ec.fieldContext_AccountNamesByType_names(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type AccountNamesByType", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _FignodeStagingRowEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *model.FignodeStagingRowEdge) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeStagingRowEdge_cursor,
+		func(ctx context.Context) (any, error) {
+			return obj.Cursor, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeStagingRowEdge_cursor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeStagingRowEdge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _FignodeStagingRowEdge_node(ctx context.Context, field graphql.CollectedField, obj *model.FignodeStagingRowEdge) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_FignodeStagingRowEdge_node,
+		func(ctx context.Context) (any, error) {
+			return obj.Node, nil
+		},
+		nil,
+		ec.marshalNFignodeStagingRow2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐFignodeStagingRow,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_FignodeStagingRowEdge_node(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "FignodeStagingRowEdge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_FignodeStagingRow_id(ctx, field)
+			case "sessionId":
+				return ec.fieldContext_FignodeStagingRow_sessionId(ctx, field)
+			case "realmId":
+				return ec.fieldContext_FignodeStagingRow_realmId(ctx, field)
+			case "sourceType":
+				return ec.fieldContext_FignodeStagingRow_sourceType(ctx, field)
+			case "rawDescription":
+				return ec.fieldContext_FignodeStagingRow_rawDescription(ctx, field)
+			case "rawAmount":
+				return ec.fieldContext_FignodeStagingRow_rawAmount(ctx, field)
+			case "rawDate":
+				return ec.fieldContext_FignodeStagingRow_rawDate(ctx, field)
+			case "rawVendorName":
+				return ec.fieldContext_FignodeStagingRow_rawVendorName(ctx, field)
+			case "predictedVendorId":
+				return ec.fieldContext_FignodeStagingRow_predictedVendorId(ctx, field)
+			case "predictedVendorName":
+				return ec.fieldContext_FignodeStagingRow_predictedVendorName(ctx, field)
+			case "predictedAccountId":
+				return ec.fieldContext_FignodeStagingRow_predictedAccountId(ctx, field)
+			case "predictedAccountName":
+				return ec.fieldContext_FignodeStagingRow_predictedAccountName(ctx, field)
+			case "predictedAccountType":
+				return ec.fieldContext_FignodeStagingRow_predictedAccountType(ctx, field)
+			case "normalizedVendor":
+				return ec.fieldContext_FignodeStagingRow_normalizedVendor(ctx, field)
+			case "confidenceScore":
+				return ec.fieldContext_FignodeStagingRow_confidenceScore(ctx, field)
+			case "aiReasoning":
+				return ec.fieldContext_FignodeStagingRow_aiReasoning(ctx, field)
+			case "isDuplicate":
+				return ec.fieldContext_FignodeStagingRow_isDuplicate(ctx, field)
+			case "duplicateOf":
+				return ec.fieldContext_FignodeStagingRow_duplicateOf(ctx, field)
+			case "isRecurring":
+				return ec.fieldContext_FignodeStagingRow_isRecurring(ctx, field)
+			case "splitSuggestion":
+				return ec.fieldContext_FignodeStagingRow_splitSuggestion(ctx, field)
+			case "overrideVendorId":
+				return ec.fieldContext_FignodeStagingRow_overrideVendorId(ctx, field)
+			case "overrideVendorName":
+				return ec.fieldContext_FignodeStagingRow_overrideVendorName(ctx, field)
+			case "overrideAccountId":
+				return ec.fieldContext_FignodeStagingRow_overrideAccountId(ctx, field)
+			case "overrideAccountName":
+				return ec.fieldContext_FignodeStagingRow_overrideAccountName(ctx, field)
+			case "paidWith":
+				return ec.fieldContext_FignodeStagingRow_paidWith(ctx, field)
+			case "paidInto":
+				return ec.fieldContext_FignodeStagingRow_paidInto(ctx, field)
+			case "status":
+				return ec.fieldContext_FignodeStagingRow_status(ctx, field)
+			case "erpTransactionId":
+				return ec.fieldContext_FignodeStagingRow_erpTransactionId(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_FignodeStagingRow_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_FignodeStagingRow_updatedAt(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type FignodeStagingRow", field.Name)
 		},
 	}
 	return fc, nil
@@ -5117,6 +5778,10 @@ func (ec *executionContext) fieldContext_Mutation_fignodeCategorize(ctx context.
 				return ec.fieldContext_FignodeStagingRow_overrideAccountId(ctx, field)
 			case "overrideAccountName":
 				return ec.fieldContext_FignodeStagingRow_overrideAccountName(ctx, field)
+			case "paidWith":
+				return ec.fieldContext_FignodeStagingRow_paidWith(ctx, field)
+			case "paidInto":
+				return ec.fieldContext_FignodeStagingRow_paidInto(ctx, field)
 			case "status":
 				return ec.fieldContext_FignodeStagingRow_status(ctx, field)
 			case "erpTransactionId":
@@ -6022,6 +6687,10 @@ func (ec *executionContext) fieldContext_Query_fignodeSessions(ctx context.Conte
 				return ec.fieldContext_FignodeSession_fileName(ctx, field)
 			case "rowCount":
 				return ec.fieldContext_FignodeSession_rowCount(ctx, field)
+			case "isAmbiguous":
+				return ec.fieldContext_FignodeSession_isAmbiguous(ctx, field)
+			case "ambiguityReason":
+				return ec.fieldContext_FignodeSession_ambiguityReason(ctx, field)
 			case "status":
 				return ec.fieldContext_FignodeSession_status(ctx, field)
 			case "createdAt":
@@ -6079,6 +6748,10 @@ func (ec *executionContext) fieldContext_Query_fignodeSession(ctx context.Contex
 				return ec.fieldContext_FignodeSession_fileName(ctx, field)
 			case "rowCount":
 				return ec.fieldContext_FignodeSession_rowCount(ctx, field)
+			case "isAmbiguous":
+				return ec.fieldContext_FignodeSession_isAmbiguous(ctx, field)
+			case "ambiguityReason":
+				return ec.fieldContext_FignodeSession_ambiguityReason(ctx, field)
 			case "status":
 				return ec.fieldContext_FignodeSession_status(ctx, field)
 			case "createdAt":
@@ -6176,6 +6849,10 @@ func (ec *executionContext) fieldContext_Query_fignodeBatch(ctx context.Context,
 				return ec.fieldContext_FignodeStagingRow_overrideAccountId(ctx, field)
 			case "overrideAccountName":
 				return ec.fieldContext_FignodeStagingRow_overrideAccountName(ctx, field)
+			case "paidWith":
+				return ec.fieldContext_FignodeStagingRow_paidWith(ctx, field)
+			case "paidInto":
+				return ec.fieldContext_FignodeStagingRow_paidInto(ctx, field)
 			case "status":
 				return ec.fieldContext_FignodeStagingRow_status(ctx, field)
 			case "erpTransactionId":
@@ -6275,6 +6952,10 @@ func (ec *executionContext) fieldContext_Query_stagingRows(ctx context.Context, 
 				return ec.fieldContext_FignodeStagingRow_overrideAccountId(ctx, field)
 			case "overrideAccountName":
 				return ec.fieldContext_FignodeStagingRow_overrideAccountName(ctx, field)
+			case "paidWith":
+				return ec.fieldContext_FignodeStagingRow_paidWith(ctx, field)
+			case "paidInto":
+				return ec.fieldContext_FignodeStagingRow_paidInto(ctx, field)
 			case "status":
 				return ec.fieldContext_FignodeStagingRow_status(ctx, field)
 			case "erpTransactionId":
@@ -6295,6 +6976,59 @@ func (ec *executionContext) fieldContext_Query_stagingRows(ctx context.Context, 
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_stagingRows_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_stagingRowsConnection(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_stagingRowsConnection,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().StagingRowsConnection(ctx, fc.Args["sessionId"].(string), fc.Args["status"].(*string), fc.Args["first"].(*int32), fc.Args["after"].(*string))
+		},
+		nil,
+		ec.marshalNFignodeStagingRowConnection2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐFignodeStagingRowConnection,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_stagingRowsConnection(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "edges":
+				return ec.fieldContext_FignodeStagingRowConnection_edges(ctx, field)
+			case "nodes":
+				return ec.fieldContext_FignodeStagingRowConnection_nodes(ctx, field)
+			case "pageInfo":
+				return ec.fieldContext_FignodeStagingRowConnection_pageInfo(ctx, field)
+			case "totalCount":
+				return ec.fieldContext_FignodeStagingRowConnection_totalCount(ctx, field)
+			case "accountNamesByType":
+				return ec.fieldContext_FignodeStagingRowConnection_accountNamesByType(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type FignodeStagingRowConnection", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_stagingRowsConnection_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -9605,6 +10339,50 @@ func (ec *executionContext) _AccountMatch(ctx context.Context, sel ast.Selection
 	return out
 }
 
+var accountNamesByTypeImplementors = []string{"AccountNamesByType"}
+
+func (ec *executionContext) _AccountNamesByType(ctx context.Context, sel ast.SelectionSet, obj *model.AccountNamesByType) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, accountNamesByTypeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("AccountNamesByType")
+		case "accountType":
+			out.Values[i] = ec._AccountNamesByType_accountType(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "names":
+			out.Values[i] = ec._AccountNamesByType_names(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var authPayloadImplementors = []string{"AuthPayload"}
 
 func (ec *executionContext) _AuthPayload(ctx context.Context, sel ast.SelectionSet, obj *model.AuthPayload) graphql.Marshaler {
@@ -9863,6 +10641,13 @@ func (ec *executionContext) _FignodeSession(ctx context.Context, sel ast.Selecti
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "isAmbiguous":
+			out.Values[i] = ec._FignodeSession_isAmbiguous(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "ambiguityReason":
+			out.Values[i] = ec._FignodeSession_ambiguityReason(ctx, field, obj)
 		case "status":
 			out.Values[i] = ec._FignodeSession_status(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -9975,6 +10760,10 @@ func (ec *executionContext) _FignodeStagingRow(ctx context.Context, sel ast.Sele
 			out.Values[i] = ec._FignodeStagingRow_overrideAccountId(ctx, field, obj)
 		case "overrideAccountName":
 			out.Values[i] = ec._FignodeStagingRow_overrideAccountName(ctx, field, obj)
+		case "paidWith":
+			out.Values[i] = ec._FignodeStagingRow_paidWith(ctx, field, obj)
+		case "paidInto":
+			out.Values[i] = ec._FignodeStagingRow_paidInto(ctx, field, obj)
 		case "status":
 			out.Values[i] = ec._FignodeStagingRow_status(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -9989,6 +10778,109 @@ func (ec *executionContext) _FignodeStagingRow(ctx context.Context, sel ast.Sele
 			}
 		case "updatedAt":
 			out.Values[i] = ec._FignodeStagingRow_updatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var fignodeStagingRowConnectionImplementors = []string{"FignodeStagingRowConnection"}
+
+func (ec *executionContext) _FignodeStagingRowConnection(ctx context.Context, sel ast.SelectionSet, obj *model.FignodeStagingRowConnection) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, fignodeStagingRowConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("FignodeStagingRowConnection")
+		case "edges":
+			out.Values[i] = ec._FignodeStagingRowConnection_edges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "nodes":
+			out.Values[i] = ec._FignodeStagingRowConnection_nodes(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pageInfo":
+			out.Values[i] = ec._FignodeStagingRowConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._FignodeStagingRowConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "accountNamesByType":
+			out.Values[i] = ec._FignodeStagingRowConnection_accountNamesByType(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var fignodeStagingRowEdgeImplementors = []string{"FignodeStagingRowEdge"}
+
+func (ec *executionContext) _FignodeStagingRowEdge(ctx context.Context, sel ast.SelectionSet, obj *model.FignodeStagingRowEdge) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, fignodeStagingRowEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("FignodeStagingRowEdge")
+		case "cursor":
+			out.Values[i] = ec._FignodeStagingRowEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "node":
+			out.Values[i] = ec._FignodeStagingRowEdge_node(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -10587,6 +11479,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_stagingRows(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "stagingRowsConnection":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_stagingRowsConnection(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -11474,6 +12388,60 @@ func (ec *executionContext) marshalNAccountMatch2ᚖgithubᚗcomᚋYankzyᚋuset
 	return ec._AccountMatch(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNAccountNamesByType2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAccountNamesByTypeᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.AccountNamesByType) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalNAccountNamesByType2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAccountNamesByType(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNAccountNamesByType2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAccountNamesByType(ctx context.Context, sel ast.SelectionSet, v *model.AccountNamesByType) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._AccountNamesByType(ctx, sel, v)
+}
+
 func (ec *executionContext) marshalNAuthPayload2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐAuthPayload(ctx context.Context, sel ast.SelectionSet, v model.AuthPayload) graphql.Marshaler {
 	return ec._AuthPayload(ctx, sel, &v)
 }
@@ -11691,6 +12659,74 @@ func (ec *executionContext) marshalNFignodeStagingRow2ᚖgithubᚗcomᚋYankzy�
 		return graphql.Null
 	}
 	return ec._FignodeStagingRow(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNFignodeStagingRowConnection2githubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐFignodeStagingRowConnection(ctx context.Context, sel ast.SelectionSet, v model.FignodeStagingRowConnection) graphql.Marshaler {
+	return ec._FignodeStagingRowConnection(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNFignodeStagingRowConnection2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐFignodeStagingRowConnection(ctx context.Context, sel ast.SelectionSet, v *model.FignodeStagingRowConnection) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._FignodeStagingRowConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNFignodeStagingRowEdge2ᚕᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐFignodeStagingRowEdgeᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.FignodeStagingRowEdge) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalNFignodeStagingRowEdge2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐFignodeStagingRowEdge(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNFignodeStagingRowEdge2ᚖgithubᚗcomᚋYankzyᚋusetoroᚋcmdᚋgraphqlᚋgraphᚋmodelᚐFignodeStagingRowEdge(ctx context.Context, sel ast.SelectionSet, v *model.FignodeStagingRowEdge) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._FignodeStagingRowEdge(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalNFloat2float64(ctx context.Context, v any) (float64, error) {
@@ -12365,6 +13401,24 @@ func (ec *executionContext) marshalOID2ᚖstring(ctx context.Context, sel ast.Se
 	_ = sel
 	_ = ctx
 	res := graphql.MarshalID(*v)
+	return res
+}
+
+func (ec *executionContext) unmarshalOInt2ᚖint32(ctx context.Context, v any) (*int32, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalInt32(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOInt2ᚖint32(ctx context.Context, sel ast.SelectionSet, v *int32) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	_ = sel
+	_ = ctx
+	res := graphql.MarshalInt32(*v)
 	return res
 }
 

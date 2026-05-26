@@ -36,6 +36,11 @@ type AccountMatch struct {
 	Name      string  `json:"name"`
 }
 
+type AccountNamesByType struct {
+	AccountType string   `json:"accountType"`
+	Names       []string `json:"names"`
+}
+
 type AuthPayload struct {
 	AccessToken  string    `json:"accessToken"`
 	RefreshToken string    `json:"refreshToken"`
@@ -118,10 +123,25 @@ type FignodeStagingRow struct {
 	OverrideVendorName   *string    `json:"overrideVendorName,omitempty"`
 	OverrideAccountID    *string    `json:"overrideAccountId,omitempty"`
 	OverrideAccountName  *string    `json:"overrideAccountName,omitempty"`
+	PaidWith             *string    `json:"paidWith,omitempty"`
+	PaidInto             *string    `json:"paidInto,omitempty"`
 	Status               string     `json:"status"`
 	ErpTransactionID     *string    `json:"erpTransactionId,omitempty"`
 	CreatedAt            time.Time  `json:"createdAt"`
 	UpdatedAt            time.Time  `json:"updatedAt"`
+}
+
+type FignodeStagingRowConnection struct {
+	Edges              []*FignodeStagingRowEdge `json:"edges"`
+	Nodes              []*FignodeStagingRow     `json:"nodes"`
+	PageInfo           *PageInfo                `json:"pageInfo"`
+	TotalCount         int32                    `json:"totalCount"`
+	AccountNamesByType []*AccountNamesByType    `json:"accountNamesByType"`
+}
+
+type FignodeStagingRowEdge struct {
+	Cursor string             `json:"cursor"`
+	Node   *FignodeStagingRow `json:"node"`
 }
 
 type LoginInput struct {

@@ -144,6 +144,9 @@ type FignodeStagingRow {
   overrideVendorName: String
   overrideAccountId: String
   overrideAccountName: String
+  # Counterparty context
+  paidWith: String
+  paidInto: String
   # Lifecycle
   status: String!
   erpTransactionId: String
@@ -186,6 +189,24 @@ type PageInfo {
   hasPreviousPage: Boolean!
 }
 
+type FignodeStagingRowEdge {
+  cursor: String!
+  node: FignodeStagingRow!
+}
+
+type AccountNamesByType {
+  accountType: String!
+  names: [String!]!
+}
+
+type FignodeStagingRowConnection {
+  edges: [FignodeStagingRowEdge!]!
+  nodes: [FignodeStagingRow!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+  accountNamesByType: [AccountNamesByType!]!
+}
+
 type TenantConnection {
   nodes: [Tenant!]!
   totalCount: Int!
@@ -224,6 +245,12 @@ type Query {
   fignodeSession(sessionId: ID!): FignodeSession!
   fignodeBatch(sessionId: ID, limit: Int!): [FignodeStagingRow!]!
   stagingRows(sessionId: ID!, status: String): [FignodeStagingRow!]!
+  stagingRowsConnection(
+    sessionId: ID!
+    status: String
+    first: Int
+    after: String
+  ): FignodeStagingRowConnection!
   
   # Transaction Data Pull
   transactions(realmId: ID!, status: String): [Transaction!]!

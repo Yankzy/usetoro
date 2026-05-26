@@ -194,17 +194,27 @@ func ExtractRows(data []byte) ([]map[string]interface{}, error) {
 
 		// Priority 3: Check if the top-level itself is a map of rows (e.g. { "row_1": {...} })
 		// Heuristic: Must NOT be a FIPA control object (no id, perf, src keys)
+		// AND must NOT be a wrapper object (no input, payload, data, config, dependencies)
 		if _, hasPerf := generic["perf"]; !hasPerf {
-			var rowMap map[string]map[string]interface{}
-			if err := json.Unmarshal(data, &rowMap); err == nil && len(rowMap) > 0 {
-				rows := make([]map[string]interface{}, 0, len(rowMap))
-				for _, v := range rowMap {
-					if len(v) > 0 {
-						rows = append(rows, v)
-					}
+			isWrapper := false
+			for _, k := range []string{"input", "payload", "data", "config", "dependencies", "mapped_rows"} {
+				if _, has := generic[k]; has {
+					isWrapper = true
+					break
 				}
-				if len(rows) > 0 {
-					return rows, nil
+			}
+			if !isWrapper {
+				var rowMap map[string]map[string]interface{}
+				if err := json.Unmarshal(data, &rowMap); err == nil && len(rowMap) > 0 {
+					rows := make([]map[string]interface{}, 0, len(rowMap))
+					for _, v := range rowMap {
+						if len(v) > 0 {
+							rows = append(rows, v)
+						}
+					}
+					if len(rows) > 0 {
+						return rows, nil
+					}
 				}
 			}
 		}

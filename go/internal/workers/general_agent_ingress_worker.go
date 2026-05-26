@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/conversation"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/lookup"
@@ -17,23 +18,28 @@ import (
 )
 
 // GeneralAgentIngressWorker handles inbound requests from the HTTP ingress
-// endpoint (POST /ingress?domain=general). It resolves the general-purpose
-// agent, persists the conversation, and publishes the agent's response for
+// endpoint (POST /ingress?domain=general) and from multi-channel webhook workers.
+// It resolves the general-purpose agent, loads conversation session context,
+// assembles full message history, and publishes the agent's response for
 // outbound dispatch by the OmniChatWorker.
 type GeneralAgentIngressWorker struct {
-	db     *database.Queries
-	logger *slog.Logger
-	cfg    *config.Config
-	nc     *nats.Conn
+	db              *database.Queries
+	logger          *slog.Logger
+	cfg             *config.Config
+	nc              *nats.Conn
+	sessionManager  *conversation.SessionManager
+	contextBuilder  *conversation.ContextBuilder
 }
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
 		return &GeneralAgentIngressWorker{
-			db:     deps.Store.Queries,
-			logger: deps.Logger,
-			cfg:    deps.Config,
-			nc:     deps.Queue,
+			db:             deps.Store.Queries,
+			logger:         deps.Logger,
+			cfg:            deps.Config,
+			nc:             deps.Queue,
+			sessionManager: conversation.NewSessionManager(deps.Store.Queries, deps.Logger),
+			contextBuilder: conversation.NewContextBuilder(),
 		}, nil
 	})
 }
@@ -75,10 +81,10 @@ func (w *GeneralAgentIngressWorker) Subscriptions() []SubscriptionConfig {
 }
 
 func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) error {
-	// 1. Parse the raw body — supports both API (prompt) and email (body_text)
+	// 1. Parse the raw body
 	var req struct {
 		Prompt       string `json:"prompt"`
-		BodyText     string `json:"body_text"`      // email path uses this
+		BodyText     string `json:"body_text"`
 		EntityID     string `json:"entity_id"`
 		SystemPrompt string `json:"system_prompt,omitempty"`
 		SessionID    string `json:"session_id,omitempty"`
@@ -92,7 +98,7 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		return nil
 	}
 	if req.Prompt == "" {
-		req.Prompt = req.BodyText // email sends body_text
+		req.Prompt = req.BodyText
 	}
 	if req.Prompt == "" {
 		w.logger.Error("ingress(general): missing prompt")
@@ -112,34 +118,84 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		req.ToHandle = "general-agent"
 	}
 
-	// 2. Persist inbound message
 	var entityUUID pgtype.UUID
 	_ = entityUUID.Scan(req.EntityID)
+
+	// 2. Find or create a conversation session for this participant
+	sess, isNew, err := w.sessionManager.FindOrCreateSession(ctx, conversation.FindOrCreateParams{
+		EntityID:          entityUUID,
+		Source:            req.Source,
+		ParticipantHandle: req.FromHandle,
+		ToroHandle:        req.ToHandle,
+		Subject:           req.Subject,
+		SystemPrompt:      req.SystemPrompt,
+	})
+	if err != nil {
+		w.logger.Error("ingress(general): session lookup failed", "error", err)
+		// Fall back to stateless behavior — persist and proceed
+	} else if isNew {
+		w.logger.Info("ingress(general): created new conversation session",
+			"session_id", uuid.UUID(sess.ID.Bytes).String(),
+			"participant", req.FromHandle,
+			"source", req.Source,
+		)
+	}
+
+	// 3. Persist inbound message linked to the session
 	var subj pgtype.Text
 	if req.Subject != "" {
 		subj = pgtype.Text{String: req.Subject, Valid: true}
 	}
-	_ = w.db.SaveInboundConversation(ctx, database.SaveInboundConversationParams{
-		EntityID:   entityUUID,
-		Source:     req.Source,
-		ExternalID: fmt.Sprintf("ingress-%s", uuid.New().String()),
-		FromHandle: req.FromHandle,
-		ToHandle:   req.ToHandle,
-		Subject:    subj,
-		BodyText:   pgtype.Text{String: req.Prompt, Valid: true},
-		Metadata:   mustMarshalBytes(map[string]any{"session_id": req.SessionID}),
+	var sessionID pgtype.UUID
+	if sess.ID.Valid {
+		sessionID = sess.ID
+	}
+	_ = w.db.SaveConversationSessionMessage(ctx, database.SaveConversationSessionMessageParams{
+		EntityID:     entityUUID,
+		Source:       req.Source,
+		ExternalID:   fmt.Sprintf("ingress-%s", uuid.New().String()),
+		FromHandle:   req.FromHandle,
+		ToHandle:     req.ToHandle,
+		Subject:      subj,
+		BodyText:     pgtype.Text{String: req.Prompt, Valid: true},
+		Metadata:     mustMarshalBytes(map[string]any{"session_id": req.SessionID}),
+		SessionID:    sessionID,
 	})
 
-	// 3. Resolve the general agent via Almanac
+	// 4. Assemble the full conversational context
+	var promptForAgent string
+	var systemPromptForAgent string
+
+	if sess.ID.Valid {
+		history, err := w.sessionManager.GetSessionHistory(ctx, sess.ID)
+		if err != nil {
+			w.logger.Warn("ingress(general): failed to load session history", "error", err)
+		}
+
+		result := w.contextBuilder.BuildContext(sess, history, req.Prompt)
+		promptForAgent = result.Prompt
+		systemPromptForAgent = result.SystemPrompt
+
+		w.logger.Info("ingress(general): assembled conversation context",
+			"session_id", uuid.UUID(sess.ID.Bytes).String(),
+			"history_messages", len(history),
+			"prompt_len", len(promptForAgent),
+		)
+	} else {
+		promptForAgent = req.Prompt
+		systemPromptForAgent = req.SystemPrompt
+	}
+
+	// 5. Resolve the general agent via Almanac
 	agentInbox, err := w.resolveAgentInbox()
 	if err != nil {
 		w.logger.Error("ingress(general): agent resolution failed", "error", err)
 		return nil
 	}
 
-	// 4. Build REQUEST envelope
+	// 6. Build REQUEST envelope with assembled context
 	payload := map[string]any{
-		"prompt":      req.Prompt,
+		"prompt":      promptForAgent,
 		"entity_id":   req.EntityID,
 		"from_handle": req.FromHandle,
 		"to_handle":   req.ToHandle,
@@ -158,8 +214,8 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		Complexity: core.ComplexityEntry,
 		Payload:    mustMarshalRaw(payload),
 	}
-	if req.SystemPrompt != "" {
-		taskDef.SystemPrompt = req.SystemPrompt
+	if systemPromptForAgent != "" {
+		taskDef.SystemPrompt = systemPromptForAgent
 	}
 	taskBytes, _ := json.Marshal(taskDef)
 
@@ -173,14 +229,14 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 	}
 	envlpBytes, _ := json.Marshal(envlp)
 
-	// 5. Send to general agent (NATS request-reply, 5 min timeout)
+	// 7. Send to general agent (NATS request-reply, 5 min timeout)
 	resp, err := w.nc.Request(agentInbox, envlpBytes, 5*time.Minute)
 	if err != nil {
 		w.logger.Error("ingress(general): agent request failed", "error", err)
 		return fmt.Errorf("agent request: %w", err)
 	}
 
-	// 6. Parse INFORM response
+	// 8. Parse INFORM response
 	var replyEnv core.Envelope
 	if err := json.Unmarshal(resp.Data, &replyEnv); err != nil {
 		w.logger.Error("ingress(general): unparseable agent response", "error", err)
@@ -193,7 +249,7 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		return nil
 	}
 
-	// 7. Extract response text
+	// 9. Extract response text
 	var output struct {
 		Output string `json:"output"`
 	}
@@ -203,8 +259,8 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		replyText = string(proof.Data)
 	}
 
-	// 8. Persist agent response to conversations
-	_ = w.db.SaveInboundConversation(ctx, database.SaveInboundConversationParams{
+	// 10. Persist agent response linked to the session
+	_ = w.db.SaveConversationSessionMessage(ctx, database.SaveConversationSessionMessageParams{
 		EntityID:   entityUUID,
 		Source:     req.Source,
 		ExternalID: fmt.Sprintf("agent-res-%s", uuid.New().String()),
@@ -212,10 +268,15 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		ToHandle:   req.FromHandle,
 		BodyText:   pgtype.Text{String: replyText, Valid: true},
 		Metadata:   mustMarshalBytes(map[string]any{"session_id": req.SessionID}),
+		SessionID:  sessionID,
 	})
 
-	// 9. Publish to proof.outgoing.chat so OmniChatWorker dispatches
-	// via the correct channel (email, slack, etc.)
+	// 11. Update session last_activity_at (and optionally status)
+	if sess.ID.Valid {
+		_ = w.sessionManager.UpdateSession(ctx, sess.ID, "", "", nil)
+	}
+
+	// 12. Publish to proof.outgoing.chat so OmniChatWorker dispatches
 	outProof := core.Proof{
 		TaskID:    taskDef.ID,
 		Type:      core.ProofAPI,
@@ -238,7 +299,7 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		w.logger.Error("ingress(general): failed to publish to proof.outgoing.chat", "error", err)
 	}
 
-	w.logger.Info("ingress(general): processed", "reply_len", len(replyText))
+	w.logger.Info("ingress(general): processed", "reply_len", len(replyText), "session_id", uuid.UUID(sess.ID.Bytes).String())
 	return nil
 }
 

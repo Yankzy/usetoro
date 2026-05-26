@@ -26,6 +26,7 @@ type Querier interface {
 	ComputePeriodLeaderboard(ctx context.Context, since pgtype.Timestamptz) ([]ComputePeriodLeaderboardRow, error)
 	CountEnrichedTransactionsBySession(ctx context.Context, sessionID pgtype.UUID) (int64, error)
 	CountEntities(ctx context.Context) (int64, error)
+	CountSessionRows(ctx context.Context, arg CountSessionRowsParams) (int64, error)
 	// =========================================================================
 	// Cleanup Mode Queries (now stored in fignode schema)
 	// =========================================================================
@@ -58,11 +59,14 @@ type Querier interface {
 	GetAccountByName(ctx context.Context, arg GetAccountByNameParams) (ShadowErpAccount, error)
 	GetAccountsByRealm(ctx context.Context, realmID string) ([]ShadowErpAccount, error)
 	GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUpdatedSinceParams) ([]ShadowErpAccount, error)
+	GetActiveAccountsByRealm(ctx context.Context, realmID string) ([]GetActiveAccountsByRealmRow, error)
 	// =========================================================================
 	// Rule Execution & Cleanup
 	// =========================================================================
 	GetActiveRealms(ctx context.Context) ([]string, error)
 	GetActiveRuleGroupsByRealm(ctx context.Context, realmID string) ([]ShadowErpRuleGroup, error)
+	GetActiveSessionByParticipant(ctx context.Context, arg GetActiveSessionByParticipantParams) (ToroCoreConversationSession, error)
+	GetActiveSessions(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreConversationSession, error)
 	GetActiveWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error)
 	GetAiCorrectionByRawInput(ctx context.Context, arg GetAiCorrectionByRawInputParams) (GetAiCorrectionByRawInputRow, error)
 	GetAllAccountsForRealms(ctx context.Context, realmIds []string) ([]ShadowErpAccount, error)
@@ -76,6 +80,7 @@ type Querier interface {
 	GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousProposalsParams) ([]FignodeStagingTransaction, error)
 	GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([]GetApprovedRowsRow, error)
 	GetAttachableByERPID(ctx context.Context, arg GetAttachableByERPIDParams) (ShadowErpAttachable, error)
+	GetAwaitingReplySessions(ctx context.Context) ([]ToroCoreConversationSession, error)
 	GetBankAccountName(ctx context.Context, id pgtype.UUID) (string, error)
 	GetBankAccounts(ctx context.Context) ([]string, error)
 	GetBillByERPID(ctx context.Context, arg GetBillByERPIDParams) (ShadowErpBill, error)
@@ -87,6 +92,7 @@ type Querier interface {
 	GetCompanyInfo(ctx context.Context, realmID string) (ShadowErpCompanyInfo, error)
 	GetConditionsByRuleGroups(ctx context.Context, ruleGroupIds []int32) ([]ShadowErpRuleCondition, error)
 	GetConnectionWithWebhookTimes(ctx context.Context, arg GetConnectionWithWebhookTimesParams) (GetConnectionWithWebhookTimesRow, error)
+	GetConversationSession(ctx context.Context, id pgtype.UUID) (ToroCoreConversationSession, error)
 	GetCreditCardAccounts(ctx context.Context) ([]string, error)
 	GetCustomerByERPID(ctx context.Context, arg GetCustomerByERPIDParams) (ShadowErpCustomer, error)
 	GetCustomerByID(ctx context.Context, id pgtype.UUID) (ShadowErpCustomer, error)
@@ -187,12 +193,14 @@ type Querier interface {
 	GetRuleAuditLogsByTransaction(ctx context.Context, transactionID pgtype.UUID) ([]ShadowErpRuleAuditLog, error)
 	GetRuleConditionByExample(ctx context.Context, arg GetRuleConditionByExampleParams) (ShadowErpRuleCondition, error)
 	GetRuleGroupByRealmAndName(ctx context.Context, arg GetRuleGroupByRealmAndNameParams) (ShadowErpRuleGroup, error)
+	GetSessionConversations(ctx context.Context, sessionID pgtype.UUID) ([]ToroCoreConversation, error)
 	GetSessionRows(ctx context.Context, arg GetSessionRowsParams) ([]GetSessionRowsRow, error)
+	GetSessionRowsPaginated(ctx context.Context, arg GetSessionRowsPaginatedParams) ([]GetSessionRowsPaginatedRow, error)
 	GetSessionSummary(ctx context.Context, sessionID pgtype.UUID) (GetSessionSummaryRow, error)
 	// =========================================================================
 	// QBO Sync Worker
 	// =========================================================================
-	GetStagingTransactionsReadyForQBO(ctx context.Context, realmID pgtype.Text) ([]FignodeStagingTransaction, error)
+	GetStagingTransactionsReadyForQBO(ctx context.Context, sessionID pgtype.UUID) ([]FignodeStagingTransaction, error)
 	GetStalledMessagesByAgent(ctx context.Context, agentDid string) ([]ToroCoreStalledMessage, error)
 	// =========================================================================
 	// Advanced Rule Engine Bootstrap Queries (1:1 Feature Coverage)
@@ -241,6 +249,7 @@ type Querier interface {
 	GetWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error)
 	IncrementEmployeeCleared(ctx context.Context, userID pgtype.UUID) error
 	InsertCleanupRow(ctx context.Context, arg InsertCleanupRowParams) (pgtype.UUID, error)
+	InsertConversationSession(ctx context.Context, arg InsertConversationSessionParams) (ToroCoreConversationSession, error)
 	InsertLeaderboardSnapshot(ctx context.Context, arg InsertLeaderboardSnapshotParams) error
 	// =========================================================================
 	// Badges: Award & query (schema removed)
@@ -260,6 +269,7 @@ type Querier interface {
 	MarkRowPosted(ctx context.Context, arg MarkRowPostedParams) error
 	MarkStagingTransactionFailed(ctx context.Context, arg MarkStagingTransactionFailedParams) error
 	MarkStagingTransactionSynced(ctx context.Context, arg MarkStagingTransactionSyncedParams) error
+	MarkStagingTransactionTransferHold(ctx context.Context, id pgtype.UUID) error
 	OverrideCleanupRow(ctx context.Context, arg OverrideCleanupRowParams) (OverrideCleanupRowRow, error)
 	// =========================================================================
 	// AI Corrections
@@ -268,6 +278,7 @@ type Querier interface {
 	RejectCleanupRow(ctx context.Context, id pgtype.UUID) error
 	ResetStaleStreaks(ctx context.Context) error
 	ResetTodayCleared(ctx context.Context) error
+	SaveConversationSessionMessage(ctx context.Context, arg SaveConversationSessionMessageParams) error
 	SaveInboundConversation(ctx context.Context, arg SaveInboundConversationParams) error
 	SetTransactionInReview(ctx context.Context, id pgtype.UUID) error
 	SoftDeleteAccount(ctx context.Context, arg SoftDeleteAccountParams) error
@@ -285,6 +296,7 @@ type Querier interface {
 	UpdateCleanupSessionRowCount(ctx context.Context, arg UpdateCleanupSessionRowCountParams) error
 	UpdateCleanupSessionStatus(ctx context.Context, arg UpdateCleanupSessionStatusParams) error
 	UpdateCompanyTaxonomy(ctx context.Context, arg UpdateCompanyTaxonomyParams) error
+	UpdateConversationSession(ctx context.Context, arg UpdateConversationSessionParams) error
 	UpdateCustomerTaxonomy(ctx context.Context, arg UpdateCustomerTaxonomyParams) error
 	UpdateCustomerVectorSync(ctx context.Context, arg UpdateCustomerVectorSyncParams) error
 	UpdateDepositRuleID(ctx context.Context, arg UpdateDepositRuleIDParams) error
@@ -306,6 +318,7 @@ type Querier interface {
 	UpdatePurchaseRuleID(ctx context.Context, arg UpdatePurchaseRuleIDParams) error
 	UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichmentParams) error
 	UpdateRuleGroupKeywords(ctx context.Context, arg UpdateRuleGroupKeywordsParams) error
+	UpdateSessionTransactionsToReadyForReview(ctx context.Context, sessionID pgtype.UUID) error
 	UpdateStagingTransactionAccountType(ctx context.Context, arg UpdateStagingTransactionAccountTypeParams) error
 	UpdateStagingTransactionCashDirection(ctx context.Context, arg UpdateStagingTransactionCashDirectionParams) error
 	UpdateStagingTransactionMacroClass(ctx context.Context, arg UpdateStagingTransactionMacroClassParams) error

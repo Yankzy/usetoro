@@ -13,6 +13,7 @@ type Purchase struct {
 	PaymentType string        `json:",omitempty"`
 	AccountRef  ReferenceType `json:",omitempty"`
 	EntityRef   ReferenceType `json:",omitempty"`
+	Credit      bool          `json:",omitempty"`
 	Line        []Line
 	TotalAmt    json.Number `json:",omitempty"`
 	TxnDate     Date        `json:",omitempty"`

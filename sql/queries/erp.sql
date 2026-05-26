@@ -458,6 +458,14 @@ SELECT * FROM shadow_erp.accounts
 WHERE realm_id = $1 AND deleted_at IS NULL
 ORDER BY name ASC;
 
+-- name: GetActiveAccountsByRealm :many
+SELECT name, account_type
+FROM shadow_erp.accounts
+WHERE realm_id = $1
+  AND active = true
+  AND deleted_at IS NULL
+ORDER BY account_type, name;
+
 -- name: GetAllVendorsForRealms :many
 SELECT * FROM shadow_erp.vendors
 WHERE realm_id = ANY(@realm_ids::text[]) AND deleted_at IS NULL
@@ -1481,12 +1489,11 @@ SELECT name FROM shadow_erp.accounts WHERE id = $1;
 
 -- name: GetStagingTransactionsReadyForQBO :many
 SELECT st.* FROM fignode.staging_transactions st
-JOIN fignode.staging_sessions ss ON ss.id = st.session_id
-WHERE ss.realm_id = $1
+WHERE st.session_id = $1
   AND st.predicted_account_id IS NOT NULL
   AND st.split_suggestion IS NULL
   AND st.cash_direction IS NOT NULL
-  AND st.status = 'SWIPED_APPROVED'
+  AND (st.status = 'SWIPED_APPROVED' OR st.rule_group_id IS NOT NULL)
 ORDER BY st.created_at ASC;
 
 -- name: MarkStagingTransactionSynced :exec
@@ -1501,5 +1508,12 @@ WHERE id = $1;
 UPDATE fignode.staging_transactions
 SET status = 'FAILED',
     error_message = $2,
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: MarkStagingTransactionTransferHold :exec
+UPDATE fignode.staging_transactions
+SET status = 'TRANSFER_HOLD',
+    error_message = 'Intercepted: Missing credit card statement for liability payment',
     updated_at = NOW()
 WHERE id = $1;

@@ -56,13 +56,13 @@ func (b *Bootstrapper) RunAdvancedBootstrap(ctx context.Context, realmID string)
 	}
 
 	// Phase 5: Review Flags / High Entropy Catch-All (Priority 1)
-	reviewRules, err := b.bootstrapReviewFlags(ctx, realmID)
-	if err != nil {
-		b.logger.Error("Review flags bootstrapping failed", "error", err)
-	} else {
-		b.logger.Info("Review flags bootstrapping complete", "count", len(reviewRules))
-		allRules = append(allRules, reviewRules...)
-	}
+	// reviewRules, err := b.bootstrapReviewFlags(ctx, realmID)
+	// if err != nil {
+	// 	b.logger.Error("Review flags bootstrapping failed", "error", err)
+	// } else {
+	// 	b.logger.Info("Review flags bootstrapping complete", "count", len(reviewRules))
+	// 	allRules = append(allRules, reviewRules...)
+	// }
 
 	b.logger.Info("All analyzers complete, creating rules",
 		"total_rules", len(allRules),

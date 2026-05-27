@@ -1,9 +1,12 @@
 package workers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"github.com/Yankzy/usetoro/internal/config"
@@ -57,6 +60,7 @@ type PostmarkInboundEmailWorker struct {
 	logger *slog.Logger
 	cfg    *config.Config
 	nc     *nats.Conn
+	client *http.Client
 }
 
 func init() {
@@ -66,6 +70,7 @@ func init() {
 			logger: deps.Logger,
 			cfg:    deps.Config,
 			nc:     deps.Queue,
+			client: &http.Client{},
 		}, nil
 	})
 }
@@ -125,28 +130,70 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 		return nil
 	}
 
-	// 1. Resolve Entity ID
-	lookupEmail := payload.OriginalRecipient
-	if lookupEmail == "" {
-		lookupEmail = payload.To
+	// 1. Parse the agent alias from the recipient.
+	// Emails go to mark@usetoro.io (not subdomain-routed). The alias
+	// determines which agent handles the message.
+	recipient := payload.OriginalRecipient
+	if recipient == "" {
+		recipient = payload.To
 	}
+	agentAlias, _ := parseAgentEmail(recipient)
 
-	var entityID pgtype.UUID
-	if lookupEmail != "" {
-		var err error
-		entityID, err = w.db.GetEntityIDByEmail(ctx, lookupEmail)
-		if err != nil {
-			w.logger.Warn("could not resolve entity_id for inbound email", "email", lookupEmail, "error", err)
-		}
-	}
-
-	// 2. Extract In-Reply-To from headers
+	// 2. Extract In-Reply-To and SMTP Message-ID from headers.
+	// We must use the SMTP Message-ID (with angle brackets) from the Headers
+	// array, not the top-level MessageID which is Postmark's internal ID.
+	// Email clients use the SMTP Message-ID for threading via In-Reply-To
+	// and References headers.
 	var inReplyTo string
+	var smtpMessageID string
 	for _, header := range payload.Headers {
 		if strings.EqualFold(header.Name, "In-Reply-To") {
 			inReplyTo = header.Value
-			break
 		}
+		if strings.EqualFold(header.Name, "Message-ID") {
+			smtpMessageID = header.Value
+		}
+	}
+	if smtpMessageID == "" {
+		w.logger.Warn("SMTP Message-ID header not found in inbound payload, falling back to Postmark internal MessageID which will not support email threading",
+			"postmark_message_id", payload.MessageID,
+			"from", payload.From,
+			"subject", payload.Subject,
+		)
+		smtpMessageID = payload.MessageID
+	}
+
+	// 3. Resolve Entity ID.
+	// Priority 1: sender is a registered user (CPA emailing their agent).
+	// Priority 2: In-Reply-To references an existing conversation.
+	var entityID pgtype.UUID
+	if payload.From != "" {
+		id, err := w.db.GetEntityIDByEmail(ctx, payload.From)
+		if err == nil {
+			entityID = id
+		}
+	}
+	if !entityID.Valid && inReplyTo != "" {
+		// Try to find the entity from the referenced conversation's session
+		cleanID := cleanMessageID(inReplyTo)
+		refSessionID, err := w.db.GetConversationByExternalID(ctx, cleanID)
+		if err == nil && refSessionID.Valid {
+			sess, err := w.db.GetConversationSession(ctx, refSessionID)
+			if err == nil {
+				entityID = sess.EntityID
+			}
+		}
+	}
+
+	if !entityID.Valid {
+		w.logger.Warn("bouncing email: entity not found",
+			"from", payload.From,
+			"recipient", recipient,
+			"agent_alias", agentAlias,
+		)
+		w.sendBounceReply(ctx, payload.From, payload.TextBody, payload.Subject)
+		msg.Ack()
+		return nil
 	}
 
 	// 3. Prepare metadata
@@ -166,7 +213,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	err = w.db.SaveInboundConversation(ctx, database.SaveInboundConversationParams{
 		EntityID:     entityID,
 		Source:       "email",
-		ExternalID:   payload.MessageID,
+		ExternalID:   smtpMessageID,
 		FromHandle:   payload.From,
 		ToHandle:     payload.To,
 		ReplyTo:      pgtype.Text{String: payload.ReplyTo, Valid: payload.ReplyTo != ""},
@@ -184,7 +231,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 		return err
 	}
 
-	w.logger.Info("successfully saved inbound email", "message_id", payload.MessageID, "from", payload.From, "entity_id", entityID)
+	w.logger.Info("successfully saved inbound email", "message_id", smtpMessageID, "from", payload.From, "entity_id", entityID)
 
 	// 5. Route to the General Agent ingress worker (same path as HTTP /ingress?domain=general)
 	// The GeneralAgentIngressWorker handles conversation persistence, agent dispatch, and
@@ -197,12 +244,15 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	}
 
 	eventData := map[string]interface{}{
-		"prompt":      payload.StrippedTextReply,
-		"entity_id":   entityID,
-		"from_handle": payload.From,
-		"to_handle":   payload.To,
-		"source":      "email",
-		"subject":     payload.Subject,
+		"prompt":         payload.StrippedTextReply,
+		"entity_id":      entityID,
+		"from_handle":    payload.From,
+		"to_handle":      payload.To,
+		"source":         "email",
+		"subject":        payload.Subject,
+		"agent_alias":    agentAlias,
+		"in_reply_to":    inReplyTo,
+		"message_id":     smtpMessageID,
 	}
 	// Fall back to full text body if stripped reply is empty
 	if payload.StrippedTextReply == "" {
@@ -219,4 +269,99 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	w.logger.Info("routed email to general agent ingress", "subject", subject)
 	msg.Ack()
 	return nil
+}
+
+// sendBounceReply sends a direct reply via Postmark when the inbound message
+// cannot be matched to a known entity. This avoids wasting LLM tokens on
+// unresolvable messages.
+func (w *PostmarkInboundEmailWorker) sendBounceReply(ctx context.Context, to, originalBody, originalSubject string) {
+	if w.cfg.PostmarkServerToken == "" {
+		w.logger.Warn("cannot send bounce reply: postmark token not configured")
+		return
+	}
+
+	subject := "Unable to process your message"
+	if originalSubject != "" {
+		subject = fmt.Sprintf("Re: %s", originalSubject)
+	}
+
+	body := fmt.Sprintf(`The recipient to your message below could not be resolved. Please double check.
+
+---
+%s
+---
+
+Do not reply to this email.`, originalBody)
+
+	payload := map[string]interface{}{
+		"From":          "do-not-reply@usetoro.io",
+		"To":            to,
+		"Subject":       subject,
+		"TextBody":      body,
+		"MessageStream": "outbound",
+	}
+
+	jsonPayload, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.postmarkapp.com/email", bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		w.logger.Error("bounce reply: failed to create request", "error", err)
+		return
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Postmark-Server-Token", w.cfg.PostmarkServerToken)
+
+	resp, err := w.client.Do(req)
+	if err != nil {
+		w.logger.Error("bounce reply: failed to send", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+		w.logger.Error("bounce reply: postmark API error",
+			"status", resp.StatusCode,
+			"error", errResp,
+		)
+		return
+	}
+
+	w.logger.Info("bounce reply sent", "to", to)
+}
+
+// parseAgentEmail splits an agent email address into its routing components.
+// "mark@cpa2.usetoro.io" → alias="mark", subdomain="cpa2"
+func parseAgentEmail(email string) (alias, subdomain string) {
+	// Strip name prefix if present: "Mark Smith <mark@cpa2.usetoro.io>"
+	email = strings.TrimSpace(email)
+	if idx := strings.LastIndex(email, "<"); idx >= 0 {
+		email = strings.TrimSuffix(strings.TrimSpace(email[idx+1:]), ">")
+	}
+
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return "", ""
+	}
+	alias = strings.ToLower(strings.TrimSpace(parts[0]))
+
+	domainParts := strings.SplitN(parts[1], ".", 3)
+	if len(domainParts) >= 2 {
+		subdomain = strings.ToLower(strings.TrimSpace(domainParts[0]))
+	}
+
+	return alias, subdomain
+}
+
+// cleanMessageID strips brackets and domain from an SMTP Message-ID
+// so it can be matched against the Postmark MessageID stored in the DB.
+func cleanMessageID(id string) string {
+	id = strings.TrimSpace(id)
+	id = strings.TrimPrefix(id, "<")
+	id = strings.TrimSuffix(id, ">")
+	if idx := strings.Index(id, "@"); idx >= 0 {
+		id = id[:idx]
+	}
+	return id
 }

@@ -218,6 +218,7 @@ func main() {
 						DenyPurge:   srvCfg.JetStream.DenyPurge,
 						AllowRollup: srvCfg.JetStream.AllowRollup,
 						AllowDirect: srvCfg.JetStream.AllowDirect,
+						AllowMsgTTL: srvCfg.JetStream.AllowMsgTTL,
 					}
 					if streamCfg.Replicas == 0 {
 						streamCfg.Replicas = 1
@@ -245,6 +246,7 @@ func main() {
 							DenyPurge:   compCfg.JetStream.DenyPurge,
 							AllowRollup: compCfg.JetStream.AllowRollup,
 							AllowDirect: compCfg.JetStream.AllowDirect,
+							AllowMsgTTL: compCfg.JetStream.AllowMsgTTL,
 						}
 						if compStreamCfg.Replicas == 0 {
 							compStreamCfg.Replicas = 1

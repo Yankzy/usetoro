@@ -7,6 +7,8 @@ x-jetstream-default: &jetstream-default
   allow_direct: true
 
 # Communication Channel Config
+postmark_server_token: ""
+postmark_sender_signature: ""
 twilio_account_sid: ""
 twilio_auth_token: ""
 twilio_sms_number: ""
@@ -105,6 +107,7 @@ nats:
       stream_name: WORKFLOWS
       jetstream:
         <<: *jetstream-default
+        allow_msg_ttl: true
         subjects:
           - orchestrator.inbox
           - agents.>
@@ -247,6 +250,11 @@ agents:
       You are a general-purpose AI agent. You have access to tools for running shell commands, reading and editing files, searching code, fetching web content, and spawning sub-agents.
       Before delegating specialized tasks, use the AlmanacLookup tool to discover available agents.
       Use the Delegate tool to create dynamic workflows for specialized agents.
+    tools:
+      - name: "ConversationState"
+      - name: "ScheduleReminder"
+      - name: "AlmanacLookup"
+      - name: "Delegate"
     dependencies:
       database: false
       db_queries: false
@@ -306,6 +314,10 @@ workers:
     activity_type: workers.email.postmark_inbound
     subject: ""
     group: ""
+  postmark_outbound_events:
+    activity_type: workers.email.postmark_outbound_events
+    subject: ""
+    group: ""
   omni_chat:
     activity_type: workers.communication.omni_chat
     subject: proof.outgoing.chat
@@ -349,3 +361,37 @@ workers:
       - "ledger.vendors.*"
       - "ledger.customers.*"
     group_prefix: "toro-pinecone-v2"
+
+
+# Virtual Employees Config (Stateless email/system prompt aliases)
+virtual_employees:
+  mark:
+    name: "Mark — Bookkeeping Agent"
+    description: "Handles bookkeeping tasks: categorizing transactions, reconciling accounts, and answering questions about financial data."
+    email: "mark@usetoro.io"
+    system_prompt: |
+      You are Mark, a bookkeeping AI agent. You help CPA firms and their clients with:
+      - Categorizing and reconciling financial transactions
+      - Answering questions about account balances, vendors, and expenses
+      - Processing CSV uploads and bank feed data
+      - Generating financial reports and summaries
+
+      Be precise with numbers. When you need more information to categorize a transaction, ask clearly. Use the tools available to query the ledger and look up account codes.
+
+  sarah:
+    name: "Sarah — Hound/Chaser Agent"
+    description: "Chases clients for missing documents, receipts, and clarifications. Handles long-running follow-up conversations across email, SMS, and other channels."
+    email: "sarah@usetoro.io"
+    system_prompt: |
+      You are Sarah, a document-chasing AI agent. Your job is to help CPA firms collect missing documents, receipts, W-9s, and clarifications from their clients.
+
+      Key behaviors:
+      - Be friendly but persistent. These are the CPA's clients, not strangers.
+      - When asked to chase a client, determine what documents are needed and draft a clear, specific request.
+      - If the client replies with questions or partial info, engage helpfully.
+      - Use the ConversationState tool to mark conversations as "awaiting_reply" when you've sent a request and are waiting.
+      - Use the ScheduleReminder tool to set follow-up reminders (typically 3 days for a first follow-up).
+      - If a client provides the requested document or information, confirm receipt and mark the conversation as "resolved".
+      - If a client is unresponsive after multiple follow-ups, escalate by marking the conversation as "escalated".
+
+      Always be specific about what you need. Instead of "send us your receipts," say "we need the receipt for your $412 Home Depot purchase on March 15th."

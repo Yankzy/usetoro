@@ -24,6 +24,8 @@ import (
 	_ "github.com/Yankzy/usetoro/tap/agents/csv_mapping"
 	_ "github.com/Yankzy/usetoro/tap/agents/general_agent"
 	_ "github.com/Yankzy/usetoro/tap/agents/generic_batch_agent"
+	_ "github.com/Yankzy/usetoro/tap/agents/intent_extractor"
+	_ "github.com/Yankzy/usetoro/tap/agents/ocr_agent"
 	_ "github.com/Yankzy/usetoro/tap/agents/omni_chat_agent"
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_expense"
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_revenue"
@@ -129,6 +131,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 				DenyPurge:   srvCfg.JetStream.DenyPurge,
 				AllowRollup: srvCfg.JetStream.AllowRollup,
 				AllowDirect: srvCfg.JetStream.AllowDirect,
+				AllowMsgTTL: srvCfg.JetStream.AllowMsgTTL,
 			}
 			if streamCfg.Replicas == 0 {
 				streamCfg.Replicas = 1
@@ -158,6 +161,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 					DenyPurge:   compCfg.JetStream.DenyPurge,
 					AllowRollup: compCfg.JetStream.AllowRollup,
 					AllowDirect: compCfg.JetStream.AllowDirect,
+					AllowMsgTTL: compCfg.JetStream.AllowMsgTTL,
 				}
 				if compStreamCfg.Replicas == 0 {
 					compStreamCfg.Replicas = 1

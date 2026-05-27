@@ -87,7 +87,8 @@ type Config struct {
 	RuleEngine RuleEngineConfig `mapstructure:"rule_engine"`
 
 	// Postmark Config
-	PostmarkServerToken string `mapstructure:"postmark_server_token"`
+	PostmarkServerToken    string `mapstructure:"postmark_server_token"`
+	PostmarkSenderSignature string `mapstructure:"postmark_sender_signature"` // verified root, e.g. mark@usetoro.io
 
 	// Twilio Config (SMS + WhatsApp)
 	TwilioAccountSID  string `mapstructure:"twilio_account_sid"`
@@ -100,6 +101,9 @@ type Config struct {
 
 	// Slack Config
 	SlackBotToken string `mapstructure:"slack_bot_token"`
+
+	// Virtual Employees Config (Stateless email/system prompt aliases)
+	VirtualEmployees map[string]AgentAlias `mapstructure:"virtual_employees"`
 }
 
 type RuleEngineConfig struct {
@@ -132,6 +136,7 @@ type JetStreamConfig struct {
 	DenyPurge   bool          `mapstructure:"deny_purge"`
 	AllowRollup bool          `mapstructure:"allow_rollup"`
 	AllowDirect bool          `mapstructure:"allow_direct"`
+	AllowMsgTTL bool          `mapstructure:"allow_msg_ttl"`
 }
 
 // WorkerSubjects stores per-worker subscription settings keyed by worker name.
@@ -265,6 +270,7 @@ func Load() (*Config, *viper.Viper, error) {
 	_ = v.BindEnv("encryption_key", "ENCRYPTION_KEY")
 	_ = v.BindEnv("workers.erp_event.subject", "NATS_ERP_EVENT_SUBJECT")
 	_ = v.BindEnv("postmark_server_token", "POSTMARK_TRANSACTIONAL_SERVER_TOKEN")
+	_ = v.BindEnv("postmark_sender_signature", "POSTMARK_SENDER_SIGNATURE")
 	_ = v.BindEnv("twilio_account_sid", "TWILIO_ACCOUNT_SID")
 	_ = v.BindEnv("twilio_auth_token", "TWILIO_AUTH_TOKEN")
 	_ = v.BindEnv("twilio_sms_number", "TWILIO_SMS_NUMBER")
@@ -391,4 +397,12 @@ func (c Config) Validate() error {
 	}
 
 	return nil
+}
+
+// AgentAlias defines a known agent mailbox alias and its configuration.
+type AgentAlias struct {
+	Name         string `mapstructure:"name"`
+	Description  string `mapstructure:"description"`
+	SystemPrompt string `mapstructure:"system_prompt"`
+	Email        string `mapstructure:"email"`
 }

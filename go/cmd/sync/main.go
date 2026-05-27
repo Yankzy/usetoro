@@ -57,6 +57,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 			DenyPurge:   erpCfg.JetStream.DenyPurge,
 			AllowRollup: erpCfg.JetStream.AllowRollup,
 			AllowDirect: erpCfg.JetStream.AllowDirect,
+			AllowMsgTTL: erpCfg.JetStream.AllowMsgTTL,
 		}); err != nil {
 			logger.Warn("Failed to ensure ERP stream", "error", err)
 		} else {
@@ -76,6 +77,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 			DenyPurge:   ledgerCfg.JetStream.DenyPurge,
 			AllowRollup: ledgerCfg.JetStream.AllowRollup,
 			AllowDirect: ledgerCfg.JetStream.AllowDirect,
+			AllowMsgTTL: ledgerCfg.JetStream.AllowMsgTTL,
 		}); err != nil {
 			logger.Warn("Failed to ensure LEDGER stream", "error", err)
 		} else {

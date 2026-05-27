@@ -13,6 +13,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/Yankzy/usetoro/internal/agents"
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
@@ -91,6 +92,9 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		ToHandle   string `json:"to_handle"`
 		Source     string `json:"source"`
 		Subject    string `json:"subject"`
+		InReplyTo  string `json:"in_reply_to"`
+		SessionID  string `json:"session_id"`
+		EntityID   string `json:"entity_id"`
 	}
 
 	if err := json.Unmarshal(proof.Data, &response); err != nil {
@@ -98,13 +102,24 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	// 1. Persist to the database (Read-only agents policy)
-	err := w.db.SaveInboundConversation(ctx, database.SaveInboundConversationParams{
-		Source:       response.Source,
-		ExternalID:   fmt.Sprintf("agent-res-%s-%d", env.ID, time.Now().Unix()),
-		FromHandle:   response.FromHandle,
-		ToHandle:     response.ToHandle,
-		BodyText:     pgtype.Text{String: response.BodyText, Valid: true},
-		StrippedText: pgtype.Text{String: response.BodyText, Valid: true},
+	tempExternalID := fmt.Sprintf("agent-res-%s-%d", env.ID, time.Now().Unix())
+	var entityUUID pgtype.UUID
+	var sessionUUID pgtype.UUID
+	if response.EntityID != "" {
+		_ = entityUUID.Scan(response.EntityID)
+	}
+	if response.SessionID != "" {
+		_ = sessionUUID.Scan(response.SessionID)
+	}
+	err := w.db.SaveConversationSessionMessage(ctx, database.SaveConversationSessionMessageParams{
+		EntityID:   entityUUID,
+		Source:     response.Source,
+		ExternalID: tempExternalID,
+		FromHandle: response.FromHandle,
+		ToHandle:   response.ToHandle,
+		BodyText:   pgtype.Text{String: response.BodyText, Valid: true},
+		SessionID:  sessionUUID,
+		Role:       "assistant",
 	})
 
 	if err != nil {
@@ -115,7 +130,20 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	// 2. Dispatch to the appropriate channel
 	switch response.Source {
 	case "email":
-		return w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText)
+		msgID, err := w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText, response.InReplyTo)
+		if err != nil {
+			return err
+		}
+		if msgID != "" {
+			updateErr := w.db.UpdateConversationExternalID(ctx, database.UpdateConversationExternalIDParams{
+				ExternalID:   msgID,
+				ExternalID_2: tempExternalID,
+			})
+			if updateErr != nil {
+				w.logger.Error("failed to update conversation external ID with Postmark MessageID", "error", updateErr, "temp_id", tempExternalID, "real_id", msgID)
+			}
+		}
+		return nil
 	case "whatsapp":
 		return w.sendWhatsApp(ctx, response.ToHandle, response.BodyText)
 	case "sms":
@@ -133,27 +161,53 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 }
 
 // sendEmail sends an outbound email using the Postmark API.
-func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body string) error {
+func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body, inReplyTo string) (string, error) {
 	if w.cfg.PostmarkServerToken == "" {
-		return fmt.Errorf("postmark server token not configured")
+		return "", fmt.Errorf("postmark server token not configured")
 	}
 
 	if subject == "" {
 		subject = "Response from Toro AI"
 	}
 
+	if inReplyTo != "" && !strings.HasPrefix(subject, "Re:") {
+		subject = "Re: " + subject
+	}
+
+	fromAddr := from
+	replyTo := from
+
+	alias, _ := parseAgentEmail(from)
+	if cfg := agents.Lookup(alias); cfg != nil && cfg.Email != "" {
+		fromAddr = cfg.Email
+		replyTo = from
+	} else if w.cfg.PostmarkSenderSignature != "" {
+		fromAddr = w.cfg.PostmarkSenderSignature
+		replyTo = from
+	}
+
 	payload := map[string]interface{}{
-		"From":          from,
+		"From":          fromAddr,
 		"To":            to,
+		"ReplyTo":       replyTo,
 		"Subject":       subject,
 		"TextBody":      body,
+		"TrackOpens":    true,
+		"TrackLinks":    "HtmlAndText",
 		"MessageStream": "outbound",
+	}
+
+	if inReplyTo != "" {
+		payload["Headers"] = []map[string]string{
+			{"Name": "In-Reply-To", "Value": inReplyTo},
+			{"Name": "References", "Value": inReplyTo},
+		}
 	}
 
 	jsonPayload, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.postmarkapp.com/email", bytes.NewBuffer(jsonPayload))
 	if err != nil {
-		return fmt.Errorf("failed to create postmark request: %w", err)
+		return "", fmt.Errorf("failed to create postmark request: %w", err)
 	}
 
 	req.Header.Set("Accept", "application/json")
@@ -162,18 +216,25 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body 
 
 	resp, err := w.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("postmark request failed: %w", err)
+		return "", fmt.Errorf("postmark request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp map[string]interface{}
 		_ = json.NewDecoder(resp.Body).Decode(&errResp)
-		return fmt.Errorf("postmark API error (status %d): %v", resp.StatusCode, errResp)
+		return "", fmt.Errorf("postmark API error (status %d): %v", resp.StatusCode, errResp)
 	}
 
-	w.logger.Info("successfully sent outbound email via Postmark", "to", to)
-	return nil
+	var successResp struct {
+		MessageID string `json:"MessageID"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&successResp); err != nil {
+		return "", fmt.Errorf("failed to decode postmark success response: %w", err)
+	}
+
+	w.logger.Info("successfully sent outbound email via Postmark", "to", to, "message_id", successResp.MessageID)
+	return successResp.MessageID, nil
 }
 
 // sendSMS sends an outbound SMS via the Twilio Programmable SMS API.

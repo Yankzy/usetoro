@@ -94,14 +94,19 @@ func (c *Client) EnsureStream(cfg *nats.StreamConfig) error {
 
 	if err == nil {
 		// Stream exists, update if needed
-		// Check if subjects need to be exactly updated (added or removed)
-		if !subjectsExactMatch(info.Config.Subjects, cfg.Subjects) {
+		if needsStreamUpdate(&info.Config, cfg) {
 			updateCfg := info.Config
 			updateCfg.Subjects = cfg.Subjects
+			updateCfg.MaxAge = cfg.MaxAge
+			updateCfg.AllowMsgTTL = cfg.AllowMsgTTL
+			updateCfg.AllowRollup = cfg.AllowRollup
+			updateCfg.DenyDelete = cfg.DenyDelete
+			updateCfg.DenyPurge = cfg.DenyPurge
+			updateCfg.AllowDirect = cfg.AllowDirect
 
 			_, err = c.js.UpdateStream(&updateCfg)
 			if err != nil {
-				return fmt.Errorf("failed to update stream: %w", err)
+				return fmt.Errorf("failed to update stream %q: %w", cfg.Name, err)
 			}
 		}
 		return nil
@@ -233,3 +238,16 @@ func subjectIsCovered(req, existing string) bool {
 	// Make sure they have the exact same number of tokens unless > matched early
 	return len(reqTokens) == len(exTokens)
 }
+
+// needsStreamUpdate returns true if the existing stream configuration differs from the required configuration
+// for any updateable fields.
+func needsStreamUpdate(existing, required *nats.StreamConfig) bool {
+	return !subjectsExactMatch(existing.Subjects, required.Subjects) ||
+		existing.MaxAge != required.MaxAge ||
+		existing.AllowMsgTTL != required.AllowMsgTTL ||
+		existing.AllowRollup != required.AllowRollup ||
+		existing.DenyDelete != required.DenyDelete ||
+		existing.DenyPurge != required.DenyPurge ||
+		existing.AllowDirect != required.AllowDirect
+}
+

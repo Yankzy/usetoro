@@ -2,6 +2,9 @@ package queue
 
 import (
 	"testing"
+	"time"
+
+	"github.com/nats-io/nats.go"
 )
 
 func TestSubjectsExactMatch(t *testing.T) {
@@ -82,3 +85,145 @@ func TestSubjectsExactMatch(t *testing.T) {
 		})
 	}
 }
+
+func TestNeedsStreamUpdate(t *testing.T) {
+	defaultExisting := &nats.StreamConfig{
+		Subjects:    []string{"a", "b"},
+		MaxAge:      30 * 24 * time.Hour,
+		AllowMsgTTL: false,
+		AllowRollup: false,
+		DenyDelete:  true,
+		DenyPurge:   true,
+		AllowDirect: true,
+	}
+
+	tests := []struct {
+		name     string
+		existing *nats.StreamConfig
+		required *nats.StreamConfig
+		expected bool
+	}{
+		{
+			name:     "identical config",
+			existing: defaultExisting,
+			required: &nats.StreamConfig{
+				Subjects:    []string{"a", "b"},
+				MaxAge:      30 * 24 * time.Hour,
+				AllowMsgTTL: false,
+				AllowRollup: false,
+				DenyDelete:  true,
+				DenyPurge:   true,
+				AllowDirect: true,
+			},
+			expected: false,
+		},
+		{
+			name:     "subjects differ",
+			existing: defaultExisting,
+			required: &nats.StreamConfig{
+				Subjects:    []string{"a", "b", "c"},
+				MaxAge:      30 * 24 * time.Hour,
+				AllowMsgTTL: false,
+				AllowRollup: false,
+				DenyDelete:  true,
+				DenyPurge:   true,
+				AllowDirect: true,
+			},
+			expected: true,
+		},
+		{
+			name:     "MaxAge differs",
+			existing: defaultExisting,
+			required: &nats.StreamConfig{
+				Subjects:    []string{"a", "b"},
+				MaxAge:      1 * time.Hour,
+				AllowMsgTTL: false,
+				AllowRollup: false,
+				DenyDelete:  true,
+				DenyPurge:   true,
+				AllowDirect: true,
+			},
+			expected: true,
+		},
+		{
+			name:     "AllowMsgTTL differs",
+			existing: defaultExisting,
+			required: &nats.StreamConfig{
+				Subjects:    []string{"a", "b"},
+				MaxAge:      30 * 24 * time.Hour,
+				AllowMsgTTL: true,
+				AllowRollup: false,
+				DenyDelete:  true,
+				DenyPurge:   true,
+				AllowDirect: true,
+			},
+			expected: true,
+		},
+		{
+			name:     "AllowRollup differs",
+			existing: defaultExisting,
+			required: &nats.StreamConfig{
+				Subjects:    []string{"a", "b"},
+				MaxAge:      30 * 24 * time.Hour,
+				AllowMsgTTL: false,
+				AllowRollup: true,
+				DenyDelete:  true,
+				DenyPurge:   true,
+				AllowDirect: true,
+			},
+			expected: true,
+		},
+		{
+			name:     "DenyDelete differs",
+			existing: defaultExisting,
+			required: &nats.StreamConfig{
+				Subjects:    []string{"a", "b"},
+				MaxAge:      30 * 24 * time.Hour,
+				AllowMsgTTL: false,
+				AllowRollup: false,
+				DenyDelete:  false,
+				DenyPurge:   true,
+				AllowDirect: true,
+			},
+			expected: true,
+		},
+		{
+			name:     "DenyPurge differs",
+			existing: defaultExisting,
+			required: &nats.StreamConfig{
+				Subjects:    []string{"a", "b"},
+				MaxAge:      30 * 24 * time.Hour,
+				AllowMsgTTL: false,
+				AllowRollup: false,
+				DenyDelete:  true,
+				DenyPurge:   false,
+				AllowDirect: true,
+			},
+			expected: true,
+		},
+		{
+			name:     "AllowDirect differs",
+			existing: defaultExisting,
+			required: &nats.StreamConfig{
+				Subjects:    []string{"a", "b"},
+				MaxAge:      30 * 24 * time.Hour,
+				AllowMsgTTL: false,
+				AllowRollup: false,
+				DenyDelete:  true,
+				DenyPurge:   true,
+				AllowDirect: false,
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := needsStreamUpdate(tt.existing, tt.required)
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v for %s", tt.expected, result, tt.name)
+			}
+		})
+	}
+}
+

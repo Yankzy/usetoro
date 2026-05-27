@@ -199,7 +199,7 @@ rebuild_all:
 
 rebuild: fix-permissions
 	@if [ -n "$(RUN_ARGS)" ]; then \
-		$(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) up --build -d --force-recreate $(RUN_ARGS); \
+		$(MAKE) vndr && $(MAKE) sqlc && $(MAKE) down && $(DOCKER_COMPOSE) build $(RUN_ARGS) && $(MAKE) up; \
 		$(MAKE) logs; \
 	else \
 		echo "Enter the service name: "; \

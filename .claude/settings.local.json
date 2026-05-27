@@ -58,7 +58,8 @@
       "Bash(~/go/bin/gqlgen generate *)",
       "Bash(xxd /Users/Yankz/programming/usetoro/go/internal/wshandler/workflow_consumer.go)",
       "Bash(GOWORK=off go run github.com/99designs/gqlgen generate)",
-      "Bash(GOWORK=off go run -mod=mod github.com/99designs/gqlgen generate)"
+      "Bash(GOWORK=off go run -mod=mod github.com/99designs/gqlgen generate)",
+      "WebSearch"
     ]
   }
 }

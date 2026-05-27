@@ -13,7 +13,7 @@ import (
 
 const getActiveSessionByParticipant = `-- name: GetActiveSessionByParticipant :one
 SELECT id, entity_id, external_id, source, participant_handle, toro_handle, subject, status, system_prompt, context_json, last_activity_at, created_at, updated_at FROM toro_core.conversation_sessions
-WHERE entity_id = $1 AND participant_handle = $2 AND status IN ('active', 'awaiting_reply')
+WHERE entity_id = $1 AND participant_handle = $2 AND source = $3 AND status IN ('active', 'awaiting_reply')
 ORDER BY last_activity_at DESC
 LIMIT 1
 `
@@ -21,10 +21,11 @@ LIMIT 1
 type GetActiveSessionByParticipantParams struct {
 	EntityID          pgtype.UUID
 	ParticipantHandle string
+	Source            string
 }
 
 func (q *Queries) GetActiveSessionByParticipant(ctx context.Context, arg GetActiveSessionByParticipantParams) (ToroCoreConversationSession, error) {
-	row := q.db.QueryRow(ctx, getActiveSessionByParticipant, arg.EntityID, arg.ParticipantHandle)
+	row := q.db.QueryRow(ctx, getActiveSessionByParticipant, arg.EntityID, arg.ParticipantHandle, arg.Source)
 	var i ToroCoreConversationSession
 	err := row.Scan(
 		&i.ID,
@@ -124,6 +125,19 @@ func (q *Queries) GetAwaitingReplySessions(ctx context.Context) ([]ToroCoreConve
 	return items, nil
 }
 
+const getConversationByExternalID = `-- name: GetConversationByExternalID :one
+SELECT session_id FROM toro_core.conversations
+WHERE external_id = $1 AND session_id IS NOT NULL
+LIMIT 1
+`
+
+func (q *Queries) GetConversationByExternalID(ctx context.Context, externalID string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getConversationByExternalID, externalID)
+	var session_id pgtype.UUID
+	err := row.Scan(&session_id)
+	return session_id, err
+}
+
 const getConversationSession = `-- name: GetConversationSession :one
 SELECT id, entity_id, external_id, source, participant_handle, toro_handle, subject, status, system_prompt, context_json, last_activity_at, created_at, updated_at FROM toro_core.conversation_sessions WHERE id = $1
 `
@@ -149,6 +163,17 @@ func (q *Queries) GetConversationSession(ctx context.Context, id pgtype.UUID) (T
 	return i, err
 }
 
+const getEntityBySubdomain = `-- name: GetEntityBySubdomain :one
+SELECT id FROM toro_core.entities WHERE name = $1 AND status = 'active' LIMIT 1
+`
+
+func (q *Queries) GetEntityBySubdomain(ctx context.Context, name string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getEntityBySubdomain, name)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getEntityIDByEmail = `-- name: GetEntityIDByEmail :one
 SELECT entity_id FROM toro_core.users WHERE email = $1 LIMIT 1
 `
@@ -161,7 +186,7 @@ func (q *Queries) GetEntityIDByEmail(ctx context.Context, email string) (pgtype.
 }
 
 const getRecentConversations = `-- name: GetRecentConversations :many
-SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, created_at, updated_at, session_id FROM toro_core.conversations
+SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, created_at, updated_at, session_id, delivered, bounced, opened, clicked, complained, role FROM toro_core.conversations
 WHERE (from_handle = $1 AND to_handle = $2)
    OR (from_handle = $2 AND to_handle = $1)
 ORDER BY created_at DESC
@@ -200,6 +225,12 @@ func (q *Queries) GetRecentConversations(ctx context.Context, arg GetRecentConve
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.SessionID,
+			&i.Delivered,
+			&i.Bounced,
+			&i.Opened,
+			&i.Clicked,
+			&i.Complained,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}
@@ -212,7 +243,7 @@ func (q *Queries) GetRecentConversations(ctx context.Context, arg GetRecentConve
 }
 
 const getSessionConversations = `-- name: GetSessionConversations :many
-SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, created_at, updated_at, session_id FROM toro_core.conversations
+SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, created_at, updated_at, session_id, delivered, bounced, opened, clicked, complained, role FROM toro_core.conversations
 WHERE session_id = $1
 ORDER BY created_at ASC
 `
@@ -243,6 +274,12 @@ func (q *Queries) GetSessionConversations(ctx context.Context, sessionID pgtype.
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.SessionID,
+			&i.Delivered,
+			&i.Bounced,
+			&i.Opened,
+			&i.Clicked,
+			&i.Complained,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}
@@ -302,9 +339,9 @@ func (q *Queries) InsertConversationSession(ctx context.Context, arg InsertConve
 
 const saveConversationSessionMessage = `-- name: SaveConversationSessionMessage :exec
 INSERT INTO toro_core.conversations (
-    entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, session_id
+    entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, session_id, role
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
 ON CONFLICT (external_id) DO NOTHING
 `
@@ -323,6 +360,7 @@ type SaveConversationSessionMessageParams struct {
 	StrippedText pgtype.Text
 	Metadata     []byte
 	SessionID    pgtype.UUID
+	Role         string
 }
 
 func (q *Queries) SaveConversationSessionMessage(ctx context.Context, arg SaveConversationSessionMessageParams) error {
@@ -340,6 +378,7 @@ func (q *Queries) SaveConversationSessionMessage(ctx context.Context, arg SaveCo
 		arg.StrippedText,
 		arg.Metadata,
 		arg.SessionID,
+		arg.Role,
 	)
 	return err
 }
@@ -394,6 +433,55 @@ func (q *Queries) SaveInboundConversation(ctx context.Context, arg SaveInboundCo
 		arg.StrippedText,
 		arg.Metadata,
 	)
+	return err
+}
+
+const updateConversationDeliveryStatus = `-- name: UpdateConversationDeliveryStatus :exec
+UPDATE toro_core.conversations
+SET
+    delivered = COALESCE($2, delivered),
+    bounced = COALESCE($3, bounced),
+    opened = COALESCE($4, opened),
+    clicked = COALESCE($5, clicked),
+    complained = COALESCE($6, complained),
+    updated_at = NOW()
+WHERE external_id = $1
+`
+
+type UpdateConversationDeliveryStatusParams struct {
+	ExternalID string
+	Delivered  []byte
+	Bounced    []byte
+	Opened     []byte
+	Clicked    []byte
+	Complained []byte
+}
+
+func (q *Queries) UpdateConversationDeliveryStatus(ctx context.Context, arg UpdateConversationDeliveryStatusParams) error {
+	_, err := q.db.Exec(ctx, updateConversationDeliveryStatus,
+		arg.ExternalID,
+		arg.Delivered,
+		arg.Bounced,
+		arg.Opened,
+		arg.Clicked,
+		arg.Complained,
+	)
+	return err
+}
+
+const updateConversationExternalID = `-- name: UpdateConversationExternalID :exec
+UPDATE toro_core.conversations
+SET external_id = $1
+WHERE external_id = $2
+`
+
+type UpdateConversationExternalIDParams struct {
+	ExternalID   string
+	ExternalID_2 string
+}
+
+func (q *Queries) UpdateConversationExternalID(ctx context.Context, arg UpdateConversationExternalIDParams) error {
+	_, err := q.db.Exec(ctx, updateConversationExternalID, arg.ExternalID, arg.ExternalID_2)
 	return err
 }
 

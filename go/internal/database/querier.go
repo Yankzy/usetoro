@@ -92,6 +92,7 @@ type Querier interface {
 	GetCompanyInfo(ctx context.Context, realmID string) (ShadowErpCompanyInfo, error)
 	GetConditionsByRuleGroups(ctx context.Context, ruleGroupIds []int32) ([]ShadowErpRuleCondition, error)
 	GetConnectionWithWebhookTimes(ctx context.Context, arg GetConnectionWithWebhookTimesParams) (GetConnectionWithWebhookTimesRow, error)
+	GetConversationByExternalID(ctx context.Context, externalID string) (pgtype.UUID, error)
 	GetConversationSession(ctx context.Context, id pgtype.UUID) (ToroCoreConversationSession, error)
 	GetCreditCardAccounts(ctx context.Context) ([]string, error)
 	GetCustomerByERPID(ctx context.Context, arg GetCustomerByERPIDParams) (ShadowErpCustomer, error)
@@ -125,6 +126,7 @@ type Querier interface {
 	// =========================================================================
 	GetEmployeeStats(ctx context.Context, userID pgtype.UUID) (GetEmployeeStatsRow, error)
 	GetEntities(ctx context.Context, arg GetEntitiesParams) ([]ToroCoreEntity, error)
+	GetEntityBySubdomain(ctx context.Context, name string) (pgtype.UUID, error)
 	GetEntityDescendants(ctx context.Context, id pgtype.UUID) ([]pgtype.UUID, error)
 	GetEntityIDByEmail(ctx context.Context, email string) (pgtype.UUID, error)
 	GetExpenseAccountsFromPurchases(ctx context.Context, realmID string) ([]GetExpenseAccountsFromPurchasesRow, error)
@@ -296,6 +298,8 @@ type Querier interface {
 	UpdateCleanupSessionRowCount(ctx context.Context, arg UpdateCleanupSessionRowCountParams) error
 	UpdateCleanupSessionStatus(ctx context.Context, arg UpdateCleanupSessionStatusParams) error
 	UpdateCompanyTaxonomy(ctx context.Context, arg UpdateCompanyTaxonomyParams) error
+	UpdateConversationDeliveryStatus(ctx context.Context, arg UpdateConversationDeliveryStatusParams) error
+	UpdateConversationExternalID(ctx context.Context, arg UpdateConversationExternalIDParams) error
 	UpdateConversationSession(ctx context.Context, arg UpdateConversationSessionParams) error
 	UpdateCustomerTaxonomy(ctx context.Context, arg UpdateCustomerTaxonomyParams) error
 	UpdateCustomerVectorSync(ctx context.Context, arg UpdateCustomerVectorSyncParams) error

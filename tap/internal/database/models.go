@@ -432,6 +432,12 @@ type ToroCoreConversation struct {
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
 	SessionID    pgtype.UUID
+	Delivered    []byte
+	Bounced      []byte
+	Opened       []byte
+	Clicked      []byte
+	Complained   []byte
+	Role         string
 }
 
 type ToroCoreConversationSession struct {

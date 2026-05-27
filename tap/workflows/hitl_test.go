@@ -26,6 +26,8 @@ func (s *stubBus) Publish(subject string, data []byte) error {
 	return nil
 }
 
+func (s *stubBus) PublishCore(subject string, data []byte) error { return s.Publish(subject, data) }
+
 func (s *stubBus) RequestWithContext(_ context.Context, _ string, _ []byte) (*nats.Msg, error) {
 	return nil, nil
 }

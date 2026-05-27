@@ -64,6 +64,8 @@ func (b *mockEventBus) Publish(subject string, data []byte) error {
 	return nil
 }
 
+func (b *mockEventBus) PublishCore(subject string, data []byte) error { return b.Publish(subject, data) }
+
 func (b *mockEventBus) RequestWithContext(_ context.Context, _ string, _ []byte) (*nats.Msg, error) {
 	return nil, errors.New("mock: not implemented")
 }

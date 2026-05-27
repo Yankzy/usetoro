@@ -17,6 +17,7 @@ func (b *mockBus) Publish(subject string, data []byte) error {
 	fmt.Printf("MockBus: Publish to %s\n", subject)
 	return nil
 }
+func (b *mockBus) PublishCore(subject string, data []byte) error { return nil }
 func (b *mockBus) RequestWithContext(ctx context.Context, subject string, data []byte) (*nats.Msg, error) {
 	return nil, nil
 }

@@ -1,4 +1,4 @@
-package general_agent
+package builtin
 
 import (
 	"context"
@@ -10,16 +10,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// conversationStateTool lets the general agent update the conversation session
+// ConversationStateTool lets an agent update the conversation session
 // status (e.g. mark as resolved, awaiting reply, or escalated).
-type conversationStateTool struct {
-	bus    core.EventBus
-	logger *slog.Logger
+type ConversationStateTool struct {
+	Bus      core.EventBus
+	Logger   *slog.Logger
+	AgentDID string
 }
 
-func (t *conversationStateTool) Name() string        { return "ConversationState" }
-func (t *conversationStateTool) Description() string  { return "Update the current conversation session status. Use this to mark a conversation as resolved when the user's request is complete, or mark it as awaiting_reply when you've asked a question and need to wait for a response." }
-func (t *conversationStateTool) InputSchema() json.RawMessage {
+func (t *ConversationStateTool) Name() string        { return "ConversationState" }
+func (t *ConversationStateTool) Description() string { return "Update the current conversation session status. Use this to mark a conversation as resolved when the user's request is complete, or mark it as awaiting_reply when you've asked a question and need to wait for a response." }
+func (t *ConversationStateTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -30,7 +31,7 @@ func (t *conversationStateTool) InputSchema() json.RawMessage {
 	}`)
 }
 
-func (t *conversationStateTool) Call(ctx context.Context, input map[string]any) (string, error) {
+func (t *ConversationStateTool) Call(ctx context.Context, input map[string]any) (string, error) {
 	status, _ := input["status"].(string)
 	if status == "" {
 		return "", fmt.Errorf("status is required")
@@ -51,32 +52,32 @@ func (t *conversationStateTool) Call(ctx context.Context, input map[string]any) 
 
 	envlp := core.Envelope{
 		ID:           uuid.New().String(),
-		SenderDID:    "did:toro:agent:general_purpose_1",
+		SenderDID:    t.AgentDID,
 		ReceiverDID:  "did:toro:worker:conversation_scheduler",
 		Performative: core.REQUEST,
 		Body:         payloadBytes,
 	}
 	envlpBytes, _ := json.Marshal(envlp)
 
-	if err := t.bus.Publish(subject, envlpBytes); err != nil {
+	if err := t.Bus.Publish(subject, envlpBytes); err != nil {
 		return "", fmt.Errorf("publish conversation update: %w", err)
 	}
 
-	t.logger.Info("conversation state updated", "status", status, "reason", reason)
+	t.Logger.Info("conversation state updated", "status", status, "reason", reason)
 	return fmt.Sprintf("Conversation status updated to '%s'.", status), nil
 }
 
-// scheduleReminderTool lets the general agent schedule a delayed follow-up
-// message. The scheduler worker will publish the message back to the general
-// agent ingress at the specified time.
-type scheduleReminderTool struct {
-	bus    core.EventBus
-	logger *slog.Logger
+// ScheduleReminderTool lets an agent schedule a delayed follow-up
+// message. The scheduler worker will publish the message back to the ingress at the specified time.
+type ScheduleReminderTool struct {
+	Bus      core.EventBus
+	Logger   *slog.Logger
+	AgentDID string
 }
 
-func (t *scheduleReminderTool) Name() string        { return "ScheduleReminder" }
-func (t *scheduleReminderTool) Description() string  { return "Schedule a follow-up reminder to be sent after a delay. Use this when waiting for a client response and you want to follow up automatically. The reminder will re-trigger the conversation with context." }
-func (t *scheduleReminderTool) InputSchema() json.RawMessage {
+func (t *ScheduleReminderTool) Name() string        { return "ScheduleReminder" }
+func (t *ScheduleReminderTool) Description() string { return "Schedule a follow-up reminder to be sent after a delay. Use this when waiting for a client response and you want to follow up automatically. The reminder will re-trigger the conversation with context." }
+func (t *ScheduleReminderTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -87,7 +88,7 @@ func (t *scheduleReminderTool) InputSchema() json.RawMessage {
 	}`)
 }
 
-func (t *scheduleReminderTool) Call(ctx context.Context, input map[string]any) (string, error) {
+func (t *ScheduleReminderTool) Call(ctx context.Context, input map[string]any) (string, error) {
 	delay, _ := input["delay"].(string)
 	message, _ := input["message"].(string)
 	if delay == "" || message == "" {
@@ -108,17 +109,17 @@ func (t *scheduleReminderTool) Call(ctx context.Context, input map[string]any) (
 
 	envlp := core.Envelope{
 		ID:           uuid.New().String(),
-		SenderDID:    "did:toro:agent:general_purpose_1",
+		SenderDID:    t.AgentDID,
 		ReceiverDID:  "did:toro:worker:conversation_scheduler",
 		Performative: core.REQUEST,
 		Body:         payloadBytes,
 	}
 	envlpBytes, _ := json.Marshal(envlp)
 
-	if err := t.bus.Publish(subject, envlpBytes); err != nil {
+	if err := t.Bus.Publish(subject, envlpBytes); err != nil {
 		return "", fmt.Errorf("publish schedule reminder: %w", err)
 	}
 
-	t.logger.Info("reminder scheduled", "delay", delay)
+	t.Logger.Info("reminder scheduled", "delay", delay)
 	return fmt.Sprintf("Reminder scheduled in %s.", delay), nil
 }

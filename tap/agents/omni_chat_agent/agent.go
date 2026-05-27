@@ -260,6 +260,8 @@ Example:
 			"from_handle": toHandle,
 			"to_handle":   fromHandle,
 			"source":      core.RowString(payload, "source"),
+			"subject":     core.RowString(payload, "subject"),
+			"in_reply_to": core.RowString(payload, "in_reply_to"),
 		}
 
 		responseBytes, _ := json.Marshal(response)

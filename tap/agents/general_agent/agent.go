@@ -63,13 +63,15 @@ func NewGeneralAgent(env core.Environment) core.Runnable {
 			bus:    env.Bus,
 			logger: logger,
 		},
-		"ConversationState": &conversationStateTool{
-			bus:    env.Bus,
-			logger: logger,
+		"ConversationState": &builtin.ConversationStateTool{
+			Bus:      env.Bus,
+			Logger:   logger,
+			AgentDID: env.Config.DID,
 		},
-		"ScheduleReminder": &scheduleReminderTool{
-			bus:    env.Bus,
-			logger: logger,
+		"ScheduleReminder": &builtin.ScheduleReminderTool{
+			Bus:      env.Bus,
+			Logger:   logger,
+			AgentDID: env.Config.DID,
 		},
 	}
 
@@ -103,10 +105,24 @@ func NewGeneralAgent(env core.Environment) core.Runnable {
 
 func (ga *GeneralAgent) makeLLMCallFunc() tools.LLMCallFunc {
 	return func(ctx context.Context, messages []tools.Message, tlz []tools.Tool) (string, error) {
-		// Build prompt from messages
-		prompt := buildPromptFromMessages(messages)
-
-		sysPrompt := ga.BaseAgent.Cfg.SystemPrompt
+		// Convert tools.Message -> agent.MessageInput
+		msgInputs := make([]agent.MessageInput, 0, len(messages))
+		for _, m := range messages {
+			// For tool results, we append them as user messages with a special prefix
+			// since the unified MessageInput doesn't have a dedicated tool role yet.
+			// (The chat paradigm can handle tool results natively, but we map it simply here
+			// to avoid overly complex state management across paradigms).
+			content := m.Content
+			role := m.Role
+			if role == "tool" {
+				role = "user"
+				content = fmt.Sprintf("TOOL RESULT (%s): %s", m.ToolCallID, m.Content)
+			}
+			msgInputs = append(msgInputs, agent.MessageInput{
+				Role:    role,
+				Content: content,
+			})
+		}
 
 		// Convert tools.Tool → agent.ToolDef
 		toolDefs := make([]agent.ToolDef, 0, len(tlz))
@@ -139,7 +155,7 @@ func (ga *GeneralAgent) makeLLMCallFunc() tools.LLMCallFunc {
 			return t.Call(tctx, args)
 		}
 
-		return ga.RT.ExecWithToolCalling(ctx, prompt, sysPrompt, nil, nil, toolDefs, toolHandler)
+		return ga.RT.ExecWithMessages(ctx, msgInputs, toolDefs, toolHandler)
 	}
 }
 
@@ -167,6 +183,16 @@ func buildPromptFromMessages(messages []tools.Message) string {
 // ── NATS handler ──────────────────────────────────────────────────────
 
 func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, replySubject string) {
+	// Hard cap at 2 delivery attempts to prevent runaway LLM costs.
+	if meta, err := msg.Metadata(); err == nil && meta.NumDelivered > 2 {
+		ga.BaseAgent.Logger.Error("message exceeded max delivery attempts, terminating",
+			"num_delivered", meta.NumDelivered,
+			"subject", msg.Subject,
+		)
+		msg.Term()
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
@@ -188,27 +214,33 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 		ctx = context.WithValue(ctx, conversationIDKey{}, envlp.ConversationID)
 	}
 
-	// Extract the user prompt and optional workflow schema
-	prompt, wfSchema, rbacPolicy := extractTaskConfig(envlp.Body)
+	// Extract the user prompt, system prompt override, workflow schema, and messages
+	prompt, taskSysPrompt, wfSchema, rbacPolicy, structuredMsgs := extractTaskConfig(envlp.Body)
 
 	toolList := resolveToolsFromConfig(env.Config, ga.toolMap)
 
-	// Build system prompt — instruct the LLM to emit RFC 6902 patches when a schema is provided
-	systemPrompt := env.Config.SystemPrompt
+	// Use the task's system prompt if provided, otherwise fall back to config
+	systemPrompt := taskSysPrompt
+	if systemPrompt == "" {
+		systemPrompt = env.Config.SystemPrompt
+	}
 	if wfSchema != "" {
 		if systemPrompt != "" {
 			systemPrompt += "\n\n"
 		}
 		systemPrompt += fmt.Sprintf("OUTPUT FORMAT: You MUST produce a JSON array of RFC 6902 JSON Patch operations. The target state schema is:\n%s\n\nEach operation must have 'op', 'path', and 'value' fields. Example: [{\"op\":\"add\",\"path\":\"/result\",\"value\":\"...\"}]", wfSchema)
 	}
-	// Temporarily override the config's system prompt for this invocation
-	origPrompt := env.Config.SystemPrompt
-	env.Config.SystemPrompt = systemPrompt
-	defer func() { env.Config.SystemPrompt = origPrompt }()
 
-	messages := []tools.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: prompt},
+	var messages []tools.Message
+	if len(structuredMsgs) > 0 {
+		messages = make([]tools.Message, 0, len(structuredMsgs)+1)
+		messages = append(messages, tools.Message{Role: "system", Content: systemPrompt})
+		messages = append(messages, structuredMsgs...)
+	} else {
+		messages = []tools.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: prompt},
+		}
 	}
 
 	agentCtx := tools.NewAgentContext("general-purpose", 50)
@@ -253,8 +285,8 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 		}
 
 		store, storeErr := redux.NewStore(redux.EngineConfig{
-			SchemaString: wfSchema,
-			RBAC:         rbacPolicy,
+			SchemaString:    wfSchema,
+			RBAC:            rbacPolicy,
 			MaxOperations:   10,
 			MaxPayloadBytes: 64 * 1024,
 		})
@@ -307,11 +339,28 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 	}
 	replyBytes, _ := json.Marshal(replyEnv)
 
-	targetTopic := replySubject; if targetTopic == "" { targetTopic = core.BuildAgentInbox(envlp.SenderDID) }
-	if err := env.Bus.Publish(targetTopic, replyBytes); err != nil {
-		ga.BaseAgent.Logger.Error("failed to publish INFORM", "error", err)
-		msg.Nak()
-		return
+	// Extract custom reply header to bypass JetStream Ack-override behavior
+	if msg.Header != nil {
+		if customReply := msg.Header.Get("Toro-Reply-To"); customReply != "" {
+			replySubject = customReply
+		}
+	}
+
+	// Reply via core NATS if we have a reply subject (inbox from
+	// async dispatch). JetStream Publish can't target _INBOX.* subjects.
+	if replySubject != "" && !strings.HasPrefix(replySubject, "$JS.") {
+		if err := env.Bus.PublishCore(replySubject, replyBytes); err != nil {
+			ga.BaseAgent.Logger.Error("failed to respond via inbox", "error", err)
+			msg.Nak()
+			return
+		}
+	} else {
+		targetTopic := core.BuildAgentInbox(envlp.SenderDID)
+		if err := env.Bus.Publish(targetTopic, replyBytes); err != nil {
+			ga.BaseAgent.Logger.Error("failed to publish INFORM", "error", err)
+			msg.Nak()
+			return
+		}
 	}
 
 	ga.BaseAgent.Logger.Info("agent finished, INFORM sent", "output_len", len(finalOutput))
@@ -320,47 +369,58 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-func extractTaskConfig(body json.RawMessage) (prompt string, wfSchema string, rbac redux.RBACPolicy) {
+func extractTaskConfig(body json.RawMessage) (prompt string, systemPrompt string, wfSchema string, rbac redux.RBACPolicy, messages []tools.Message) {
 	// Try raw string
 	var s string
 	if err := json.Unmarshal(body, &s); err == nil && s != "" {
-		return s, "", redux.RBACPolicy{}
+		return s, "", "", redux.RBACPolicy{}, nil
 	}
 
 	// Try TaskDefinition wrapper
 	var taskDef core.TaskDefinition
 	if err := json.Unmarshal(body, &taskDef); err == nil && len(taskDef.Payload) > 0 {
 		wfSchema = taskDef.WorkflowSchema
+		systemPrompt = taskDef.SystemPrompt
 		if len(taskDef.RBACPolicy) > 0 {
 			rbac = redux.RBACPolicy{AllowedPrefixes: map[string][]string{
-				taskDef.SystemPrompt: taskDef.RBACPolicy, // RBAC prefixes from task
+				taskDef.SystemPrompt: taskDef.RBACPolicy,
 			}}
 		}
 		var payload map[string]any
 		if err := core.UnmarshalTaskPayload(taskDef.Payload, &payload); err == nil {
+			if msgsRaw, ok := payload["messages"]; ok {
+				msgsBytes, _ := json.Marshal(msgsRaw)
+				_ = json.Unmarshal(msgsBytes, &messages)
+			}
+			
 			if p, ok := payload["prompt"].(string); ok && p != "" {
-				return p, wfSchema, rbac
+				return p, systemPrompt, wfSchema, rbac, messages
 			}
 			if in, ok := payload["input"].(string); ok && in != "" {
-				return in, wfSchema, rbac
+				return in, systemPrompt, wfSchema, rbac, messages
 			}
 			b, _ := json.Marshal(payload)
-			return string(b), wfSchema, rbac
+			return string(b), systemPrompt, wfSchema, rbac, messages
 		}
 	}
 
 	// Try plain JSON object
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err == nil {
+		if msgsRaw, ok := m["messages"]; ok {
+			msgsBytes, _ := json.Marshal(msgsRaw)
+			_ = json.Unmarshal(msgsBytes, &messages)
+		}
+
 		if p, ok := m["prompt"].(string); ok && p != "" {
-			return p, wfSchema, rbac
+			return p, "", wfSchema, rbac, messages
 		}
 		if in, ok := m["input"].(string); ok && in != "" {
-			return in, wfSchema, rbac
+			return in, "", wfSchema, rbac, messages
 		}
 	}
 
-	return string(body), wfSchema, rbac
+	return string(body), "", wfSchema, rbac, nil
 }
 
 func parsePatches(output string) ([]json.RawMessage, error) {
@@ -399,7 +459,10 @@ func replyFailure(msg *nats.Msg, envlp core.Envelope, env core.Environment, logg
 		Body:         mustMarshal(payload),
 	}
 	replyBytes, _ := json.Marshal(replyEnv)
-	targetTopic := replySubject; if targetTopic == "" { targetTopic = core.BuildAgentInbox(envlp.SenderDID) }
+	targetTopic := replySubject
+	if targetTopic == "" {
+		targetTopic = core.BuildAgentInbox(envlp.SenderDID)
+	}
 	if pubErr := env.Bus.Publish(targetTopic, replyBytes); pubErr != nil {
 		logger.Error("failed to publish FAILURE", "error", pubErr)
 	}
@@ -409,7 +472,10 @@ func replyFailure(msg *nats.Msg, envlp core.Envelope, env core.Environment, logg
 func resolveToolsFromConfig(cfg core.AgentConfig, allTools map[string]tools.Tool) []tools.Tool {
 	if len(cfg.Tools) == 0 {
 		list := make([]tools.Tool, 0, len(allTools))
-		for _, t := range allTools {
+		for name, t := range allTools {
+			if name == "ConversationState" || name == "ScheduleReminder" {
+				continue
+			}
 			list = append(list, t)
 		}
 		return list
@@ -435,8 +501,10 @@ type almanacLookupTool struct {
 	logger *slog.Logger
 }
 
-func (t *almanacLookupTool) Name() string        { return "AlmanacLookup" }
-func (t *almanacLookupTool) Description() string { return "Query the Almanac to discover available specialized agents and their capabilities. Use this before delegating work to find the right agent for a task." }
+func (t *almanacLookupTool) Name() string { return "AlmanacLookup" }
+func (t *almanacLookupTool) Description() string {
+	return "Query the Almanac to discover available specialized agents and their capabilities. Use this before delegating work to find the right agent for a task."
+}
 func (t *almanacLookupTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
@@ -485,8 +553,10 @@ type delegateTool struct {
 	logger *slog.Logger
 }
 
-func (t *delegateTool) Name() string        { return "Delegate" }
-func (t *delegateTool) Description() string { return "Delegate work to specialized agents by creating a dynamic workflow. Provide the agent activity types (discovered via AlmanacLookup) and the payload. The Orchestrator will dispatch to the appropriate agents and correlate results." }
+func (t *delegateTool) Name() string { return "Delegate" }
+func (t *delegateTool) Description() string {
+	return "Delegate work to specialized agents by creating a dynamic workflow. Provide the agent activity types (discovered via AlmanacLookup) and the payload. The Orchestrator will dispatch to the appropriate agents and correlate results."
+}
 func (t *delegateTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",

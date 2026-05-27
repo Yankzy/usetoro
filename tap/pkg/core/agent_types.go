@@ -15,6 +15,7 @@ import (
 // EventBus abstracts the underlying messaging system (e.g., NATS).
 type EventBus interface {
 	Publish(subject string, data []byte) error
+	PublishCore(subject string, data []byte) error
 	RequestWithContext(ctx context.Context, subject string, data []byte) (*nats.Msg, error)
 	QueueSubscribe(subj, queue string, cb nats.MsgHandler, opts ...nats.SubOpt) (*nats.Subscription, error)
 }

@@ -14,7 +14,7 @@ import (
 
 func TestExtractTaskConfig_DirectString(t *testing.T) {
 	body := json.RawMessage(`"hello world"`)
-	prompt, _, _ := extractTaskConfig(body)
+	prompt, _, _, _, _ := extractTaskConfig(body)
 	if prompt != "hello world" {
 		t.Errorf("prompt = %q, want %q", prompt, "hello world")
 	}
@@ -22,7 +22,7 @@ func TestExtractTaskConfig_DirectString(t *testing.T) {
 
 func TestExtractTaskConfig_Object(t *testing.T) {
 	body := json.RawMessage(`{"key": "value"}`)
-	prompt, _, _ := extractTaskConfig(body)
+	prompt, _, _, _, _ := extractTaskConfig(body)
 	if !strings.Contains(prompt, "key") {
 		t.Errorf("prompt should contain 'key', got: %s", prompt)
 	}
@@ -30,7 +30,7 @@ func TestExtractTaskConfig_Object(t *testing.T) {
 
 func TestExtractTaskConfig_PromptField(t *testing.T) {
 	body := json.RawMessage(`{"prompt": "do something useful", "config": {}}`)
-	prompt, _, _ := extractTaskConfig(body)
+	prompt, _, _, _, _ := extractTaskConfig(body)
 	if prompt != "do something useful" {
 		t.Errorf("prompt = %q, want %q", prompt, "do something useful")
 	}
@@ -38,7 +38,7 @@ func TestExtractTaskConfig_PromptField(t *testing.T) {
 
 func TestExtractTaskConfig_InputField(t *testing.T) {
 	body := json.RawMessage(`{"input": "process this data", "config": {}}`)
-	prompt, _, _ := extractTaskConfig(body)
+	prompt, _, _, _, _ := extractTaskConfig(body)
 	if prompt != "process this data" {
 		t.Errorf("prompt = %q, want %q", prompt, "process this data")
 	}
@@ -53,7 +53,7 @@ func TestExtractTaskConfig_TaskDefinitionWithPayload(t *testing.T) {
 	}
 	body, _ := json.Marshal(taskDef)
 
-	prompt, schema, _ := extractTaskConfig(body)
+	prompt, _, schema, _, _ := extractTaskConfig(body)
 	if prompt != "classify these transactions" {
 		t.Errorf("prompt = %q, want %q", prompt, "classify these transactions")
 	}
@@ -64,7 +64,7 @@ func TestExtractTaskConfig_TaskDefinitionWithPayload(t *testing.T) {
 
 func TestExtractTaskConfig_EmptyObject(t *testing.T) {
 	body := json.RawMessage(`{}`)
-	prompt, _, _ := extractTaskConfig(body)
+	prompt, _, _, _, _ := extractTaskConfig(body)
 	if prompt != "{}" {
 		t.Errorf("prompt = %q, want %q", prompt, "{}")
 	}
@@ -247,19 +247,5 @@ func TestReduxCircuitBreaker(t *testing.T) {
 			t.Error("expected faults for type mismatch, got none")
 		}
 	})
-}
-
-func TestBuildPromptFromMessages(t *testing.T) {
-	msgs := []tools.Message{
-		{Role: "system", Content: "sys prompt"},
-		{Role: "user", Content: "user prompt"},
-		{Role: "assistant", Content: "assistant response"},
-		{Role: "tool", ToolCallID: "call_abc123", Content: "tool response"},
-	}
-	got := buildPromptFromMessages(msgs)
-	want := "SYSTEM: sys prompt\n\nUSER: user prompt\n\nASSISTANT: assistant response\n\nTOOL RESULT (call_abc123): tool response\n\n"
-	if got != want {
-		t.Errorf("buildPromptFromMessages() = %q, want %q", got, want)
-	}
 }
 

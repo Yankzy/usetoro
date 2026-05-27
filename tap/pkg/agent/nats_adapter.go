@@ -17,6 +17,10 @@ func NewNatsAdapter(nc *nats.Conn, js nats.JetStreamContext) *NatsAdapter {
 	return &NatsAdapter{nc: nc, js: js}
 }
 
+func (n *NatsAdapter) PublishCore(subject string, data []byte) error {
+	return n.nc.Publish(subject, data)
+}
+
 func (n *NatsAdapter) Publish(subject string, data []byte) error {
 	_, err := n.js.Publish(subject, data)
 	if err != nil {

@@ -57,9 +57,8 @@ type mockBus struct {
 	subs []string
 }
 
-func (m *mockBus) Publish(_ string, _ []byte) error {
-	return nil
-}
+func (m *mockBus) Publish(_ string, _ []byte) error     { return nil }
+func (m *mockBus) PublishCore(_ string, _ []byte) error { return nil }
 
 func (m *mockBus) RequestWithContext(_ context.Context, _ string, _ []byte) (*nats.Msg, error) {
 	return nil, errors.New("not implemented")

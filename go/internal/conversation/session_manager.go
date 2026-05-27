@@ -22,10 +22,10 @@ func NewSessionManager(db *database.Queries, logger *slog.Logger) *SessionManage
 // FindOrCreateSession looks for an active session matching the participant,
 // or creates a new one. Returns the session and whether it was newly created.
 func (m *SessionManager) FindOrCreateSession(ctx context.Context, params FindOrCreateParams) (database.ToroCoreConversationSession, bool, error) {
-	// Try to find an existing active session for this participant
 	existing, err := m.db.GetActiveSessionByParticipant(ctx, database.GetActiveSessionByParticipantParams{
 		EntityID:          params.EntityID,
 		ParticipantHandle: params.ParticipantHandle,
+		Source:            params.Source,
 	})
 	if err == nil && existing.ID.Valid {
 		m.logger.Debug("found existing conversation session",
@@ -36,7 +36,21 @@ func (m *SessionManager) FindOrCreateSession(ctx context.Context, params FindOrC
 		return existing, false, nil
 	}
 
-	// Create a new session
+	session, err := m.insertSession(ctx, params)
+	if err != nil {
+		return database.ToroCoreConversationSession{}, false, err
+	}
+	return session, true, nil
+}
+
+// CreateSession always creates a new session without searching for an existing one.
+// Use this for channels with threading (email) where each new message without a
+// reply reference starts a fresh conversation.
+func (m *SessionManager) CreateSession(ctx context.Context, params FindOrCreateParams) (database.ToroCoreConversationSession, error) {
+	return m.insertSession(ctx, params)
+}
+
+func (m *SessionManager) insertSession(ctx context.Context, params FindOrCreateParams) (database.ToroCoreConversationSession, error) {
 	m.logger.Info("creating new conversation session",
 		"participant", params.ParticipantHandle,
 		"source", params.Source,
@@ -57,7 +71,7 @@ func (m *SessionManager) FindOrCreateSession(ctx context.Context, params FindOrC
 		contextJSON = []byte("{}")
 	}
 
-	session, err := m.db.InsertConversationSession(ctx, database.InsertConversationSessionParams{
+	return m.db.InsertConversationSession(ctx, database.InsertConversationSessionParams{
 		EntityID:          params.EntityID,
 		Source:            params.Source,
 		ParticipantHandle: params.ParticipantHandle,
@@ -66,11 +80,6 @@ func (m *SessionManager) FindOrCreateSession(ctx context.Context, params FindOrC
 		SystemPrompt:      sysPrompt,
 		ContextJson:       contextJSON,
 	})
-	if err != nil {
-		return database.ToroCoreConversationSession{}, false, err
-	}
-
-	return session, true, nil
 }
 
 // GetSession returns a session by ID.

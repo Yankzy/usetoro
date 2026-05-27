@@ -46,6 +46,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		DenyPurge:   syncConfig.JetStream.DenyPurge,
 		AllowRollup: syncConfig.JetStream.AllowRollup,
 		AllowDirect: syncConfig.JetStream.AllowDirect,
+		AllowMsgTTL: syncConfig.JetStream.AllowMsgTTL,
 	}
 
 	// Iterate components
@@ -62,6 +63,7 @@ func (w *Worker) Start(ctx context.Context) error {
 				DenyPurge:   comp.JetStream.DenyPurge,
 				AllowRollup: comp.JetStream.AllowRollup,
 				AllowDirect: comp.JetStream.AllowDirect,
+				AllowMsgTTL: comp.JetStream.AllowMsgTTL,
 			}
 			err := w.q.EnsureStream(compStreamConfig)
 			if err != nil {

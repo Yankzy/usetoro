@@ -1,52 +1,36 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/nats-io/nats.go"
 )
 
 // HandleIngressWorker reads the HTTP body and publishes it directly to NATS.
-// Takes optional "subject" and "domain" query parameters for routing.
+// Takes an "activity-type" query parameter (without the "workers." prefix).
+// The router prepends "workers." and derives the worker inbox subject.
 func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
-	subject := r.URL.Query().Get("subject")
-	domain := r.URL.Query().Get("domain")
+	activityType := r.URL.Query().Get("activity-type")
 
-	switch domain {
-	case "general":
-		if derived, err := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress"); err == nil {
-			subject = derived
-		} else {
-			h.Logger.Error("ingress: failed to derive general agent ingress subject", "error", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-
-	case "postmark":
-		derived, err := core.BuildWorkerInboxFromActivity("workers.email.postmark_inbound")
-		if err != nil {
-			h.Logger.Error("ingress: failed to derive postmark subject", "error", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		subject = derived
-
-	case "accounting":
-		taskType := r.URL.Query().Get("task")
-		if taskType == "" {
-			taskType = "cleanup"
-		}
-		subject = core.BuildEventSubject("accounting", core.ComplexityEntry, taskType)
+	if activityType == "" {
+		http.Error(w, "missing activity-type", http.StatusBadRequest)
+		return
 	}
 
-	if subject == "" {
-		h.Logger.Error("ingress: no subject provided")
-		http.Error(w, "no subject provided", http.StatusBadRequest)
+	subject, err := core.BuildWorkerInboxFromActivity("workers." + activityType)
+	if err != nil {
+		h.Logger.Error("ingress: failed to derive worker inbox", "activity_type", activityType, "error", err)
+		http.Error(w, "invalid activity-type", http.StatusBadRequest)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
+	fmt.Println("ingress: received request", "activity_type", activityType, "body", string(body))
 	if err != nil {
 		h.Logger.Error("ingress: failed to read body", "error", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -59,8 +43,15 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.NATS.Publish(subject, body)
-	if err != nil {
+	msg := nats.NewMsg(subject)
+	msg.Data = body
+	msg.Header.Set(nats.MsgIdHdr, fmt.Sprintf("ingress-%d", time.Now().UnixNano()))
+	msg.Header.Set("Nats-TTL", "1m")
+
+	publishCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	if _, err := h.NATS.PublishMsg(msg, nats.Context(publishCtx)); err != nil {
 		h.Logger.Error("ingress: failed to publish to NATS", "error", err, "subject", subject)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return

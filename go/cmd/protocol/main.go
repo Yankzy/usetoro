@@ -26,7 +26,6 @@ import (
 	_ "github.com/Yankzy/usetoro/tap/agents/generic_batch_agent"
 	_ "github.com/Yankzy/usetoro/tap/agents/intent_extractor"
 	_ "github.com/Yankzy/usetoro/tap/agents/ocr_agent"
-	_ "github.com/Yankzy/usetoro/tap/agents/omni_chat_agent"
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_expense"
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_revenue"
 	_ "github.com/Yankzy/usetoro/tap/agents/stripe_processor"

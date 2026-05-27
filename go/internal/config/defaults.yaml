@@ -225,20 +225,6 @@ agents:
       database: false
       db_queries: true
       entity_resolver: false
-
-  - did: did:toro:agent:omni_chat_1
-    name: Omni-channel Chat Agent
-    model: gpt-5.4-mini
-    engine: internal
-    internal_module: omni-chat-agent
-    activity_type: agents.communication.chat
-    task_queue: events.conversations.new
-    output_subject: proof.outgoing.chat
-    dependencies:
-      database: false
-      db_queries: true
-      entity_resolver: false
-
   - did: did:toro:agent:general_purpose_1
     name: General Purpose Agent
     model: gpt-5.4

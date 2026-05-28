@@ -30,7 +30,7 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body, err := io.ReadAll(r.Body)
-	fmt.Println("ingress: received request", "activity_type", activityType, "body", string(body))
+	fmt.Println("ingress: received request", "activity_type", activityType)
 	if err != nil {
 		h.Logger.Error("ingress: failed to read body", "error", err)
 		http.Error(w, "bad request", http.StatusBadRequest)

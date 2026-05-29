@@ -111,7 +111,7 @@ func InitStreams(js nats.JetStreamContext) error {
 	}
 
 	// 3. Settlement Stream (Contracts & Ingests)
-	// Renamed from CONTRACTS to SETTLEMENT to match defaults.yaml
+	// Renamed from CONTRACTS to SETTLEMENT to match defaults.yml
 	if err := ensureStream(&nats.StreamConfig{
 		Name:     "SETTLEMENT",
 		Subjects: []string{"contracts.>", "raw.ingest.>"},

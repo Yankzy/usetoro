@@ -95,11 +95,11 @@ func TestConfiguredInternalAgents_RegisteredAndDerivedRouting(t *testing.T) {
 		internalCount++
 
 		if _, needsOutputSubject := modulesRequiringOutputSubject[agentCfg.InternalModule]; needsOutputSubject && agentCfg.OutputSubject == "" {
-			t.Fatalf("agent %s requires output_subject in defaults.yaml", agentCfg.InternalModule)
+			t.Fatalf("agent %s requires output_subject in defaults.yml", agentCfg.InternalModule)
 		}
 
 		if agentCfg.TaskQueue == "" {
-			t.Fatalf("agent %s must define task_queue in defaults.yaml", agentCfg.InternalModule)
+			t.Fatalf("agent %s must define task_queue in defaults.yml", agentCfg.InternalModule)
 		}
 
 		factory, ok := registry[agentCfg.InternalModule]

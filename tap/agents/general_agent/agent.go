@@ -21,7 +21,7 @@ import (
 	"github.com/Yankzy/usetoro/tap/workflows"
 )
 
-type conversationIDKey struct{}
+
 
 func init() {
 	agents.Register("general-agent", NewGeneralAgent)
@@ -55,6 +55,8 @@ func NewGeneralAgent(env core.Environment) core.Runnable {
 		"FileEdit":  &builtin.FileEditTool{},
 		"Grep":      &builtin.GrepTool{},
 		"WebFetch":  &builtin.WebFetchTool{},
+		"CallWorker": builtin.NewCallWorkerTool(env.Bus),
+		"LookupClient": builtin.NewClientLookupTool(env.Queries),
 		"AlmanacLookup": &almanacLookupTool{
 			bus:    env.Bus,
 			logger: logger,
@@ -72,6 +74,12 @@ func NewGeneralAgent(env core.Environment) core.Runnable {
 			Bus:      env.Bus,
 			Logger:   logger,
 			AgentDID: env.Config.DID,
+		},
+		"SendEmail": &builtin.EmailTool{
+			Bus:       env.Bus,
+			Logger:    logger,
+			AgentDID:  env.Config.DID,
+			AgentName: env.Config.Name,
 		},
 	}
 
@@ -104,24 +112,31 @@ func NewGeneralAgent(env core.Environment) core.Runnable {
 // ── LLM Call Func (bridges tools → Runtime.ExecWithToolCalling) ──────
 
 func (ga *GeneralAgent) makeLLMCallFunc() tools.LLMCallFunc {
-	return func(ctx context.Context, messages []tools.Message, tlz []tools.Tool) (string, error) {
-		// Convert tools.Message -> agent.MessageInput
+	return func(ctx context.Context, messages []tools.Message, tlz []tools.Tool) (string, []tools.Message, error) {
+		// Convert tools.Message -> agent.MessageInput with native tool lineage
 		msgInputs := make([]agent.MessageInput, 0, len(messages))
 		for _, m := range messages {
-			// For tool results, we append them as user messages with a special prefix
-			// since the unified MessageInput doesn't have a dedicated tool role yet.
-			// (The chat paradigm can handle tool results natively, but we map it simply here
-			// to avoid overly complex state management across paradigms).
-			content := m.Content
-			role := m.Role
-			if role == "tool" {
-				role = "user"
-				content = fmt.Sprintf("TOOL RESULT (%s): %s", m.ToolCallID, m.Content)
+			input := agent.MessageInput{
+				Role:       m.Role,
+				Content:    m.Content,
+				ToolCallID: m.ToolCallID,
 			}
-			msgInputs = append(msgInputs, agent.MessageInput{
-				Role:    role,
-				Content: content,
-			})
+			if len(m.ToolCalls) > 0 {
+				input.ToolCalls = make([]agent.ToolCallInput, len(m.ToolCalls))
+				for i, tc := range m.ToolCalls {
+					args := tc.RawArguments
+					if args == "" {
+						b, _ := json.Marshal(tc.Input)
+						args = string(b)
+					}
+					input.ToolCalls[i] = agent.ToolCallInput{
+						ID:        tc.ID,
+						Name:      tc.Name,
+						Arguments: args,
+					}
+				}
+			}
+			msgInputs = append(msgInputs, input)
 		}
 
 		// Convert tools.Tool → agent.ToolDef
@@ -155,29 +170,36 @@ func (ga *GeneralAgent) makeLLMCallFunc() tools.LLMCallFunc {
 			return t.Call(tctx, args)
 		}
 
-		return ga.RT.ExecWithMessages(ctx, msgInputs, toolDefs, toolHandler)
-	}
-}
-
-func buildPromptFromMessages(messages []tools.Message) string {
-	var b strings.Builder
-	for _, m := range messages {
-		switch m.Role {
-		case "system":
-			b.WriteString("SYSTEM: ")
-		case "user":
-			b.WriteString("USER: ")
-		case "assistant":
-			b.WriteString("ASSISTANT: ")
-		case "tool":
-			b.WriteString("TOOL RESULT (")
-			b.WriteString(m.ToolCallID)
-			b.WriteString("): ")
+		output, newAgentMsgs, err := ga.RT.ExecWithMessages(ctx, msgInputs, toolDefs, toolHandler)
+		if err != nil {
+			return "", nil, err
 		}
-		b.WriteString(m.Content)
-		b.WriteString("\n\n")
+
+		var newMsgs []tools.Message
+		for _, m := range newAgentMsgs {
+			var tc []tools.ToolCall
+			if len(m.ToolCalls) > 0 {
+				tc = make([]tools.ToolCall, len(m.ToolCalls))
+				for i, inputTc := range m.ToolCalls {
+					var inputMap map[string]any
+					_ = json.Unmarshal([]byte(inputTc.Arguments), &inputMap)
+					tc[i] = tools.ToolCall{
+						ID:           inputTc.ID,
+						Name:         inputTc.Name,
+						Input:        inputMap,
+						RawArguments: inputTc.Arguments,
+					}
+				}
+			}
+			newMsgs = append(newMsgs, tools.Message{
+				Role:       m.Role,
+				Content:    m.Content,
+				ToolCallID: m.ToolCallID,
+				ToolCalls:  tc,
+			})
+		}
+		return output, newMsgs, nil
 	}
-	return b.String()
 }
 
 // ── NATS handler ──────────────────────────────────────────────────────
@@ -211,11 +233,21 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 	ga.BaseAgent.Logger.Info("received task", "performative", envlp.Performative, "from", envlp.SenderDID)
 
 	if envlp.ConversationID != "" {
-		ctx = context.WithValue(ctx, conversationIDKey{}, envlp.ConversationID)
+		ctx = context.WithValue(ctx, tools.ConversationIDKey{}, envlp.ConversationID)
 	}
 
 	// Extract the user prompt, system prompt override, workflow schema, and messages
-	prompt, taskSysPrompt, wfSchema, rbacPolicy, structuredMsgs := extractTaskConfig(envlp.Body)
+	prompt, taskSysPrompt, wfSchema, rbacPolicy, structuredMsgs, entityID, sessionID, inReplyTo := extractTaskConfig(envlp.Body)
+
+	if entityID != "" {
+		ctx = context.WithValue(ctx, tools.EntityIDKey{}, entityID)
+	}
+	if sessionID != "" {
+		ctx = context.WithValue(ctx, tools.SessionIDKey{}, sessionID)
+	}
+	if inReplyTo != "" {
+		ctx = context.WithValue(ctx, tools.MessageIDKey{}, inReplyTo)
+	}
 
 	toolList := resolveToolsFromConfig(env.Config, ga.toolMap)
 
@@ -369,11 +401,11 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-func extractTaskConfig(body json.RawMessage) (prompt string, systemPrompt string, wfSchema string, rbac redux.RBACPolicy, messages []tools.Message) {
+func extractTaskConfig(body json.RawMessage) (prompt string, systemPrompt string, wfSchema string, rbac redux.RBACPolicy, messages []tools.Message, entityID string, sessionID string, inReplyTo string) {
 	// Try raw string
 	var s string
 	if err := json.Unmarshal(body, &s); err == nil && s != "" {
-		return s, "", "", redux.RBACPolicy{}, nil
+		return s, "", "", redux.RBACPolicy{}, nil, "", "", ""
 	}
 
 	// Try TaskDefinition wrapper
@@ -393,14 +425,24 @@ func extractTaskConfig(body json.RawMessage) (prompt string, systemPrompt string
 				_ = json.Unmarshal(msgsBytes, &messages)
 			}
 			
+			if eid, ok := payload["entity_id"].(string); ok {
+				entityID = eid
+			}
+			if sid, ok := payload["session_id"].(string); ok {
+				sessionID = sid
+			}
+			if inR, ok := payload["in_reply_to"].(string); ok {
+				inReplyTo = inR
+			}
+
 			if p, ok := payload["prompt"].(string); ok && p != "" {
-				return p, systemPrompt, wfSchema, rbac, messages
+				return p, systemPrompt, wfSchema, rbac, messages, entityID, sessionID, inReplyTo
 			}
 			if in, ok := payload["input"].(string); ok && in != "" {
-				return in, systemPrompt, wfSchema, rbac, messages
+				return in, systemPrompt, wfSchema, rbac, messages, entityID, sessionID, inReplyTo
 			}
 			b, _ := json.Marshal(payload)
-			return string(b), systemPrompt, wfSchema, rbac, messages
+			return string(b), systemPrompt, wfSchema, rbac, messages, entityID, sessionID, inReplyTo
 		}
 	}
 
@@ -412,15 +454,25 @@ func extractTaskConfig(body json.RawMessage) (prompt string, systemPrompt string
 			_ = json.Unmarshal(msgsBytes, &messages)
 		}
 
+		if eid, ok := m["entity_id"].(string); ok {
+			entityID = eid
+		}
+		if sid, ok := m["session_id"].(string); ok {
+			sessionID = sid
+		}
+		if inR, ok := m["in_reply_to"].(string); ok {
+			inReplyTo = inR
+		}
+
 		if p, ok := m["prompt"].(string); ok && p != "" {
-			return p, "", wfSchema, rbac, messages
+			return p, "", wfSchema, rbac, messages, entityID, sessionID, inReplyTo
 		}
 		if in, ok := m["input"].(string); ok && in != "" {
-			return in, "", wfSchema, rbac, messages
+			return in, "", wfSchema, rbac, messages, entityID, sessionID, inReplyTo
 		}
 	}
 
-	return string(body), "", wfSchema, rbac, nil
+	return string(body), "", wfSchema, rbac, nil, "", "", ""
 }
 
 func parsePatches(output string) ([]json.RawMessage, error) {
@@ -569,7 +621,7 @@ func (t *delegateTool) InputSchema() json.RawMessage {
 }
 
 func (t *delegateTool) Call(ctx context.Context, input map[string]any) (string, error) {
-	convID, _ := ctx.Value(conversationIDKey{}).(string)
+	convID, _ := ctx.Value(tools.ConversationIDKey{}).(string)
 	if convID == "" {
 		return "", fmt.Errorf("no conversation ID in context; Delegate can only be used within a workflow")
 	}

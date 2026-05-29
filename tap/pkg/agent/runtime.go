@@ -13,23 +13,26 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
+	"github.com/openai/openai-go/v3/shared/constant"
 )
 
 // Runtime represents a single, autonomous agent instance.
 type Runtime struct {
-	Config core.AgentConfig
-	Logger *slog.Logger
-	Bus    core.EventBus
-	sub    *nats.Subscription
+	Config   core.AgentConfig
+	Logger   *slog.Logger
+	Bus      core.EventBus
+	Provider ModelProvider
+	sub      *nats.Subscription
 }
 
 // NewRuntime initializes the agent.
 func NewRuntime(logger *slog.Logger, bus core.EventBus, cfg core.AgentConfig) *Runtime {
 	return &Runtime{
-		Config: cfg,
-		Logger: logger.With("did", cfg.DID),
-		Bus:    bus,
-		sub:    nil,
+		Config:   cfg,
+		Logger:   logger.With("did", cfg.DID),
+		Bus:      bus,
+		Provider: &DefaultModelProvider{},
+		sub:      nil,
 	}
 }
 
@@ -281,7 +284,7 @@ func (r *Runtime) execWithPagingResponses(ctx context.Context, client openai.Cli
 					var args struct {
 						LocalRef int `json:"local_ref"`
 					}
-					_ = json.Unmarshal([]byte(call.Arguments), &args)
+					_ = json.Unmarshal([]byte(mapper.Restore(call.Arguments)), &args)
 
 					var outputMsg string
 
@@ -399,7 +402,7 @@ func (r *Runtime) execWithPagingChat(ctx context.Context, client openai.Client, 
 				var args struct {
 					LocalRef int `json:"local_ref"`
 				}
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+				_ = json.Unmarshal([]byte(mapper.Restore(tc.Function.Arguments)), &args)
 
 				if pageCount >= maxPages {
 					outputMsg = "SYSTEM ERROR: MAX_PAGES_PER_CYCLE reached. Aborting fetch. Must explicitly emit outputs directly structurally."
@@ -477,61 +480,125 @@ func (r *Runtime) ExecWithToolCalling(ctx context.Context, prompt string, system
 // MessageInput represents a single message in a multi-turn conversation
 // for structured LLM input with proper role separation.
 type MessageInput struct {
-	Role    string `json:"role"`    // "system", "user", or "assistant"
-	Content string `json:"content"`
+	Role       string          `json:"role"`                  // "system", "user", "assistant", or "tool"
+	Content    string          `json:"content"`
+	ToolCallID string          `json:"tool_call_id,omitempty"` // Used when Role == "tool"
+	ToolCalls  []ToolCallInput `json:"tool_calls,omitempty"`   // Used when Role == "assistant"
+}
+
+// ToolCallInput describes a tool call requested by the assistant.
+type ToolCallInput struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// Model abstracts the underlying execution API paradigm (Chat vs Responses).
+type Model interface {
+	ExecWithMessages(ctx context.Context, messages []MessageInput, tools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, []MessageInput, error)
+}
+
+// ModelProvider routes a model name string to an initialized Model client.
+type ModelProvider interface {
+	GetModel(modelName string) (Model, error)
+}
+
+// OpenAIModel wraps an openai.Client and implements Model for both Chat and Responses paradigms.
+type OpenAIModel struct {
+	client    openai.Client
+	config    ProviderConfig
+	modelName string
+}
+
+func (m *OpenAIModel) ExecWithMessages(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, []MessageInput, error) {
+	switch m.config.Paradigm {
+	case ParadigmResponses:
+		return m.execWithMessagesResponses(ctx, messages, extraTools, toolHandler, mapper)
+	case ParadigmChat:
+		return m.execWithMessagesChat(ctx, messages, extraTools, toolHandler, mapper)
+	default:
+		return "", nil, fmt.Errorf("paradigm %q not yet implemented", m.config.Paradigm)
+	}
+}
+
+// DefaultModelProvider implements ModelProvider by resolving model names via ResolveModel
+// and creating OpenAIModel instances.
+type DefaultModelProvider struct{}
+
+func (p *DefaultModelProvider) GetModel(modelName string) (Model, error) {
+	pc, err := ResolveModel(modelName)
+	if err != nil {
+		return nil, fmt.Errorf("resolve model %q: %w", modelName, err)
+	}
+	client := openai.NewClient(pc.ClientOptions()...)
+	return &OpenAIModel{
+		client:    client,
+		config:    pc,
+		modelName: modelName,
+	}, nil
 }
 
 // ExecWithMessages runs the LLM with structured multi-turn messages instead
-// of a single prompt string. This produces proper user/assistant message turns
+// of a single prompt string. This produces proper user/assistant/tool message turns
 // in the API call rather than flattening everything into one user message.
-func (r *Runtime) ExecWithMessages(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler) (string, error) {
+func (r *Runtime) ExecWithMessages(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler) (string, []MessageInput, error) {
 	if len(messages) == 0 {
-		return "", fmt.Errorf("no messages provided")
+		return "", nil, fmt.Errorf("no messages provided")
 	}
 
 	mapper := NewUUIDMapper()
 
-	// Obfuscate all message contents
+	// Obfuscate message contents (but not tool call arguments — those are structured JSON)
 	obfuscated := make([]MessageInput, len(messages))
 	for i, m := range messages {
 		obfuscated[i] = MessageInput{
-			Role:    m.Role,
-			Content: mapper.Obfuscate(m.Content),
+			Role:       m.Role,
+			Content:    mapper.Obfuscate(m.Content),
+			ToolCallID: m.ToolCallID,
+			ToolCalls:  m.ToolCalls,
 		}
 	}
 
-	pc, client, err := r.resolveClient(ctx)
+	model, err := r.Provider.GetModel(r.effectiveModel(ctx))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
-	switch pc.Paradigm {
-	case ParadigmResponses:
-		return r.execWithMessagesResponses(ctx, client, obfuscated, extraTools, toolHandler, mapper)
-	case ParadigmChat:
-		return r.execWithMessagesChat(ctx, client, obfuscated, extraTools, toolHandler, mapper)
-	default:
-		return "", fmt.Errorf("paradigm %q not yet implemented", pc.Paradigm)
+	output, newMsgs, err := model.ExecWithMessages(ctx, obfuscated, extraTools, toolHandler, mapper)
+
+	for i := range newMsgs {
+		newMsgs[i].Content = mapper.Restore(newMsgs[i].Content)
 	}
+
+	return output, newMsgs, nil
 }
 
-func (r *Runtime) execWithMessagesResponses(ctx context.Context, client openai.Client, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, error) {
+func (m *OpenAIModel) execWithMessagesResponses(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, []MessageInput, error) {
 	// Build tools
 	rtools := make([]responses.ToolUnionParam, 0, len(extraTools))
 	for _, t := range extraTools {
-		rtools = append(rtools, responses.ToolParamOfFunction(t.Name, t.Schema, false))
+		toolParam := responses.ToolParamOfFunction(t.Name, t.Schema, false)
+		if toolParam.OfFunction != nil && t.Description != "" {
+			toolParam.OfFunction.Description = openai.String(t.Description)
+		}
+		rtools = append(rtools, toolParam)
 	}
 
 	// Build the initial input as a structured message list
 	inputItems := make(responses.ResponseInputParam, 0, len(messages))
-	for _, m := range messages {
-		switch m.Role {
+	for _, msg := range messages {
+		switch msg.Role {
 		case "system":
-			inputItems = append(inputItems, responses.ResponseInputItemParamOfMessage(m.Content, responses.EasyInputMessageRoleSystem))
+			inputItems = append(inputItems, responses.ResponseInputItemParamOfMessage(msg.Content, responses.EasyInputMessageRoleSystem))
 		case "assistant":
-			inputItems = append(inputItems, responses.ResponseInputItemParamOfMessage(m.Content, responses.EasyInputMessageRoleAssistant))
+			inputItems = append(inputItems, responses.ResponseInputItemParamOfMessage(msg.Content, responses.EasyInputMessageRoleAssistant))
+			for _, tc := range msg.ToolCalls {
+				inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCall(tc.ID, tc.Name, tc.Arguments))
+			}
+		case "tool":
+			inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCallOutput(msg.ToolCallID, msg.Content))
 		default: // "user"
-			inputItems = append(inputItems, responses.ResponseInputItemParamOfMessage(m.Content, responses.EasyInputMessageRoleUser))
+			inputItems = append(inputItems, responses.ResponseInputItemParamOfMessage(msg.Content, responses.EasyInputMessageRoleUser))
 		}
 	}
 
@@ -540,12 +607,14 @@ func (r *Runtime) execWithMessagesResponses(ctx context.Context, client openai.C
 
 	for attempt := 0; attempt < 10; attempt++ {
 		params := responses.ResponseNewParams{
-			Model:           shared.ChatModel(r.effectiveModel(ctx)),
+			Model:           shared.ChatModel(m.modelName),
 			MaxOutputTokens: openai.Int(16384),
 		}
 		if len(rtools) > 0 {
 			params.Tools = rtools
 		}
+
+		var newMessages []MessageInput
 
 		if attempt == 0 {
 			params.Input = responses.ResponseNewParamsInputUnion{OfInputItemList: inputItems}
@@ -554,20 +623,53 @@ func (r *Runtime) execWithMessagesResponses(ctx context.Context, client openai.C
 			params.Input = responses.ResponseNewParamsInputUnion{OfInputItemList: toolOutputs}
 		}
 
-		resp, err := client.Responses.New(ctx, params)
+		resp, err := m.client.Responses.New(ctx, params)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		lastResponseID = resp.ID
 		toolOutputs = nil
 		hasToolCalls := false
 
+		var assistantContent string
+		var tcInputs []ToolCallInput
+
+		// First pass: extract assistant content and function calls
 		for _, item := range resp.Output {
-			if item.Type == "function_call" {
+			if item.Type == "message" {
+				msgItem := item.AsMessage()
+				if string(msgItem.Role) == "assistant" {
+					for _, block := range msgItem.Content {
+						if block.Type == "text" {
+							assistantContent += block.Text
+						}
+					}
+				}
+			} else if item.Type == "function_call" {
 				hasToolCalls = true
 				call := item.AsFunctionCall()
+				tcInputs = append(tcInputs, ToolCallInput{
+					ID:        call.CallID,
+					Name:      call.Name,
+					Arguments: call.Arguments,
+				})
+			}
+		}
+
+		if hasToolCalls {
+			newMessages = append(newMessages, MessageInput{
+				Role:      "assistant",
+				Content:   assistantContent,
+				ToolCalls: tcInputs,
+			})
+		}
+
+		// Second pass: execute function calls
+		for _, item := range resp.Output {
+			if item.Type == "function_call" {
+				call := item.AsFunctionCall()
 				var args map[string]any
-				_ = json.Unmarshal([]byte(call.Arguments), &args)
+				_ = json.Unmarshal([]byte(mapper.Restore(call.Arguments)), &args)
 
 				var outputMsg string
 				if toolHandler != nil {
@@ -581,31 +683,60 @@ func (r *Runtime) execWithMessagesResponses(ctx context.Context, client openai.C
 					outputMsg = "ERROR: Unknown tool '" + call.Name + "' — no handler registered."
 				}
 				toolOutputs = append(toolOutputs, responses.ResponseInputItemParamOfFunctionCallOutput(call.CallID, outputMsg))
+				
+				newMessages = append(newMessages, MessageInput{
+					Role:       "tool",
+					Content:    outputMsg,
+					ToolCallID: call.CallID,
+				})
 			}
 		}
 
 		if !hasToolCalls {
 			outputText := mapper.Restore(resp.OutputText())
 			if outputText != "" {
-				return outputText, nil
+				return outputText, newMessages, nil
 			}
-			return "", fmt.Errorf("empty response generated without tools")
+			return "", nil, fmt.Errorf("empty response generated without tools")
 		}
 	}
-	return "", fmt.Errorf("exceeded max reasoning loops")
+	return "", nil, fmt.Errorf("exceeded max reasoning loops")
 }
 
-func (r *Runtime) execWithMessagesChat(ctx context.Context, client openai.Client, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, error) {
-	// Build chat messages with proper roles
+func (m *OpenAIModel) execWithMessagesChat(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, []MessageInput, error) {
+	// Build chat messages with strict role handling
 	chatMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
-	for _, m := range messages {
-		switch m.Role {
+	for _, msg := range messages {
+		switch msg.Role {
 		case "system":
-			chatMessages = append(chatMessages, openai.SystemMessage(m.Content))
+			chatMessages = append(chatMessages, openai.SystemMessage(msg.Content))
+		case "user":
+			chatMessages = append(chatMessages, openai.UserMessage(msg.Content))
 		case "assistant":
-			chatMessages = append(chatMessages, openai.AssistantMessage(m.Content))
-		default: // "user"
-			chatMessages = append(chatMessages, openai.UserMessage(m.Content))
+			var oaiToolCalls []openai.ChatCompletionMessageToolCallUnionParam
+			for _, tc := range msg.ToolCalls {
+				oaiToolCalls = append(oaiToolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+					OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+						ID:   tc.ID,
+						Type: constant.Function("function"),
+						Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+							Name:      tc.Name,
+							Arguments: tc.Arguments,
+						},
+					},
+				})
+			}
+			assistantParam := openai.ChatCompletionAssistantMessageParam{
+				Content: openai.ChatCompletionAssistantMessageParamContentUnion{
+					OfString: openai.String(msg.Content),
+				},
+				ToolCalls: oaiToolCalls,
+			}
+			chatMessages = append(chatMessages, openai.ChatCompletionMessageParamUnion{
+				OfAssistant: &assistantParam,
+			})
+		case "tool":
+			chatMessages = append(chatMessages, openai.ToolMessage(msg.Content, msg.ToolCallID))
 		}
 	}
 
@@ -619,9 +750,11 @@ func (r *Runtime) execWithMessagesChat(ctx context.Context, client openai.Client
 		}))
 	}
 
+	var newMessages []MessageInput
+
 	for attempt := 0; attempt < 10; attempt++ {
 		params := openai.ChatCompletionNewParams{
-			Model:               shared.ChatModel(r.effectiveModel(ctx)),
+			Model:               shared.ChatModel(m.modelName),
 			Messages:            chatMessages,
 			MaxCompletionTokens: openai.Int(16384),
 		}
@@ -629,27 +762,43 @@ func (r *Runtime) execWithMessagesChat(ctx context.Context, client openai.Client
 			params.Tools = chatTools
 		}
 
-		resp, err := client.Chat.Completions.New(ctx, params)
+		resp, err := m.client.Chat.Completions.New(ctx, params)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if len(resp.Choices) == 0 {
-			return "", fmt.Errorf("chat: no choices returned")
+			return "", nil, fmt.Errorf("chat: no choices returned")
 		}
 		choice := resp.Choices[0]
 		if len(choice.Message.ToolCalls) == 0 {
 			outputText := mapper.Restore(choice.Message.Content)
 			if outputText != "" {
-				return outputText, nil
+				return outputText, newMessages, nil
 			}
-			return "", fmt.Errorf("empty response generated without tools")
+			return "", nil, fmt.Errorf("empty response generated without tools")
 		}
+
+		// Track the new assistant message
+		var tcInputs []ToolCallInput
+		for _, tc := range choice.Message.ToolCalls {
+			tcInputs = append(tcInputs, ToolCallInput{
+				ID:        tc.ID,
+				Name:      tc.Function.Name,
+				Arguments: tc.Function.Arguments,
+			})
+		}
+		newMessages = append(newMessages, MessageInput{
+			Role:      "assistant",
+			Content:   choice.Message.Content,
+			ToolCalls: tcInputs,
+		})
+
 		chatMessages = append(chatMessages, choice.Message.ToParam())
 		for _, tc := range choice.Message.ToolCalls {
 			var outputMsg string
 			if toolHandler != nil {
 				var args map[string]any
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+				_ = json.Unmarshal([]byte(mapper.Restore(tc.Function.Arguments)), &args)
 				out, herr := toolHandler(ctx, tc.Function.Name, args)
 				if herr != nil {
 					outputMsg = "ERROR: " + herr.Error()
@@ -660,9 +809,14 @@ func (r *Runtime) execWithMessagesChat(ctx context.Context, client openai.Client
 				outputMsg = "ERROR: Unknown tool '" + tc.Function.Name + "'."
 			}
 			chatMessages = append(chatMessages, openai.ToolMessage(outputMsg, tc.ID))
+			newMessages = append(newMessages, MessageInput{
+				Role:       "tool",
+				Content:    outputMsg,
+				ToolCallID: tc.ID,
+			})
 		}
 	}
-	return "", fmt.Errorf("exceeded max reasoning loops")
+	return "", nil, fmt.Errorf("exceeded max reasoning loops")
 }
 
 func (r *Runtime) execWithToolsResponses(ctx context.Context, client openai.Client, prompt, systemPrompt string, pages []PageContext, fetcher DocumentFetcher, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, error) {
@@ -686,7 +840,11 @@ func (r *Runtime) execWithToolsResponses(ctx context.Context, client openai.Clie
 		}, false),
 	}
 	for _, t := range extraTools {
-		rtools = append(rtools, responses.ToolParamOfFunction(t.Name, t.Schema, false))
+		toolParam := responses.ToolParamOfFunction(t.Name, t.Schema, false)
+		if toolParam.OfFunction != nil && t.Description != "" {
+			toolParam.OfFunction.Description = openai.String(t.Description)
+		}
+		rtools = append(rtools, toolParam)
 	}
 
 	maxPages := 3
@@ -720,7 +878,7 @@ func (r *Runtime) execWithToolsResponses(ctx context.Context, client openai.Clie
 				hasToolCalls = true
 				call := item.AsFunctionCall()
 				var args map[string]any
-				_ = json.Unmarshal([]byte(call.Arguments), &args)
+				_ = json.Unmarshal([]byte(mapper.Restore(call.Arguments)), &args)
 
 				var outputMsg string
 				switch {
@@ -728,7 +886,7 @@ func (r *Runtime) execWithToolsResponses(ctx context.Context, client openai.Clie
 					var pargs struct {
 						LocalRef int `json:"local_ref"`
 					}
-					_ = json.Unmarshal([]byte(call.Arguments), &pargs)
+					_ = json.Unmarshal([]byte(mapper.Restore(call.Arguments)), &pargs)
 					if pageCount >= maxPages {
 						outputMsg = "ERROR: MAX_PAGES_PER_CYCLE reached."
 					} else {
@@ -841,7 +999,7 @@ func (r *Runtime) execWithToolsChat(ctx context.Context, client openai.Client, p
 				var pargs struct {
 					LocalRef int `json:"local_ref"`
 				}
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &pargs)
+				_ = json.Unmarshal([]byte(mapper.Restore(tc.Function.Arguments)), &pargs)
 				if pageCount >= maxPages {
 					outputMsg = "ERROR: MAX_PAGES_PER_CYCLE reached."
 				} else {
@@ -862,7 +1020,7 @@ func (r *Runtime) execWithToolsChat(ctx context.Context, client openai.Client, p
 				}
 			case toolHandler != nil:
 				var args map[string]any
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+				_ = json.Unmarshal([]byte(mapper.Restore(tc.Function.Arguments)), &args)
 				out, herr := toolHandler(ctx, tc.Function.Name, args)
 				if herr != nil {
 					outputMsg = "ERROR: " + herr.Error()

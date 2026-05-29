@@ -14,7 +14,7 @@ import (
 
 func TestExtractTaskConfig_DirectString(t *testing.T) {
 	body := json.RawMessage(`"hello world"`)
-	prompt, _, _, _, _ := extractTaskConfig(body)
+	prompt, _, _, _, _, _, _, _ := extractTaskConfig(body)
 	if prompt != "hello world" {
 		t.Errorf("prompt = %q, want %q", prompt, "hello world")
 	}
@@ -22,7 +22,7 @@ func TestExtractTaskConfig_DirectString(t *testing.T) {
 
 func TestExtractTaskConfig_Object(t *testing.T) {
 	body := json.RawMessage(`{"key": "value"}`)
-	prompt, _, _, _, _ := extractTaskConfig(body)
+	prompt, _, _, _, _, _, _, _ := extractTaskConfig(body)
 	if !strings.Contains(prompt, "key") {
 		t.Errorf("prompt should contain 'key', got: %s", prompt)
 	}
@@ -30,7 +30,7 @@ func TestExtractTaskConfig_Object(t *testing.T) {
 
 func TestExtractTaskConfig_PromptField(t *testing.T) {
 	body := json.RawMessage(`{"prompt": "do something useful", "config": {}}`)
-	prompt, _, _, _, _ := extractTaskConfig(body)
+	prompt, _, _, _, _, _, _, _ := extractTaskConfig(body)
 	if prompt != "do something useful" {
 		t.Errorf("prompt = %q, want %q", prompt, "do something useful")
 	}
@@ -38,7 +38,7 @@ func TestExtractTaskConfig_PromptField(t *testing.T) {
 
 func TestExtractTaskConfig_InputField(t *testing.T) {
 	body := json.RawMessage(`{"input": "process this data", "config": {}}`)
-	prompt, _, _, _, _ := extractTaskConfig(body)
+	prompt, _, _, _, _, _, _, _ := extractTaskConfig(body)
 	if prompt != "process this data" {
 		t.Errorf("prompt = %q, want %q", prompt, "process this data")
 	}
@@ -53,7 +53,7 @@ func TestExtractTaskConfig_TaskDefinitionWithPayload(t *testing.T) {
 	}
 	body, _ := json.Marshal(taskDef)
 
-	prompt, _, schema, _, _ := extractTaskConfig(body)
+	prompt, _, schema, _, _, _, _, _ := extractTaskConfig(body)
 	if prompt != "classify these transactions" {
 		t.Errorf("prompt = %q, want %q", prompt, "classify these transactions")
 	}
@@ -64,7 +64,7 @@ func TestExtractTaskConfig_TaskDefinitionWithPayload(t *testing.T) {
 
 func TestExtractTaskConfig_EmptyObject(t *testing.T) {
 	body := json.RawMessage(`{}`)
-	prompt, _, _, _, _ := extractTaskConfig(body)
+	prompt, _, _, _, _, _, _, _ := extractTaskConfig(body)
 	if prompt != "{}" {
 		t.Errorf("prompt = %q, want %q", prompt, "{}")
 	}
@@ -155,8 +155,8 @@ func TestResolveToolsFromConfig_UnknownTool(t *testing.T) {
 
 func TestRunAgent_BasicFlow(t *testing.T) {
 	// Mock LLM function that returns text immediately
-	mockLLM := func(ctx context.Context, messages []tools.Message, tlz []tools.Tool) (string, error) {
-		return "I analyzed the request and here is the answer.", nil
+	mockLLM := func(ctx context.Context, messages []tools.Message, tlz []tools.Tool) (string, []tools.Message, error) {
+		return "I analyzed the request and here is the answer.", nil, nil
 	}
 
 	allTools := []tools.Tool{&builtin.FileReadTool{}}
@@ -173,8 +173,8 @@ func TestRunAgent_BasicFlow(t *testing.T) {
 }
 
 func TestRunAgent_ContextCancel(t *testing.T) {
-	mockLLM := func(ctx context.Context, messages []tools.Message, tlz []tools.Tool) (string, error) {
-		return "ok", nil
+	mockLLM := func(ctx context.Context, messages []tools.Message, tlz []tools.Tool) (string, []tools.Message, error) {
+		return "ok", nil, nil
 	}
 
 	allTools := []tools.Tool{&builtin.FileReadTool{}}

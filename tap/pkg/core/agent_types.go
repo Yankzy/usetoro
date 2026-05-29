@@ -50,10 +50,10 @@ type AgentConfig struct {
 	OutputSubject string `yaml:"output_subject,omitempty" mapstructure:"output_subject"`
 
 	// TaskQueue is the public NATS subject the Orchestrator assigns to this agent's activity_type.
-	// When provided in defaults.yaml it becomes the explicit queue for the capability.
+	// When provided in defaults.yml it becomes the explicit queue for the capability.
 	TaskQueue string `yaml:"task_queue" mapstructure:"task_queue"`
 
-	// QueueGroup and DurableName are derived at runtime from the DID. Not set in defaults.yaml.
+	// QueueGroup and DurableName are derived at runtime from the DID. Not set in defaults.yml.
 	QueueGroup  string `yaml:"-" mapstructure:"-"`
 	DurableName string `yaml:"-" mapstructure:"-"`
 }

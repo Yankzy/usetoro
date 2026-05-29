@@ -24,7 +24,7 @@ WORKDIR /app
 
 # Copy Go Brain Binary
 COPY --from=builder /protocol /usr/local/bin/protocol
-COPY go/internal/config/defaults.yaml /app/internal/config/defaults.yaml
+COPY go/internal/config/defaults.yml /app/internal/config/defaults.yml
 COPY --from=builder /tap/workflows /app/tap/workflows
 
 USER nobody

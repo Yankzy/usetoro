@@ -107,7 +107,7 @@ services:
       - toro-net
     volumes:
       - ../tap/workflows:/app/tap/workflows
-      - ../go/internal/config/defaults.yaml:/app/internal/config/defaults.yaml
+      - ../go/internal/config/defaults.yml:/app/internal/config/defaults.yml
 
   sync:
     build:

@@ -33,7 +33,7 @@ func GetGlobal() *Config {
 	return global
 }
 
-// Config mirrors your defaults.yaml structure and environment variables.
+// Config mirrors your defaults.yml structure and environment variables.
 type Config struct {
 	Port        string `mapstructure:"port"`
 	DatabaseURL string `mapstructure:"database_url"`
@@ -224,7 +224,7 @@ func loadEnvFile(filepath string) {
 	}
 }
 
-// Load reads defaults.yaml and overrides with ENV variables
+// Load reads defaults.yml and overrides with ENV variables
 func Load() (*Config, *viper.Viper, error) {
 	v := viper.New()
 

@@ -93,7 +93,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 }
 
 func TestLoad_Streams(t *testing.T) {
-	// This test checks if defaults.yaml is loaded
+	// This test checks if defaults.yml is loaded
 	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
 	dummyKey := "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="
 	os.Setenv("ENCRYPTION_KEY", dummyKey)
@@ -108,7 +108,7 @@ func TestLoad_Streams(t *testing.T) {
 	cfg, _, err := Load()
 	require.NoError(t, err)
 
-	// Check if services are loaded from defaults.yaml
+	// Check if services are loaded from defaults.yml
 	if len(cfg.NATS.Services) > 0 {
 		sync, ok := cfg.NATS.Services["sync"]
 		assert.True(t, ok, "Expected 'sync' service to be present")
@@ -125,7 +125,7 @@ func TestLoad_Streams(t *testing.T) {
 			}
 		}
 	} else {
-		// Failing the test if defaults.yaml isn't loaded
-		t.Fatal("defaults.yaml was not loaded or contained no services")
+		// Failing the test if defaults.yml isn't loaded
+		t.Fatal("defaults.yml was not loaded or contained no services")
 	}
 }

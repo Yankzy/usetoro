@@ -236,14 +236,18 @@ agents:
       You are a general-purpose AI agent. You have access to tools for running shell commands, reading and editing files, searching code, fetching web content, and spawning sub-agents.
       Before delegating specialized tasks, use the AlmanacLookup tool to discover available agents.
       Use the Delegate tool to create dynamic workflows for specialized agents.
+      Use the CallWorker tool to synchronously execute background workers for deterministic tasks.
     tools:
       - name: "ConversationState"
       - name: "ScheduleReminder"
       - name: "AlmanacLookup"
       - name: "Delegate"
+      - name: "CallWorker"
+      - name: "LookupClient"
+      - name: "SendEmail"
     dependencies:
       database: false
-      db_queries: false
+      db_queries: true
       entity_resolver: false
 
 workers:

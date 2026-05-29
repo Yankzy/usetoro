@@ -176,7 +176,7 @@ func (o *Orchestrator) LoadFromDir(ctx context.Context, dirPath string) error {
 
 	o.logger.Info("📂 Orchestrator: loading workflows from directory", "path", dirPath)
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yml" {
 			continue
 		}
 
@@ -251,8 +251,8 @@ func (o *Orchestrator) WatchWorkflows(ctx context.Context, dirPath string) error
 			if !ok {
 				return nil
 			}
-			// We only care about writes or creates of .yaml files
-			if filepath.Ext(event.Name) != ".yaml" {
+			// We only care about writes or creates of .yml files
+			if filepath.Ext(event.Name) != ".yml" {
 				continue
 			}
 			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {

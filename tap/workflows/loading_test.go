@@ -35,7 +35,7 @@ steps:
       }
     system_prompt: "You are a test agent."
 `
-	filePath := filepath.Join(tmpDir, "test_workflow.yaml")
+	filePath := filepath.Join(tmpDir, "test_workflow.yml")
 	if err := os.WriteFile(filePath, []byte(yamlContent), 0644); err != nil {
 		t.Fatalf("failed to write test yaml: %v", err)
 	}
@@ -129,7 +129,7 @@ steps:
     depends_on:
       - run_cleanup
 `
-	filePath := filepath.Join(tmpDir, "bookkeeping.yaml")
+	filePath := filepath.Join(tmpDir, "bookkeeping.yml")
 	if err := os.WriteFile(filePath, []byte(yamlContent), 0644); err != nil {
 		t.Fatalf("failed to write yaml: %v", err)
 	}

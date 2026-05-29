@@ -3322,6 +3322,48 @@ func (q *Queries) RecordAICorrection(ctx context.Context, arg RecordAICorrection
 	return err
 }
 
+const searchClientsByEntityID = `-- name: SearchClientsByEntityID :many
+SELECT 
+    c.realm_id,
+    c.company_name
+FROM toro_core.erp_connections e
+JOIN shadow_erp.company_info c ON e.realm_id = c.realm_id
+WHERE e.entity_id = $1
+  AND c.company_name ILIKE '%' || $2 || '%'
+ORDER BY c.company_name ASC
+LIMIT 10
+`
+
+type SearchClientsByEntityIDParams struct {
+	EntityID pgtype.UUID
+	Column2  pgtype.Text
+}
+
+type SearchClientsByEntityIDRow struct {
+	RealmID     string
+	CompanyName string
+}
+
+func (q *Queries) SearchClientsByEntityID(ctx context.Context, arg SearchClientsByEntityIDParams) ([]SearchClientsByEntityIDRow, error) {
+	rows, err := q.db.Query(ctx, searchClientsByEntityID, arg.EntityID, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchClientsByEntityIDRow
+	for rows.Next() {
+		var i SearchClientsByEntityIDRow
+		if err := rows.Scan(&i.RealmID, &i.CompanyName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const softDeleteAccount = `-- name: SoftDeleteAccount :exec
 UPDATE shadow_erp.accounts
 SET deleted_at = $1, updated_at = $1, event_source = 'erp_sync'

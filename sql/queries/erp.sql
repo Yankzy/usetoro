@@ -1517,3 +1517,14 @@ SET status = 'TRANSFER_HOLD',
     error_message = 'Intercepted: Missing credit card statement for liability payment',
     updated_at = NOW()
 WHERE id = $1;
+
+-- name: SearchClientsByEntityID :many
+SELECT 
+    c.realm_id,
+    c.company_name
+FROM toro_core.erp_connections e
+JOIN shadow_erp.company_info c ON e.realm_id = c.realm_id
+WHERE e.entity_id = $1
+  AND c.company_name ILIKE '%' || $2 || '%'
+ORDER BY c.company_name ASC
+LIMIT 10;

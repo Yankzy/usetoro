@@ -274,6 +274,9 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 	if req.Subject != "" {
 		payload["subject"] = req.Subject
 	}
+	if req.InReplyTo != "" {
+		payload["in_reply_to"] = req.InReplyTo
+	}
 
 	taskDef := core.TaskDefinition{
 		ID:         uuid.New().String(),

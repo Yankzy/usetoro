@@ -409,7 +409,7 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	}
 	e.logger.Info("✅ semantic enrichment complete!", "session", sessionID)
 
-	if err := e.broadcastEnrichmentProof(ctx, sessionID, env.ConversationID); err != nil {
+	if err := e.broadcastEnrichmentProof(ctx, msg, sessionID, env.ConversationID); err != nil {
 		return fmt.Errorf("broadcast failed: %w", err)
 	}
 
@@ -475,7 +475,7 @@ func decodeBase64Payload(payload string) ([]byte, error) {
 	return nil, errors.New("payload is not valid base64")
 }
 
-func (e *EnrichmentWorker) broadcastEnrichmentProof(ctx context.Context, sessionID, cid string) error {
+func (e *EnrichmentWorker) broadcastEnrichmentProof(ctx context.Context, msg *nats.Msg, sessionID, cid string) error {
 	resultData, _ := json.Marshal(map[string]string{
 		"status":     "enriched",
 		"session_id": sessionID,
@@ -488,10 +488,13 @@ func (e *EnrichmentWorker) broadcastEnrichmentProof(ctx context.Context, session
 	}
 
 	dst := "did:toro:hive"
-	targetTopic := enrichmentLegacyProofSubject
-	if cid != "" {
-		dst = workflows.OrchestratorDID
-		targetTopic = workflows.OrchestratorInbox
+	targetTopic := msg.Reply
+	if targetTopic == "" {
+		targetTopic = enrichmentLegacyProofSubject
+		if cid != "" {
+			dst = workflows.OrchestratorDID
+			targetTopic = workflows.OrchestratorInbox
+		}
 	}
 
 	proofEnv, err := core.NewEnvelope(uuid.New().String(), enrichmentWorkerDID, dst, cid, core.INFORM, proof)

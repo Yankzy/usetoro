@@ -282,6 +282,7 @@ type Querier interface {
 	ResetTodayCleared(ctx context.Context) error
 	SaveConversationSessionMessage(ctx context.Context, arg SaveConversationSessionMessageParams) error
 	SaveInboundConversation(ctx context.Context, arg SaveInboundConversationParams) error
+	SearchClientsByEntityID(ctx context.Context, arg SearchClientsByEntityIDParams) ([]SearchClientsByEntityIDRow, error)
 	SetTransactionInReview(ctx context.Context, id pgtype.UUID) error
 	SoftDeleteAccount(ctx context.Context, arg SoftDeleteAccountParams) error
 	// restore if previously soft-deleted

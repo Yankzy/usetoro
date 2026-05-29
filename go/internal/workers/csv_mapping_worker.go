@@ -307,10 +307,15 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 		}
 		replyBytes, _ := json.Marshal(replyEnv)
 
-		if _, pubErr := js.Publish(workflows.OrchestratorInbox, replyBytes); pubErr != nil {
-			e.logger.Error("csv mapping worker: failed to notify orchestrator", "error", pubErr)
+		targetSubject := msg.Reply
+		if targetSubject == "" {
+			targetSubject = workflows.OrchestratorInbox
+		}
+
+		if _, pubErr := js.Publish(targetSubject, replyBytes); pubErr != nil {
+			e.logger.Error("csv mapping worker: failed to notify target", "error", pubErr, "target", targetSubject)
 		} else {
-			e.logger.Info("csv mapping worker: sent explicit INFORM back to Orchestrator", "cid", cid)
+			e.logger.Info("csv mapping worker: sent explicit INFORM back to target", "cid", cid, "target", targetSubject)
 		}
 	} else {
 		// Legacy global broadcast if not part of a guided conversation

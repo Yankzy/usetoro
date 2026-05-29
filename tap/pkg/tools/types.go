@@ -17,10 +17,11 @@ type Tool interface {
 
 // ToolCall represents a single tool invocation requested by the LLM.
 type ToolCall struct {
-	ID    string
-	Name  string
-	Input map[string]any
-	Async bool // run_in_background hint
+	ID           string
+	Name         string
+	Input        map[string]any
+	RawArguments string // original JSON arguments string before unmarshaling
+	Async        bool   // run_in_background hint
 }
 
 // ToolResult contains the output of a tool execution.
@@ -42,6 +43,13 @@ type AgentDefinition struct {
 }
 
 // Message is a single turn in the LLM conversation.
+type MessageRole string
+
+type ConversationIDKey struct{}
+type EntityIDKey struct{}
+type SessionIDKey struct{}
+type MessageIDKey struct{}
+
 type Message struct {
 	Role       string     // "user", "assistant", "tool"
 	Content    string     // text content
@@ -66,7 +74,6 @@ type AgentResult struct {
 }
 
 // LLMCallFunc is a function that sends messages and tool definitions to an LLM,
-// handles all tool-calling internally, and returns the final text response.
-// This abstraction allows the tools package to remain NATS/LLM-provider-free
-// while the general_agent package wires it to Runtime.ExecWithToolCalling.
-type LLMCallFunc func(ctx context.Context, messages []Message, tools []Tool) (string, error)
+// handles all tool-calling internally, and returns the final text response
+// along with any new tool messages generated during execution.
+type LLMCallFunc func(ctx context.Context, messages []Message, tools []Tool) (string, []Message, error)

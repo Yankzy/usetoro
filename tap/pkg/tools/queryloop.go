@@ -21,43 +21,39 @@ var QueryLogger *slog.Logger
 // RunAgent is recursive — the AgentTool calls it with a child AgentContext
 // and a restricted tool set.
 func RunAgent(ctx context.Context, agentCtx AgentContext, tools []Tool, messages []Message, llmFunc LLMCallFunc) (*AgentResult, error) {
-	maxTurns := agentCtx.MaxTurns
-	if maxTurns <= 0 {
-		maxTurns = DefaultMaxTurns
+	select {
+	case <-agentCtx.Abort.Done():
+		return nil, fmt.Errorf("agent %s aborted: %w", agentCtx.AgentID, agentCtx.Abort.Err())
+	case <-ctx.Done():
+		return nil, fmt.Errorf("agent %s context done: %w", agentCtx.AgentID, ctx.Err())
+	default:
 	}
 
-	for turn := 0; turn < maxTurns; turn++ {
-		select {
-		case <-agentCtx.Abort.Done():
-			return nil, fmt.Errorf("agent %s aborted: %w", agentCtx.AgentID, agentCtx.Abort.Err())
-		case <-ctx.Done():
-			return nil, fmt.Errorf("agent %s context done: %w", agentCtx.AgentID, ctx.Err())
-		default:
-		}
+	output, newMsgs, err := llmFunc(ctx, messages, tools)
+	if err != nil {
+		return nil, fmt.Errorf("llm call: %w", err)
+	}
 
-		output, err := llmFunc(ctx, messages, tools)
-		if err != nil {
-			return nil, fmt.Errorf("llm call (turn %d): %w", turn, err)
-		}
-
+	if len(newMsgs) > 0 {
+		messages = append(messages, newMsgs...)
+	} else {
+		// Fallback: if the LLMFunc didn't generate structured tool messages,
+		// just append the final text response. (For backwards compatibility with old tests)
 		messages = append(messages, Message{
 			Role:    "assistant",
 			Content: output,
 		})
-
-		if QueryLogger != nil {
-			QueryLogger.Info("agent finished",
-				"agent_id", agentCtx.AgentID,
-				"agent_type", agentCtx.AgentType,
-				"turns", turn+1,
-			)
-		}
-
-		return &AgentResult{
-			Output:   output,
-			Messages: messages,
-		}, nil
 	}
 
-	return nil, fmt.Errorf("agent %s exceeded max turns (%d)", agentCtx.AgentID, maxTurns)
+	if QueryLogger != nil {
+		QueryLogger.Info("agent finished",
+			"agent_id", agentCtx.AgentID,
+			"agent_type", agentCtx.AgentType,
+		)
+	}
+
+	return &AgentResult{
+		Output:   output,
+		Messages: messages,
+	}, nil
 }

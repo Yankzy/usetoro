@@ -15,7 +15,7 @@ import (
 type AgentTool struct {
 	Registry    *tools.AgentRegistry
 	TaskManager *tools.TaskManager
-	LLMFunc     tools.LLMCallFunc // wired to Runtime.ExecWithToolCalling
+	LLMFunc     tools.LLMCallFunc // wired to Runtime.ExecWithMessages
 	AllTools    map[string]tools.Tool
 }
 

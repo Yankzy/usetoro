@@ -9,7 +9,7 @@ It supports:
 - optional `vendor` and `customer` columns
 - sign-convention inference (`is_expense_positive`)
 
-## Config (`go/internal/config/defaults.yaml`)
+## Config (`go/internal/config/defaults.yml`)
 
 ```yaml
 - name: "CSV Mapping Agent"

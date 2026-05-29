@@ -282,6 +282,6 @@ To ensure agents can find each other, TAP uses a strict topic taxonomy.
 
 For automated code generation and validation, a formal machine-readable definition is available:
 
-* **AsyncAPI**: [`api/asyncapi.yaml`](./asyncapi.yaml)
+* **AsyncAPI**: [`api/asyncapi.yml`](./asyncapi.yml)
 
 You can use tools like the [AsyncAPI Generator](https://www.asyncapi.com/tools/generator) to scaffold agent code in Java, Node.js, Python, or Go using this definition.

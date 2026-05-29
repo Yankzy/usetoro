@@ -14,7 +14,7 @@ Agents that survive the experimental tier and achieve a predefined reputation th
 
 **Feature 2.1: Tier 1 - The Community Sandbox (Self-Hosted Edge)**
 * **Requirement:** Zero-friction onboarding for developers to encourage ecosystem growth and rapid experimentation.
-* **Logic:** Developers host their own agent code on their own hardware. They upload their declarative `workflow.yaml` files to the Toro OS platform. 
+* **Logic:** Developers host their own agent code on their own hardware. They upload their declarative `workflow.yml` files to the Toro OS platform. 
 * **Execution:** When an event occurs, the Toro OS orchestration layer reads the YAML file and routes the payload via NATS directly to the developer's external edge node. 
 * **Qualification Pipeline:** All agents start here with a `verified: false` tag. They must complete a predefined volume of successful tasks (e.g., 500 tasks) while maintaining a minimum user rating (e.g., 4.8/5.0) to automatically trigger a promotion review for the Enterprise tier.
 

@@ -14,15 +14,17 @@ To maintain clear boundaries in the codebase, we differentiate components as fol
 
 An Agent implementation spans four components: Config, Runtime, Supervisor, and Daemon.
 
-### 1. Config (`defaults.yaml`)
-Agents require explicit registration in `defaults.yaml` to boot.
+### 1. Config (`defaults.yml`)
+Agents require explicit registration in `defaults.yml` to boot.
 - Defines identity: Binds the `did:toro:agent` Decentralized Identifier (DID).
 - Defines model: Specifies the LLM string (e.g. `gpt-5.1-mini`). The `Runtime` parses this configuration instead of hardcoding target models in code.
 
 ### 2. Runtime (`runtime.go`)
-Manages the OpenAI client integration loop.
-- Exposes `runtime.Exec()`.
-- Routes context windows to the API via the defined YAML model parameter. It applies and enforces JSON schema outputs before returning parsed data to the caller.
+Manages the LLM client integration and execution paradigms.
+- Uses a `ModelProvider` interface to support dynamic routing and multiple execution paradigms (e.g., standard Chat Completions vs the OpenAI Responses API) based on YAML configuration.
+- Exposes `ExecWithMessages()`, which handles structured, native multi-turn message arrays instead of flattened strings.
+- Implements an **Autonomous Reasoning Loop**: If the LLM requests tool executions, the runtime safely maps and executes them via the `ToolCallHandler`, then automatically loops back (up to 10 times) to allow the LLM to chain reasoning steps without returning to the main worker loop.
+- Bubbles up the entire sequence of intermediate tool calls back to the caller (e.g., `tools.RunAgent`) to ensure perfect, deterministic state memory across Redux circuit-breaker retries.
 
 ### 3. Supervisor (`supervisor.go`)
 Manages the active Goroutines for running Agents.
@@ -33,7 +35,7 @@ Manages the active Goroutines for running Agents.
 ### 4. Daemon (`daemon.go`)
 Initializes the Toro host node ecosystem.
 - Establishes connections to Postgres and JetStream.
-- Iterates over `defaults.yaml` configurations and deploys the Supervisor for each active Agent.
+- Iterates over `defaults.yml` configurations and deploys the Supervisor for each active Agent.
 - Publishes each Agent's DID Inbox address over NATS to the global `Almanac` ledger, alerting other network instances that the Agent is online.
 
 ## Observability Data Flow

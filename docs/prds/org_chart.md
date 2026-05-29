@@ -230,7 +230,7 @@ Unit tests for the CFO agent's message handler, multi-turn loop flow, and Redux 
 
 ### Configuration
 
-#### [MODIFY] [defaults.yaml](file:///Users/Yankz/programming/usetoro/go/internal/config/defaults.yaml)
+#### [MODIFY] [defaults.yml](file:///Users/Yankz/programming/usetoro/go/internal/config/defaults.yml)
 
 Add the CFO agent configuration entry:
 
@@ -281,7 +281,7 @@ Add a `NATSConn() *nats.Conn` accessor to `BaseAgent` so the CFO agent can perfo
 
 ### Workflow YAML (Optional)
 
-#### [NEW] [cfo_analysis.yaml](file:///Users/Yankz/programming/usetoro/tap/workflows/cfo_analysis.yaml)
+#### [NEW] [cfo_analysis.yml](file:///Users/Yankz/programming/usetoro/tap/workflows/cfo_analysis.yml)
 
 Optional workflow definition that triggers the CFO agent. This is a simple single-step workflow:
 

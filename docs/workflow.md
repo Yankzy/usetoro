@@ -53,7 +53,7 @@ We won't make individual Agents and Workers manage their own registration loops.
 
 ### Redesigning the YAML format to be Temporal-esque
 
-#### `tap/workflows/csv_cleaner_pipeline.yaml`
+#### `tap/workflows/csv_cleaner_pipeline.yml`
 ```yaml
 name: CSV Cleaner Pipeline
 version: "1.0"
@@ -77,7 +77,7 @@ steps:
 1. **[MODIFY] `go/internal/api/`**: Add a handler for querying the `Almanac` to serve the frontend registry view.
 2. **[MODIFY] `tap/pkg/agent/supervisor.go` and `go/internal/workers/manager.go`**: Implement the centralized `almanac.register` heartbeat loop.
 3. **[MODIFY] `tap/workflows/workflow_schema.go`**: Update structs to rename `InputTopic` to Temporal `TaskQueue`, and add `Negotiate` and `ActivityType` fields.
-4. **[MODIFY] `tap/workflows/csv_cleaner_pipeline.yaml`**: Update to the Temporal/FIPA schema above.
+4. **[MODIFY] `tap/workflows/csv_cleaner_pipeline.yml`**: Update to the Temporal/FIPA schema above.
 5. **[MODIFY] `tap/workflows/workflow_generation_prompt.md`**: Train the LLM to output Temporal-friendly Task Queues and negotiate blocks.
 6. **[MODIFY] `tap/agents/agent_generation_prompt.md`**: Guide LLMs on the FIPA interaction mode (Listen on Task Queue -> Send PROPOSE -> Wait for ACCEPT on Inbox -> Do work -> Send INFORM Proof).
 

@@ -90,7 +90,7 @@ The "compile-time agent import" has been refined into an intentional deployment 
 
 ## Final Verification Path
 
-1. **DAG Execution:** `csv_cleaner_pipeline.yaml` migrated to `depends_on` semantics.
+1. **DAG Execution:** `csv_cleaner_pipeline.yml` migrated to `depends_on` semantics.
 2. **Sub-Workflows:** Parent-child instance links verified via `InstancePath` persistence.
 3. **Durability:** Almanac heartbeats survive NATS server restarts.
 4. **State:** Multi-step payloads correctly merged into downstream `dependencies` map.

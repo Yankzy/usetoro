@@ -116,7 +116,7 @@ starts cleanly but is inactive.
 
 ### Loading from YAML
 
-On first boot, `LoadFromDir(ctx, dirPath)` scans a directory for `*.yaml` files, parses each
+On first boot, `LoadFromDir(ctx, dirPath)` scans a directory for `*.yml` files, parses each
 into a `WorkflowDef`, and **upserts** the result into the `workflow_blueprints` Postgres table.
 The DB is the runtime registry; the YAML files are the bootstrap source.
 
@@ -327,7 +327,7 @@ workflows inside a larger DAG without coupling the two YAML files together.
 #### YAML declaration
 
 ```yaml
-# bookkeeping.yaml
+# bookkeeping.yml
 steps:
   - id: run_cleanup
     sub_workflow: "CSV Cleaner Pipeline"   # exact blueprint name in DB
@@ -340,7 +340,7 @@ steps:
       - run_cleanup                        # waits for the sub-workflow to finish
 ```
 
-`csv_cleaner_pipeline.yaml` is **entirely unchanged** and remains independently triggerable via
+`csv_cleaner_pipeline.yml` is **entirely unchanged** and remains independently triggerable via
 its own `trigger_topic`.
 
 #### How it works — code trace
@@ -432,7 +432,7 @@ events.accounting.bookkeeping published
 
 | Property | Value |
 |---|---|
-| `csv_cleaner_pipeline.yaml` modified? | **No** — zero changes |
+| `csv_cleaner_pipeline.yml` modified? | **No** — zero changes |
 | Can CSV Cleaner still run standalone? | **Yes** — still has its own `trigger_topic` |
 | Coupling between the two YAMLs | Only: the string `"CSV Cleaner Pipeline"` (blueprint name in DB) |
 | Concurrency safe? | Yes — child and parent are separate DB rows with separate `SequenceID` |
@@ -671,7 +671,7 @@ DLQ subjects: `workflow.dlq.trigger`, `workflow.dlq.inbox`.
 
 ## 18. CSV Cleaner Pipeline — Reference Shape
 
-`tap/workflows/csv_cleaner_pipeline.yaml`:
+`tap/workflows/csv_cleaner_pipeline.yml`:
 
 | Phase | Subject | Publisher | Subscriber |
 |---|---|---|---|
@@ -686,7 +686,7 @@ The `suspend_routes: [1]` on `map_columns` means ambiguous polarity halts the pi
 `workflow.events.ambiguous` before `commit_mapped_columns` runs. The downstream commit step only
 executes when `route_condition` equals `0`.
 
-When composed inside `bookkeeping.yaml` as a `sub_workflow`, the pipeline runs identically —
+When composed inside `bookkeeping.yml` as a `sub_workflow`, the pipeline runs identically —
 there is no difference from its perspective whether it was triggered by a NATS event or spawned by
 a parent orchestrator.
 

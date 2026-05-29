@@ -39,7 +39,7 @@ All services run in Docker Compose on the `toro-net` network:
 
 ## Configuration
 
-- Viper reads `defaults.yaml` + environment variable overrides
+- Viper reads `defaults.yml` + environment variable overrides
 - Config struct validated at startup — fail fast on invalid config
 - Secrets (encryption keys, JWT keys) via env vars, never committed
 - Connection pool sizes, timeouts, and limits are configurable

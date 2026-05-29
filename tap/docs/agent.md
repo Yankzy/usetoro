@@ -37,7 +37,7 @@ An agent publishes its DID, routing inbox, operational capabilities (e.g., `acco
 The TAP framework supports two distinct modalities of agents operating under the same Supervisor:
 
 ### A. Declarative Pipeline Agents (`agent.Runtime`)
-For simpler workflows, agents can be instantiated dynamically from a `defaults.yaml` configuration using the generic `agent.Runtime`. 
+For simpler workflows, agents can be instantiated dynamically from a `defaults.yml` configuration using the generic `agent.Runtime`. 
 
 ```yaml
 agents:
@@ -123,8 +123,8 @@ supervisor.RegisterInternalAgent("my-custom-agent", func(l *slog.Logger, b agent
 })
 ```
 
-#### Step 4: Configure `defaults.yaml`
-Finally, define the agent in your `defaults.yaml` under `agents:`. The Supervisor will automatically lookup the `internal_module` string and spawn your struct dynamically.
+#### Step 4: Configure `defaults.yml`
+Finally, define the agent in your `defaults.yml` under `agents:`. The Supervisor will automatically lookup the `internal_module` string and spawn your struct dynamically.
 
 ```yaml
 agents:

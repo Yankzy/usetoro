@@ -183,12 +183,12 @@ DRAFT → PROPOSED → VALIDATED → ESCROWED → LOCKED → IN_PROGRESS → SET
 | `agents.<sanitized-did>.inbox` | Pattern | Direct agent addressing | `topics.go:50-52` |
 | `tasks.<domain>.<complexity>.<type>` | Pattern | CFP broadcast channels | `topics.go:23-25` |
 | `workers.inbox.<id>` | Pattern | Worker addressing | `topics.go:56-58` |
-| `contracts.request` | Exact | Contract submission | `defaults.yaml:61` |
+| `contracts.request` | Exact | Contract submission | `defaults.yml:61` |
 
 #### JetStream Configuration
 
 ```yaml
-# go/internal/config/defaults.yaml:64-71
+# go/internal/config/defaults.yml:64-71
 almanac:
   stream_name: ALMANAC
   jetstream:
@@ -725,9 +725,9 @@ The identity system is used for:
 
 | File | Role |
 |------|------|
-| `go/internal/config/defaults.yaml:64-71` | ALMANAC JetStream stream config |
+| `go/internal/config/defaults.yml:64-71` | ALMANAC JetStream stream config |
 | `tap/api/json-schema/v1/almanac.json` | Registration payload JSON schema |
-| `tap/api/asyncapi.yaml:8-14` | almanac.query channel spec |
+| `tap/api/asyncapi.yml:8-14` | almanac.query channel spec |
 
 ### Tooling
 

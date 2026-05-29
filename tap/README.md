@@ -567,7 +567,7 @@ For the complete technical specification, see:
 - **[Envelope Schema](api/json-schema/v1/envelope.json)** - Message format
 - **[Almanac Schema](api/json-schema/v1/almanac.json)** - Registration format
 - **[Primitives Schema](api/json-schema/v1/primitives.json)** - Business objects
-- **[AsyncAPI Spec](api/asyncapi.yaml)** - Machine-readable API definition
+- **[AsyncAPI Spec](api/asyncapi.yml)** - Machine-readable API definition
 
 The API docs include:
 - Field-by-field schema explanations

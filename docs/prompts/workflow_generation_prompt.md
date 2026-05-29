@@ -122,7 +122,7 @@ Generation Constraints (LLM-Friendly)
 
 One-shot Learning Examples
 
-Example 1 — `tap/workflows/csv_cleaner_pipeline.yaml` (flat DAG)
+Example 1 — `tap/workflows/csv_cleaner_pipeline.yml` (flat DAG)
 
 Step sequence:
 - `map_columns` (agent, negotiate true)
@@ -133,7 +133,7 @@ Legacy note from that file:
 - it includes `complexity` keys on some agent steps
 - for newly generated workflows, omit `complexity` in final output to match the current schema contract
 
-Example 2 — `tap/workflows/bookkeeping.yaml` (sub-workflow composition)
+Example 2 — `tap/workflows/bookkeeping.yml` (sub-workflow composition)
 
 Step sequence:
 - `run_cleanup` (sub_workflow: "CSV Cleaner Pipeline") — runs the entire cleanup DAG as a child

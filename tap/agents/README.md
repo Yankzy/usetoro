@@ -6,7 +6,7 @@ The `agents` package is the **plugin registry** for all compiled internal AI age
 
 ## How It Works
 
-Agents register themselves at binary startup via Go's `init()` mechanism, identical to how `database/sql` drivers work. The `ProtocolDaemon` then reads `defaults.yaml`, matches each `internal_module` string against the registry, and boots the agent with the correct infrastructure injected.
+Agents register themselves at binary startup via Go's `init()` mechanism, identical to how `database/sql` drivers work. The `ProtocolDaemon` then reads `defaults.yml`, matches each `internal_module` string against the registry, and boots the agent with the correct infrastructure injected.
 
 ```
 init() in each agent package
@@ -21,7 +21,7 @@ daemon.go iterates agents.GetRegistry()
 supervisor.RegisterInternalAgent(name, factory)
         │
         ▼
-supervisor.LoadAgents(configs from defaults.yaml)
+supervisor.LoadAgents(configs from defaults.yml)
         │   for each config where engine == "internal":
         │   - builds core.Environment (injects DB, EntityResolver if requested)
         │   - calls factory(env) → core.Runnable
@@ -96,7 +96,7 @@ import (
 )
 ```
 
-### 4. Add a config entry to `go/internal/config/defaults.yaml`
+### 4. Add a config entry to `go/internal/config/defaults.yml`
 
 ```yaml
 agents:
@@ -143,7 +143,7 @@ Fields not requested are `nil`. If your agent accesses `env.Queries` without dec
 | `tap/pkg/agent/base.go` | `BaseAgent` — handles subscription, almanac registration, signing |
 | `tap/pkg/agent/supervisor.go` | Instantiates agents, manages lifecycle |
 | `tap/pkg/daemon/daemon.go` | Bootstraps supervisor, iterates registry, calls `LoadAgents` |
-| `go/internal/config/defaults.yaml` | Declarative agent list — the single source of truth |
+| `go/internal/config/defaults.yml` | Declarative agent list — the single source of truth |
 
 ---
 

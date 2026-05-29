@@ -5,7 +5,7 @@ Copy the block below and fill in the `[PLACEHOLDERS]` before sending it to an LL
 ---
 
 ````
-You are an expert Go developer. Generate a complete, compilable `agent.go` file for a new internal TAP agent, plus a matching `defaults.yaml` snippet.
+You are an expert Go developer. Generate a complete, compilable `agent.go` file for a new internal TAP agent, plus a matching `defaults.yml` snippet.
 
 Agent Specification
 
@@ -22,7 +22,7 @@ Agent Specification
 - Uses Redux (`ExecuteGlobalWorkflow`): `[YES|NO]`
 - If Redux=YES, allowed state paths for this agent DID:
   `["/status", "/...optional_paths..."]`
-- Dependencies required in `defaults.yaml`:
+- Dependencies required in `defaults.yml`:
   - `database: true|false`
   - `db_queries: true|false`
   - `entity_resolver: true|false`
@@ -763,9 +763,9 @@ Critical behaviors to copy from this one-shot:
 - `onComplete` publishes proof to `workflows.OrchestratorInbox`.
 - `ReplyFailure` on errors to prevent NATS stalling.
 
-11. `defaults.yaml` Snippet Rules
+11. `defaults.yml` Snippet Rules
 
-Generate a matching snippet for `go/internal/config/defaults.yaml`.
+Generate a matching snippet for `go/internal/config/defaults.yml`.
 Include:
 - `name`, `model`, `engine: internal`, `internal_module`, `activity_type`
 - `dependencies` including `db_queries`
@@ -832,7 +832,7 @@ What to Return
 
 Return exactly two blocks:
 1. `agent.go` source
-2. `defaults.yaml` snippet
+2. `defaults.yml` snippet
 
 Return nothing else.
 ````

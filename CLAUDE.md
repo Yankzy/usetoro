@@ -41,7 +41,7 @@ go/                  — Main Go module (github.com/Yankzy/usetoro)
   internal/
     api/             — REST handlers, router, server, webhook verifiers
     auth/            — Ed25519 JWT, Argon2id, Redis token blacklist
-    config/          — Viper-based config (defaults.yaml + env overrides)
+    config/          — Viper-based config (defaults.yml + env overrides)
     connectors/      — ERP adapter interfaces (QBO client)
     database/        — sqlc-generated DB code (DO NOT EDIT — regenerated from sql/queries/)
     domain/          — Shared domain types

@@ -20,10 +20,14 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	mux.HandleFunc("POST /webhooks/twilio/sms", h.HandleTwilioSMSWebhook)
 	mux.HandleFunc("POST /webhooks/twilio/whatsapp", h.HandleTwilioWhatsAppWebhook)
 	mux.HandleFunc("POST /webhooks/telegram/{bot_token}", h.HandleTelegramWebhook)
+	mux.HandleFunc("POST /webhooks/slack", h.HandleSlackWebhook)
 
 	// QBO OAuth2 endpoints
 	mux.HandleFunc("GET /auth/qbo/callback", h.HandleQBOCallback)
 	mux.HandleFunc("GET /auth/qbo/url", h.HandleGetQBOAuthURL)
+
+	// Slack OAuth2 endpoints
+	mux.HandleFunc("GET /auth/slack/url", h.HandleGetSlackAuthURL)
 
 	// CPA Review Loop & Feedback
 	mux.HandleFunc("POST /transactions/{id}/approve", h.HandleApproveTransaction)

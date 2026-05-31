@@ -98,9 +98,7 @@ type FignodeStagingTransaction struct {
 	AccountType           pgtype.Text
 	ParsedDate            pgtype.Date
 	SyncedAt              pgtype.Timestamptz
-	V2Status              pgtype.Text
-	V2TransferHoldReason  pgtype.Text
-	V2ErpTransactionID    pgtype.Text
+	AseExecutionTrace     []byte
 }
 
 type MarketingLeadForm struct {
@@ -507,6 +505,26 @@ type ToroCoreRefreshToken struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type ToroCoreScheduledJob struct {
+	ID           pgtype.UUID
+	QueueSubject string
+	PayloadJson  []byte
+	FireAt       pgtype.Timestamptz
+	Status       string
+	CreatedAt    pgtype.Timestamptz
+	FiredAt      pgtype.Timestamptz
+}
+
+type ToroCoreSlackTenantMapping struct {
+	ID               pgtype.UUID
+	TenantID         pgtype.UUID
+	SlackTeamID      string
+	SlackAccessToken string
+	SlackBotUserID   string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type ToroCoreStalledMessage struct {
 	ID              pgtype.UUID
 	AgentDid        string
@@ -534,6 +552,17 @@ type ToroCoreTelemetryEvent struct {
 	EventType  string
 	DurationMs pgtype.Int4
 	Meta       []byte
+}
+
+type ToroCoreToroThreadsMapping struct {
+	ID                   pgtype.UUID
+	ConversationID       pgtype.UUID
+	TenantID             pgtype.UUID
+	SlackChannelID       string
+	SlackParentTs        string
+	EmailLatestMessageID string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
 }
 
 type ToroCoreTransaction struct {

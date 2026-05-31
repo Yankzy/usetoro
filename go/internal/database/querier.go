@@ -47,11 +47,13 @@ type Querier interface {
 	CreateRuleCondition(ctx context.Context, arg CreateRuleConditionParams) (ShadowErpRuleCondition, error)
 	CreateRuleGroup(ctx context.Context, arg CreateRuleGroupParams) (ShadowErpRuleGroup, error)
 	CreateTeamInvite(ctx context.Context, arg CreateTeamInviteParams) (ToroCoreTeamInvite, error)
+	CreateThreadMapping(ctx context.Context, arg CreateThreadMappingParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.UUID, error)
 	CreateWallet(ctx context.Context, entityID pgtype.UUID) (ToroCoreWallet, error)
 	DeleteAndReturnTeamInvite(ctx context.Context, token string) (ToroCoreTeamInvite, error)
 	DeleteExpiredTeamInvites(ctx context.Context) error
 	DeleteRefreshToken(ctx context.Context, tokenHash string) error
+	DeleteSlackTenantMappingByTeamID(ctx context.Context, slackTeamID string) error
 	DeleteStalledMessage(ctx context.Context, id pgtype.UUID) error
 	DeleteWorkflowBlueprint(ctx context.Context, name string) error
 	GetAccountByERPID(ctx context.Context, arg GetAccountByERPIDParams) (ShadowErpAccount, error)
@@ -176,6 +178,7 @@ type Querier interface {
 	// Transactions Batch
 	// =========================================================================
 	GetPendingFignodeTransactions(ctx context.Context) ([]FignodeStagingTransaction, error)
+	GetPendingJobsWindow(ctx context.Context, arg GetPendingJobsWindowParams) ([]ToroCoreScheduledJob, error)
 	GetPendingRealmRows(ctx context.Context, arg GetPendingRealmRowsParams) ([]GetPendingRealmRowsRow, error)
 	GetPendingSessionRows(ctx context.Context, sessionID pgtype.UUID) ([]GetPendingSessionRowsRow, error)
 	// =========================================================================
@@ -199,6 +202,8 @@ type Querier interface {
 	GetSessionRows(ctx context.Context, arg GetSessionRowsParams) ([]GetSessionRowsRow, error)
 	GetSessionRowsPaginated(ctx context.Context, arg GetSessionRowsPaginatedParams) ([]GetSessionRowsPaginatedRow, error)
 	GetSessionSummary(ctx context.Context, sessionID pgtype.UUID) (GetSessionSummaryRow, error)
+	GetSlackTenantMappingByTeamID(ctx context.Context, slackTeamID string) (ToroCoreSlackTenantMapping, error)
+	GetSlackTenantMappingByTenantID(ctx context.Context, tenantID pgtype.UUID) (ToroCoreSlackTenantMapping, error)
 	// =========================================================================
 	// QBO Sync Worker
 	// =========================================================================
@@ -214,6 +219,8 @@ type Querier interface {
 	// Used by bootstrap_exact_match.go (Priority 100).
 	GetStrictDepositConsensus(ctx context.Context, arg GetStrictDepositConsensusParams) ([]GetStrictDepositConsensusRow, error)
 	GetTeamInviteByToken(ctx context.Context, token string) (ToroCoreTeamInvite, error)
+	GetThreadMappingByEmailMessageID(ctx context.Context, emailLatestMessageID string) (ToroCoreToroThreadsMapping, error)
+	GetThreadMappingBySlackTS(ctx context.Context, arg GetThreadMappingBySlackTSParams) (ToroCoreToroThreadsMapping, error)
 	// =========================================================================
 	// Transaction Proposal & Audit
 	// =========================================================================
@@ -253,6 +260,7 @@ type Querier interface {
 	InsertCleanupRow(ctx context.Context, arg InsertCleanupRowParams) (pgtype.UUID, error)
 	InsertConversationSession(ctx context.Context, arg InsertConversationSessionParams) (ToroCoreConversationSession, error)
 	InsertLeaderboardSnapshot(ctx context.Context, arg InsertLeaderboardSnapshotParams) error
+	InsertScheduledJob(ctx context.Context, arg InsertScheduledJobParams) (pgtype.UUID, error)
 	// =========================================================================
 	// Badges: Award & query (schema removed)
 	// =========================================================================
@@ -268,6 +276,7 @@ type Querier interface {
 	LogStalledMessage(ctx context.Context, arg LogStalledMessageParams) (ToroCoreStalledMessage, error)
 	LogWorkflowHistory(ctx context.Context, arg LogWorkflowHistoryParams) (ToroCoreWorkflowHistory, error)
 	MarkCleanupSessionAmbiguous(ctx context.Context, arg MarkCleanupSessionAmbiguousParams) error
+	MarkJobFired(ctx context.Context, id pgtype.UUID) error
 	MarkRowPosted(ctx context.Context, arg MarkRowPostedParams) error
 	MarkStagingTransactionFailed(ctx context.Context, arg MarkStagingTransactionFailedParams) error
 	MarkStagingTransactionSynced(ctx context.Context, arg MarkStagingTransactionSyncedParams) error
@@ -332,6 +341,7 @@ type Querier interface {
 	// Streak: Update & midnight reset
 	// =========================================================================
 	UpdateStreak(ctx context.Context, userID pgtype.UUID) error
+	UpdateThreadMappingEmailMessageID(ctx context.Context, arg UpdateThreadMappingEmailMessageIDParams) error
 	UpdateVendorSynonyms(ctx context.Context, arg UpdateVendorSynonymsParams) error
 	UpdateVendorSynonymsByERPID(ctx context.Context, arg UpdateVendorSynonymsByERPIDParams) error
 	UpdateVendorTaxonomy(ctx context.Context, arg UpdateVendorTaxonomyParams) error
@@ -359,6 +369,7 @@ type Querier interface {
 	UpsertPayment(ctx context.Context, arg UpsertPaymentParams) error
 	UpsertPurchase(ctx context.Context, arg UpsertPurchaseParams) error
 	UpsertSalesReceipt(ctx context.Context, arg UpsertSalesReceiptParams) error
+	UpsertSlackTenantMapping(ctx context.Context, arg UpsertSlackTenantMappingParams) (ToroCoreSlackTenantMapping, error)
 	// $1 is the session_id (typically a SYSTEM session for the realm).
 	// $2 is realm_id, used only for the vendor/account lookups (joined via session at read time).
 	UpsertStagingTransaction(ctx context.Context, arg UpsertStagingTransactionParams) error

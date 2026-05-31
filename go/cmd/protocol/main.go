@@ -14,6 +14,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/erp"
 	"github.com/Yankzy/usetoro/internal/erp/adapters/quickbooks"
+	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
@@ -33,6 +34,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
 )
@@ -241,6 +243,28 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 
 	fignodeLLM, _ := ai.NewLLMClient(os.Getenv("OPENAI_API_KEY"), "")
 
+	// 5.5 Initialize Redis Client
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://redis:6379"
+	}
+	redisOpts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse REDIS_URL: %w", err)
+	}
+	redisClient := redis.NewClient(redisOpts)
+
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		logger.Warn("Redis connection failed", "error", err)
+		redisClient = nil
+	} else {
+		logger.Info("✅ Connected to Redis")
+	}
+
+	if err := ase.InitConfig(logger); err != nil {
+		return fmt.Errorf("failed to init ASE config: %w", err)
+	}
+
 	workerDeps := workers.Dependencies{
 		Logger:          logger,
 		Config:          cfg,
@@ -259,6 +283,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 			return qboConn.FetchEntity(ctx, realmID, entityType, entityID, op)
 		},
 		QBOConnector: qboConn,
+		Redis:        redisClient,
 	}
 
 	if err := workerManager.LoadFromRegistry(workerDeps); err != nil {
@@ -276,7 +301,20 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 
 	// 7. Initialize Protocol Daemon with shared infra
 	loader := func() (*config.Config, *viper.Viper, error) {
-		return config.Load()
+		c, v, err := config.Load()
+		if err != nil {
+			return c, v, err
+		}
+		
+		// Dynamically inject inferred worker schemas into the general purpose agent
+		inferredTools := workerManager.InferToolConfigs(c)
+		for i, a := range c.Agents {
+			if a.ActivityType == "agents.general.purpose" {
+				c.Agents[i].Tools = append(c.Agents[i].Tools, inferredTools...)
+			}
+		}
+		
+		return c, v, nil
 	}
 	d := daemon.New(logger, loader, ":9090", dbPool, q.Conn(), js, entityResolver)
 

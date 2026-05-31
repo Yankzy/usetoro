@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/tap/agents"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
@@ -84,6 +85,11 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 	// 1. Initial Load of configuration
 	if err := d.loadConfig(); err != nil {
 		return fmt.Errorf("initial config load failed: %w", err)
+	}
+
+	// 1.5 Load ASE Prompts Configuration
+	if err := ase.InitConfig(d.Logger); err != nil {
+		d.Logger.Warn("Failed to initialize ASE prompts config, using fallback or defaults", "error", err)
 	}
 
 	// 2. Initialize the Nervous System (EventBus)

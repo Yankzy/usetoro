@@ -65,9 +65,11 @@ type AgentDependenciesConfig struct {
 }
 
 type ToolConfig struct {
-	Name        string `yaml:"name" mapstructure:"name"`
-	Subject     string `yaml:"subject" mapstructure:"subject"`
-	Description string `yaml:"description" mapstructure:"description"`
+	Name         string `yaml:"name" mapstructure:"name"`
+	Subject      string `yaml:"subject" mapstructure:"subject"`
+	Description  string `yaml:"description" mapstructure:"description"`
+	ActivityType string `yaml:"activity_type" mapstructure:"activity_type"`
+	InputSchema  string `yaml:"input_schema" mapstructure:"input_schema"`
 }
 
 type State struct{}

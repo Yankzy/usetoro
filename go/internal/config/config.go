@@ -100,7 +100,10 @@ type Config struct {
 	TelegramBotToken string `mapstructure:"telegram_bot_token"`
 
 	// Slack Config
-	SlackBotToken string `mapstructure:"slack_bot_token"`
+	SlackClientID      string `mapstructure:"slack_client_id"`
+	SlackClientSecret  string `mapstructure:"slack_client_secret"`
+	SlackBotToken      string `mapstructure:"slack_bot_token"`
+	SlackSigningSecret string `mapstructure:"slack_signing_secret"`
 
 	// Virtual Employees Config (Stateless email/system prompt aliases)
 	VirtualEmployees map[string]AgentAlias `mapstructure:"virtual_employees"`
@@ -276,7 +279,10 @@ func Load() (*Config, *viper.Viper, error) {
 	_ = v.BindEnv("twilio_sms_number", "TWILIO_SMS_NUMBER")
 	_ = v.BindEnv("twilio_wa_number", "TWILIO_WA_NUMBER")
 	_ = v.BindEnv("telegram_bot_token", "TELEGRAM_BOT_TOKEN")
+	_ = v.BindEnv("slack_client_id", "SLACK_CLIENT_ID")
+	_ = v.BindEnv("slack_client_secret", "SLACK_CLIENT_SECRET")
 	_ = v.BindEnv("slack_bot_token", "SLACK_BOT_TOKEN")
+	_ = v.BindEnv("slack_signing_secret", "SLACK_SIGNING_SECRET")
 	_ = v.BindEnv("stripe_secret_key", "STRIPE_SECRET_KEY")
 	_ = v.BindEnv("stripe_webhook_secret", "STRIPE_WEBHOOK_SECRET")
 
@@ -405,4 +411,5 @@ type AgentAlias struct {
 	Description  string `mapstructure:"description"`
 	SystemPrompt string `mapstructure:"system_prompt"`
 	Email        string `mapstructure:"email"`
+	ReplyTo      string `mapstructure:"reply_to"`
 }

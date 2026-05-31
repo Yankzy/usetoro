@@ -46,45 +46,28 @@ func NewGeneralAgent(env core.Environment) core.Runnable {
 
 	taskMgr := tools.NewTaskManager()
 
-	// Build the full tool pool (builtin tools + NATS-aware tools).
-	// LLMFunc is set below after we have the Runtime reference.
-	allTools := map[string]tools.Tool{
-		"Bash":      &builtin.ShellTool{},
-		"FileRead":  &builtin.FileReadTool{},
-		"FileWrite": &builtin.FileWriteTool{},
-		"FileEdit":  &builtin.FileEditTool{},
-		"Grep":      &builtin.GrepTool{},
-		"WebFetch":  &builtin.WebFetchTool{},
-		"CallWorker": builtin.NewCallWorkerTool(env.Bus),
-		"LookupClient": builtin.NewClientLookupTool(env.Queries),
-		"AlmanacLookup": &almanacLookupTool{
-			bus:    env.Bus,
-			logger: logger,
-		},
-		"Delegate": &delegateTool{
-			bus:    env.Bus,
-			logger: logger,
-		},
-		"ConversationState": &builtin.ConversationStateTool{
-			Bus:      env.Bus,
-			Logger:   logger,
-			AgentDID: env.Config.DID,
-		},
-		"ScheduleReminder": &builtin.ScheduleReminderTool{
-			Bus:      env.Bus,
-			Logger:   logger,
-			AgentDID: env.Config.DID,
-		},
-		"SendEmail": &builtin.EmailTool{
-			Bus:       env.Bus,
-			Logger:    logger,
-			AgentDID:  env.Config.DID,
-			AgentName: env.Config.Name,
-		},
+	allTools := make(map[string]tools.Tool)
+
+	for _, toolCfg := range env.Config.Tools {
+		if toolCfg.ActivityType != "" {
+			allTools[toolCfg.Name] = &builtin.AsyncWorkerTool{
+				Bus:          env.Bus,
+				AgentDID:     env.Config.DID,
+				ToolName:     toolCfg.Name,
+				ToolDesc:     toolCfg.Description,
+				Schema:       json.RawMessage(toolCfg.InputSchema),
+				ActivityType: toolCfg.ActivityType,
+			}
+		} else {
+			if builtinTool := builtin.GetTool(toolCfg.Name, env, logger); builtinTool != nil {
+				allTools[toolCfg.Name] = builtinTool
+			} else {
+				logger.Warn("Tool requested in config but not found in builtin registry", "tool", toolCfg.Name)
+			}
+		}
 	}
 
 	base := agent.NewBaseAgent(logger, env.Bus, env.Config, nil)
-
 	ga := &GeneralAgent{
 		BaseAgent:    base,
 		RT:           agent.NewRuntime(logger, env.Bus, env.Config),
@@ -225,7 +208,7 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 		return
 	}
 
-	if envlp.Performative != core.CFP && envlp.Performative != core.ACCEPT_PROPOSAL && envlp.Performative != core.REQUEST {
+	if envlp.Performative != core.CFP && envlp.Performative != core.ACCEPT_PROPOSAL && envlp.Performative != core.REQUEST && envlp.Performative != core.INFORM {
 		msg.Ack()
 		return
 	}
@@ -238,6 +221,10 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 
 	// Extract the user prompt, system prompt override, workflow schema, and messages
 	prompt, taskSysPrompt, wfSchema, rbacPolicy, structuredMsgs, entityID, sessionID, inReplyTo := extractTaskConfig(envlp.Body)
+
+	if envlp.Performative == core.INFORM {
+		prompt = "Worker asynchronous task completed. Result:\n" + prompt
+	}
 
 	if entityID != "" {
 		ctx = context.WithValue(ctx, tools.EntityIDKey{}, entityID)
@@ -665,4 +652,19 @@ func (t *delegateTool) Call(ctx context.Context, input map[string]any) (string, 
 		return "", fmt.Errorf("publish DELEGATE to orchestrator: %w", err)
 	}
 	return fmt.Sprintf("Dynamic workflow dispatched to Orchestrator with %d step(s). ConversationID: %s.", len(steps), convID), nil
+}
+
+func init() {
+	builtin.Register("AlmanacLookup", func(env core.Environment, logger *slog.Logger) tools.Tool {
+		return &almanacLookupTool{
+			bus:    env.Bus,
+			logger: logger,
+		}
+	})
+	builtin.Register("Delegate", func(env core.Environment, logger *slog.Logger) tools.Tool {
+		return &delegateTool{
+			bus:    env.Bus,
+			logger: logger,
+		}
+	})
 }

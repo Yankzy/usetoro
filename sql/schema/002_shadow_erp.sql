@@ -46,6 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_accounts_realm_active ON shadow_erp.accounts(real
 
 -- =========================================================================
 -- Vendors (The Entity Resolution Cache)
+-- Includes taxonomy columns (from 008)
 -- =========================================================================
 CREATE TABLE IF NOT EXISTS shadow_erp.vendors (
     id                   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -55,6 +56,11 @@ CREATE TABLE IF NOT EXISTS shadow_erp.vendors (
     sync_token           TEXT NOT NULL,
     last_known_account_id UUID,                     -- AI hint: usual expense account
     ai_synonyms          JSONB,                     -- ["Staples Inc", "STAPLS", "Staples #44"]
+    -- Taxonomy columns (from 008)
+    industry             TEXT,
+    industry_icon        TEXT,
+    vendor_description   TEXT,
+    vendor_url           TEXT,
     event_source         TEXT NOT NULL DEFAULT 'toro_internal',
     created_at           TIMESTAMPTZ DEFAULT NOW(),
     updated_at           TIMESTAMPTZ DEFAULT NOW(),
@@ -68,6 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_vendors_name  ON shadow_erp.vendors(realm_id, dis
 
 -- =========================================================================
 -- Customers (For AR Tracking)
+-- Includes taxonomy columns (from 009)
 -- =========================================================================
 CREATE TABLE IF NOT EXISTS shadow_erp.customers (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -75,6 +82,11 @@ CREATE TABLE IF NOT EXISTS shadow_erp.customers (
     realm_id     TEXT NOT NULL,
     display_name TEXT NOT NULL,
     sync_token   TEXT NOT NULL,
+    -- Taxonomy columns (from 009)
+    industry             TEXT,
+    industry_icon        TEXT,
+    customer_description TEXT,
+    customer_url         TEXT,
     event_source TEXT NOT NULL DEFAULT 'toro_internal',
     created_at   TIMESTAMPTZ DEFAULT NOW(),
     updated_at   TIMESTAMPTZ DEFAULT NOW(),
@@ -241,6 +253,7 @@ COMMENT ON COLUMN shadow_erp.rule_audit_logs.match_info IS 'Verbose match explan
 
 -- =========================================================================
 -- Company Info Cache (mirrors QBO CompanyInfo per realm) (from 009)
+-- Includes taxonomy columns (from 008)
 -- =========================================================================
 CREATE TABLE IF NOT EXISTS shadow_erp.company_info (
     id                   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -266,6 +279,12 @@ CREATE TABLE IF NOT EXISTS shadow_erp.company_info (
 
     -- Sparse preference bag (NameValue pairs from QBO)
     name_values          JSONB,
+
+    -- Taxonomy columns (from 008)
+    industry             TEXT,
+    industry_icon        TEXT,
+    business_model       TEXT,
+    mindset_hint         TEXT,
 
     event_source         TEXT NOT NULL DEFAULT 'toro_internal',
     erp_created_time     TIMESTAMPTZ,
@@ -366,13 +385,62 @@ CREATE TABLE IF NOT EXISTS shadow_erp.deposits (
 CREATE INDEX IF NOT EXISTS idx_purchases_realm ON shadow_erp.purchases(realm_id);
 CREATE INDEX IF NOT EXISTS idx_deposits_realm ON shadow_erp.deposits(realm_id);
 
--- Add support for Deposit webhooks to the core connections table
-ALTER TABLE toro_core.erp_connections ADD COLUMN IF NOT EXISTS last_webhook_deposit TIMESTAMPTZ;
+-- =========================================================================
+-- Payments (from 023)
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS shadow_erp.payments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    erp_id TEXT NOT NULL,
+    realm_id TEXT NOT NULL,
+    sync_token TEXT NOT NULL,
+    txn_date DATE NOT NULL,
+    total_amount DECIMAL(15,2) NOT NULL,
+    unapplied_amount DECIMAL(15,2) DEFAULT 0,
+    customer_id TEXT,
+    deposit_to_account_id TEXT,
+    lines JSONB NOT NULL,
+    rule_id INT REFERENCES shadow_erp.rule_groups(id),
+    event_source TEXT NOT NULL DEFAULT 'toro_internal',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE(realm_id, erp_id)
+);
+
+-- =========================================================================
+-- Sales Receipts (from 023)
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS shadow_erp.sales_receipts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    erp_id TEXT NOT NULL,
+    realm_id TEXT NOT NULL,
+    sync_token TEXT NOT NULL,
+    txn_date DATE NOT NULL,
+    total_amount DECIMAL(15,2) NOT NULL,
+    customer_id TEXT,
+    deposit_to_account_id TEXT,
+    doc_number TEXT,
+    lines JSONB NOT NULL,
+    rule_id INT REFERENCES shadow_erp.rule_groups(id),
+    event_source TEXT NOT NULL DEFAULT 'toro_internal',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE(realm_id, erp_id)
+);
 
 -- +goose Down
+DROP TABLE IF EXISTS shadow_erp.sales_receipts;
+DROP TABLE IF EXISTS shadow_erp.payments;
 DROP TABLE IF EXISTS shadow_erp.deposits;
 DROP TABLE IF EXISTS shadow_erp.purchases;
 DROP TABLE IF EXISTS shadow_erp.attachables;
+DROP TABLE IF EXISTS shadow_erp.company_info;
+DROP TABLE IF EXISTS shadow_erp.rule_audit_logs;
+DROP TABLE IF EXISTS shadow_erp.rule_conditions;
+DROP TABLE IF EXISTS shadow_erp.rule_groups;
+DROP TABLE IF EXISTS shadow_erp.ai_corrections;
+DROP TABLE IF EXISTS shadow_erp.vector_sync_state;
 DROP TABLE IF EXISTS shadow_erp.bills;
 DROP TABLE IF EXISTS shadow_erp.invoices;
 DROP TABLE IF EXISTS shadow_erp.customers;

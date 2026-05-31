@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS fignode.staging_sessions (
     bank_account_id  UUID REFERENCES shadow_erp.accounts(id) ON DELETE SET NULL,   -- The specific bank/credit card account
     is_ambiguous      BOOLEAN NOT NULL DEFAULT FALSE,
     ambiguity_reason  TEXT,
+    outflow_is        TEXT NOT NULL DEFAULT 'NEGATIVE',  -- (from 013)
     created_at  TIMESTAMPTZ DEFAULT NOW(),
     updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
@@ -64,7 +65,8 @@ CREATE TABLE IF NOT EXISTS fignode.staging_transactions (
     source_type          TEXT NOT NULL DEFAULT 'BankFeed', -- 'CSV', 'BankFeed', 'Receipt'
     raw_description      TEXT,                             -- e.g., "AMZN Mktp US"
     raw_amount           TEXT NOT NULL,
-    raw_date             DATE,
+    raw_date             TEXT,                             -- TEXT to preserve raw CSV date strings (from 015)
+    parsed_date          DATE,                             -- Successfully parsed date for sorting (from 015)
     cash_direction       TEXT,                             -- 'INFLOW' or 'OUTFLOW' (The LLM Anchor)
     iso_currency_code    TEXT DEFAULT 'USD',               -- Protects against cross-border ledger corruption
     transaction_hash     VARCHAR(64) UNIQUE,               -- The SHA-256 Idempotency hash for CSV uploads
@@ -110,6 +112,17 @@ CREATE TABLE IF NOT EXISTS fignode.staging_transactions (
     
     -- Rule engine flags
     rule_group_id INT REFERENCES shadow_erp.rule_groups(id) ON DELETE SET NULL,
+
+    -- Classification columns (from 014)
+    macro_class          TEXT,
+    account_type         TEXT,
+
+    -- Sync tracking (from 016)
+    synced_at            TIMESTAMPTZ,
+
+    -- ASE execution trace (net effect of 024+031: v2_* columns added then removed, ase_execution_trace added)
+    ase_execution_trace  JSONB NOT NULL DEFAULT '[]'::jsonb,
+
     created_at           TIMESTAMPTZ DEFAULT NOW(),
     updated_at           TIMESTAMPTZ DEFAULT NOW()
 );

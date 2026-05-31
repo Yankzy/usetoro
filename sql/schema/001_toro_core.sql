@@ -155,6 +155,9 @@ CREATE TABLE IF NOT EXISTS toro_core.erp_connections (
     last_webhook_invoice     TIMESTAMPTZ,
     last_webhook_bill        TIMESTAMPTZ,
     last_webhook_transaction TIMESTAMPTZ,
+    last_webhook_deposit     TIMESTAMPTZ,          -- (from 002 shadow_erp)
+    last_webhook_payment     TIMESTAMPTZ,          -- (from 023)
+    last_webhook_sales_receipt TIMESTAMPTZ,        -- (from 023)
 
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -223,8 +226,273 @@ SELECT add_continuous_aggregate_policy('toro_core.agent_performance_hourly',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '30 minutes');
 
+-- =========================================================================
+-- 11. Wallet & Micrion Ledger (from 005)
+-- =========================================================================
+
+-- The Wallet Master Record
+CREATE TABLE toro_core.wallet (
+    id                       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id                UUID NOT NULL UNIQUE REFERENCES toro_core.entities(id) ON DELETE CASCADE,
+    total_purchased_micrions BIGINT NOT NULL DEFAULT 0,
+    total_burned_micrions    BIGINT NOT NULL DEFAULT 0,
+    created_at               TIMESTAMPTZ DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TRIGGER update_wallet_updated_at
+    BEFORE UPDATE ON toro_core.wallet
+    FOR EACH ROW EXECUTE FUNCTION toro_core.update_updated_at_column();
+
+-- The Transactions Ledger (Immutable Audit Log)
+-- `stripe_session_id` tracks Fiat On-Ramps.
+-- `nats_revision` tracks high-speed burn rollups (The Two Generals idempontency lock).
+CREATE TABLE toro_core.wallet_transactions (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wallet_id         UUID NOT NULL REFERENCES toro_core.wallet(id) ON DELETE CASCADE,
+    transaction_type  VARCHAR(50) NOT NULL, -- 'purchase' or 'burn'
+    micrion_amount    BIGINT NOT NULL,      -- Positive for purchase, positive for burn (contextualized by type)
+    usd_amount        BIGINT,               -- Only populated on 'purchase' (in cents)
+    stripe_session_id TEXT,                 -- Only populated on 'purchase'
+    nats_revision     BIGINT,               -- Only populated on 'burn' (The CAS idempotency lock)
+    created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indexes for fast querying
+CREATE INDEX idx_wallet_transactions_wallet ON toro_core.wallet_transactions(wallet_id);
+
+-- Idempotency Constraints!
+-- Ensure we never double-charge a Stripe Session
+CREATE UNIQUE INDEX idx_wallet_txn_stripe_unique 
+    ON toro_core.wallet_transactions(stripe_session_id) 
+    WHERE stripe_session_id IS NOT NULL;
+
+-- Ensure we never double-charge a NATS execution rollup! (The cross-database atomic safety lock)
+CREATE UNIQUE INDEX idx_wallet_txn_nats_unique 
+    ON toro_core.wallet_transactions(wallet_id, nats_revision) 
+    WHERE nats_revision IS NOT NULL;
+
+-- =========================================================================
+-- 12. Stalled Messages (Paywall DLQ, from 006)
+-- =========================================================================
+-- Stores NATS JetStream payloads that failed due to insufficient Micrions (402 Payment Required).
+-- These are automatically replayed when the agent's wallet is topped up.
+CREATE TABLE toro_core.stalled_messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    agent_did VARCHAR(255) NOT NULL,
+    original_subject VARCHAR(255) NOT NULL,
+    payload BYTEA NOT NULL,
+    error_reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_stalled_messages_agent ON toro_core.stalled_messages(agent_did);
+
+-- =========================================================================
+-- 13. Workflows & History (from 007)
+-- =========================================================================
+
+-- Workflows (The Redux Engine Base State)
+CREATE TABLE toro_core.workflows (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id     UUID REFERENCES toro_core.entities(id) ON DELETE CASCADE,
+    state         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    sequence_id   BIGINT NOT NULL DEFAULT 0,    -- Tracks monotonic NATS idempotency
+    status        TEXT NOT NULL DEFAULT 'open', -- 'open', 'processing', 'completed', 'failed'
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_workflows_entity_id ON toro_core.workflows(entity_id);
+CREATE INDEX idx_workflows_status ON toro_core.workflows(status);
+
+-- Attach the standard toro_core updated_at trigger
+CREATE TRIGGER update_workflows_updated_at
+    BEFORE UPDATE ON toro_core.workflows
+    FOR EACH ROW EXECUTE FUNCTION toro_core.update_updated_at_column();
+
+-- Workflow History (The LLM Chat State)
+CREATE TABLE toro_core.workflow_history (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workflow_id   UUID NOT NULL REFERENCES toro_core.workflows(id) ON DELETE CASCADE,
+    role          TEXT NOT NULL,    -- e.g., 'user', 'assistant', 'system', 'tool'
+    content       JSONB NOT NULL,   -- The explicit OpenAI content matrix / function calls 
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_workflow_history_workflow_id ON toro_core.workflow_history(workflow_id);
+
+-- =========================================================================
+-- 14. Workflow Blueprints (from 010)
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS toro_core.workflow_blueprints (
+    name          TEXT PRIMARY KEY,
+    trigger_topic TEXT NOT NULL,
+    definition    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_blueprints_trigger_topic
+    ON toro_core.workflow_blueprints(trigger_topic);
+
+-- Attach the standard toro_core updated_at trigger
+DROP TRIGGER IF EXISTS update_workflow_blueprints_updated_at ON toro_core.workflow_blueprints;
+CREATE TRIGGER update_workflow_blueprints_updated_at
+    BEFORE UPDATE ON toro_core.workflow_blueprints
+    FOR EACH ROW EXECUTE FUNCTION toro_core.update_updated_at_column();
+
+-- =========================================================================
+-- 15. Conversations (from 012 + 026 postmark cols + 027 role col)
+-- =========================================================================
+CREATE TABLE toro_core.conversations (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id     UUID REFERENCES toro_core.entities(id) ON DELETE CASCADE,
+    source        TEXT NOT NULL,           -- 'email', 'whatsapp', 'sms', 'slack', 'discord'
+    external_id   TEXT UNIQUE NOT NULL,    -- Postmark MessageID, etc.
+    from_handle   TEXT NOT NULL,           -- email address, phone number, etc.
+    to_handle     TEXT NOT NULL,           -- recipient email, etc.
+    reply_to      TEXT,                    -- Reply-To header
+    in_reply_to   TEXT,                    -- In-Reply-To header (for threading)
+    subject       TEXT,
+    body_text     TEXT,
+    body_html     TEXT,
+    stripped_text TEXT,                    -- Useful for AI chat (removes email signatures/quotes)
+    metadata      JSONB DEFAULT '{}',      -- attachments, raw headers, etc.
+    role          TEXT NOT NULL DEFAULT 'user',  -- (from 027)
+    -- Postmark delivery status tracking (from 026)
+    delivered     JSONB,
+    bounced       JSONB,
+    opened        JSONB,
+    clicked       JSONB,
+    complained    JSONB,
+    session_id    UUID,                    -- FK added after conversation_sessions is created below
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_conversations_external_id ON toro_core.conversations(external_id);
+CREATE INDEX idx_conversations_entity_id ON toro_core.conversations(entity_id);
+CREATE INDEX idx_conversations_source ON toro_core.conversations(source);
+CREATE INDEX idx_conversations_in_reply_to ON toro_core.conversations(in_reply_to);
+
+-- =========================================================================
+-- 16. Conversation Sessions (from 025)
+-- =========================================================================
+-- Groups messages into durable threads that survive across long pauses
+-- (hours to months). The general agent uses these to load full context
+-- before each response.
+CREATE TABLE toro_core.conversation_sessions (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entity_id           UUID NOT NULL REFERENCES toro_core.entities(id) ON DELETE CASCADE,
+    external_id         TEXT,              -- external reference (e.g. email thread ID, Twilio conversation SID)
+    source              TEXT NOT NULL,     -- 'email', 'sms', 'whatsapp', 'telegram', 'slack', 'api'
+    participant_handle  TEXT NOT NULL,     -- the external person's handle (email, phone, @username)
+    toro_handle         TEXT NOT NULL,     -- our handle on this channel (toro email, toro phone, etc.)
+    subject             TEXT,              -- conversation topic
+    status              TEXT NOT NULL DEFAULT 'active',  -- active, awaiting_reply, resolved, escalated
+    system_prompt       TEXT,              -- per-session override of the general agent's system prompt
+    context_json        JSONB DEFAULT '{}', -- arbitrary context (chase intent, doc list, deadlines, etc.)
+    last_activity_at    TIMESTAMPTZ DEFAULT NOW(),
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Now add the FK from conversations to conversation_sessions
+ALTER TABLE toro_core.conversations
+    ADD CONSTRAINT fk_conversations_session
+    FOREIGN KEY (session_id) REFERENCES toro_core.conversation_sessions(id) ON DELETE SET NULL;
+
+CREATE INDEX idx_conv_sessions_entity        ON toro_core.conversation_sessions(entity_id);
+CREATE INDEX idx_conv_sessions_participant   ON toro_core.conversation_sessions(entity_id, participant_handle);
+CREATE INDEX idx_conv_sessions_status        ON toro_core.conversation_sessions(status);
+CREATE INDEX idx_conv_sessions_last_activity ON toro_core.conversation_sessions(last_activity_at);
+CREATE INDEX idx_conversations_session       ON toro_core.conversations(session_id);
+
+-- Attach updated_at trigger
+CREATE TRIGGER update_conv_sessions_updated_at
+    BEFORE UPDATE ON toro_core.conversation_sessions
+    FOR EACH ROW EXECUTE FUNCTION toro_core.update_updated_at_column();
+
+-- =========================================================================
+-- 17. Thread Mappings (from 028)
+-- =========================================================================
+-- Bridges email and Slack threads bidirectionally.
+-- When an email initiates a Slack thread (Flow 1), a row is inserted with
+-- the Slack parent_ts and email Message-ID. Subsequent replies on either
+-- channel update email_latest_message_id to keep the pointer chain current.
+CREATE TABLE toro_core.toro_threads_mappings (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    conversation_id     UUID NOT NULL,
+    tenant_id           UUID NOT NULL REFERENCES toro_core.entities(id) ON DELETE CASCADE,
+    slack_channel_id    TEXT NOT NULL,
+    slack_parent_ts     TEXT NOT NULL,
+    email_latest_message_id TEXT NOT NULL,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX idx_thread_map_slack ON toro_core.toro_threads_mappings(slack_channel_id, slack_parent_ts);
+CREATE INDEX idx_thread_map_email ON toro_core.toro_threads_mappings(email_latest_message_id);
+CREATE INDEX idx_thread_map_tenant ON toro_core.toro_threads_mappings(tenant_id);
+
+-- =========================================================================
+-- 18. Slack Tenant Mappings (from 029)
+-- =========================================================================
+CREATE TABLE toro_core.slack_tenant_mappings (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id           UUID NOT NULL REFERENCES toro_core.entities(id) ON DELETE CASCADE,
+    slack_team_id       TEXT NOT NULL UNIQUE,
+    slack_access_token  TEXT NOT NULL,
+    slack_bot_user_id   TEXT NOT NULL,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_slack_mapping_tenant ON toro_core.slack_tenant_mappings(tenant_id);
+
+CREATE TRIGGER update_slack_mapping_updated_at
+    BEFORE UPDATE ON toro_core.slack_tenant_mappings
+    FOR EACH ROW EXECUTE FUNCTION toro_core.update_updated_at_column();
+
+-- =========================================================================
+-- 19. Scheduled Jobs (from 030)
+-- =========================================================================
+CREATE TABLE toro_core.scheduled_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    queue_subject TEXT NOT NULL,
+    payload_json JSONB NOT NULL,
+    fire_at TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    fired_at TIMESTAMPTZ
+);
+CREATE INDEX idx_scheduled_jobs_fire_at ON toro_core.scheduled_jobs(fire_at) WHERE status = 'pending';
+
 
 -- +goose Down
+DROP TABLE IF EXISTS toro_core.scheduled_jobs;
+DROP TRIGGER IF EXISTS update_slack_mapping_updated_at ON toro_core.slack_tenant_mappings;
+DROP TABLE IF EXISTS toro_core.slack_tenant_mappings;
+DROP TABLE IF EXISTS toro_core.toro_threads_mappings;
+DROP TRIGGER IF EXISTS update_conv_sessions_updated_at ON toro_core.conversation_sessions;
+DROP INDEX IF EXISTS idx_conversations_session;
+DROP INDEX IF EXISTS idx_conv_sessions_last_activity;
+DROP INDEX IF EXISTS idx_conv_sessions_status;
+DROP INDEX IF EXISTS idx_conv_sessions_participant;
+DROP INDEX IF EXISTS idx_conv_sessions_entity;
+ALTER TABLE toro_core.conversations DROP CONSTRAINT IF EXISTS fk_conversations_session;
+DROP TABLE IF EXISTS toro_core.conversation_sessions;
+DROP TABLE IF EXISTS toro_core.conversations;
+DROP TRIGGER IF EXISTS update_workflow_blueprints_updated_at ON toro_core.workflow_blueprints;
+DROP TABLE IF EXISTS toro_core.workflow_blueprints;
+DROP TABLE IF EXISTS toro_core.workflow_history;
+DROP TRIGGER IF EXISTS update_workflows_updated_at ON toro_core.workflows;
+DROP TABLE IF EXISTS toro_core.workflows;
+DROP TABLE IF EXISTS toro_core.stalled_messages;
+DROP TABLE IF EXISTS toro_core.wallet_transactions;
+DROP TABLE IF EXISTS toro_core.wallet;
 DROP MATERIALIZED VIEW IF EXISTS toro_core.agent_performance_hourly;
 DROP TABLE IF EXISTS toro_core.telemetry_events;
 DROP TABLE IF EXISTS toro_core.team_invites;

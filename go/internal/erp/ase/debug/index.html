@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ASE Memory Visualizer</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
+        .box { border: 1px solid #ccc; padding: 15px; margin-bottom: 15px; border-radius: 8px; background: white; }
+        .status { font-weight: bold; }
+        .dag-container { display: flex; flex-direction: row; gap: 20px; overflow-x: auto; padding: 10px 0; }
+        .dag-node { border: 2px solid #2196F3; border-radius: 8px; padding: 10px; min-width: 250px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .node-title { font-weight: bold; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 10px; }
+        .node-queue { font-size: 1.4em; color: #E91E63; font-weight: bold; text-align: center; margin: 10px 0; }
+        .children-container { margin-left: 30px; border-left: 2px dashed #bbb; padding-left: 30px; display: flex; flex-direction: column; gap: 15px; justify-content: center;}
+    </style>
+</head>
+<body>
+    <h2>🧠 ASE DAG Memory Visualizer</h2>
+    <div class="box">
+        <label>WebSocket URL:</label>
+        <input type="text" id="wsUrl" value="ws://localhost:8081/ws/dag" style="width: 100%;">
+        <br><br>
+        <button id="btnConnect" onclick="connect()">Connect to Engine</button>
+        <span id="status" class="status">Disconnected</span>
+    </div>
+    
+    <div class="box" style="overflow-x: auto;">
+        <div id="dagRoot" style="min-height: 400px; display: flex; align-items: center;">
+            <p style="color: #999; margin: 0 auto;">Waiting for DAG state...</p>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+
+        // Auto-connect if URL is relative or same host
+        window.addEventListener('DOMContentLoaded', () => {
+            const urlInput = document.getElementById('wsUrl');
+            if (window.location.protocol !== 'file:') {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                urlInput.value = `${protocol}//${window.location.host}/ws/dag`;
+            }
+        });
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            try { ws = new WebSocket(url); } catch (e) { alert('Error: ' + e.message); return; }
+
+            ws.onopen = () => {
+                document.getElementById('status').innerText = "🟢 Connected (Live)";
+                document.getElementById('btnConnect').disabled = true;
+            };
+
+            ws.onmessage = (event) => {
+                const stats = JSON.parse(event.data);
+                renderDAG(stats);
+            };
+
+            ws.onclose = () => {
+                document.getElementById('status').innerText = "🔴 Disconnected";
+                document.getElementById('btnConnect').disabled = false;
+            };
+        }
+
+        function renderDAG(rootStats) {
+            const container = document.getElementById('dagRoot');
+            container.innerHTML = '';
+            container.appendChild(createNodeElement(rootStats, true));
+        }
+
+        function createNodeElement(node, isRoot = false) {
+            const wrapper = document.createElement('div');
+            wrapper.style.display = 'flex';
+            wrapper.style.flexDirection = 'row';
+            wrapper.style.alignItems = 'center';
+
+            const el = document.createElement('div');
+            el.className = 'dag-node';
+            
+            // Highlight if queue is full/flushing
+            if (node.queue_length >= node.batch_size && node.batch_size > 0) {
+                el.style.borderColor = '#4CAF50';
+                el.style.backgroundColor = '#e8f5e9';
+            }
+
+            let html = `
+                <div class="node-title">${node.name} <br><span style="font-size:0.7em;color:#999;font-weight:normal;">${node.id} (${node.kind})</span></div>
+                <div class="node-queue">
+                    ${node.queue_length} <span style="font-size: 0.5em; color: #888;">/ ${node.batch_size || '∞'}</span>
+                </div>
+            `;
+            el.innerHTML = html;
+            wrapper.appendChild(el);
+
+            if (node.children && Object.keys(node.children).length > 0) {
+                const childrenContainer = document.createElement('div');
+                childrenContainer.className = 'children-container';
+                for (const [key, childStats] of Object.entries(node.children)) {
+                    // Create a label for the routing key
+                    const branchWrapper = document.createElement('div');
+                    branchWrapper.style.position = 'relative';
+                    
+                    const label = document.createElement('div');
+                    label.innerText = "➔ " + key;
+                    label.style.fontSize = "0.8em";
+                    label.style.color = "#888";
+                    label.style.marginBottom = "5px";
+                    label.style.fontWeight = "bold";
+
+                    branchWrapper.appendChild(label);
+                    branchWrapper.appendChild(createNodeElement(childStats));
+                    childrenContainer.appendChild(branchWrapper);
+                }
+                wrapper.appendChild(childrenContainer);
+            }
+
+            return wrapper;
+        }
+    </script>
+</body>
+</html>

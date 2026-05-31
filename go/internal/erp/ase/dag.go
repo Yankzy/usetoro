@@ -1,0 +1,542 @@
+package ase
+
+import (
+	"context"
+	"log/slog"
+	"sync"
+	"time"
+)
+
+// DAGNodeKind identifies the type of classification stage a DAG node represents.
+type DAGNodeKind string
+
+// DAGNode represents a single node in the classification DAG topology.
+// Each node accepts transaction agents, batches them, and routes results
+// to child nodes.
+type DAGNode struct {
+	// Identity
+	ID                  string      `json:"id"`
+	Kind                DAGNodeKind `json:"kind"`
+	Name                string      `json:"name"`
+	PromptKey           string      `json:"prompt_key"`
+	EdgeType            string      `json:"edge_type"`
+	DynamicEdgeProvider string      `json:"dynamic_edge_provider"`
+	HoldStateSignal     string      `json:"hold_state_signal"`
+	HoldReasonString    string      `json:"hold_reason_string"`
+
+	// Batching
+	queue      []*AutonomousSemanticEngineNode
+	batchSize  int
+	batchFlush time.Duration
+	mu         sync.Mutex
+
+	// LLM dispatch function — called during Think phase with a batch of nodes.
+	thinkFn ThinkFunc
+
+	// ExecutionParams holds node-level execution configuration (e.g. close_status for terminals).
+	ExecutionParams map[string]string `json:"execution_params"`
+
+	// Children are downstream DAG nodes keyed by classification result value.
+	// e.g., a MacroClassifierNode may have children keyed by "ASSET", "EXPENSE", etc.
+	children map[string]*DAGNode
+	// defaultChild is used when no specific child matches the routing key.
+	defaultChild *DAGNode
+	// resumeChild is used for quarantine/holding gates to indicate where to resume processing.
+	resumeChild *DAGNode
+
+	logger  *slog.Logger
+	ctx     context.Context
+	cancel  context.CancelFunc
+	stopped chan struct{}
+
+	// Callback when a node completes its lifecycle through this DAG node.
+	onNodeComplete func(node *AutonomousSemanticEngineNode, result string)
+}
+
+// NodeClassification pairs a property key with its classification candidates.
+type NodeClassification struct {
+	Property   string
+	Candidates []ProbabilityCandidate
+}
+
+// ThinkFunc is invoked by a DAG node during its Think phase. It receives a batch
+// of ASENode records and must return classification results for each.
+// The returned map is keyed by NodeID and includes the property key being classified,
+// preventing state overwrites when multiple DAG nodes share the same Kind (e.g. holding_gate).
+type ThinkFunc func(ctx context.Context, batch []*AutonomousSemanticEngineNode) (map[string]NodeClassification, error)
+
+// DAG represents the full classification topology.
+type DAG struct {
+	EntryNode *DAGNode
+	Nodes     map[string]*DAGNode
+	logger    *slog.Logger
+}
+
+// NewDAG creates a new classification DAG with the given entry node.
+func NewDAG(entryNode *DAGNode, nodes map[string]*DAGNode, logger *slog.Logger) *DAG {
+	return &DAG{
+		EntryNode: entryNode,
+		Nodes:     nodes,
+		logger:    logger,
+	}
+}
+
+// Route determines the entry point for a transaction agent into the DAG.
+func (d *DAG) Route(node *AutonomousSemanticEngineNode) *DAGNode {
+	return d.EntryNode
+}
+
+// GetNode safely retrieves a DAG node by its ID.
+func (d *DAG) GetNode(id string) *DAGNode {
+	if d.Nodes == nil {
+		return nil
+	}
+	return d.Nodes[id]
+}
+
+// NewDAGNode creates a new DAG node with batching configuration.
+func NewDAGNode(id string, kind DAGNodeKind, name string, batchSize int, batchFlush time.Duration, logger *slog.Logger, cfg DAGNodeConfig) *DAGNode {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &DAGNode{
+		ID:                  id,
+		Kind:                kind,
+		Name:                name,
+		PromptKey:           cfg.PromptKey,
+		EdgeType:            cfg.EdgeType,
+		DynamicEdgeProvider: cfg.DynamicEdgeProvider,
+		HoldStateSignal:     cfg.HoldStateSignal,
+		HoldReasonString:    cfg.HoldReasonString,
+		ExecutionParams:     cfg.ExecutionParams,
+		queue:               make([]*AutonomousSemanticEngineNode, 0),
+		batchSize:           batchSize,
+		batchFlush:          batchFlush,
+		children:            make(map[string]*DAGNode),
+		logger:              logger.With("dag_node", id, "kind", string(kind)),
+		ctx:                 ctx,
+		cancel:              cancel,
+		stopped:             make(chan struct{}),
+	}
+}
+
+// SetThinkFunc assigns the LLM dispatch function for this DAG node's Think phase.
+func (dn *DAGNode) SetThinkFunc(fn ThinkFunc) {
+	dn.mu.Lock()
+	defer dn.mu.Unlock()
+	dn.thinkFn = fn
+}
+
+// SetOnNodeComplete registers a callback fired when a node finishes processing
+// through this DAG node.
+func (dn *DAGNode) SetOnNodeComplete(fn func(node *AutonomousSemanticEngineNode, result string)) {
+	dn.mu.Lock()
+	defer dn.mu.Unlock()
+	dn.onNodeComplete = fn
+}
+
+// AddChild registers a child DAG node for a specific routing key (e.g., "ASSET", "EXPENSE").
+func (dn *DAGNode) AddChild(key string, child *DAGNode) {
+	dn.mu.Lock()
+	defer dn.mu.Unlock()
+	dn.children[key] = child
+}
+
+// SetDefaultChild sets the fallback child node when no specific key matches.
+func (dn *DAGNode) SetDefaultChild(child *DAGNode) {
+	dn.mu.Lock()
+	defer dn.mu.Unlock()
+	dn.defaultChild = child
+}
+
+// ResumeChild returns the resume child node for quarantine/holding gates.
+func (dn *DAGNode) ResumeChild() *DAGNode {
+	dn.mu.Lock()
+	defer dn.mu.Unlock()
+	return dn.resumeChild
+}
+
+// Accept enqueues a transaction agent into this DAG node for batched processing.
+// Once accepted, the agent waits in the node's queue until a batch flush occurs.
+func (dn *DAGNode) Accept(node *AutonomousSemanticEngineNode) {
+	dn.mu.Lock()
+	dn.queue = append(dn.queue, node)
+	shouldFlush := len(dn.queue) >= dn.batchSize
+	queueDepth := len(dn.queue)
+	dn.mu.Unlock()
+
+	if dn.logger != nil {
+		dn.logger.Info("dag node accepted transaction agent",
+			"node_id", node.NodeID,
+			"queue_depth", queueDepth,
+		)
+	}
+
+	if shouldFlush {
+		go dn.flush()
+	}
+}
+
+// Start begins the periodic flush loop for this DAG node.
+func (dn *DAGNode) Start() {
+	go dn.flushLoop()
+}
+
+func (dn *DAGNode) flushLoop() {
+	defer close(dn.stopped)
+	ticker := time.NewTicker(dn.batchFlush)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-dn.ctx.Done():
+			// Final flush before stopping.
+			dn.flush()
+			return
+		case <-ticker.C:
+			dn.flush()
+		}
+	}
+}
+
+// Stop signals the DAG node to stop flushing and waits for completion.
+func (dn *DAGNode) Stop() {
+	dn.cancel()
+	<-dn.stopped
+}
+
+// flush drains the queue and executes the Think phase for all waiting agents.
+func (dn *DAGNode) flush() {
+	dn.mu.Lock()
+	if len(dn.queue) == 0 || (dn.thinkFn == nil && dn.HoldStateSignal == "" && dn.Kind != "cash_direction_router" && dn.Kind != "terminal") {
+		dn.mu.Unlock()
+		return
+	}
+
+	// Snapshot the queue.
+	batch := make([]*AutonomousSemanticEngineNode, len(dn.queue))
+	copy(batch, dn.queue)
+	dn.queue = dn.queue[:0]
+	dn.mu.Unlock()
+
+	// 1) Fast-Path Dead-End Interceptor
+	// If this node defines a static hold signal, instantly transition and halt.
+	if dn.HoldStateSignal != "" {
+		for _, node := range batch {
+			node.mu.Lock()
+			node.HoldReason = dn.HoldReasonString
+			node.mu.Unlock()
+			node.transition(NodeState(dn.HoldStateSignal))
+		}
+		return
+	}
+
+	// 1b) Fast-Path Terminal Nodes
+	// Terminal nodes have no thinkFn but carry a close_status execution parameter
+	// (e.g. COLLAPSED) to properly finalize the agent.
+	if dn.Kind == "terminal" {
+		closeStatus := dn.ExecutionParams["close_status"]
+		if closeStatus == "" {
+			closeStatus = string(StateCollapsed)
+		}
+		for _, node := range batch {
+			node.transition(NodeState(closeStatus))
+		}
+		return
+	}
+
+	// 2) Fast-Path Cash Direction Router
+	// Hardware-level bypass of LLM to segregate batches by cash flow direction.
+	if dn.Kind == "cash_direction_router" {
+		for _, node := range batch {
+			node.mu.RLock()
+			dir := node.CashDirection
+			node.mu.RUnlock()
+            
+			// Inject hardware state directly into the classification slot.
+			node.SetPropertyCandidates(string(dn.Kind), []ProbabilityCandidate{{
+				Value:      dir,
+				Confidence: 1.0,
+				Reasoning:  "Hardware property routing via cash_direction_router.",
+			}})
+			node.transition(StateActivating)
+			dn.routeToChild(node, string(dn.Kind))
+		}
+		return
+	}
+
+	if dn.logger != nil {
+		dn.logger.Info("dag node flushing batch",
+			"kind", string(dn.Kind),
+			"batch_size", len(batch),
+		)
+	}
+
+	// Transition all nodes to Thinking.
+	for _, node := range batch {
+		node.transition(StateThinking)
+	}
+
+	// Execute Think phase.
+	results, err := dn.thinkFn(dn.ctx, batch)
+	if err != nil {
+		if dn.logger != nil {
+			dn.logger.Error("dag node think phase failed",
+				"kind", string(dn.Kind),
+				"error", err,
+			)
+		}
+		// On failure, transition nodes to HOLD state with error context.
+		for _, node := range batch {
+			node.mu.Lock()
+			node.HoldReason = "think phase failed: " + err.Error()
+			node.mu.Unlock()
+			node.transition(StateHoldMissingCtx)
+		}
+		return
+	}
+
+	// Distribute results to each node.
+	for _, node := range batch {
+		classification, ok := results[node.NodeID]
+		if !ok || len(classification.Candidates) == 0 {
+			node.mu.Lock()
+			node.HoldReason = "no classification candidates returned from think phase"
+			node.mu.Unlock()
+			node.transition(StateHoldMissingCtx)
+			continue
+		}
+
+		// Use the LLM-returned property key (or fall back to the DAG node's kind).
+		propertyKey := classification.Property
+		if propertyKey == "" {
+			propertyKey = string(dn.Kind)
+		}
+
+		// Apply candidates and recalculate entropy.
+		node.SetPropertyCandidates(propertyKey, classification.Candidates)
+		node.transition(StateActivating)
+
+		// Route to child DAG node based on top candidate's classification.
+		dn.routeToChild(node, propertyKey)
+	}
+}
+
+// routeToChild forwards a classified node to the appropriate child DAG node
+// based on its top candidate's classification value.
+func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey string) {
+	top := node.TopCandidate(propertyKey)
+	if top == nil {
+		node.transition(StateHoldMissingCtx)
+		return
+	}
+
+	// Determine routing key based on this DAG node's kind.
+	routeKey := dn.routingKey(top)
+
+	// Take a snapshot of the candidates for the property to store in the trace.
+	node.mu.RLock()
+	candidatesCopy := make([]ProbabilityCandidate, len(node.Candidates[propertyKey]))
+	copy(candidatesCopy, node.Candidates[propertyKey])
+	node.mu.RUnlock()
+
+	// Append the execution step to the node's trace.
+	node.AppendExecutionStep(NodeExecutionStep{
+		DAGNodeID:    dn.ID,
+		Kind:         string(dn.Kind),
+		PropertyKey:  propertyKey,
+		Candidates:   candidatesCopy,
+		SelectedEdge: routeKey,
+		Timestamp:    time.Now().UTC(),
+	})
+
+	dn.mu.Lock()
+	child, exists := dn.children[routeKey]
+	if !exists {
+		child = dn.defaultChild
+	}
+	dn.mu.Unlock()
+
+	if child == nil {
+		// No downstream DAG node — check if we can collapse.
+		if dn.Kind == "account_selection" {
+			// Terminal classification stage: ready for final check.
+			if node.IsConfident() {
+				node.transition(StateClassified)
+			} else {
+				node.mu.Lock()
+				node.HoldReason = "Unified Confidence Score below 0.98 structural threshold."
+				node.mu.Unlock()
+				node.transition(StateHoldMissingCtx)
+			}
+		} else {
+			node.mu.Lock()
+			node.HoldReason = "no downstream DAG node for routing key: " + routeKey
+			node.mu.Unlock()
+			node.transition(StateHoldMissingCtx)
+		}
+		return
+	}
+
+	// Notify callback if set.
+	dn.mu.Lock()
+	cb := dn.onNodeComplete
+	dn.mu.Unlock()
+	if cb != nil {
+		cb(node, routeKey)
+	}
+
+	// Forward to the child DAG node.
+	child.Accept(node)
+}
+
+// routingKey extracts the classification value used to route to child DAG nodes.
+func (dn *DAGNode) routingKey(candidate *ProbabilityCandidate) string {
+	return candidate.Value
+}
+
+// BuildDAGFromConfig dynamically constructs the DAG topology from YAML configuration.
+func BuildDAGFromConfig(cfg DAGConfig, logger *slog.Logger) *DAG {
+	if len(cfg.Nodes) == 0 {
+		logger.Warn("DAGConfig contains no nodes. Building empty DAG.")
+		return NewDAG(nil, nil, logger)
+	}
+
+	nodesMap := make(map[string]*DAGNode)
+
+	// Step 1: Instantiate all nodes without relationships
+	for id, nCfg := range cfg.Nodes {
+		batchFlush := time.Duration(nCfg.BatchFlushSeconds) * time.Second
+		if batchFlush == 0 {
+			batchFlush = 5 * time.Second // fallback default
+		}
+		
+		node := NewDAGNode(id, DAGNodeKind(nCfg.Kind), nCfg.Name, nCfg.BatchSize, batchFlush, logger, nCfg)
+		nodesMap[id] = node
+	}
+
+	// Step 2: Wire relationships
+	for id, nCfg := range cfg.Nodes {
+		node := nodesMap[id]
+
+		// Wire resume child
+		if nCfg.ResumeChild != "" {
+			resumeNode, exists := nodesMap[nCfg.ResumeChild]
+			if !exists {
+				logger.Warn("DAG routing resume_child not found", "parent", id, "missing_child", nCfg.ResumeChild)
+			} else {
+				node.mu.Lock()
+				node.resumeChild = resumeNode
+				node.mu.Unlock()
+			}
+		}
+
+		// Map specific children keys
+		for key, childID := range nCfg.Children {
+			childNode, exists := nodesMap[childID]
+			if !exists {
+				logger.Warn("DAG routing child not found", "parent", id, "key", key, "missing_child", childID)
+				continue
+			}
+			node.AddChild(key, childNode)
+		}
+
+		// Map default fallback child
+		if nCfg.DefaultChild != "" {
+			defaultNode, exists := nodesMap[nCfg.DefaultChild]
+			if !exists {
+				logger.Warn("DAG default routing child not found", "parent", id, "missing_child", nCfg.DefaultChild)
+			} else {
+				node.SetDefaultChild(defaultNode)
+			}
+		}
+	}
+
+	entryNode, exists := nodesMap[cfg.EntryNode]
+	if !exists {
+		logger.Error("DAG entry node not found in nodes definition", "entry_node", cfg.EntryNode)
+		return NewDAG(nil, nodesMap, logger)
+	}
+
+	return NewDAG(entryNode, nodesMap, logger)
+}
+
+// StartAll starts the flush loops for the entire DAG topology.
+func (dn *DAGNode) StartAll() {
+	dn.Start()
+	dn.mu.Lock()
+	defer dn.mu.Unlock()
+	for _, child := range dn.children {
+		child.StartAll()
+	}
+	if dn.defaultChild != nil {
+		dn.defaultChild.StartAll()
+	}
+}
+
+// StopAll stops the flush loops for the entire DAG topology.
+func (dn *DAGNode) StopAll() {
+	dn.Stop()
+	dn.mu.Lock()
+	defer dn.mu.Unlock()
+	for _, child := range dn.children {
+		child.StopAll()
+	}
+	if dn.defaultChild != nil {
+		dn.defaultChild.StopAll()
+	}
+}
+
+func (d *DAG) StopAll() {
+	if d.EntryNode != nil {
+		d.EntryNode.StopAll()
+	}
+}
+
+// DAGStats represents a snapshot of the current state of a DAG node.
+type DAGStats struct {
+	ID          string              `json:"id"`
+	Kind        string              `json:"kind"`
+	Name        string              `json:"name"`
+	QueueLength int                 `json:"queue_length"`
+	BatchSize   int                 `json:"batch_size"`
+	Children    map[string]DAGStats `json:"children"`
+}
+
+// Stats returns a full recursive snapshot of the DAG topology and queues.
+func (d *DAG) Stats() *DAGStats {
+	if d.EntryNode == nil {
+		return nil
+	}
+	stats := d.EntryNode.Stats()
+	return &stats
+}
+
+// Stats returns the snapshot for this node and all its downstream children.
+func (dn *DAGNode) Stats() DAGStats {
+	dn.mu.Lock()
+	queueLen := len(dn.queue)
+	childrenSnapshot := make(map[string]*DAGNode, len(dn.children))
+	for k, v := range dn.children {
+		childrenSnapshot[k] = v
+	}
+	defaultChild := dn.defaultChild
+	dn.mu.Unlock()
+
+	stats := DAGStats{
+		ID:          dn.ID,
+		Kind:        string(dn.Kind),
+		Name:        dn.Name,
+		QueueLength: queueLen,
+		BatchSize:   dn.batchSize,
+		Children:    make(map[string]DAGStats),
+	}
+
+	for k, child := range childrenSnapshot {
+		stats.Children[k] = child.Stats()
+	}
+
+	if defaultChild != nil {
+		stats.Children["*default*"] = defaultChild.Stats()
+	}
+
+	return stats
+}

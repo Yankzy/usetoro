@@ -1,0 +1,56 @@
+name: ASE Bookkeeping Workflow
+version: "2.0"
+trigger_topic: events.accounting.ase.bookkeeping
+steps:
+  - id: run_cleanup
+    sub_workflow: "CSV Cleaner Pipeline"
+    negotiate: false
+    timeout: "300s"
+    description: "Runs the CSV cleanup and enrichment pipeline as a sub-workflow. When it completes the orchestrator automatically continues this DAG."
+
+  - id: bootstrap_rule_engine
+    activity_type: workers.rule_bootstrap
+    negotiate: false
+    timeout: "300s"
+    description: "Bootstraps the rule engine so historical vendor rules are seeded before the bookkeeping steps run."
+    depends_on:
+      - run_cleanup
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "realm_id": { "type": "string" }
+        },
+        "required": ["realm_id"]
+      }
+
+  - id: run_rule_engine
+    activity_type: workers.rule_evaluation
+    negotiate: false
+    timeout: "300s"
+    description: "Evaluates transactions against the rule engine to automatically approve or categorize based on historical patterns."
+    depends_on:
+      - bootstrap_rule_engine
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" }
+        },
+        "required": ["session_id"]
+      }
+  
+  - id: ase_bridge
+    activity_type: workers.ase_bridge
+    depends_on:
+      - run_rule_engine
+    timeout: "600s"
+    description: "Fans out Autonomous Semantic Engine micro-agents for all pending transactions."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" }
+        },
+        "required": ["session_id"]
+      }

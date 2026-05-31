@@ -27,9 +27,9 @@ type SQLWorker struct {
 
 // SQLWorkerPayload defines the highly restricted JSON payload from the Wails frontend.
 type SQLWorkerPayload struct {
-	QueryID       string `json:"query_id"`
-	Args          []any  `json:"args,omitempty"`
-	ReturnSubject string `json:"return_subject,omitempty"`
+	QueryID       string `json:"query_id" desc:"The ID of the SQL query to execute (e.g. 'get_bank_accounts')"`
+	Args          []any  `json:"args,omitempty" desc:"Optional arguments for the SQL query"`
+	ReturnSubject string `json:"return_subject,omitempty" desc:"Optional NATS subject to publish the result to"`
 }
 
 // SQLWorkerResult represents the payload published back to the orchestrator or frontend.
@@ -254,4 +254,16 @@ func (w *SQLWorker) publishCompletionProof(result SQLWorkerResult, cid string) e
 
 	_, err = js.Publish(workflows.OrchestratorInbox, final)
 	return err
+}
+
+func (w *SQLWorker) ToolName() string {
+	return "ExecuteSQL"
+}
+
+func (w *SQLWorker) ToolDescription() string {
+	return "Execute a read-only SQL query via the background SQL worker."
+}
+
+func (w *SQLWorker) PayloadStruct() any {
+	return SQLWorkerPayload{}
 }

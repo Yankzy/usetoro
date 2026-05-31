@@ -87,14 +87,16 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 	// Extract the structured response from the agent
 	var response struct {
-		BodyText   string `json:"body_text"`
-		FromHandle string `json:"from_handle"`
-		ToHandle   string `json:"to_handle"`
-		Source     string `json:"source"`
-		Subject    string `json:"subject"`
-		InReplyTo  string `json:"in_reply_to"`
-		SessionID  string `json:"session_id"`
-		EntityID   string `json:"entity_id"`
+		BodyText       string `json:"body_text"`
+		FromHandle     string `json:"from_handle"`
+		ToHandle       string `json:"to_handle"`
+		Source         string `json:"source"`
+		Subject        string `json:"subject"`
+		InReplyTo      string `json:"in_reply_to"`
+		SessionID      string `json:"session_id"`
+		EntityID       string `json:"entity_id"`
+		SlackChannelID string `json:"slack_channel_id"`
+		SlackThreadTS  string `json:"slack_thread_ts"`
 	}
 
 	if err := json.Unmarshal(proof.Data, &response); err != nil {
@@ -130,7 +132,7 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	// 2. Dispatch to the appropriate channel
 	switch response.Source {
 	case "email":
-		msgID, err := w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText, response.InReplyTo)
+		msgID, err := w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText, response.InReplyTo, response.SlackChannelID, response.SlackThreadTS)
 		if err != nil {
 			return err
 		}
@@ -149,7 +151,7 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	case "sms":
 		return w.sendSMS(ctx, response.ToHandle, response.BodyText)
 	case "slack":
-		return w.sendSlack(ctx, response.ToHandle, response.BodyText)
+		return w.sendSlack(ctx, response.SlackChannelID, response.ToHandle, response.BodyText, response.SlackThreadTS, response.EntityID, response.SessionID)
 	case "telegram":
 		return w.sendTelegram(ctx, response.ToHandle, response.BodyText)
 	case "discord":
@@ -161,7 +163,10 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 }
 
 // sendEmail sends an outbound email using the Postmark API.
-func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body, inReplyTo string) (string, error) {
+// When slackChannelID and slackParentTs are provided, this email is part of
+// a bridged Slack thread — the Postmark MessageID is used to update
+// toro_threads_mappings.email_latest_message_id on success.
+func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body, inReplyTo, slackChannelID, slackParentTs string) (string, error) {
 	if w.cfg.PostmarkServerToken == "" {
 		return "", fmt.Errorf("postmark server token not configured")
 	}
@@ -179,11 +184,35 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 
 	alias, _ := parseAgentEmail(from)
 	if cfg := agents.Lookup(alias); cfg != nil && cfg.Email != "" {
-		fromAddr = cfg.Email
-		replyTo = from
+		if !strings.Contains(from, "@") {
+			fromAddr = fmt.Sprintf(`"%s" <%s>`, from, cfg.Email)
+		} else {
+			fromAddr = cfg.Email
+		}
+		if cfg.ReplyTo != "" {
+			replyTo = cfg.ReplyTo
+		} else {
+			if strings.Contains(cfg.Email, "@") && !strings.Contains(cfg.Email, "@cpa.") {
+				replyTo = strings.Replace(cfg.Email, "@", "@cpa.", 1)
+			} else {
+				replyTo = cfg.Email
+			}
+		}
 	} else if w.cfg.PostmarkSenderSignature != "" {
-		fromAddr = w.cfg.PostmarkSenderSignature
-		replyTo = from
+		if !strings.Contains(from, "@") {
+			fromAddr = fmt.Sprintf(`"%s" <%s>`, from, w.cfg.PostmarkSenderSignature)
+		} else {
+			fromAddr = w.cfg.PostmarkSenderSignature
+		}
+		replyTo = w.cfg.PostmarkSenderSignature
+	} else {
+		fallbackEmail := "notifications@usetoro.io"
+		if !strings.Contains(from, "@") {
+			fromAddr = fmt.Sprintf(`"%s" <%s>`, from, fallbackEmail)
+		} else {
+			fromAddr = fallbackEmail
+		}
+		replyTo = fallbackEmail
 	}
 
 	payload := map[string]interface{}{
@@ -231,6 +260,20 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&successResp); err != nil {
 		return "", fmt.Errorf("failed to decode postmark success response: %w", err)
+	}
+
+	// If this email is part of a bridged Slack thread, advance the
+	// email pointer so the next reply cycle can find the mapping.
+	if slackChannelID != "" && slackParentTs != "" {
+		_ = w.db.UpdateThreadMappingEmailMessageID(ctx, database.UpdateThreadMappingEmailMessageIDParams{
+			EmailLatestMessageID: successResp.MessageID,
+			SlackChannelID:       slackChannelID,
+			SlackParentTs:        slackParentTs,
+		})
+		w.logger.Info("updated toro_threads_mappings email pointer for bridged thread",
+			"slack_channel", slackChannelID,
+			"new_email_message_id", successResp.MessageID,
+		)
 	}
 
 	w.logger.Info("successfully sent outbound email via Postmark", "to", to, "message_id", successResp.MessageID)
@@ -312,15 +355,42 @@ func (w *OmniChatWorker) sendTelegram(ctx context.Context, chatID, body string) 
 }
 
 // sendSlack sends an outbound message via the Slack Web API.
-func (w *OmniChatWorker) sendSlack(ctx context.Context, channel, body string) error {
-	if w.cfg.SlackBotToken == "" {
-		w.logger.Warn("Slack channel not configured (missing slack_bot_token)")
+// When threadTs is non-empty, the message is posted as a threaded reply.
+// When threadTs is empty and slackChannelID is provided, this is a new
+// top-level message — the Slack ts is parsed from the response and used
+// to create a toro_threads_mappings row linking the email and Slack threads.
+func (w *OmniChatWorker) sendSlack(ctx context.Context, slackChannelID, channel, body, threadTs, entityIDStr, sessionIDStr string) error {
+	// Default to the global bot token
+	botToken := w.cfg.SlackBotToken
+
+	// If we have an entity ID (TenantID), try to get the mapped OAuth token
+	if entityIDStr != "" {
+		var entityUUID pgtype.UUID
+		if err := entityUUID.Scan(entityIDStr); err == nil {
+			mapping, err := w.db.GetSlackTenantMappingByTenantID(ctx, entityUUID)
+			if err == nil && mapping.SlackAccessToken != "" {
+				botToken = mapping.SlackAccessToken
+			}
+		}
+	}
+
+	if botToken == "" {
+		w.logger.Warn("Slack channel not configured (no slack token available)")
 		return nil
+	}
+
+	if strings.HasPrefix(channel, "slack-channel:") {
+		channel = strings.TrimPrefix(channel, "slack-channel:")
+	} else if strings.HasPrefix(channel, "slack-user:") {
+		channel = strings.TrimPrefix(channel, "slack-user:")
 	}
 
 	payload := map[string]interface{}{
 		"channel": channel,
 		"text":    body,
+	}
+	if threadTs != "" {
+		payload["thread_ts"] = threadTs
 	}
 
 	jsonPayload, _ := json.Marshal(payload)
@@ -329,7 +399,7 @@ func (w *OmniChatWorker) sendSlack(ctx context.Context, channel, body string) er
 		return fmt.Errorf("slack: create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", w.cfg.SlackBotToken))
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", botToken))
 
 	resp, err := w.client.Do(req)
 	if err != nil {
@@ -343,7 +413,37 @@ func (w *OmniChatWorker) sendSlack(ctx context.Context, channel, body string) er
 		return fmt.Errorf("slack: API error (status %d): %v", resp.StatusCode, errResp)
 	}
 
-	w.logger.Info("successfully sent outbound Slack message", "channel", channel)
+	// Parse the Slack response to get the message ts.
+	// If this was a new top-level message (no incoming threadTs) and we have
+	// entity/session info, create the thread mapping for future bridging.
+	var slackResp struct {
+		OK      bool   `json:"ok"`
+		Channel string `json:"channel"`
+		TS      string `json:"ts"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&slackResp); err == nil && slackResp.TS != "" {
+		if threadTs == "" && slackChannelID != "" && entityIDStr != "" {
+			var entityUUID pgtype.UUID
+			_ = entityUUID.Scan(entityIDStr)
+			var sessionUUID pgtype.UUID
+			_ = sessionUUID.Scan(sessionIDStr)
+			_ = w.db.CreateThreadMapping(ctx, database.CreateThreadMappingParams{
+				ConversationID:       sessionUUID,
+				TenantID:             entityUUID,
+				SlackChannelID:       slackChannelID,
+				SlackParentTs:        slackResp.TS,
+				EmailLatestMessageID: "", // will be updated when email reply arrives
+			})
+			w.logger.Info("created toro_threads_mappings row for new Slack thread",
+				"slack_channel", slackChannelID,
+				"slack_ts", slackResp.TS,
+			)
+		}
+	} else {
+		w.logger.Warn("slack: could not parse ts from chat.postMessage response", "error", err)
+	}
+
+	w.logger.Info("successfully sent outbound Slack message", "channel", channel, "thread_ts", threadTs)
 	return nil
 }
 

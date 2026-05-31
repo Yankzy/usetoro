@@ -20,6 +20,7 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
@@ -44,15 +45,38 @@ func init() {
 // StageConfig is read from the workflow step's config block (YAML).
 // It defines the specific behavior for the current classification stage.
 type StageConfig struct {
-	Stage            string `json:"stage" mapstructure:"stage"`                               // The name of the stage (e.g., "macro_class", "account_type").
-	Model            string `json:"model" mapstructure:"model"`                               // The specific LLM model to use for this stage (e.g., "gpt-4o").
-	GroupBy          string `json:"group_by" mapstructure:"group_by"`                         // How to group rows for batching: "direction", "macro_class", or "none".
-	DBFilter         string `json:"db_filter" mapstructure:"db_filter"`                       // SQL WHERE clause filter to select rows eligible for this stage.
-	DBWriteColumn    string `json:"db_write_column" mapstructure:"db_write_column"`           // The primary database column to write the LLM's classification result to.
-	DBWriteReasoning bool   `json:"db_write_reasoning" mapstructure:"db_write_reasoning"`     // Whether to persist the LLM's reasoning to the ai_reasoning column.
-	SystemPromptTmpl string `json:"system_prompt_template" mapstructure:"system_prompt_template"` // The template string for the LLM system prompt.
-	InjectContext    bool   `json:"inject_context" mapstructure:"inject_context"`             // Whether to load and inject Realm-level context (Accounts, Vendors, etc.).
-	BatchSize        int    `json:"batch_size" mapstructure:"batch_size"`                     // Maximum number of transactions to send to the LLM in a single batch.
+	Stage            string `json:"stage" mapstructure:"stage" desc:"The name of the stage (e.g., 'macro_class', 'account_type')"`
+	Model            string `json:"model" mapstructure:"model" desc:"The specific LLM model to use for this stage (e.g., 'gpt-4o')"`
+	GroupBy          string `json:"group_by" mapstructure:"group_by" desc:"How to group rows for batching: 'direction', 'macro_class', or 'none'"`
+	DBFilter         string `json:"db_filter" mapstructure:"db_filter" desc:"SQL WHERE clause filter to select rows eligible for this stage"`
+	DBWriteColumn    string `json:"db_write_column" mapstructure:"db_write_column" desc:"The primary database column to write the LLM's classification result to"`
+	DBWriteReasoning bool   `json:"db_write_reasoning" mapstructure:"db_write_reasoning" desc:"Whether to persist the LLM's reasoning to the ai_reasoning column"`
+	SystemPromptTmpl string `json:"system_prompt_template" mapstructure:"system_prompt_template" desc:"The template string for the LLM system prompt"`
+	InjectContext    bool   `json:"inject_context" mapstructure:"inject_context" desc:"Whether to load and inject Realm-level context (Accounts, Vendors, etc.)"`
+	BatchSize        int    `json:"batch_size" mapstructure:"batch_size" desc:"Maximum number of transactions to send to the LLM in a single batch"`
+}
+
+// ClassificationStageWorkerPayload defines the expected JSON payload for LLM tool invocation.
+type ClassificationStageWorkerPayload struct {
+	SessionID string `json:"session_id" desc:"The ID of the cleanup session to classify"`
+	Data      struct {
+		Config StageConfig `json:"config" desc:"Configuration for the classification stage to run"`
+	} `json:"data" desc:"Wrapper object containing the stage configuration"`
+}
+
+// ToolName returns the unique LLM tool name for this worker.
+func (w *ClassificationStageWorker) ToolName() string {
+	return "TriggerClassificationStage"
+}
+
+// ToolDescription provides the context for the LLM.
+func (w *ClassificationStageWorker) ToolDescription() string {
+	return "Triggers a specific AI classification stage (e.g., macro_class, account_type, entity matching) for a cleanup session."
+}
+
+// PayloadStruct returns a typed instance to automatically generate a JSON schema.
+func (w *ClassificationStageWorker) PayloadStruct() any {
+	return ClassificationStageWorkerPayload{}
 }
 
 // ClassificationStageStore is the minimal database interface required by this worker.
@@ -71,46 +95,8 @@ type ClassificationStageStore interface {
 	GetAccountByERPID(ctx context.Context, arg database.GetAccountByERPIDParams) (database.ShadowErpAccount, error)
 }
 
-// accountTypeOptions maps macro classes (e.g., ASSET, EXPENSE) to their valid
-// sub-categories (QBO AccountTypes). This restricts the LLM's choices to valid options.
-var accountTypeOptions = map[string]string{
-	"ASSET":     "Accounts Receivable, Bank, Fixed Assets, Leasehold Improvements, Other Current Assets, Other Assets",
-	"LIABILITY": "Accounts Payable, Credit Cards, Long Term Liability, Other Current Liability",
-	"EQUITY":    "Equity",
-	"REVENUE":   "Income, Other Income",
-	"EXPENSE":   "Expense, Other Expense, Cost of Goods Sold",
-}
-
-// macroClassSpecificRules provides focused heuristics per macro class so the
-// LLM only sees rules relevant to the batch it is processing. This improves
-// classification accuracy by reducing prompt noise.
-var macroClassSpecificRules = map[string]string{
-	"ASSET": `Evaluate each transaction against these distinct asset categories:
-1. BANK: Use this if the description indicates cash or liquidity positions (e.g., checking, savings, or internal transfers between funding sources).
-2. FIXED ASSET: Use this if the purchase is for long-term physical equipment, machinery, company vehicles, or software infrastructure licenses where the absolute value is > $2,500.
-3. OTHER CURRENT ASSET: Use this for short-term economic values expected to convert to cash within one year (e.g., security deposits, inventory prepayments).
-4. OTHER ASSETS: Use this for non-current, non-fixed assets (e.g., long-term investments, intangible assets).
-5. LEASEHOLD IMPROVEMENTS: Use this for structural modifications to rented property.
-6. ACCOUNTS RECEIVABLE: Use this only if the transaction represents money owed to the business by a customer.`,
-
-	"LIABILITY": `Evaluate each transaction against these distinct liability categories:
-1. CREDIT CARDS: Use this ONLY if the description explicitly references a known credit card provider or card payment obligation.
-2. LONG TERM LIABILITY: Use this for debts with a maturity beyond one year (e.g., equipment loans, mortgages, SBA loans).
-3. OTHER CURRENT LIABILITY: Use this for short-term obligations due within one year (e.g., payroll taxes payable, sales tax collected, short-term notes).
-4. ACCOUNTS PAYABLE: Use this only if the transaction represents money the business owes to a supplier or vendor.`,
-
-	"EQUITY": `Evaluate each transaction against this category:
-1. EQUITY: Use this for all owner-related transactions including owner draws, owner investments, retained earnings adjustments, and partner distributions.`,
-
-	"REVENUE": `Evaluate each transaction against these distinct revenue categories:
-1. INCOME: Use this for all standard operating revenue from the primary business activity (e.g., product sales, service fees, consulting income, Stripe payouts).
-2. OTHER INCOME: Use this for non-operating or incidental revenue (e.g., interest earned, foreign exchange gains, insurance claim proceeds, asset sale gains).`,
-
-	"EXPENSE": `Evaluate each transaction against these distinct expense categories:
-1. COST OF GOODS SOLD: Use this ONLY if the transaction is directly, structurally tied to producing revenue or purchasing inventory based on the Business Industry (e.g., raw building supplies for a contractor, direct software server hosting for a SaaS app).
-2. OTHER EXPENSE: Use this for unusual, non-operating outflows that do not reflect day-to-day business operations (e.g., tax penalties, legal settlements, corporate restructuring costs).
-3. EXPENSE: Use this for all standard operating overhead, general administrative costs, software subscriptions, travel, meals, and general supplies.`,
-}
+// The rules are now imported from the ase package to ensure the ASE and batch
+// classification workers use the exact same logic.
 
 // ClassificationStageWorker is a configurable worker that handles any
 // classification stage (macro_class, account_type, entity, account selection).
@@ -451,7 +437,7 @@ func (w *ClassificationStageWorker) Handle(ctx context.Context, msg *nats.Msg) e
 			}
 			chunk := groupRows[i:end]
 			// Single-option class? Skip LLM, assign directly.
-			if opts, ok := accountTypeOptions[groupKey]; ok && !strings.Contains(opts, ",") {
+			if opts, ok := ase.AccountTypeOptions[groupKey]; ok && !strings.Contains(opts, ",") {
 				wg.Add(1)
 				go func(gk string, chunkRows []map[string]interface{}) {
 					defer wg.Done()
@@ -958,11 +944,11 @@ func (w *ClassificationStageWorker) renderPrompt(tmpl string, groupKey string, c
 	result = strings.ReplaceAll(result, "{cash_direction}", groupKey)
 	result = strings.ReplaceAll(result, "{macro_class}", groupKey)
 
-	if opts, ok := accountTypeOptions[groupKey]; ok {
+	if opts, ok := ase.AccountTypeOptions[groupKey]; ok {
 		result = strings.ReplaceAll(result, "{account_type_options}", opts)
 	}
 
-	if rules, ok := macroClassSpecificRules[groupKey]; ok {
+	if rules, ok := ase.MacroClassSpecificRules[groupKey]; ok {
 		result = strings.ReplaceAll(result, "{macro_class_specific_rules}", rules)
 	}
 

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"runtime/debug"
+	"strings"
 
 	"github.com/nats-io/nats.go"
 
@@ -17,6 +19,9 @@ import (
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+	
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 // SubscriptionConfig defines a single JetStream subscription requirement
@@ -31,6 +36,13 @@ type Worker interface {
 	Init(ctx context.Context) error
 	Subscriptions() []SubscriptionConfig
 	Handle(ctx context.Context, msg *nats.Msg) error
+}
+
+// ToolExposer allows a worker to expose itself as an LLM tool dynamically.
+type ToolExposer interface {
+	ToolName() string
+	ToolDescription() string
+	PayloadStruct() any
 }
 
 // Manager orchestrates the lifecycle of multiple background workers
@@ -128,6 +140,7 @@ type Dependencies struct {
 	LLMClient       *ai.LLMClient
 	FetchEntityFn   func(ctx context.Context, tenantID, realmID, entityType, entityID, op string) error
 	QBOConnector    *connectors.QBOConnector
+	Redis           *redis.Client
 }
 
 type WorkerFactory func(deps Dependencies) (Worker, error)
@@ -223,3 +236,93 @@ func ExtractRows(data []byte) ([]map[string]interface{}, error) {
 	return nil, fmt.Errorf("data does not match standard row formats (array or mapped_rows)")
 }
 
+
+// InferToolConfigs iterates through all loaded workers, checks if they implement ToolExposer,
+// and dynamically infers their JSON schemas. It returns these as ToolConfigs for the LLM agents.
+func (m *Manager) InferToolConfigs(cfg *config.Config) []core.ToolConfig {
+	var tools []core.ToolConfig
+	for _, w := range m.workers {
+		_, workerCfg := cfg.Workers.GetForWorker(w)
+		if workerCfg.ActivityType == "" {
+			continue
+		}
+		if te, ok := w.(ToolExposer); ok {
+			tc := core.ToolConfig{
+				Name:         te.ToolName(),
+				Description:  te.ToolDescription(),
+				ActivityType: workerCfg.ActivityType,
+				InputSchema:  inferSchema(te.PayloadStruct()),
+			}
+			tools = append(tools, tc)
+		}
+	}
+	return tools
+}
+
+func inferSchema(v any) string {
+	t := reflect.TypeOf(v)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	props := make(map[string]any)
+	var required []string
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		jsonTag := field.Tag.Get("json")
+		if jsonTag == "-" {
+			continue
+		}
+		name := field.Name
+		parts := strings.Split(jsonTag, ",")
+		if len(parts) > 0 && parts[0] != "" {
+			name = parts[0]
+		}
+
+		isRequired := true
+		for _, p := range parts[1:] {
+			if p == "omitempty" {
+				isRequired = false
+			}
+		}
+
+		fieldType := "string"
+		switch field.Type.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+			fieldType = "number"
+		case reflect.Bool:
+			fieldType = "boolean"
+		case reflect.Slice, reflect.Array:
+			fieldType = "array"
+		case reflect.Map, reflect.Struct:
+			fieldType = "object"
+		}
+
+		desc := field.Tag.Get("desc")
+		if desc == "" {
+			desc = field.Tag.Get("description")
+		}
+
+		propMap := map[string]string{"type": fieldType}
+		if desc != "" {
+			propMap["description"] = desc
+		}
+
+		props[name] = propMap
+		if isRequired {
+			required = append(required, name)
+		}
+	}
+
+	schema := map[string]any{
+		"type":       "object",
+		"properties": props,
+	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+
+	b, _ := json.MarshalIndent(schema, "", "  ")
+	return string(b)
+}

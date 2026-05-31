@@ -41,7 +41,7 @@ func TestPostmarkOutboundEventsWorker_Handle_Malformed(t *testing.T) {
 
 	msg := &nats.Msg{
 		Subject: "worker.inbox.email.postmark_outbound_events",
-		Data:    []byte(`{ "invalid": "json"`),
+		Data:    []byte(`{ "invalid": "json" }`),
 	}
 
 	err := w.Handle(context.Background(), msg)

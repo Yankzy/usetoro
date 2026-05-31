@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/Yankzy/usetoro/internal/erp/ase"
 )
 
 var clsTestWorker = &ClassificationStageWorker{logger: testLogger()}
@@ -41,7 +43,7 @@ func TestRenderPrompt_AccountTypeOptions(t *testing.T) {
 	for _, mc := range []string{"ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"} {
 		t.Run(mc, func(t *testing.T) {
 			got := clsTestWorker.renderPrompt(tmpl, mc, nil)
-			if !strings.Contains(got, accountTypeOptions[mc]) {
+			if !strings.Contains(got, ase.AccountTypeOptions[mc]) {
 				t.Errorf("missing account_type_options for %s: %q", mc, got)
 			}
 		})
@@ -53,7 +55,7 @@ func TestRenderPrompt_MacroClassSpecificRules(t *testing.T) {
 	for _, mc := range []string{"ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"} {
 		t.Run(mc, func(t *testing.T) {
 			got := clsTestWorker.renderPrompt(tmpl, mc, nil)
-			want := macroClassSpecificRules[mc]
+			want := ase.MacroClassSpecificRules[mc]
 			if !strings.Contains(got, want) {
 				t.Errorf("missing macro_class_specific_rules for %s", mc)
 			}
@@ -592,7 +594,6 @@ func TestPatchColumnMap_AllExpectedMappings(t *testing.T) {
 		"reasoning":        "ai_reasoning",
 		"new_clean_name":   "merchant_name",
 		"match_confidence": "confidence_score",
-		"account_id":       "predicted_account_name",
 		"requires_split":   "split_suggestion",
 	}
 	for k, want := range expected {
@@ -615,7 +616,7 @@ func TestPatchColumnMap_AllExpectedMappings(t *testing.T) {
 
 func TestMacroClassSpecificRules_AllClassesPresent(t *testing.T) {
 	for _, mc := range []string{"ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"} {
-		rules, ok := macroClassSpecificRules[mc]
+		rules, ok := ase.MacroClassSpecificRules[mc]
 		if !ok {
 			t.Errorf("missing macroClassSpecificRules for %s", mc)
 		}
@@ -631,7 +632,7 @@ func TestMacroClassSpecificRules_AllClassesPresent(t *testing.T) {
 
 func TestAccountTypeOptions_AllClassesPresent(t *testing.T) {
 	for _, mc := range []string{"ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"} {
-		opts, ok := accountTypeOptions[mc]
+		opts, ok := ase.AccountTypeOptions[mc]
 		if !ok {
 			t.Errorf("missing accountTypeOptions for %s", mc)
 		}

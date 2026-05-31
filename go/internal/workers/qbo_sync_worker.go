@@ -188,6 +188,26 @@ func (w *QboSyncWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	return nil
 }
 
+// QboSyncWorkerPayload defines the expected JSON payload.
+type QboSyncWorkerPayload struct {
+	SessionID string `json:"session_id" desc:"The ID of the cleanup session to sync with QBO"`
+}
+
+// ToolName returns the unique LLM tool name for this worker.
+func (w *QboSyncWorker) ToolName() string {
+	return "TriggerQBOSync"
+}
+
+// ToolDescription provides the context for the LLM.
+func (w *QboSyncWorker) ToolDescription() string {
+	return "Triggers the QuickBooks Online Sync worker asynchronously to push approved staging transactions to QBO for a specific session."
+}
+
+// PayloadStruct returns a typed instance to automatically generate a JSON schema.
+func (w *QboSyncWorker) PayloadStruct() any {
+	return QboSyncWorkerPayload{}
+}
+
 // extractSessionAndRealm pulls the session_id from the incoming NATS message and looks up the session.
 func (w *QboSyncWorker) extractSessionAndRealm(ctx context.Context, data []byte) (pgtype.UUID, database.GetCleanupSessionRow, error) {
 	var env core.Envelope
@@ -195,9 +215,7 @@ func (w *QboSyncWorker) extractSessionAndRealm(ctx context.Context, data []byte)
 		data = env.Body
 	}
 
-	var payload struct {
-		SessionID string `json:"session_id"`
-	}
+	var payload QboSyncWorkerPayload
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return pgtype.UUID{}, database.GetCleanupSessionRow{}, err
 	}

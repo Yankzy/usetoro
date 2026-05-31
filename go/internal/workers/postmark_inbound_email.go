@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
 )
@@ -233,7 +235,69 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 
 	w.logger.Info("successfully saved inbound email", "message_id", smtpMessageID, "from", payload.From, "entity_id", entityID)
 
-	// 5. Route to the General Agent ingress worker (same path as HTTP /ingress?domain=general)
+	// 5. Check whether this email is a reply to a bridged Slack thread.
+	// If the In-Reply-To header matches a known email_latest_message_id in
+	// toro_threads_mappings, this is Flow 3: email follow-up → append to
+	// existing Slack thread.
+	if inReplyTo != "" {
+		mapping, mappingErr := w.db.GetThreadMappingByEmailMessageID(ctx, inReplyTo)
+		if mappingErr == nil && mapping.SlackChannelID != "" {
+			w.logger.Info("email follow-up to bridged slack thread",
+				"slack_channel", mapping.SlackChannelID,
+				"slack_thread_ts", mapping.SlackParentTs,
+				"in_reply_to", inReplyTo,
+			)
+
+			promptText := payload.StrippedTextReply
+			if promptText == "" {
+				promptText = payload.TextBody
+			}
+
+			// Route to OmniChatWorker to post as a threaded Slack reply.
+			outProof := core.Proof{
+				Type:      core.ProofAPI,
+				Timestamp: time.Now().Unix(),
+				Data: mustMarshalRaw(map[string]interface{}{
+					"body_text":         promptText,
+					"source":            "slack",
+					"from_handle":       payload.From,
+					"to_handle":         mapping.SlackChannelID,
+					"slack_channel_id":  mapping.SlackChannelID,
+					"slack_thread_ts":   mapping.SlackParentTs,
+					"entity_id":         entityID,
+				}),
+			}
+			proofBytes, _ := json.Marshal(outProof)
+
+			outEnv := core.Envelope{
+				ID:           uuid.New().String(),
+				Timestamp:    time.Now(),
+				SenderDID:    "did:toro:worker:postmark_inbound_email",
+				ReceiverDID:  "did:toro:worker:omni_chat",
+				Performative: core.INFORM,
+				Body:         proofBytes,
+			}
+			outgoingBytes, _ := json.Marshal(outEnv)
+			if err := w.nc.Publish("proof.outgoing.chat", outgoingBytes); err != nil {
+				w.logger.Error("failed to publish bridged email to slack", "error", err)
+				msg.Nak()
+				return err
+			}
+
+			// Advance the email pointer so the next reply cycle can find the mapping.
+			_ = w.db.UpdateThreadMappingEmailMessageID(ctx, database.UpdateThreadMappingEmailMessageIDParams{
+				EmailLatestMessageID: smtpMessageID,
+				SlackChannelID:       mapping.SlackChannelID,
+				SlackParentTs:        mapping.SlackParentTs,
+			})
+
+			w.logger.Info("routed email follow-up to slack thread", "thread_ts", mapping.SlackParentTs)
+			msg.Ack()
+			return nil
+		}
+	}
+
+	// 6. Route to the General Agent ingress worker (same path as HTTP /ingress?domain=general)
 	// The GeneralAgentIngressWorker handles conversation persistence, agent dispatch, and
 	// publishing to proof.outgoing.chat for OmniChatWorker channel delivery.
 	subject, err := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")

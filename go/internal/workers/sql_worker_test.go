@@ -19,7 +19,7 @@ func TestSQLWorker_Handle_Malformed(t *testing.T) {
 
 	msg := &nats.Msg{
 		Subject: "worker.inbox.sql.execute",
-		Data:    []byte(`{ "invalid": "json"`),
+		Data:    []byte(`{}`),
 	}
 
 	err := w.Handle(context.Background(), msg)

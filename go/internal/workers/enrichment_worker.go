@@ -56,6 +56,26 @@ type EnrichmentWorker struct {
 	cfg    *config.Config
 }
 
+// EnrichmentWorkerPayload defines the expected JSON payload for LLM tool invocation.
+type EnrichmentWorkerPayload struct {
+	SessionID string `json:"session_id" desc:"The ID of the cleanup session to enrich"`
+}
+
+// ToolName returns the unique LLM tool name for this worker.
+func (e *EnrichmentWorker) ToolName() string {
+	return "TriggerEnrichment"
+}
+
+// ToolDescription provides the context for the LLM.
+func (e *EnrichmentWorker) ToolDescription() string {
+	return "Triggers the semantic enrichment process for a specific cleanup session. This dedupes and formats extracted bank transaction rows."
+}
+
+// PayloadStruct returns a typed instance to automatically generate a JSON schema.
+func (e *EnrichmentWorker) PayloadStruct() any {
+	return EnrichmentWorkerPayload{}
+}
+
 func NewEnrichmentWorker(
 	db *database.Queries,
 	nc *nats.Conn,

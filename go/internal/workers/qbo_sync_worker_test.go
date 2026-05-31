@@ -970,6 +970,9 @@ func TestHandle_NoReadyRows(t *testing.T) {
 
 func TestHandle_FetchError(t *testing.T) {
 	store := &qboSyncMockStore{
+		GetSessionFunc: func(_ context.Context, id pgtype.UUID) (database.GetCleanupSessionRow, error) {
+			return database.GetCleanupSessionRow{}, nil
+		},
 		GetReadyFunc: func(_ context.Context, sessionID pgtype.UUID) ([]database.FignodeStagingTransaction, error) {
 			return nil, errors.New("db down")
 		},
@@ -998,7 +1001,14 @@ func TestHandle_AllHydrationFailures(t *testing.T) {
 			}, nil
 		},
 		GetSessionFunc: func(_ context.Context, id pgtype.UUID) (database.GetCleanupSessionRow, error) {
-			return database.GetCleanupSessionRow{}, errors.New("no session")
+			// Return a valid session with a valid bank account to pass extractSessionAndRealm and Handle checks
+			return database.GetCleanupSessionRow{BankAccountID: makeUUID("00000000-0000-0000-0000-000000000010")}, nil
+		},
+		GetAccountFunc: func(_ context.Context, id pgtype.UUID) (database.ShadowErpAccount, error) {
+			return database.ShadowErpAccount{ErpID: "acct-erp"}, nil
+		},
+		GetCustomerFunc: func(_ context.Context, id pgtype.UUID) (database.ShadowErpCustomer, error) {
+			return database.ShadowErpCustomer{}, errors.New("no customer")
 		},
 		MarkFailedFunc: func(_ context.Context, p database.MarkStagingTransactionFailedParams) error {
 			failedIDs = append(failedIDs, p.ID)
@@ -1056,8 +1066,8 @@ func TestHandle_BatchPushFatal(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error to trigger NAK")
 	}
-	if len(failedIDs) != 1 {
-		t.Errorf("expected 1 marked failed, got %d", len(failedIDs))
+	if len(failedIDs) != 0 {
+		t.Errorf("expected 0 marked failed (should retry instead), got %d", len(failedIDs))
 	}
 }
 

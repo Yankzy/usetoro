@@ -54,6 +54,28 @@ func NewRuleBootstrapWorker(db *database.Queries, logger *slog.Logger, cfg *conf
 	}
 }
 
+// RuleBootstrapWorkerPayload defines the expected JSON payload for LLM tool invocation.
+type RuleBootstrapWorkerPayload struct {
+	RealmID   string `json:"realm_id" desc:"The ID of the realm (company) to run rule bootstrap for"`
+	EntityID  string `json:"entity_id,omitempty" desc:"Optional ID of the entity"`
+	SessionID string `json:"session_id,omitempty" desc:"Optional cleanup session ID context"`
+}
+
+// ToolName returns the unique LLM tool name for this worker.
+func (w *RuleBootstrapWorker) ToolName() string {
+	return "TriggerRuleBootstrap"
+}
+
+// ToolDescription provides the context for the LLM.
+func (w *RuleBootstrapWorker) ToolDescription() string {
+	return "Triggers the accounting rule engine bootstrapping process. This evaluates recent user classifications to automatically generate new deterministic rules."
+}
+
+// PayloadStruct returns a typed instance to automatically generate a JSON schema.
+func (w *RuleBootstrapWorker) PayloadStruct() any {
+	return RuleBootstrapWorkerPayload{}
+}
+
 // Init initializes the worker, starting the background daily cleanup process.
 func (w *RuleBootstrapWorker) Init(ctx context.Context) error {
 	// Start daily background task to process transactions that weren't caught by real-time rules.

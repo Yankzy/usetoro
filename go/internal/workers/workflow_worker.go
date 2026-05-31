@@ -33,9 +33,24 @@ type WorkflowWorker struct {
 // It mirrors the WorkflowDef top-level fields so the sender does not need to know
 // the internal DB schema — just the canonical YAML field names.
 type UpsertWorkflowPayload struct {
-	Name         string          `json:"name"`
-	TriggerTopic string          `json:"trigger_topic"`
-	Definition   json.RawMessage `json:"definition"`
+	Name         string          `json:"name" desc:"The unique name of the workflow blueprint"`
+	TriggerTopic string          `json:"trigger_topic" desc:"The NATS subject that triggers this workflow"`
+	Definition   json.RawMessage `json:"definition" desc:"The workflow definition in JSON format"`
+}
+
+// ToolName returns the unique LLM tool name for this worker.
+func (w *WorkflowWorker) ToolName() string {
+	return "UpsertWorkflowBlueprint"
+}
+
+// ToolDescription provides the context for the LLM.
+func (w *WorkflowWorker) ToolDescription() string {
+	return "Upserts a workflow blueprint into the database and signals the orchestrator to sync it."
+}
+
+// PayloadStruct returns a typed instance to automatically generate a JSON schema.
+func (w *WorkflowWorker) PayloadStruct() any {
+	return UpsertWorkflowPayload{}
 }
 
 func init() {

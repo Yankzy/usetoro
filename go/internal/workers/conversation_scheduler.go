@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/config"
@@ -18,14 +19,21 @@ import (
 // 1. Session status updates from the general agent (ConversationState tool)
 // 2. Scheduling follow-up reminders (ScheduleReminder tool)
 // 3. Periodic checks for sessions needing follow-up
+// 4. Distributed internal cron via toro_core.scheduled_jobs
 type ConversationSchedulerWorker struct {
-	db        *database.Queries
-	logger    *slog.Logger
-	cfg       *config.Config
-	nc        *nats.Conn
-	ticker    *time.Ticker
-	stopCh    chan struct{}
+	db            *database.Queries
+	logger        *slog.Logger
+	cfg           *config.Config
+	nc            *nats.Conn
+	ticker        *time.Ticker
+	hourlyTicker  *time.Ticker
+	secondlyTicker *time.Ticker
+	stopCh        chan struct{}
 	checkInterval time.Duration
+
+	// In-memory buffer for scheduled jobs to execute within the current hour
+	jobBufferMu sync.Mutex
+	jobBuffer   map[string]database.ToroCoreScheduledJob
 }
 
 func init() {
@@ -37,14 +45,24 @@ func init() {
 			nc:            deps.Queue,
 			stopCh:        make(chan struct{}),
 			checkInterval: 15 * time.Minute,
+			jobBuffer:     make(map[string]database.ToroCoreScheduledJob),
 		}, nil
 	})
 }
 
 func (w *ConversationSchedulerWorker) Init(ctx context.Context) error {
 	w.ticker = time.NewTicker(w.checkInterval)
+	w.hourlyTicker = time.NewTicker(time.Hour)
+	w.secondlyTicker = time.NewTicker(time.Second)
+
+	// Pre-load the job buffer immediately on startup
+	w.pollHourlyJobs(ctx)
+
 	go w.followupLoop(ctx)
-	w.logger.Info("conversation scheduler: follow-up loop started", "interval", w.checkInterval)
+	go w.hourlyLoop(ctx)
+	go w.secondlyLoop(ctx)
+
+	w.logger.Info("conversation scheduler: loops started", "interval", w.checkInterval)
 	return nil
 }
 
@@ -153,11 +171,44 @@ func (w *ConversationSchedulerWorker) handleScheduleReminder(ctx context.Context
 	fireAt := time.Now().Add(dur)
 	w.logger.Info("scheduler: reminder scheduled", "delay", delayStr, "fire_at", fireAt)
 
-	// Store the reminder context in a goroutine with time.AfterFunc.
-	// For production durability, this should be persisted to a DB table.
-	time.AfterFunc(dur, func() {
-		w.fireReminder(message)
+	// Build the event payload that we will eventually publish
+	subject, err := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
+	if err != nil {
+		w.logger.Error("scheduler: failed to derive general agent ingress subject", "error", err)
+		msg.Ack()
+		return nil
+	}
+	eventData := map[string]interface{}{
+		"prompt": message,
+		"source": "system",
+	}
+	eventBytes, _ := json.Marshal(eventData)
+
+	// Insert into DB
+	jobID, err := w.db.InsertScheduledJob(ctx, database.InsertScheduledJobParams{
+		QueueSubject: subject,
+		PayloadJson:  eventBytes,
+		FireAt:       pgtype.Timestamptz{Time: fireAt, Valid: true},
 	})
+	if err != nil {
+		w.logger.Error("scheduler: failed to insert scheduled job", "error", err)
+		// NAK so it retries
+		msg.Nak()
+		return nil
+	}
+
+	// If it's firing within the current hour, push to memory buffer immediately
+	// so the secondly ticker picks it up without waiting for the hourly poll.
+	if time.Until(fireAt) <= time.Hour {
+		w.jobBufferMu.Lock()
+		w.jobBuffer[uuidFromPG(jobID)] = database.ToroCoreScheduledJob{
+			ID:           jobID,
+			QueueSubject: subject,
+			PayloadJson:  eventBytes,
+			FireAt:       pgtype.Timestamptz{Time: fireAt, Valid: true},
+		}
+		w.jobBufferMu.Unlock()
+	}
 
 	msg.Ack()
 	return nil
@@ -301,6 +352,90 @@ func parseDelay(s string) (time.Duration, error) {
 		return time.Duration(weeks) * 7 * 24 * time.Hour, nil
 	default:
 		return time.ParseDuration(s)
+	}
+}
+
+func (w *ConversationSchedulerWorker) hourlyLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			w.hourlyTicker.Stop()
+			return
+		case <-w.stopCh:
+			w.hourlyTicker.Stop()
+			return
+		case <-w.hourlyTicker.C:
+			w.pollHourlyJobs(ctx)
+		}
+	}
+}
+
+func (w *ConversationSchedulerWorker) pollHourlyJobs(ctx context.Context) {
+	now := time.Now()
+	oneHourLater := now.Add(time.Hour)
+
+	jobs, err := w.db.GetPendingJobsWindow(ctx, database.GetPendingJobsWindowParams{
+		FireAt:   pgtype.Timestamptz{Time: now, Valid: true},
+		FireAt_2: pgtype.Timestamptz{Time: oneHourLater, Valid: true},
+	})
+	if err != nil {
+		w.logger.Error("scheduler: failed to poll hourly jobs", "error", err)
+		return
+	}
+
+	w.jobBufferMu.Lock()
+	defer w.jobBufferMu.Unlock()
+
+	// Replace the memory buffer with the newly fetched jobs
+	// Note: since we run this every hour, some jobs from the previous hour might still be in here if they were missed,
+	// but the query bounds are strictly [now, +1h]. It's fine to overwrite the buffer if we assume it's cleanly processed.
+	// A safer way is to just merge or clear.
+	w.jobBuffer = make(map[string]database.ToroCoreScheduledJob)
+	for _, job := range jobs {
+		w.jobBuffer[uuidFromPG(job.ID)] = job
+	}
+
+	w.logger.Info("scheduler: loaded scheduled jobs for next hour", "count", len(jobs))
+}
+
+func (w *ConversationSchedulerWorker) secondlyLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			w.secondlyTicker.Stop()
+			return
+		case <-w.stopCh:
+			w.secondlyTicker.Stop()
+			return
+		case <-w.secondlyTicker.C:
+			w.fireReadyJobs(ctx)
+		}
+	}
+}
+
+func (w *ConversationSchedulerWorker) fireReadyJobs(ctx context.Context) {
+	w.jobBufferMu.Lock()
+	defer w.jobBufferMu.Unlock()
+
+	now := time.Now()
+
+	for id, job := range w.jobBuffer {
+		if !job.FireAt.Valid || job.FireAt.Time.After(now) {
+			continue // Not ready yet
+		}
+
+		// Fire it!
+		w.logger.Info("scheduler: firing scheduled job", "job_id", id, "subject", job.QueueSubject)
+		if err := w.nc.Publish(job.QueueSubject, job.PayloadJson); err != nil {
+			w.logger.Error("scheduler: failed to publish scheduled job", "job_id", id, "error", err)
+			continue
+		}
+
+		// Mark as fired in the database
+		_ = w.db.MarkJobFired(ctx, job.ID)
+
+		// Remove from memory buffer
+		delete(w.jobBuffer, id)
 	}
 }
 

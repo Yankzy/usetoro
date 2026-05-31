@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -137,15 +138,46 @@ func searchStringValue(value interface{}, keys ...string) string {
 	return ""
 }
 
+func capitalizeFirstLetter(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) == 0 {
+		return s
+	}
+	s = strings.ToLower(s)
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
 // RawRow matches the struct output by the TAP Cleanup Agent
 type RawRow struct {
-	SessionID   string `json:"SessionID"`
-	RealmID     string `json:"RealmID"`
-	Date        string `json:"Date"`
-	Description string `json:"Description"`
-	Amount      string `json:"Amount"`
-	Vendor      string `json:"Vendor"`
-	Customer    string `json:"Customer"`
+	SessionID   string `json:"SessionID" desc:"The ID of the cleanup session"`
+	RealmID     string `json:"RealmID" desc:"The ID of the realm (company)"`
+	Date        string `json:"Date" desc:"The date of the transaction"`
+	Description string `json:"Description" desc:"The description/memo of the transaction"`
+	Amount      string `json:"Amount" desc:"The amount of the transaction"`
+	Vendor      string `json:"Vendor" desc:"The optional vendor name"`
+	Customer    string `json:"Customer" desc:"The optional customer name"`
+}
+
+// CSVMappingWorkerPayload defines the expected JSON payload for LLM tool invocation.
+type CSVMappingWorkerPayload struct {
+	Rows []RawRow `json:"rows" desc:"List of raw transaction rows to insert"`
+}
+
+// ToolName returns the unique LLM tool name for this worker.
+func (e *CSVMappingWorker) ToolName() string {
+	return "StartCSVMapping"
+}
+
+// ToolDescription provides the context for the LLM.
+func (e *CSVMappingWorker) ToolDescription() string {
+	return "Starts the CSV mapping ingestion process by inserting a batch of raw transaction rows into the staging table for AI enrichment."
+}
+
+// PayloadStruct returns a typed instance to automatically generate a JSON schema.
+func (e *CSVMappingWorker) PayloadStruct() any {
+	return CSVMappingWorkerPayload{}
 }
 
 // handleProof processes the finalized mapping output from the AI TAP Agent.
@@ -248,7 +280,7 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 			}
 		}
 
-		rawDescription := core.RowString(r, "Description", "description")
+		rawDescription := capitalizeFirstLetter(core.RowString(r, "Description", "description"))
 		rawAmount := core.RowString(r, "Amount", "amount")
 		rawDateStr := core.RowString(r, "Date", "date")
 		vendorName := core.RowString(r, "Vendor", "vendor")

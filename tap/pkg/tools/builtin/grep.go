@@ -1,6 +1,9 @@
 package builtin
 
 import (
+	"github.com/Yankzy/usetoro/tap/pkg/tools"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"log/slog"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -80,4 +83,10 @@ func (t *GrepTool) Call(ctx context.Context, input map[string]any) (string, erro
 	}
 
 	return outStr, nil
+}
+
+func init() {
+	Register("Grep", func(env core.Environment, logger *slog.Logger) tools.Tool {
+		return &GrepTool{}
+	})
 }

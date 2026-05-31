@@ -1,6 +1,9 @@
 package builtin
 
 import (
+	"github.com/Yankzy/usetoro/tap/pkg/tools"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"log/slog"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,4 +76,10 @@ func (t *ShellTool) Call(ctx context.Context, input map[string]any) (string, err
 	}
 
 	return string(output), nil
+}
+
+func init() {
+	Register("Bash", func(env core.Environment, logger *slog.Logger) tools.Tool {
+		return &ShellTool{}
+	})
 }

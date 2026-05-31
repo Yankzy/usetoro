@@ -26,7 +26,7 @@ func (t *EmailTool) Name() string {
 }
 
 func (t *EmailTool) Description() string {
-	return "Send an email to a specific recipient. Use this to proactively reach out to clients, vendors, or CPAs when you need information or to notify them of something."
+	return "Send an email to a specific recipient. Use this to proactively reach out to clients, vendors, or CPAs when you need information or to notify them of something. IMPORTANT: You are acting as 'Sarah', a virtual employee. Write the email from Sarah's perspective, using a polite and professional tone, and sign off as Sarah."
 }
 
 func (t *EmailTool) InputSchema() json.RawMessage {
@@ -43,7 +43,7 @@ func (t *EmailTool) InputSchema() json.RawMessage {
 			},
 			"body": {
 				"type": "string",
-				"description": "The plain text body of the email"
+				"description": "The plain text body of the email. Write this as 'Sarah', the virtual employee. Use a polite tone and sign off as Sarah."
 			}
 		},
 		"required": ["to", "subject", "body"]
@@ -130,4 +130,15 @@ func (t *EmailTool) Call(ctx context.Context, input map[string]any) (string, err
 
 	t.Logger.Info("Sent email via SendEmail tool", "to", to, "subject", subject)
 	return fmt.Sprintf("Successfully sent email to %s with subject '%s'", to, subject), nil
+}
+
+func init() {
+	Register("SendEmail", func(env core.Environment, logger *slog.Logger) tools.Tool {
+		return &EmailTool{
+			Bus:       env.Bus,
+			Logger:    logger,
+			AgentDID:  env.Config.DID,
+			AgentName: env.Config.Name,
+		}
+	})
 }

@@ -1,6 +1,9 @@
 package builtin
 
 import (
+	"github.com/Yankzy/usetoro/tap/pkg/tools"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"log/slog"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -80,4 +83,10 @@ func (t *FileEditTool) Call(ctx context.Context, input map[string]any) (string, 
 		replaced = 1
 	}
 	return fmt.Sprintf("Replaced %d occurrence(s) in %s", replaced, path), nil
+}
+
+func init() {
+	Register("FileEdit", func(env core.Environment, logger *slog.Logger) tools.Tool {
+		return &FileEditTool{}
+	})
 }

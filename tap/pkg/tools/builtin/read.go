@@ -1,6 +1,9 @@
 package builtin
 
 import (
+	"github.com/Yankzy/usetoro/tap/pkg/tools"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"log/slog"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -80,4 +83,10 @@ func splitLines(s string) []string {
 		lines = append(lines, current)
 	}
 	return lines
+}
+
+func init() {
+	Register("FileRead", func(env core.Environment, logger *slog.Logger) tools.Tool {
+		return &FileReadTool{}
+	})
 }

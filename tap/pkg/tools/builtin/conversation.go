@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"github.com/Yankzy/usetoro/tap/pkg/tools"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -122,4 +123,14 @@ func (t *ScheduleReminderTool) Call(ctx context.Context, input map[string]any) (
 
 	t.Logger.Info("reminder scheduled", "delay", delay)
 	return fmt.Sprintf("Reminder scheduled in %s.", delay), nil
+}
+
+func init() {
+	Register("ConversationState", func(env core.Environment, logger *slog.Logger) tools.Tool {
+		return &ConversationStateTool{
+			Bus:      env.Bus,
+			Logger:   logger,
+			AgentDID: env.Config.DID,
+		}
+	})
 }

@@ -1,6 +1,8 @@
 package builtin
 
 import (
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"log/slog"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,7 +75,7 @@ func (t *ClientLookupTool) Call(ctx context.Context, input map[string]any) (stri
 	}
 
 	if len(results) == 0 {
-		return fmt.Sprintf("No clients found matching '%s' for this Firm. Please ask the CPA to clarify or provide the exact name.", query), nil
+		return fmt.Sprintf("No clients found matching '%s'. Please ask the USER to clarify or provide the exact name.", query), nil
 	}
 
 	// Format results for the LLM
@@ -84,4 +86,10 @@ func (t *ClientLookupTool) Call(ctx context.Context, input map[string]any) (stri
 	response += "\nIf there is exactly one match, you can proceed with the task using that RealmID. If there are multiple, you MUST reply to the CPA asking them to clarify which one they meant."
 
 	return response, nil
+}
+
+func init() {
+	Register("LookupClient", func(env core.Environment, logger *slog.Logger) tools.Tool {
+		return NewClientLookupTool(env.Queries)
+	})
 }

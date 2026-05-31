@@ -1,6 +1,6 @@
 name: ASE Bookkeeping Workflow
 version: "2.0"
-trigger_topic: events.accounting.ase.bookkeeping
+trigger_topic: events.accounting.1.bookkeeping
 steps:
   - id: run_cleanup
     sub_workflow: "CSV Cleaner Pipeline"

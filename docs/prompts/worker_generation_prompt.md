@@ -37,9 +37,27 @@ type Worker interface {
     Subscriptions() []SubscriptionConfig
     Handle(ctx context.Context, msg *nats.Msg) error
 }
+
+type ToolExposer interface {
+    ToolName() string
+    ToolDescription() string
+    PayloadStruct() any
+}
 ```
 
-2. Register with `RegisterFactory` in `init()`
+2. If implementing `ToolExposer`, you MUST define a specific Payload struct with `desc` tags:
+```go
+type [WORKER_TYPE_NAME]Payload struct {
+    SessionID string `json:"session_id" desc:"The ID of the session"`
+    // ... add desc tags to all fields!
+}
+
+func (w *[WORKER_TYPE_NAME]) ToolName() string { return "Trigger[WORKER_TYPE_NAME]" }
+func (w *[WORKER_TYPE_NAME]) ToolDescription() string { return "..." }
+func (w *[WORKER_TYPE_NAME]) PayloadStruct() any { return [WORKER_TYPE_NAME]Payload{} }
+```
+
+3. Register with `RegisterFactory` in `init()`
 
 ```go
 func init() {
@@ -49,7 +67,7 @@ func init() {
 }
 ```
 
-3. Subscription pattern must match current manager conventions
+4. Subscription pattern must match current manager conventions
 
 - Use config-driven subject(s).
 - If subject is empty and activity-type derivation is appropriate, use `core.BuildWorkerInboxFromActivity(activityType)`.

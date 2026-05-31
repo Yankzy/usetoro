@@ -46,6 +46,7 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
 
     volumes:
       - ../keys:/keys:ro
@@ -98,6 +99,10 @@ services:
       CDC_SYNC_INTERVAL: ${CDC_SYNC_INTERVAL:-1h}
       POSTMARK_TRANSACTIONAL_SERVER_TOKEN: ${POSTMARK_TRANSACTIONAL_SERVER_TOKEN}
       POSTMARK_SENDER_SIGNATURE: ${POSTMARK_SENDER_SIGNATURE}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-${SLACK_BOT_AUTH_TOKEN}}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET}
     depends_on:
       db:
         condition: service_healthy
@@ -108,6 +113,7 @@ services:
     volumes:
       - ../tap/workflows:/app/tap/workflows
       - ../go/internal/config/defaults.yml:/app/internal/config/defaults.yml
+      - ../go/internal/erp/ase/ase.yml:/app/internal/erp/ase/ase.yml
 
   sync:
     build:

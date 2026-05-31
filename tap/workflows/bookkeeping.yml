@@ -1,6 +1,6 @@
 name: Bookkeeping Workflow
 version: "1.0"
-trigger_topic: events.accounting.1.bookkeeping
+trigger_topic: events.accounting.5.bookkeeping
 steps:
   - id: run_cleanup
     sub_workflow: "CSV Cleaner Pipeline"

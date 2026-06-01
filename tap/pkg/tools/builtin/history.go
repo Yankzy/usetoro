@@ -91,7 +91,7 @@ func (t *HistoryTool) Call(ctx context.Context, input map[string]any) (string, e
 		if c.Subject.Valid && c.Subject.String != "" {
 			sb.WriteString(fmt.Sprintf("Subject: %s\n", c.Subject.String))
 		}
-		sb.WriteString(fmt.Sprintf("Body:\n%s\n\n", c.StrippedText))
+		sb.WriteString(fmt.Sprintf("Body:\n%s\n\n", c.StrippedText.String))
 	}
 
 	return sb.String(), nil

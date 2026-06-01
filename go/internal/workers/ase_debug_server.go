@@ -48,8 +48,12 @@ func (w *AseBridgeWorker) startDebugServer() {
 			case <-r.Context().Done():
 				return
 			case <-ticker.C:
-				if w.dag != nil {
-					stats := w.dag.Stats()
+				w.dagsMu.RLock()
+				defaultDag := w.dags["default"]
+				w.dagsMu.RUnlock()
+				
+				if defaultDag != nil {
+					stats := defaultDag.Stats()
 					if stats != nil {
 						msg, err := json.Marshal(stats)
 						if err != nil {

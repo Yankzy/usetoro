@@ -206,13 +206,14 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 		}
 		replyTo = w.cfg.PostmarkSenderSignature
 	} else {
-		fallbackEmail := "notifications@usetoro.io"
+		fallbackFrom := "sarah@usetoro.io"
+		fallbackReplyTo := "sarah@cpa.usetoro.io"
 		if !strings.Contains(from, "@") {
-			fromAddr = fmt.Sprintf(`"%s" <%s>`, from, fallbackEmail)
+			fromAddr = fmt.Sprintf(`"%s" <%s>`, from, fallbackFrom)
 		} else {
-			fromAddr = fallbackEmail
+			fromAddr = fallbackFrom
 		}
-		replyTo = fallbackEmail
+		replyTo = fallbackReplyTo
 	}
 
 	payload := map[string]interface{}{

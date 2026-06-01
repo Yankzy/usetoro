@@ -21,15 +21,15 @@ import (
 // 3. Periodic checks for sessions needing follow-up
 // 4. Distributed internal cron via toro_core.scheduled_jobs
 type ConversationSchedulerWorker struct {
-	db            *database.Queries
-	logger        *slog.Logger
-	cfg           *config.Config
-	nc            *nats.Conn
-	ticker        *time.Ticker
-	hourlyTicker  *time.Ticker
+	db             *database.Queries
+	logger         *slog.Logger
+	cfg            *config.Config
+	nc             *nats.Conn
+	ticker         *time.Ticker
+	hourlyTicker   *time.Ticker
 	secondlyTicker *time.Ticker
-	stopCh        chan struct{}
-	checkInterval time.Duration
+	stopCh         chan struct{}
+	checkInterval  time.Duration
 
 	// In-memory buffer for scheduled jobs to execute within the current hour
 	jobBufferMu sync.Mutex
@@ -305,7 +305,7 @@ func (w *ConversationSchedulerWorker) checkFollowups(ctx context.Context) {
 		// Send follow-up reminder
 		reminderMsg := ctxJSON.LastReminderMessage
 		if reminderMsg == "" {
-			reminderMsg = fmt.Sprintf("Just checking in — we still need those documents. Please reply when you have them.")
+			reminderMsg = "Just checking in — we still need those documents. Please reply when you have them."
 		}
 
 		w.fireReminder(reminderMsg)

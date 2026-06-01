@@ -26,7 +26,7 @@ func (t *EmailTool) Name() string {
 }
 
 func (t *EmailTool) Description() string {
-	return "Send an email to a specific recipient. Use this to proactively reach out to clients, vendors, or CPAs when you need information or to notify them of something. IMPORTANT: You are acting as 'Sarah', a virtual employee. Write the email from Sarah's perspective, using a polite and professional tone, and sign off as Sarah."
+	return "Send an email to a specific recipient. Use this to proactively reach out to clients, vendors, or CPAs when you need information or to notify them of something. IMPORTANT: You are acting as 'Sarah', a virtual employee. Write the email from Sarah's perspective, using a polite and professional tone, and sign off as Sarah. The subject must be a brief, specific summary of the email's purpose — never use the agent name or a generic placeholder."
 }
 
 func (t *EmailTool) InputSchema() json.RawMessage {
@@ -39,7 +39,7 @@ func (t *EmailTool) InputSchema() json.RawMessage {
 			},
 			"subject": {
 				"type": "string",
-				"description": "The subject of the email"
+				"description": "A brief, specific subject line summarizing the email's purpose (e.g., 'Invoice #1234 Payment Confirmation', 'Q2 Tax Document Request'). Do NOT use the agent name or generic text like 'General Purpose Agent'."
 			},
 			"body": {
 				"type": "string",

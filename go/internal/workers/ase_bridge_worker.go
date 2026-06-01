@@ -30,14 +30,15 @@ type AseBridgeWorker struct {
 	nc     *nats.Conn
 	db     *database.Queries
 	store  *ase.StateStore
-	dag    *ase.DAG
+
+	dagsMu sync.RWMutex
+	dags   map[string]*ase.DAG
 }
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
 		// Initialize the ASE global dependencies
 		stateStore := ase.NewStateStore(deps.DBPool, deps.Redis)
-		dag := ase.BuildDAGFromConfig(ase.GetConfig().DAG, deps.Logger)
 
 		return &AseBridgeWorker{
 			logger: deps.Logger,
@@ -45,7 +46,7 @@ func init() {
 			nc:     deps.Queue,
 			db:     deps.Store.Queries,
 			store:  stateStore,
-			dag:    dag,
+			dags:   make(map[string]*ase.DAG),
 		}, nil
 	})
 }
@@ -58,23 +59,36 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 	classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
 	classifierService.SetDB(w.db) // Pass db for dynamic provider
 
-	// Wire up dynamic ThinkFuncs for every node in the DAG
-	w.logger.Info("ase_orchestrator: wiring dynamic DAG nodes")
-	for _, node := range w.dag.Nodes {
-		if node.EdgeType == "dynamic" {
-			node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
-		} else if node.PromptKey != "" {
-			node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
-		} else {
-			// e.g. terminal nodes or holding nodes with no dynamic logic
-			node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
-				return nil, nil // No-op
-			})
+	// Helper to instantiate, wire, and start a DAG
+	wireAndStartDAG := func(key string, cfg *ase.ASEConfig) {
+		dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
+		for _, node := range dag.Nodes {
+			if node.EdgeType == "dynamic" {
+				node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
+			} else if node.PromptKey != "" {
+				node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
+			} else {
+				// e.g. terminal nodes or holding nodes with no dynamic logic
+				node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
+					return nil, nil // No-op
+				})
+			}
 		}
+		dag.StartAll()
+
+		w.dagsMu.Lock()
+		w.dags[key] = dag
+		w.dagsMu.Unlock()
+		w.logger.Info("ase_orchestrator: wired dynamic DAG nodes", "key", key)
 	}
 
-	// Start all the DAG background flush loops
-	w.dag.StartAll()
+	// Register hot-reload callback to dynamically load tenant DAGs
+	ase.SetOnConfigLoaded(wireAndStartDAG)
+
+	// Process any already loaded configs
+	for key, cfg := range ase.GetAllConfigs() {
+		wireAndStartDAG(key, cfg)
+	}
 
 	return nil
 }
@@ -161,6 +175,25 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	if session.RealmID.Valid {
 		realmID = session.RealmID.String
 	}
+	tenantID := ""
+	if session.CreatedBy.Valid {
+		tenantID = uuid.UUID(session.CreatedBy.Bytes).String()
+	}
+
+	// Dynamically resolve the correct DAG instance for this tenant/realm
+	w.dagsMu.RLock()
+	dagToUse := w.dags["default"]
+	if tenantID != "" && w.dags["tenant_"+tenantID] != nil {
+		dagToUse = w.dags["tenant_"+tenantID]
+	} else if realmID != "" && w.dags["realm_"+realmID] != nil {
+		dagToUse = w.dags["realm_"+realmID]
+	}
+	w.dagsMu.RUnlock()
+
+	if dagToUse == nil {
+		w.logger.Error("ase_bridge: no matching DAG found, not even default", "tenantID", tenantID, "realmID", realmID)
+		return nil
+	}
 
 	// 3. Query unclassified Fignode transactions
 	pendingTxns, err := w.db.GetPendingStagingTransactions(ctx, pgSessionID)
@@ -205,6 +238,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 
 		agent := ase.NewASENode(
+			tenantID,
 			realmID,
 			desc,
 			direction,
@@ -220,7 +254,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			defer wg.Done()
 			// Provide a background context since the worker Handle context might cancel
 			bgCtx := context.Background()
-			if err := a.Run(bgCtx, w.dag, w.store); err != nil {
+			if err := a.Run(bgCtx, dagToUse, w.store); err != nil {
 				w.logger.Error("ase_bridge: agent crashed", "node_id", a.NodeID, "error", err)
 			}
 		}(agent)

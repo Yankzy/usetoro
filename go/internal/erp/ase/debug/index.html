@@ -2,120 +2,584 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>ASE Memory Visualizer</title>
-    <style>
-        body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
-        .box { border: 1px solid #ccc; padding: 15px; margin-bottom: 15px; border-radius: 8px; background: white; }
-        .status { font-weight: bold; }
-        .dag-container { display: flex; flex-direction: row; gap: 20px; overflow-x: auto; padding: 10px 0; }
-        .dag-node { border: 2px solid #2196F3; border-radius: 8px; padding: 10px; min-width: 250px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .node-title { font-weight: bold; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 10px; }
-        .node-queue { font-size: 1.4em; color: #E91E63; font-weight: bold; text-align: center; margin: 10px 0; }
-        .children-container { margin-left: 30px; border-left: 2px dashed #bbb; padding-left: 30px; display: flex; flex-direction: column; gap: 15px; justify-content: center;}
-    </style>
-</head>
-<body>
-    <h2>🧠 ASE DAG Memory Visualizer</h2>
-    <div class="box">
-        <label>WebSocket URL:</label>
-        <input type="text" id="wsUrl" value="ws://localhost:8081/ws/dag" style="width: 100%;">
-        <br><br>
-        <button id="btnConnect" onclick="connect()">Connect to Engine</button>
-        <span id="status" class="status">Disconnected</span>
-    </div>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASE Memory Visualizer (n8n Style)</title>
     
-    <div class="box" style="overflow-x: auto;">
-        <div id="dagRoot" style="min-height: 400px; display: flex; align-items: center;">
-            <p style="color: #999; margin: 0 auto;">Waiting for DAG state...</p>
-        </div>
-    </div>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for in-browser JSX transpilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-[#1e1e1e] text-gray-300 font-sans overflow-hidden">
+    <div id="root"></div>
 
-    <script>
-        let ws;
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
 
-        // Auto-connect if URL is relative or same host
-        window.addEventListener('DOMContentLoaded', () => {
-            const urlInput = document.getElementById('wsUrl');
-            if (window.location.protocol !== 'file:') {
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                urlInput.value = `${protocol}//${window.location.host}/ws/dag`;
-            }
-        });
+        // --- Icons (Inline SVGs to avoid CDN module issues) ---
+        const ZapIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>;
+        const ServerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>;
+        const PlugIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>;
+        const ActivityIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>;
+        const PlusIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
+        const MinusIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
+        const MaximizeIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>;
 
-        function connect() {
-            const url = document.getElementById('wsUrl').value;
-            try { ws = new WebSocket(url); } catch (e) { alert('Error: ' + e.message); return; }
+        // --- Constants & Config ---
+        const NODE_WIDTH = 280;
+        const NODE_HEIGHT = 110;
 
-            ws.onopen = () => {
-                document.getElementById('status').innerText = "🟢 Connected (Live)";
-                document.getElementById('btnConnect').disabled = true;
-            };
+        const KIND_COLORS = {
+            cash_direction_router: 'bg-indigo-500',
+            macro_classifier: 'bg-blue-500',
+            account_type: 'bg-emerald-500',
+            holding_gate: 'bg-amber-500',
+            terminal: 'bg-rose-500',
+            entity: 'bg-cyan-500',
+            account_selection: 'bg-purple-500',
+            trigger: 'bg-green-500',
+            action: 'bg-blue-500',
+            db: 'bg-orange-500',
+            default: 'bg-gray-500'
+        };
 
-            ws.onmessage = (event) => {
-                const stats = JSON.parse(event.data);
-                renderDAG(stats);
-            };
-
-            ws.onclose = () => {
-                document.getElementById('status').innerText = "🔴 Disconnected";
-                document.getElementById('btnConnect').disabled = false;
-            };
-        }
-
-        function renderDAG(rootStats) {
-            const container = document.getElementById('dagRoot');
-            container.innerHTML = '';
-            container.appendChild(createNodeElement(rootStats, true));
-        }
-
-        function createNodeElement(node, isRoot = false) {
-            const wrapper = document.createElement('div');
-            wrapper.style.display = 'flex';
-            wrapper.style.flexDirection = 'row';
-            wrapper.style.alignItems = 'center';
-
-            const el = document.createElement('div');
-            el.className = 'dag-node';
+        function App() {
+            // --- State ---
+            const [nodes, setNodes] = useState([]);
+            const [edges, setEdges] = useState([]);
             
-            // Highlight if queue is full/flushing
-            if (node.queue_length >= node.batch_size && node.batch_size > 0) {
-                el.style.borderColor = '#4CAF50';
-                el.style.backgroundColor = '#e8f5e9';
-            }
+            const [wsUrl, setWsUrl] = useState('ws://localhost:8084/ws/dag');
+            const [wsStatus, setWsStatus] = useState('disconnected'); // 'disconnected', 'connecting', 'connected'
+            const wsRef = useRef(null);
 
-            let html = `
-                <div class="node-title">${node.name} <br><span style="font-size:0.7em;color:#999;font-weight:normal;">${node.id} (${node.kind})</span></div>
-                <div class="node-queue">
-                    ${node.queue_length} <span style="font-size: 0.5em; color: #888;">/ ${node.batch_size || '∞'}</span>
-                </div>
-            `;
-            el.innerHTML = html;
-            wrapper.appendChild(el);
+            // Transform & Pan State
+            const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+            const [isPanning, setIsPanning] = useState(false);
+            const [panStart, setPanStart] = useState({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
 
-            if (node.children && Object.keys(node.children).length > 0) {
-                const childrenContainer = document.createElement('div');
-                childrenContainer.className = 'children-container';
-                for (const [key, childStats] of Object.entries(node.children)) {
-                    // Create a label for the routing key
-                    const branchWrapper = document.createElement('div');
-                    branchWrapper.style.position = 'relative';
+            // Dragging State
+            const [draggingNode, setDraggingNode] = useState(null);
+            const [dragStart, setDragStart] = useState({ mouseX: 0, mouseY: 0, nodeX: 0, nodeY: 0 });
+            
+            const canvasRef = useRef(null);
+
+            // --- Auto-Layout Algorithm for Tree Data ---
+            const parseDagState = useCallback((rootNode) => {
+                const newNodesMap = new Map();
+                const newEdgesMap = new Map();
+                const levelYTracker = {};
+
+                const traverse = (node, level = 0) => {
+                    if (!newNodesMap.has(node.id)) {
+                        const x = 50 + (level * 380);
+                        
+                        if (levelYTracker[level] === undefined) levelYTracker[level] = 100;
+                        const y = levelYTracker[level];
+                        
+                        levelYTracker[level] += NODE_HEIGHT + 60; // Add vertical spacing
+
+                        newNodesMap.set(node.id, {
+                            id: node.id,
+                            position: { x, y }, // Default calculated position
+                            data: node
+                        });
+                    }
+
+                    if (node.children && typeof node.children === 'object') {
+                        Object.entries(node.children).forEach(([routingKey, childNode]) => {
+                            const edgeId = `edge_${node.id}_${childNode.id}_${routingKey}`;
+                            if (!newEdgesMap.has(edgeId)) {
+                                newEdgesMap.set(edgeId, {
+                                    id: edgeId,
+                                    source: node.id,
+                                    target: childNode.id,
+                                    label: routingKey
+                                });
+                            }
+                            traverse(childNode, level + 1);
+                        });
+                    }
+                };
+
+                if (rootNode) traverse(rootNode);
+
+                // Merge new nodes with existing ones to preserve dragged positions
+                setNodes(currentNodes => {
+                    const newNodesList = Array.from(newNodesMap.values());
+                    return newNodesList.map(newNode => {
+                        const existingNode = currentNodes.find(cn => cn.id === newNode.id);
+                        if (existingNode) {
+                            return { ...newNode, position: existingNode.position }; // keep old position
+                        }
+                        return newNode;
+                    });
+                });
+                
+                setEdges(Array.from(newEdgesMap.values()));
+            }, []);
+
+            // --- WebSocket Logic ---
+            const connectWs = () => {
+                if (wsRef.current) wsRef.current.close();
+                setWsStatus('connecting');
+
+                try {
+                    const ws = new WebSocket(wsUrl);
                     
-                    const label = document.createElement('div');
-                    label.innerText = "➔ " + key;
-                    label.style.fontSize = "0.8em";
-                    label.style.color = "#888";
-                    label.style.marginBottom = "5px";
-                    label.style.fontWeight = "bold";
-
-                    branchWrapper.appendChild(label);
-                    branchWrapper.appendChild(createNodeElement(childStats));
-                    childrenContainer.appendChild(branchWrapper);
+                    ws.onopen = () => setWsStatus('connected');
+                    
+                    ws.onmessage = (event) => {
+                        const stats = JSON.parse(event.data);
+                        parseDagState(stats);
+                    };
+                    
+                    ws.onclose = () => setWsStatus('disconnected');
+                    ws.onerror = () => setWsStatus('disconnected');
+                    
+                    wsRef.current = ws;
+                } catch (e) {
+                    alert('Invalid WebSocket URL');
+                    setWsStatus('disconnected');
                 }
-                wrapper.appendChild(childrenContainer);
-            }
+            };
 
-            return wrapper;
+            const disconnectWs = () => {
+                if (wsRef.current) {
+                    wsRef.current.close();
+                    wsRef.current = null;
+                }
+                setWsStatus('disconnected');
+            };
+
+            // --- Mock Data Loader (from ase.yml) ---
+            const loadMockData = () => {
+                const flatNodes = {
+                    "direction_router": { kind: "cash_direction_router", batch_size: 50, children: { "INFLOW": "macro_classifier_inflow", "OUTFLOW": "macro_classifier_outflow" } },
+                    "macro_classifier_inflow": { kind: "macro_classifier", batch_size: 50, children: { "ASSET": "account_type_asset", "LIABILITY": "account_type_liability", "EQUITY": "account_type_equity", "REVENUE": "account_type_revenue", "EXPENSE": "account_type_expense" } },
+                    "macro_classifier_outflow": { kind: "macro_classifier", batch_size: 50, children: { "ASSET": "account_type_asset", "LIABILITY": "account_type_liability", "EQUITY": "account_type_equity", "REVENUE": "account_type_revenue", "EXPENSE": "account_type_expense" } },
+                    "account_type_asset": { kind: "account_type", batch_size: 0, children: { "Bank": "bank", "Fixed Assets": "fixed_assets", "Leasehold Improvements": "leasehold_improvements", "Other Current Assets": "other_current_assets", "Other Assets": "other_assets", "Accounts Receivable": "accounts_receivable" } },
+                    "account_type_liability": { kind: "account_type", batch_size: 0, children: { "Credit Cards": "credit_cards", "Long Term Liability": "long_term_liability", "Other Current Liability": "other_current_liability", "Accounts Payable": "accounts_payable" } },
+                    "account_type_equity": { kind: "account_type", batch_size: 0, children: { "Equity": "equity" } },
+                    "account_type_revenue": { kind: "account_type", batch_size: 0, children: { "Income": "income", "Other Income": "other_income" } },
+                    "account_type_expense": { kind: "account_type", batch_size: 0, children: { "Cost of Goods Sold": "cost_of_goods_sold", "Expense": "expense", "Other Expense": "other_expense" } },
+                    "bank": { kind: "holding_gate", batch_size: 50, children: { "INTERNAL_TRANSFER": "terminal_bank_transfer_collapse", "TREASURY_CASH_SWEEP": "terminal_bank_transfer_collapse", "STANDARD_LIQUIDITY_FLOW": "entity_outflow" } },
+                    "terminal_bank_transfer_collapse": { kind: "terminal", batch_size: 0, children: {} },
+                    "fixed_assets": { kind: "holding_gate", batch_size: 20, children: { "CAPITALIZE_ASSET": "entity_outflow", "DE_MINIMIS_EXPENSE_TRIGGER": "forced_expense_reclassification" } },
+                    "forced_expense_reclassification": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+                    "leasehold_improvements": { kind: "holding_gate", batch_size: 10, children: { "CAPITALIZE_IMPROVEMENT": "entity_outflow", "REPAIRS_MAINTENANCE_EXPENSE": "forced_expense_reclassification" } },
+                    "other_current_assets": { kind: "holding_gate", batch_size: 30, children: { "INVENTORY_PREPAYMENT": "inventory_deposit_quarantine", "SECURITY_DEPOSIT": "entity_outflow", "STANDARD_CURRENT_ASSET": "entity_outflow" } },
+                    "inventory_deposit_quarantine": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+                    "other_assets": { kind: "holding_gate", batch_size: 10, children: { "INTANGIBLE_ASSET": "entity_outflow", "LONG_TERM_SECURITY_DEPOSIT": "entity_outflow", "STANDARD_OTHER_ASSET": "entity_outflow" } },
+                    "accounts_receivable": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+                    "credit_cards": { kind: "holding_gate", batch_size: 50, children: { "CC_BALANCE_TRANSFER": "terminal_credit_card_transfer", "ANOMALOUS_CC_FLOW": "entity_outflow" } },
+                    "terminal_credit_card_transfer": { kind: "terminal", batch_size: 0, children: {} },
+                    "long_term_liability": { kind: "holding_gate", batch_size: 1, children: { "LOAN_REPAYMENT_SPLIT": "loan_amortization", "UNIDENTIFIED_DEBT_FLOW": "entity_outflow" } },
+                    "loan_amortization": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+                    "other_current_liability": { kind: "holding_gate", batch_size: 50, children: { "SALES_TAX_COLLECTED": "cash_sales_tax_splitter", "PAYROLL_TAX_WITHHELD": "cash_payroll_withholding_gate", "DEFAULT_OPERATIONAL_FLOW": "entity_outflow" } },
+                    "cash_sales_tax_splitter": { kind: "holding_gate", batch_size: 25, children: { "TAX_POSTED": "entity_outflow" } },
+                    "cash_payroll_withholding_gate": { kind: "holding_gate", batch_size: 10, children: { "RESUME": "entity_outflow" } },
+                    "accounts_payable": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+                    "equity": { kind: "holding_gate", batch_size: 20, children: { "OWNER_INVESTMENT": "entity_outflow", "OWNER_DRAW": "terminal_shareholder_draw_mitigation", "SHAREHOLDER_DISTRIBUTION": "terminal_shareholder_draw_mitigation" } },
+                    "terminal_shareholder_draw_mitigation": { kind: "terminal", batch_size: 0, children: {} },
+                    "income": { kind: "holding_gate", batch_size: 50, children: { "GROMENT_STRIPE_SQUARE_SPLIT": "merchant_payout_splitter", "STANDARD_CASH_RECEIPT": "entity_outflow" } },
+                    "merchant_payout_splitter": { kind: "holding_gate", batch_size: 25, children: { "MERCHANT_FEES_ISOLATED": "entity_outflow" } },
+                    "other_income": { kind: "holding_gate", batch_size: 50, children: { "INTEREST_DIVIDEND_INCOME": "entity_outflow", "STANDARD_OTHER_INCOME": "entity_outflow" } },
+                    "cost_of_goods_sold": { kind: "holding_gate", batch_size: 40, children: { "VALIDATED_DIRECT_COGS": "entity_outflow", "RECLASSIFY_TO_OVERHEAD_EXPENSE": "forced_overhead_reclassification" } },
+                    "forced_overhead_reclassification": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+                    "expense": { kind: "holding_gate", batch_size: 50, children: { "STANDARD_OVERHEAD": "entity_outflow", "PERSONAL_MIXIN_DETECTED": "terminal_shareholder_draw_mitigation" } },
+                    "other_expense": { kind: "holding_gate", batch_size: 50, children: { "PENALTY_OR_FINE": "entity_outflow", "INTEREST_EXPENSE": "entity_outflow", "STANDARD_OTHER_EXPENSE": "entity_outflow" } },
+                    "entity_outflow": { kind: "entity", batch_size: 0, children: { "DEFAULT": "account_selection" } },
+                    "account_selection": { kind: "account_selection", batch_size: 15, children: {} }
+                };
+
+                const buildTree = (nodeId, visited = new Set()) => {
+                    const nodeDef = flatNodes[nodeId];
+                    if (!nodeDef) return null;
+
+                    const obj = {
+                        id: nodeId,
+                        name: nodeId.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+                        kind: nodeDef.kind,
+                        queue_length: Math.floor(Math.random() * (nodeDef.batch_size || 10)),
+                        batch_size: nodeDef.batch_size || 0,
+                    };
+
+                    if (visited.has(nodeId)) return obj;
+                    visited.add(nodeId);
+
+                    if (nodeDef.children && Object.keys(nodeDef.children).length > 0) {
+                        obj.children = {};
+                        for (const [key, childId] of Object.entries(nodeDef.children)) {
+                            obj.children[key] = buildTree(childId, new Set(visited));
+                        }
+                    }
+                    return obj;
+                };
+
+                const mockStats = buildTree("direction_router");
+                parseDagState(mockStats);
+                setTransform({ x: 0, y: 0, scale: 0.8 });
+            };
+
+            // --- Mouse Handlers for Dragging and Panning ---
+            const handleNodeMouseDown = (e, node) => {
+                e.stopPropagation(); // Prevent panning when clicking a node
+                setDraggingNode(node.id);
+                setDragStart({ 
+                    mouseX: e.clientX, 
+                    mouseY: e.clientY, 
+                    nodeX: node.position.x, 
+                    nodeY: node.position.y 
+                });
+            };
+
+            const handleCanvasMouseDown = (e) => {
+                setIsPanning(true);
+                setPanStart({ 
+                    mouseX: e.clientX, 
+                    mouseY: e.clientY, 
+                    startX: transform.x, 
+                    startY: transform.y 
+                });
+            };
+
+            // Wheel Zoom Logic
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+
+                const handleWheel = (e) => {
+                    e.preventDefault();
+                    setTransform(prev => {
+                        const scaleAmount = -e.deltaY * 0.001;
+                        let newScale = prev.scale * (1 + scaleAmount);
+                        newScale = Math.min(Math.max(0.1, newScale), 4);
+                        
+                        const rect = canvas.getBoundingClientRect();
+                        const mouseX = e.clientX - rect.left;
+                        const mouseY = e.clientY - rect.top;
+
+                        // Center zoom scaling relative to mouse pointer
+                        const newX = mouseX - (mouseX - prev.x) * (newScale / prev.scale);
+                        const newY = mouseY - (mouseY - prev.y) * (newScale / prev.scale);
+
+                        return { x: newX, y: newY, scale: newScale };
+                    });
+                };
+
+                canvas.addEventListener('wheel', handleWheel, { passive: false });
+                return () => canvas.removeEventListener('wheel', handleWheel);
+            }, []);
+
+            // Drag & Pan Movement Logic
+            useEffect(() => {
+                const handleMouseMove = (e) => {
+                    if (draggingNode) {
+                        // Adjust drag offset by the current zoom scale
+                        const dx = (e.clientX - dragStart.mouseX) / transform.scale;
+                        const dy = (e.clientY - dragStart.mouseY) / transform.scale;
+
+                        setNodes(prev => prev.map(n => 
+                            n.id === draggingNode 
+                                ? { ...n, position: { x: dragStart.nodeX + dx, y: dragStart.nodeY + dy } }
+                                : n
+                        ));
+                    } else if (isPanning) {
+                        const dx = e.clientX - panStart.mouseX;
+                        const dy = e.clientY - panStart.mouseY;
+                        setTransform(prev => ({ ...prev, x: panStart.startX + dx, y: panStart.startY + dy }));
+                    }
+                };
+
+                const handleMouseUp = () => {
+                    setDraggingNode(null);
+                    setIsPanning(false);
+                };
+
+                if (draggingNode || isPanning) {
+                    window.addEventListener('mousemove', handleMouseMove);
+                    window.addEventListener('mouseup', handleMouseUp);
+                }
+                return () => {
+                    window.removeEventListener('mousemove', handleMouseMove);
+                    window.removeEventListener('mouseup', handleMouseUp);
+                };
+            }, [draggingNode, isPanning, dragStart, panStart, transform.scale]);
+
+            // --- Zoom Controls ---
+            const handleZoom = (delta) => {
+                setTransform(prev => {
+                    let newScale = prev.scale + delta;
+                    newScale = Math.min(Math.max(0.1, newScale), 4);
+                    if (!canvasRef.current) return { ...prev, scale: newScale };
+                    
+                    const rect = canvasRef.current.getBoundingClientRect();
+                    const mouseX = rect.width / 2;
+                    const mouseY = rect.height / 2;
+                    
+                    const newX = mouseX - (mouseX - prev.x) * (newScale / prev.scale);
+                    const newY = mouseY - (mouseY - prev.y) * (newScale / prev.scale);
+
+                    return { x: newX, y: newY, scale: newScale };
+                });
+            };
+
+            // --- SVG Helpers ---
+            const createBezierPath = (startX, startY, endX, endY) => {
+                const offset = Math.max(Math.abs(endX - startX) / 2, 50);
+                return `M ${startX} ${startY} C ${startX + offset} ${startY}, ${endX - offset} ${endY}, ${endX} ${endY}`;
+            };
+
+            return (
+                <div className="flex h-screen w-full bg-[#1e1e1e]">
+                    
+                    {/* Sidebar Configuration */}
+                    <div className="w-80 bg-[#252526] border-r border-[#3c3c3c] flex flex-col z-20 shadow-2xl">
+                        <div className="p-5 border-b border-[#3c3c3c] flex items-center gap-3">
+                            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                                <ActivityIcon />
+                            </div>
+                            <div>
+                                <h1 className="font-bold text-white text-md">ASE Visualizer</h1>
+                                <p className="text-xs text-gray-400">Live Memory DAG</p>
+                            </div>
+                        </div>
+                        
+                        <div className="p-5 space-y-6 flex-1">
+                            {/* Connection Panel */}
+                            <div className="space-y-3">
+                                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Engine Connection</h2>
+                                
+                                <div>
+                                    <label className="block text-xs text-gray-400 mb-1">WebSocket URL</label>
+                                    <input 
+                                        type="text" 
+                                        value={wsUrl}
+                                        onChange={(e) => setWsUrl(e.target.value)}
+                                        disabled={wsStatus === 'connected'}
+                                        className="w-full bg-[#1e1e1e] border border-[#3c3c3c] rounded text-sm px-3 py-2 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                                    />
+                                </div>
+
+                                {wsStatus === 'disconnected' ? (
+                                    <button 
+                                        onClick={connectWs}
+                                        className="w-full bg-blue-600 hover:bg-blue-500 text-white rounded py-2 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                                    >
+                                        <PlugIcon /> Connect to Live Stream
+                                    </button>
+                                ) : (
+                                    <button 
+                                        onClick={disconnectWs}
+                                        className="w-full bg-red-600/20 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 rounded py-2 text-sm font-medium transition-colors"
+                                    >
+                                        Disconnect
+                                    </button>
+                                )}
+
+                                <div className="flex items-center gap-2 text-xs mt-2">
+                                    <span className="text-gray-500">Status:</span>
+                                    {wsStatus === 'connected' && <span className="text-green-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Connected (Live)</span>}
+                                    {wsStatus === 'connecting' && <span className="text-yellow-500">Connecting...</span>}
+                                    {wsStatus === 'disconnected' && <span className="text-gray-400">Disconnected</span>}
+                                </div>
+                            </div>
+
+                            <hr className="border-[#3c3c3c]" />
+
+                            <div className="space-y-3">
+                                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Development</h2>
+                                <button 
+                                    onClick={loadMockData}
+                                    className="w-full bg-[#2d2d2d] hover:bg-[#3d3d3d] border border-[#3c3c3c] text-white rounded py-2 text-sm font-medium transition-colors"
+                                >
+                                    Load Mock Graph Data
+                                </button>
+                                <p className="text-xs text-gray-500 leading-relaxed">
+                                    Clicking this will populate the canvas with a dummy memory tree representing what the WebSocket payload looks like.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Canvas Area */}
+                    <div 
+                        className={`flex-1 relative bg-[#1e1e1e] overflow-hidden select-none ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+                        ref={canvasRef}
+                        onMouseDown={handleCanvasMouseDown}
+                    >
+                        {/* Dot Grid Background */}
+                        <div 
+                            className="absolute inset-0 pointer-events-none opacity-50"
+                            style={{
+                                backgroundImage: 'radial-gradient(#3c3c3c 1.5px, transparent 1.5px)',
+                                backgroundSize: `${20 * transform.scale}px ${20 * transform.scale}px`,
+                                backgroundPosition: `${transform.x}px ${transform.y}px`
+                            }}
+                        ></div>
+
+                        {nodes.length === 0 && (
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                <div className="text-[#3c3c3c] text-xl font-medium flex flex-col items-center gap-4">
+                                    <ServerIcon />
+                                    No data received yet.
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Transform Wrapper */}
+                        <div 
+                            style={{ 
+                                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`, 
+                                transformOrigin: '0 0',
+                                position: 'absolute',
+                                top: 0, left: 0, right: 0, bottom: 0,
+                                pointerEvents: 'none'
+                            }}
+                        >
+                            {/* Edges Layer (SVG) */}
+                            <svg style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible', pointerEvents: 'none' }}>
+                                <defs>
+                                    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                                        <polygon points="0 0, 10 3.5, 0 7" fill="#8b949e" />
+                                    </marker>
+                                </defs>
+
+                                {edges.map(edge => {
+                                    const sourceNode = nodes.find(n => n.id === edge.source);
+                                    const targetNode = nodes.find(n => n.id === edge.target);
+                                    if (!sourceNode || !targetNode) return null;
+
+                                    const startX = sourceNode.position.x + NODE_WIDTH;
+                                    const startY = sourceNode.position.y + (NODE_HEIGHT / 2);
+                                    const endX = targetNode.position.x;
+                                    const endY = targetNode.position.y + (NODE_HEIGHT / 2);
+
+                                    const path = createBezierPath(startX, startY, endX, endY);
+                                    
+                                    // Approximate text position (middle of horizontal space)
+                                    const textX = (startX + endX) / 2;
+                                    const textY = (startY + endY) / 2 - 10;
+
+                                    return (
+                                        <g key={edge.id}>
+                                            <path 
+                                                d={path} 
+                                                stroke="#525252" 
+                                                strokeWidth="2" 
+                                                fill="none" 
+                                                markerEnd="url(#arrowhead)"
+                                            />
+                                            {/* Routing Key Label */}
+                                            <text 
+                                                x={textX} 
+                                                y={textY} 
+                                                fill="#a3a3a3" 
+                                                fontSize="11" 
+                                                textAnchor="middle"
+                                                className="font-mono"
+                                                style={{ pointerEvents: 'none' }}
+                                            >
+                                                ➔ {edge.label}
+                                            </text>
+                                        </g>
+                                    );
+                                })}
+                            </svg>
+
+                            {/* Nodes Layer */}
+                            {nodes.map(node => {
+                                const colorClass = KIND_COLORS[node.data.kind] || KIND_COLORS.default;
+                                const isFull = node.data.queue_length >= node.data.batch_size && node.data.batch_size > 0;
+                                const fillPercentage = node.data.batch_size > 0 ? Math.min((node.data.queue_length / node.data.batch_size) * 100, 100) : 0;
+
+                                return (
+                                    <div
+                                        key={node.id}
+                                        onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                                        className={`absolute transition-shadow duration-200 z-10 cursor-move
+                                            ${isFull ? 'shadow-[0_0_20px_rgba(34,197,94,0.3)] ring-1 ring-green-500' : 'shadow-xl'}
+                                        `}
+                                        style={{
+                                            left: node.position.x,
+                                            top: node.position.y,
+                                            width: NODE_WIDTH,
+                                            height: NODE_HEIGHT,
+                                            pointerEvents: 'auto'
+                                        }}
+                                    >
+                                        <div className="w-full h-full bg-[#252526] rounded-xl border border-[#3c3c3c] flex flex-col overflow-hidden relative group">
+                                            
+                                            {/* Header Color Bar */}
+                                            <div className={`h-1.5 w-full ${colorClass}`} />
+                                            
+                                            <div className="flex-1 p-3 flex flex-col justify-between pointer-events-none">
+                                                {/* Top info */}
+                                                <div className="flex items-start justify-between">
+                                                    <div className="overflow-hidden">
+                                                        <div className="font-semibold text-gray-200 text-sm truncate">{node.data.name}</div>
+                                                        <div className="text-[10px] text-gray-500 font-mono truncate">{node.id}</div>
+                                                        <div className="text-[10px] text-gray-400 font-mono truncate">({node.data.kind})</div>
+                                                    </div>
+                                                    <div className="flex-shrink-0 w-8 h-8 rounded bg-[#333] flex items-center justify-center">
+                                                        <ServerIcon />
+                                                    </div>
+                                                </div>
+
+                                                {/* Queue Size Indicator */}
+                                                <div className="mt-2 bg-[#1e1e1e] rounded p-2 border border-[#333]">
+                                                    <div className="flex justify-between items-end mb-1">
+                                                        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Queue</span>
+                                                        <div className="flex items-baseline gap-1">
+                                                            <span className={`text-lg font-bold leading-none ${isFull ? 'text-green-400' : 'text-rose-500'}`}>
+                                                                {node.data.queue_length}
+                                                            </span>
+                                                            <span className="text-xs text-gray-600 font-medium">/ {node.data.batch_size || '∞'}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="w-full h-1.5 bg-[#2d2d2d] rounded-full overflow-hidden">
+                                                        <div 
+                                                            className={`h-full transition-all duration-300 ${isFull ? 'bg-green-500' : 'bg-rose-500'}`}
+                                                            style={{ width: `${fillPercentage}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Input/Output visual stubs */}
+                                            <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 bg-[#252526] border border-[#525252] rounded-full pointer-events-none" />
+                                            <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3 h-3 bg-[#252526] border border-[#525252] rounded-full pointer-events-none" />
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        
+                        {/* Floating Zoom Controls */}
+                        <div className="absolute bottom-6 right-6 flex items-center bg-[#252526] border border-[#3c3c3c] rounded-lg shadow-xl z-50 text-gray-400">
+                            <button onClick={() => handleZoom(-0.2)} className="p-2 hover:text-white hover:bg-[#3d3d3d] rounded-l-lg transition-colors border-r border-[#3c3c3c]" title="Zoom Out">
+                                <MinusIcon />
+                            </button>
+                            <div className="px-3 text-xs font-mono w-[55px] text-center select-none">{Math.round(transform.scale * 100)}%</div>
+                            <button onClick={() => handleZoom(0.2)} className="p-2 hover:text-white hover:bg-[#3d3d3d] transition-colors border-l border-[#3c3c3c]" title="Zoom In">
+                                <PlusIcon />
+                            </button>
+                            <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="p-2 hover:text-white hover:bg-[#3d3d3d] rounded-r-lg border-l border-[#3c3c3c] transition-colors" title="Reset Zoom">
+                                <MaximizeIcon />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
         }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>

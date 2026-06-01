@@ -3,6 +3,7 @@ package ase
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -133,11 +134,11 @@ func (dn *DAGNode) SetOnNodeComplete(fn func(node *AutonomousSemanticEngineNode,
 	dn.onNodeComplete = fn
 }
 
-// AddChild registers a child DAG node for a specific routing key (e.g., "ASSET", "EXPENSE").
+// AddChild registers a child DAG node for a specific routing key (e.g., "asset", "expense").
 func (dn *DAGNode) AddChild(key string, child *DAGNode) {
 	dn.mu.Lock()
 	defer dn.mu.Unlock()
-	dn.children[key] = child
+	dn.children[strings.ToLower(key)] = child
 }
 
 // SetDefaultChild sets the fallback child node when no specific key matches.
@@ -348,8 +349,10 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 		Timestamp:    time.Now().UTC(),
 	})
 
+	searchKey := strings.ToLower(routeKey)
+
 	dn.mu.Lock()
-	child, exists := dn.children[routeKey]
+	child, exists := dn.children[searchKey]
 	if !exists {
 		child = dn.defaultChild
 	}
@@ -482,6 +485,12 @@ func (dn *DAGNode) StopAll() {
 	}
 	if dn.defaultChild != nil {
 		dn.defaultChild.StopAll()
+	}
+}
+
+func (d *DAG) StartAll() {
+	if d.EntryNode != nil {
+		d.EntryNode.StartAll()
 	}
 }
 

@@ -97,23 +97,24 @@ type AutonomousSemanticEngineNode struct {
 // NewASENode creates a new transaction micro-agent from a staging transaction.
 func NewASENode(tenantID, rawDescription, cashDirection, rawAmount string) *AutonomousSemanticEngineNode {
 	now := time.Now().UTC()
+	nodeID := uuid.New().String()
 	return &AutonomousSemanticEngineNode{
-		NodeID:          uuid.New().String(),
+		NodeID:          nodeID,
 		TenantID:        tenantID,
-		RawDescription:    rawDescription,
-		CashDirection:     cashDirection,
-		RawAmount:         rawAmount,
-		ContextUpdates:    make([]string, 0),
-		CurrentState:      StateUninitialized,
-		CurrentEntropy:    4.0, // Maximum entropy at birth (4 properties * 1.0)
+		RawDescription:  rawDescription,
+		CashDirection:   cashDirection,
+		RawAmount:       rawAmount,
+		ContextUpdates:  make([]string, 0),
+		CurrentState:    StateUninitialized,
+		CurrentEntropy:  4.0, // Maximum entropy at birth (4 properties * 1.0)
 		UnifiedConfidence: 0.0,
 		PropertyEntropies: make(map[string]float64),
-		Candidates:        make(map[string][]ProbabilityCandidate),
-		ExecutionTrace:    make([]NodeExecutionStep, 0),
+		Candidates:      make(map[string][]ProbabilityCandidate),
+		ExecutionTrace:  make([]NodeExecutionStep, 0),
 		LifetimeProbes:  0,
 		CreatedAt:       now,
 		UpdatedAt:       now,
-		logger:          slog.Default().With("component", "ase.node", "node_id", ""),
+		logger:          slog.Default().With("component", "ase.node", "node_id", nodeID),
 		stateChan:       make(chan struct{}, 1),
 	}
 }

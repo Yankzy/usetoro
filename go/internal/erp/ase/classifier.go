@@ -334,16 +334,38 @@ func (cs *ClassifierService) dispatchViaNATS(ctx context.Context, systemPrompt s
 				continue
 			}
 
-			if replyEnv.Performative != core.PROPOSE {
+			switch replyEnv.Performative {
+			case core.PROPOSE:
+				cs.logger.Info("ase_bridge: agent proposed task execution", "cid", replyEnv.ConversationID)
 				continue
-			}
+			case core.FAILURE:
+				return nil, fmt.Errorf("agent returned failure via NATS")
+			case core.INFORM:
+				var proof core.Proof
+				if err := json.Unmarshal(replyEnv.Body, &proof); err != nil {
+					return nil, fmt.Errorf("failed to unmarshal agent INFORM proof: %w", err)
+				}
 
-			var resp genericNatsResponse
-			if err := json.Unmarshal(replyEnv.Body, &resp); err != nil {
-				cs.logger.Warn("skipping unmarshalable nats reply payload", "error", err)
+				// The JSON patch might be wrapped in an array by extractJSONPatches
+				var patches []genericNatsResponse
+				if err := json.Unmarshal(proof.Data, &patches); err != nil {
+					// Fallback to single object
+					var single genericNatsResponse
+					if err2 := json.Unmarshal(proof.Data, &single); err2 != nil {
+						cs.logger.Warn("skipping unmarshalable nats INFORM proof payload", "error", err2)
+						return nil, fmt.Errorf("failed to unmarshal JSON patches from proof: %w", err2)
+					}
+					return &single, nil
+				}
+
+				if len(patches) > 0 {
+					return &patches[0], nil
+				}
+				return nil, fmt.Errorf("agent returned empty patches in INFORM")
+			default:
+				// Ignore other performatives
 				continue
 			}
-			return &resp, nil
 		}
 	}
 }

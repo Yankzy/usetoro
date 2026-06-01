@@ -41,9 +41,9 @@ func (s *StateStore) PersistNode(ctx context.Context, node *AutonomousSemanticEn
 		    confidence_score = $4,
 		    macro_class = CASE WHEN $5::text != '' THEN $5::text ELSE macro_class END,
 		    account_type = CASE WHEN $6::text != '' THEN $6::text ELSE account_type END,
-		    predicted_vendor_name = CASE WHEN $8::text != '' AND $9::text = 'OUTFLOW' THEN $8::text ELSE predicted_vendor_name END,
-		    predicted_customer_name = CASE WHEN $8::text != '' AND $9::text = 'INFLOW' THEN $8::text ELSE predicted_customer_name END,
-		    ase_execution_trace = $10::jsonb,
+		    predicted_vendor_name = CASE WHEN $7::text != '' AND $8::text = 'OUTFLOW' THEN $7::text ELSE predicted_vendor_name END,
+		    predicted_customer_name = CASE WHEN $7::text != '' AND $8::text = 'INFLOW' THEN $7::text ELSE predicted_customer_name END,
+		    ase_execution_trace = $9::jsonb,
 		    updated_at = NOW()
 		WHERE id = $1`
 	var macroClass, accountType, entityName string
@@ -68,7 +68,6 @@ func (s *StateStore) PersistNode(ctx context.Context, node *AutonomousSemanticEn
 		node.GetConfidence(), // Unified confidence C replaces single-property confidence
 		macroClass,
 		accountType,
-		node.CurrentEntropy,
 		entityName,
 		node.CashDirection,
 		traceBytes,

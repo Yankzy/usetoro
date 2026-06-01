@@ -26,6 +26,7 @@ WORKDIR /app
 COPY --from=builder /protocol /usr/local/bin/protocol
 COPY go/internal/config/defaults.yml /app/internal/config/defaults.yml
 COPY go/internal/erp/ase/ase.yml /app/internal/erp/ase/ase.yml
+COPY go/internal/erp/ase/debug /app/go/internal/erp/ase/debug
 COPY --from=builder /tap/workflows /app/tap/workflows
 
 USER nobody

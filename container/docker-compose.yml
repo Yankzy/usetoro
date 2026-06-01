@@ -79,6 +79,7 @@ services:
     restart: always
     ports:
       - "9090:9090"
+      - "8084:8084"
     environment:
       DATABASE_URL: ${DATABASE_URL}
       NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222

@@ -3,6 +3,7 @@ package workers
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -20,7 +21,11 @@ func (w *AseBridgeWorker) startDebugServer() {
 
 	// Serve the visualizer HTML page
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "internal/erp/ase/debug/index.html")
+		if _, err := os.Stat("go/internal/erp/ase/debug/index.html"); err == nil {
+			http.ServeFile(w, r, "go/internal/erp/ase/debug/index.html")
+		} else {
+			http.ServeFile(w, r, "internal/erp/ase/debug/index.html")
+		}
 	})
 
 	// Handle WebSocket connections
@@ -62,8 +67,8 @@ func (w *AseBridgeWorker) startDebugServer() {
 
 	// Start the server in the background
 	go func() {
-		w.logger.Info("🛠️  ASE Debug Server running on http://localhost:8081")
-		if err := http.ListenAndServe(":8081", mux); err != nil {
+		w.logger.Info("🛠️  ASE Debug Server running on http://localhost:8084")
+		if err := http.ListenAndServe(":8084", mux); err != nil {
 			w.logger.Error("debug_server: failed to start", "error", err)
 		}
 	}()

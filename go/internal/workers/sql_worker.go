@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -201,7 +202,7 @@ func (w *SQLWorker) sendResult(msg *nats.Msg, result SQLWorkerResult, convID str
 	}
 
 	targetSubject := returnSubject
-	if targetSubject == "" {
+	if targetSubject == "" && msg.Reply != "" && !strings.HasPrefix(msg.Reply, "$JS.ACK.") {
 		targetSubject = msg.Reply
 	}
 

@@ -509,7 +509,9 @@ func (e *EnrichmentWorker) broadcastEnrichmentProof(ctx context.Context, msg *na
 
 	dst := "did:toro:hive"
 	targetTopic := msg.Reply
-	if targetTopic == "" {
+	isCoreReply := targetTopic != "" && !strings.HasPrefix(targetTopic, "$JS.ACK.")
+
+	if !isCoreReply {
 		targetTopic = enrichmentLegacyProofSubject
 		if cid != "" {
 			dst = workflows.OrchestratorDID
@@ -528,7 +530,12 @@ func (e *EnrichmentWorker) broadcastEnrichmentProof(ctx context.Context, msg *na
 		return err
 	}
 	e.logger.Info("🚀 [DEBUG] enrichment-worker sending message to JetStream", "topic", targetTopic, "data_length", len(finalBytes))
-	_, err = js.Publish(targetTopic, finalBytes)
+	
+	if isCoreReply {
+		err = e.nc.Publish(targetTopic, finalBytes)
+	} else {
+		_, err = js.Publish(targetTopic, finalBytes)
+	}
 	return err
 }
 

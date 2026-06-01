@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,7 +55,7 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 	w.startDebugServer()
 
 	// Initialize the Classifier Service (to generate ThinkFuncs)
-	classifierService := ase.NewClassifierService(nil, w.nc, "agents.accounting.batch_categorization.inbox", w.logger)
+	classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
 	classifierService.SetDB(w.db) // Pass db for dynamic provider
 
 	// Wire up dynamic ThinkFuncs for every node in the DAG
@@ -70,6 +72,9 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 			})
 		}
 	}
+
+	// Start all the DAG background flush loops
+	w.dag.StartAll()
 
 	return nil
 }
@@ -126,15 +131,17 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return nil
 	}
 
-	// 2. Extract TaskDefinition
-	var taskDef core.TaskDefinition
-	if err := core.UnmarshalTaskPayload(env.Body, &taskDef); err != nil {
-		w.logger.Error("ase_orchestrator: failed to unmarshal task definition", "error", err)
+	// 2. Extract TaskPayload
+	var payload struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := core.UnmarshalTaskPayload(env.Body, &payload); err != nil || payload.SessionID == "" {
+		w.logger.Error("ase_orchestrator: failed to unmarshal custom payload or missing session_id", "error", err)
 		return nil
 	}
 
 	// Determine session_id (used to scope the staging transactions)
-	sessionID := taskDef.ID
+	sessionID := payload.SessionID
 	var pgSessionID pgtype.UUID
 	if err := pgSessionID.Scan(sessionID); err != nil {
 		w.logger.Error("ase_orchestrator: invalid session_id UUID", "session", sessionID)
@@ -143,14 +150,16 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 	w.logger.Info("ase_orchestrator: querying pending transactions", "session_id", sessionID)
 
-	realmIDPg, err := w.db.GetRealmIDFromSession(ctx, pgSessionID)
+	// Fetch session to determine OutflowIs logic
+	session, err := w.db.GetCleanupSession(ctx, pgSessionID)
 	if err != nil {
-		w.logger.Error("ase_orchestrator: failed to fetch session realm_id", "error", err)
+		w.logger.Error("ase_orchestrator: failed to fetch session", "error", err)
 		return err
 	}
+	outflowIs := session.OutflowIs
 	realmID := ""
-	if realmIDPg.Valid {
-		realmID = realmIDPg.String
+	if session.RealmID.Valid {
+		realmID = session.RealmID.String
 	}
 
 	// 3. Query unclassified Fignode transactions
@@ -173,8 +182,26 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 
 		direction := "OUTFLOW"
-		if txn.CashDirection.Valid && txn.CashDirection.String == "INFLOW" {
-			direction = "INFLOW"
+		if txn.CashDirection.Valid && txn.CashDirection.String != "" {
+			direction = txn.CashDirection.String
+		} else {
+			// Compute direction manually if missing
+			amtStr := strings.ReplaceAll(txn.RawAmount, ",", "")
+			amtStr = strings.ReplaceAll(amtStr, "$", "")
+			amtStr = strings.TrimSpace(amtStr)
+			if amt, err := strconv.ParseFloat(amtStr, 64); err == nil {
+				isOutflow := false
+				if outflowIs == "" || outflowIs == "NEGATIVE" {
+					isOutflow = amt < 0
+				} else {
+					isOutflow = amt > 0
+				}
+				if isOutflow {
+					direction = "OUTFLOW"
+				} else {
+					direction = "INFLOW"
+				}
+			}
 		}
 
 		agent := ase.NewASENode(
@@ -219,12 +246,24 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			replyBytes, _ := json.Marshal(replyEnv)
 
 			targetSubject := msg.Reply
-			if targetSubject == "" {
+			isCoreReply := targetSubject != "" && !strings.HasPrefix(targetSubject, "$JS.ACK.")
+			if !isCoreReply {
 				targetSubject = workflows.OrchestratorInbox
 			}
 
-			if err := w.nc.Publish(targetSubject, replyBytes); err != nil {
-				w.logger.Error("ase_bridge: failed to notify target", "error", err, "target", targetSubject)
+			var pubErr error
+			if isCoreReply {
+				pubErr = w.nc.Publish(targetSubject, replyBytes)
+			} else {
+				if js, err := w.nc.JetStream(); err == nil {
+					_, pubErr = js.Publish(targetSubject, replyBytes)
+				} else {
+					pubErr = err
+				}
+			}
+
+			if pubErr != nil {
+				w.logger.Error("ase_bridge: failed to notify target", "error", pubErr, "target", targetSubject)
 			} else {
 				w.logger.Info("ase_bridge: sent explicit INFORM back to target", "cid", cid)
 			}

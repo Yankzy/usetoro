@@ -338,13 +338,20 @@ func (e *CSVMappingWorker) handleProof(ctx context.Context, msg *nats.Msg) error
 			"sig": "worker-sig",
 		}
 		replyBytes, _ := json.Marshal(replyEnv)
-
 		targetSubject := msg.Reply
-		if targetSubject == "" {
+		isCoreReply := targetSubject != "" && !strings.HasPrefix(targetSubject, "$JS.ACK.")
+		if !isCoreReply {
 			targetSubject = workflows.OrchestratorInbox
 		}
 
-		if _, pubErr := js.Publish(targetSubject, replyBytes); pubErr != nil {
+		var pubErr error
+		if isCoreReply {
+			pubErr = e.nc.Publish(targetSubject, replyBytes)
+		} else {
+			_, pubErr = js.Publish(targetSubject, replyBytes)
+		}
+
+		if pubErr != nil {
 			e.logger.Error("csv mapping worker: failed to notify target", "error", pubErr, "target", targetSubject)
 		} else {
 			e.logger.Info("csv mapping worker: sent explicit INFORM back to target", "cid", cid, "target", targetSubject)

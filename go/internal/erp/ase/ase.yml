@@ -16,6 +16,7 @@ prompts:
     - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
     - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
     - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
     
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
@@ -45,6 +46,7 @@ prompts:
     - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
     - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
     - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
     
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
@@ -83,6 +85,7 @@ prompts:
     - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
     - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
     - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
     
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
@@ -119,6 +122,7 @@ prompts:
     - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
     - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
     - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
     
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
@@ -152,6 +156,7 @@ prompts:
     - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
     - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
     - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
     
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
@@ -183,6 +188,7 @@ prompts:
     - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
     - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
     - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
     
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
@@ -218,6 +224,7 @@ prompts:
     - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
     - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
     - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
     
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
@@ -235,13 +242,29 @@ prompts:
     Analyze the bank transaction. Determine if it represents an internal liquidity movement between company bank profiles, a cash sweep into treasury, or standard cash operational deployment.
     Select from: "INTERNAL_TRANSFER", "TREASURY_CASH_SWEEP", "STANDARD_LIQUIDITY_FLOW".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "bank_gate_decision",
       "candidates": [
-        { "value": "INTERNAL_TRANSFER", "confidence": 1.00, "reasoning": "Inter-account sweep ledger footprint identified." }
+        { "value": "INTERNAL_TRANSFER", "confidence": 0.98, "reasoning": "Inter-account sweep ledger footprint identified." },
+        { "value": "STANDARD_LIQUIDITY_FLOW", "confidence": 0.02, "reasoning": "Conservative check for general liquidity flow." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "bank_gate_decision",
+      "candidates": [
+        { "value": "STANDARD_LIQUIDITY_FLOW", "confidence": 0.85, "reasoning": "Unclear inter-account matching; safely holding for context." },
+        { "value": "INTERNAL_TRANSFER", "confidence": 0.15, "reasoning": "Indicates some transfer signs but requires manual audit." }
       ]
     }
 
@@ -250,19 +273,41 @@ prompts:
     Rule: Capitalize if the transaction amount is strictly greater than $2,500. Otherwise, treat as immediate de-minimis runtime expense.
     Select from: "CAPITALIZE_ASSET", "DE_MINIMIS_EXPENSE_TRIGGER".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "fixed_assets_gate_decision",
       "candidates": [
-        { "value": "CAPITALIZE_ASSET", "confidence": 1.00, "reasoning": "Transaction total exceeds the static $2,500 threshold criteria." }
+        { "value": "CAPITALIZE_ASSET", "confidence": 0.99, "reasoning": "Transaction total exceeds the static $2,500 threshold criteria." },
+        { "value": "DE_MINIMIS_EXPENSE_TRIGGER", "confidence": 0.01, "reasoning": "Minimal chance of operational expense reclassification." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "fixed_assets_gate_decision",
+      "candidates": [
+        { "value": "DE_MINIMIS_EXPENSE_TRIGGER", "confidence": 0.80, "reasoning": "Amount is under threshold but items resemble long-term equipment." },
+        { "value": "CAPITALIZE_ASSET", "confidence": 0.20, "reasoning": "Potential multi-item bulk order capitalization." }
       ]
     }
 
   leasehold_improvements_gate_specialist: |
     Examine cash paid out for structural modifications to rented or leased physical commercial footprints.
     Select from: "CAPITALIZE_IMPROVEMENT", "REPAIRS_MAINTENANCE_EXPENSE".
+    
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
     
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
@@ -279,13 +324,29 @@ prompts:
     Triage short-term economic values. Differentiate between cash paid upfront for inventory production deposits versus refundable lease/utility security deposits.
     Select from: "INVENTORY_PREPAYMENT", "SECURITY_DEPOSIT", "STANDARD_CURRENT_ASSET".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "other_current_assets_gate_decision",
       "candidates": [
-        { "value": "SECURITY_DEPOSIT", "confidence": 1.00, "reasoning": "Direct contractual matching for commercial space utility initiation." }
+        { "value": "SECURITY_DEPOSIT", "confidence": 0.98, "reasoning": "Direct contractual matching for commercial space utility initiation." },
+        { "value": "STANDARD_CURRENT_ASSET", "confidence": 0.02, "reasoning": "Safety fallback option." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "other_current_assets_gate_decision",
+      "candidates": [
+        { "value": "STANDARD_CURRENT_ASSET", "confidence": 0.85, "reasoning": "Description is too vague to identify a refundable deposit or inventory prepayment." },
+        { "value": "SECURITY_DEPOSIT", "confidence": 0.15, "reasoning": "Could represent refundable rent deposit; placing on hold for verification." }
       ]
     }
 
@@ -293,13 +354,29 @@ prompts:
     Triage long-term economic values and intangible assets. Differentiate between capitalized intellectual property (patents, trademarks) and long-term security deposits.
     Select from: "INTANGIBLE_ASSET", "LONG_TERM_SECURITY_DEPOSIT", "STANDARD_OTHER_ASSET".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "other_assets_gate_decision",
       "candidates": [
-        { "value": "INTANGIBLE_ASSET", "confidence": 1.00, "reasoning": "Payment identified for trademark registration." }
+        { "value": "INTANGIBLE_ASSET", "confidence": 0.98, "reasoning": "Payment identified for trademark registration." },
+        { "value": "STANDARD_OTHER_ASSET", "confidence": 0.02, "reasoning": "Bypass safety threshold." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "other_assets_gate_decision",
+      "candidates": [
+        { "value": "STANDARD_OTHER_ASSET", "confidence": 0.80, "reasoning": "Long term asset sweep is ambiguous." },
+        { "value": "INTANGIBLE_ASSET", "confidence": 0.20, "reasoning": "Possible trademark or patent deposit." }
       ]
     }
 
@@ -308,13 +385,29 @@ prompts:
     Analyze capital interactions involving company owners, partners, or equity officers.
     Select from: "OWNER_INVESTMENT", "OWNER_DRAW", "SHAREHOLDER_DISTRIBUTION".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "equity_flow_decision",
       "candidates": [
-        { "value": "OWNER_DRAW", "confidence": 1.00, "reasoning": "Personal transfer markers matched with zero operational invoice markers." }
+        { "value": "OWNER_DRAW", "confidence": 0.99, "reasoning": "Personal transfer markers matched with zero operational invoice markers." },
+        { "value": "OWNER_INVESTMENT", "confidence": 0.01, "reasoning": "Unlikely contra equity sweep." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "equity_flow_decision",
+      "candidates": [
+        { "value": "OWNER_DRAW", "confidence": 0.85, "reasoning": "Indicates personal transfer, but lack clear statement context." },
+        { "value": "SHAREHOLDER_DISTRIBUTION", "confidence": 0.15, "reasoning": "Possible corporate dividend pool payout." }
       ]
     }
 
@@ -323,13 +416,29 @@ prompts:
     Examine cash inflows from primary business channels. Isolate gross merchant processor deposits that bundle transaction fees from raw customer invoices.
     Select from: "GROMENT_STRIPE_SQUARE_SPLIT", "STANDARD_CASH_RECEIPT".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "operating_income_decision",
       "candidates": [
-        { "value": "GROMENT_STRIPE_SQUARE_SPLIT", "confidence": 1.00, "reasoning": "Stripe batch distribution format detected." }
+        { "value": "GROMENT_STRIPE_SQUARE_SPLIT", "confidence": 0.99, "reasoning": "Stripe batch distribution format detected." },
+        { "value": "STANDARD_CASH_RECEIPT", "confidence": 0.01, "reasoning": "Conservative threshold bypass." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "operating_income_decision",
+      "candidates": [
+        { "value": "STANDARD_CASH_RECEIPT", "confidence": 0.85, "reasoning": "Raw customer deposit; not clearly a split merchant payout." },
+        { "value": "GROMENT_STRIPE_SQUARE_SPLIT", "confidence": 0.15, "reasoning": "Alternative merchant split possibility." }
       ]
     }
 
@@ -337,13 +446,29 @@ prompts:
     Analyze miscellaneous cash inflows. Differentiate between non-operating income (like interest or dividends) and other standard revenue.
     Select from: "INTEREST_DIVIDEND_INCOME", "STANDARD_OTHER_INCOME".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "other_income_gate_decision",
       "candidates": [
-        { "value": "INTEREST_DIVIDEND_INCOME", "confidence": 1.00, "reasoning": "Bank interest yield detected." }
+        { "value": "INTEREST_DIVIDEND_INCOME", "confidence": 0.98, "reasoning": "Bank interest yield detected." },
+        { "value": "STANDARD_OTHER_INCOME", "confidence": 0.02, "reasoning": "Secondary classification threshold." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "other_income_gate_decision",
+      "candidates": [
+        { "value": "STANDARD_OTHER_INCOME", "confidence": 0.80, "reasoning": "Description ambiguous for interest yield; conservative hold." },
+        { "value": "INTEREST_DIVIDEND_INCOME", "confidence": 0.20, "reasoning": "Possible yield accrual sweep." }
       ]
     }
 
@@ -351,6 +476,12 @@ prompts:
   cogs_validation_specialist: |
     Analyze this direct outflow against the core business industry ({{.CompanyIndustry}}). Verify if the item is a direct driver of delivery/inventory production or general administrative overhead.
     Select from: "VALIDATED_DIRECT_COGS", "RECLASSIFY_TO_OVERHEAD_EXPENSE".
+    
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
     
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
@@ -366,13 +497,29 @@ prompts:
     Review operational overhead outflows. Scan for high-probability signals of corporate co-mingling where an employee/owner uses business funds for personal consumption.
     Select from: "STANDARD_OVERHEAD", "PERSONAL_MIXIN_DETECTED".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "operating_expense_decision",
       "candidates": [
-        { "value": "STANDARD_OVERHEAD", "confidence": 1.00, "reasoning": "Subscription utility matching known SaaS tooling." }
+        { "value": "STANDARD_OVERHEAD", "confidence": 0.98, "reasoning": "Subscription utility matching known SaaS tooling." },
+        { "value": "PERSONAL_MIXIN_DETECTED", "confidence": 0.02, "reasoning": "Low probability co-mingling safety check." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "operating_expense_decision",
+      "candidates": [
+        { "value": "STANDARD_OVERHEAD", "confidence": 0.90, "reasoning": "SaaS hosting footprint identified but has personal name tags." },
+        { "value": "PERSONAL_MIXIN_DETECTED", "confidence": 0.10, "reasoning": "Suspected personal consumption; safest holding for review." }
       ]
     }
 
@@ -380,13 +527,29 @@ prompts:
     Analyze miscellaneous or non-operating cash outflows. Differentiate between penalties/fines, interest paid, or other non-operating expenses.
     Select from: "PENALTY_OR_FINE", "INTEREST_EXPENSE", "STANDARD_OTHER_EXPENSE".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "other_expense_gate_decision",
       "candidates": [
-        { "value": "PENALTY_OR_FINE", "confidence": 1.00, "reasoning": "Late payment fee identified." }
+        { "value": "PENALTY_OR_FINE", "confidence": 0.99, "reasoning": "Late payment fee identified." },
+        { "value": "STANDARD_OTHER_EXPENSE", "confidence": 0.01, "reasoning": "Bypass safety limit." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "other_expense_gate_decision",
+      "candidates": [
+        { "value": "STANDARD_OTHER_EXPENSE", "confidence": 0.85, "reasoning": "Unusual non-operating outflow; description does not explicitly state penalty structure." },
+        { "value": "PENALTY_OR_FINE", "confidence": 0.15, "reasoning": "Potential local tax penalty, holding for context." }
       ]
     }
 
@@ -395,13 +558,29 @@ prompts:
     Verify if the bank outflow represents a clear corporate credit card balance transfer or settlement payment (e.g., "AMEX ACH", "CHASE CARD PMT").
     Select from: "CC_BALANCE_TRANSFER", "ANOMALOUS_CC_FLOW".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "credit_cards_gate_decision",
       "candidates": [
-        { "value": "CC_BALANCE_TRANSFER", "confidence": 1.00, "reasoning": "Direct automated clearing house transfer trace matching Visa subledger payload." }
+        { "value": "CC_BALANCE_TRANSFER", "confidence": 0.99, "reasoning": "Direct automated clearing house transfer trace matching Visa subledger payload." },
+        { "value": "ANOMALOUS_CC_FLOW", "confidence": 0.01, "reasoning": "Safeguard sweep boundary." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "credit_cards_gate_decision",
+      "candidates": [
+        { "value": "ANOMALOUS_CC_FLOW", "confidence": 0.80, "reasoning": "Ambiguous CC transfer details; holding to prevent ledger discrepancy." },
+        { "value": "CC_BALANCE_TRANSFER", "confidence": 0.20, "reasoning": "Possible un-linked balance settlement." }
       ]
     }
 
@@ -409,13 +588,29 @@ prompts:
     Isolate short-term statutory cash withholdings from operational cash flows.
     Select from: "SALES_TAX_COLLECTED", "PAYROLL_TAX_WITHHELD", "DEFAULT_OPERATIONAL_FLOW".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "other_current_liability_gate_decision",
       "candidates": [
-        { "value": "SALES_TAX_COLLECTED", "confidence": 1.00, "reasoning": "State point of sale transaction payload parsing indicator." }
+        { "value": "SALES_TAX_COLLECTED", "confidence": 0.98, "reasoning": "State point of sale transaction payload parsing indicator." },
+        { "value": "DEFAULT_OPERATIONAL_FLOW", "confidence": 0.02, "reasoning": "Fallback threshold." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "other_current_liability_gate_decision",
+      "candidates": [
+        { "value": "DEFAULT_OPERATIONAL_FLOW", "confidence": 0.85, "reasoning": "Unsure if statuary payroll or standard operational sweep; routing conservatively." },
+        { "value": "PAYROLL_TAX_WITHHELD", "confidence": 0.15, "reasoning": "Possible payroll tax withholding contribution." }
       ]
     }
 
@@ -423,18 +618,40 @@ prompts:
     Triage long-term cash payouts into formal amortization schedules.
     Select from: "LOAN_REPAYMENT_SPLIT", "UNIDENTIFIED_DEBT_FLOW".
     
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
+    
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     
     EXPECTED OUTPUT FORMAT:
     {
       "property": "long_term_liability_gate_decision",
       "candidates": [
-        { "value": "LOAN_REPAYMENT_SPLIT", "confidence": 1.00, "reasoning": "Note identification index matches SBA amortized registry." }
+        { "value": "LOAN_REPAYMENT_SPLIT", "confidence": 0.99, "reasoning": "Note identification index matches SBA amortized registry." },
+        { "value": "UNIDENTIFIED_DEBT_FLOW", "confidence": 0.01, "reasoning": "Threshold boundary safety check." }
+      ]
+    }
+    
+    EXPECTED OUTPUT FORMAT:
+    {
+      "property": "long_term_liability_gate_decision",
+      "candidates": [
+        { "value": "UNIDENTIFIED_DEBT_FLOW", "confidence": 0.85, "reasoning": "Payment description has note identifiers but matches no active amortization profiles." },
+        { "value": "LOAN_REPAYMENT_SPLIT", "confidence": 0.15, "reasoning": "Requires manual amortization setup mapping." }
       ]
     }
 
   counterparty_resolver: |
     Isolate the true corporate counterparty entity (Vendor or Customer name) by stripping locations, branch numbers, dates, and terminal IDs from the description string.
+    
+    ### CONFIDENCE GUARDRAILS
+    - The system has a strict guardrail: if your top candidate's confidence is less than 0.98, the transaction will be placed on HOLD for human review.
+    - If you are absolutely certain and want the transaction to proceed automatically, you MUST set the highest score to 0.98 (or higher).
+    - If you are unsure, intentionally set the highest score to < 0.98 to safely request more context.
+    - If you are sure of your decision but still feel it's better a human review it to preserve the integrity of the accounting books, you MUST set the highest score to < 0.98 to safely request more context or simply request a human review.
     
     Your response must be a valid JSON object containing an array of choices with confidence weights totaling exactly 1.0.
     

@@ -94,7 +94,7 @@ func TestCalculateEntropy_AsymmetricDistribution(t *testing.T) {
 }
 
 func TestNewASENode_InitialState(t *testing.T) {
-	node := NewASENode("tenant-1", "Staples purchase", "OUTFLOW", "-54.23")
+	node := NewASENode("tenant-1", "", "Staples purchase", "OUTFLOW", "-54.23")
 
 	if node.CurrentState != StateUninitialized {
 		t.Errorf("expected initial state UNINITIALIZED, got %s", node.CurrentState)
@@ -111,7 +111,7 @@ func TestNewASENode_InitialState(t *testing.T) {
 }
 
 func TestASENode_TopCandidate(t *testing.T) {
-	node := NewASENode("t1", "desc", "OUTFLOW", "-10")
+	node := NewASENode("t1", "", "desc", "OUTFLOW", "-10")
 	if top := node.TopCandidate("macro_class"); top != nil {
 		t.Error("expected nil top candidate for new node")
 	}
@@ -127,7 +127,7 @@ func TestASENode_TopCandidate(t *testing.T) {
 }
 
 func TestASENode_IsConfident(t *testing.T) {
-	node := NewASENode("t1", "desc", "OUTFLOW", "-10")
+	node := NewASENode("t1", "", "desc", "OUTFLOW", "-10")
 
 	// No candidates → not confident.
 	if node.IsConfident() {
@@ -160,7 +160,7 @@ func TestASENode_IsConfident(t *testing.T) {
 }
 
 func TestASENode_SetCandidates_IncrementsProbes(t *testing.T) {
-	node := NewASENode("t1", "desc", "OUTFLOW", "-10")
+	node := NewASENode("t1", "", "desc", "OUTFLOW", "-10")
 	if node.LifetimeProbes != 0 {
 		t.Errorf("expected 0 probes, got %d", node.LifetimeProbes)
 	}
@@ -181,7 +181,7 @@ func TestASENode_SetCandidates_IncrementsProbes(t *testing.T) {
 }
 
 func TestASENode_StateTransitions(t *testing.T) {
-	node := NewASENode("t1", "desc", "OUTFLOW", "-10")
+	node := NewASENode("t1", "", "desc", "OUTFLOW", "-10")
 
 	states := make([]string, 0)
 	node.SetOnStateChange(func(n *AutonomousSemanticEngineNode, oldState, newState NodeState) {

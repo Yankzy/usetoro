@@ -1,20 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ASE Memory Visualizer (n8n Style)</title>
-    
+
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
+
     <!-- Babel for in-browser JSX transpilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
+
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
+
 <body class="bg-[#1e1e1e] text-gray-300 font-sans overflow-hidden">
     <div id="root"></div>
 
@@ -24,15 +26,16 @@
         // --- Icons (Inline SVGs to avoid CDN module issues) ---
         const ZapIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>;
         const ServerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>;
-        const PlugIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>;
+        const PlugIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" /></svg>;
         const ActivityIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>;
         const PlusIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
         const MinusIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
         const MaximizeIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>;
+        const SendIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>;
 
         // --- Constants & Config ---
-        const NODE_WIDTH = 280;
-        const NODE_HEIGHT = 110;
+        const NODE_WIDTH = 290;
+        const NODE_HEIGHT = 160;
 
         const KIND_COLORS = {
             cash_direction_router: 'bg-indigo-500',
@@ -48,14 +51,84 @@
             default: 'bg-gray-500'
         };
 
+        // --- Rich Mock Transaction and Distribution Data (Keyed by node ID/type) ---
+        const MOCK_TRANSACTIONS = {
+            "direction_router": {
+                description: "DIRECT DEBIT FROM STRIPE INFLOW POOL SWEEP",
+                amount: "$15,240.50",
+                direction: "INFLOW",
+                candidates: [
+                    { value: "INFLOW", confidence: 1.0, reasoning: "Positive ledger sweep indicator matches corporate merchant payout API registry." }
+                ]
+            },
+            "macro_classifier_inflow": {
+                description: "DIRECT DEBIT FROM STRIPE INFLOW POOL SWEEP",
+                amount: "$15,240.50",
+                direction: "INFLOW",
+                candidates: [
+                    { value: "REVENUE", confidence: 0.99, reasoning: "Positive settlement matches customer fee allocation criteria." },
+                    { value: "ASSET", confidence: 0.01, reasoning: "High security pool deposit bypass limit ambiguity." }
+                ]
+            },
+            "expense": {
+                description: "AWS Billing - Batch Data US-East-1 (Invoice #981240)",
+                amount: "$2,481.50",
+                direction: "OUTFLOW",
+                candidates: [
+                    { value: "STANDARD_OVERHEAD", confidence: 0.99, reasoning: "Subscription utility matches known core operational SaaS hosting patterns." },
+                    { value: "PERSONAL_MIXIN_DETECTED", confidence: 0.01, reasoning: "Extremely low probability of personal cloud consumption mix-in." }
+                ]
+            },
+            "cogs_validation_specialist": {
+                description: "TSMC WAFER FABRICATION INC - PROTO BATCH D9",
+                amount: "$42,500.00",
+                direction: "OUTFLOW",
+                candidates: [
+                    { value: "VALIDATED_DIRECT_COGS", confidence: 0.98, reasoning: "Direct micro-controller wafer supply matches core physical device product line inventory pipeline." },
+                    { value: "RECLASSIFY_TO_OVERHEAD_EXPENSE", confidence: 0.02, reasoning: "Unlikely administrative overhead allocation." }
+                ]
+            },
+            "bank": {
+                description: "INTERNAL FUNDS TRANSFER CHK 910 -> SAV 881",
+                amount: "$5,000.00",
+                direction: "OUTFLOW",
+                candidates: [
+                    { value: "INTERNAL_TRANSFER", confidence: 1.0, reasoning: "Dual ledger footprint sweeps matched cleanly between bank institutions." }
+                ]
+            },
+            "fixed_assets": {
+                description: "APPLE RETAIL - MACBOOK PRO WORKSTATION",
+                amount: "$3,299.00",
+                direction: "OUTFLOW",
+                candidates: [
+                    { value: "CAPITALIZE_ASSET", confidence: 0.99, reasoning: "Single hardware item value exceed standard corporate de-minimis threshold of $2,500." },
+                    { value: "DE_MINIMIS_EXPENSE_TRIGGER", confidence: 0.01, reasoning: "Capitalization limits strictly enforced." }
+                ]
+            },
+            "default": {
+                description: "ACME CORP ONLINE UTILITIES & CLOUD ACCESS",
+                amount: "$350.00",
+                direction: "OUTFLOW",
+                candidates: [
+                    { value: "STANDARD_OVERHEAD", confidence: 0.95, reasoning: "Matches SaaS utility heuristics." },
+                    { value: "OTHER_EXPENSE", confidence: 0.05, reasoning: "Minor non-operating operational risk." }
+                ]
+            }
+        };
+
         function App() {
             // --- State ---
             const [nodes, setNodes] = useState([]);
             const [edges, setEdges] = useState([]);
-            
+
             const [wsUrl, setWsUrl] = useState('ws://localhost:8084/ws/dag');
             const [wsStatus, setWsStatus] = useState('disconnected'); // 'disconnected', 'connecting', 'connected'
             const wsRef = useRef(null);
+
+            // Inspector/Side Panel State
+            const [selectedNode, setSelectedNode] = useState(null);
+            const [chatMessages, setChatMessages] = useState({}); // Keyed by node ID
+            const [chatInput, setChatInput] = useState("");
 
             // Transform & Pan State
             const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
@@ -65,8 +138,9 @@
             // Dragging State
             const [draggingNode, setDraggingNode] = useState(null);
             const [dragStart, setDragStart] = useState({ mouseX: 0, mouseY: 0, nodeX: 0, nodeY: 0 });
-            
+
             const canvasRef = useRef(null);
+            const messagesEndRef = useRef(null);
 
             // --- Auto-Layout Algorithm for Tree Data ---
             const parseDagState = useCallback((rootNode) => {
@@ -76,12 +150,12 @@
 
                 const traverse = (node, level = 0) => {
                     if (!newNodesMap.has(node.id)) {
-                        const x = 50 + (level * 380);
-                        
-                        if (levelYTracker[level] === undefined) levelYTracker[level] = 100;
+                        const x = 50 + (level * 390);
+
+                        if (levelYTracker[level] === undefined) levelYTracker[level] = 80;
                         const y = levelYTracker[level];
-                        
-                        levelYTracker[level] += NODE_HEIGHT + 60; // Add vertical spacing
+
+                        levelYTracker[level] += NODE_HEIGHT + 70; // Add vertical spacing
 
                         newNodesMap.set(node.id, {
                             id: node.id,
@@ -119,9 +193,16 @@
                         return newNode;
                     });
                 });
-                
+
                 setEdges(Array.from(newEdgesMap.values()));
             }, []);
+
+            // --- Scroll Chat to Bottom ---
+            useEffect(() => {
+                if (messagesEndRef.current) {
+                    messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+                }
+            }, [chatMessages, selectedNode]);
 
             // --- WebSocket Logic ---
             const connectWs = () => {
@@ -130,17 +211,17 @@
 
                 try {
                     const ws = new WebSocket(wsUrl);
-                    
+
                     ws.onopen = () => setWsStatus('connected');
-                    
+
                     ws.onmessage = (event) => {
                         const stats = JSON.parse(event.data);
                         parseDagState(stats);
                     };
-                    
+
                     ws.onclose = () => setWsStatus('disconnected');
                     ws.onerror = () => setWsStatus('disconnected');
-                    
+
                     wsRef.current = ws;
                 } catch (e) {
                     alert('Invalid WebSocket URL');
@@ -159,42 +240,57 @@
             // --- Mock Data Loader (from ase.yml) ---
             const loadMockData = () => {
                 const flatNodes = {
-                    "direction_router": { kind: "cash_direction_router", batch_size: 50, children: { "INFLOW": "macro_classifier_inflow", "OUTFLOW": "macro_classifier_outflow" } },
-                    "macro_classifier_inflow": { kind: "macro_classifier", batch_size: 50, children: { "ASSET": "account_type_asset", "LIABILITY": "account_type_liability", "EQUITY": "account_type_equity", "REVENUE": "account_type_revenue", "EXPENSE": "account_type_expense" } },
-                    "macro_classifier_outflow": { kind: "macro_classifier", batch_size: 50, children: { "ASSET": "account_type_asset", "LIABILITY": "account_type_liability", "EQUITY": "account_type_equity", "REVENUE": "account_type_revenue", "EXPENSE": "account_type_expense" } },
-                    "account_type_asset": { kind: "account_type", batch_size: 0, children: { "Bank": "bank", "Fixed Assets": "fixed_assets", "Leasehold Improvements": "leasehold_improvements", "Other Current Assets": "other_current_assets", "Other Assets": "other_assets", "Accounts Receivable": "accounts_receivable" } },
-                    "account_type_liability": { kind: "account_type", batch_size: 0, children: { "Credit Cards": "credit_cards", "Long Term Liability": "long_term_liability", "Other Current Liability": "other_current_liability", "Accounts Payable": "accounts_payable" } },
-                    "account_type_equity": { kind: "account_type", batch_size: 0, children: { "Equity": "equity" } },
-                    "account_type_revenue": { kind: "account_type", batch_size: 0, children: { "Income": "income", "Other Income": "other_income" } },
-                    "account_type_expense": { kind: "account_type", batch_size: 0, children: { "Cost of Goods Sold": "cost_of_goods_sold", "Expense": "expense", "Other Expense": "other_expense" } },
-                    "bank": { kind: "holding_gate", batch_size: 50, children: { "INTERNAL_TRANSFER": "terminal_bank_transfer_collapse", "TREASURY_CASH_SWEEP": "terminal_bank_transfer_collapse", "STANDARD_LIQUIDITY_FLOW": "entity_outflow" } },
-                    "terminal_bank_transfer_collapse": { kind: "terminal", batch_size: 0, children: {} },
-                    "fixed_assets": { kind: "holding_gate", batch_size: 20, children: { "CAPITALIZE_ASSET": "entity_outflow", "DE_MINIMIS_EXPENSE_TRIGGER": "forced_expense_reclassification" } },
-                    "forced_expense_reclassification": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-                    "leasehold_improvements": { kind: "holding_gate", batch_size: 10, children: { "CAPITALIZE_IMPROVEMENT": "entity_outflow", "REPAIRS_MAINTENANCE_EXPENSE": "forced_expense_reclassification" } },
-                    "other_current_assets": { kind: "holding_gate", batch_size: 30, children: { "INVENTORY_PREPAYMENT": "inventory_deposit_quarantine", "SECURITY_DEPOSIT": "entity_outflow", "STANDARD_CURRENT_ASSET": "entity_outflow" } },
-                    "inventory_deposit_quarantine": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-                    "other_assets": { kind: "holding_gate", batch_size: 10, children: { "INTANGIBLE_ASSET": "entity_outflow", "LONG_TERM_SECURITY_DEPOSIT": "entity_outflow", "STANDARD_OTHER_ASSET": "entity_outflow" } },
-                    "accounts_receivable": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-                    "credit_cards": { kind: "holding_gate", batch_size: 50, children: { "CC_BALANCE_TRANSFER": "terminal_credit_card_transfer", "ANOMALOUS_CC_FLOW": "entity_outflow" } },
-                    "terminal_credit_card_transfer": { kind: "terminal", batch_size: 0, children: {} },
-                    "long_term_liability": { kind: "holding_gate", batch_size: 1, children: { "LOAN_REPAYMENT_SPLIT": "loan_amortization", "UNIDENTIFIED_DEBT_FLOW": "entity_outflow" } },
-                    "loan_amortization": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-                    "other_current_liability": { kind: "holding_gate", batch_size: 50, children: { "SALES_TAX_COLLECTED": "cash_sales_tax_splitter", "PAYROLL_TAX_WITHHELD": "cash_payroll_withholding_gate", "DEFAULT_OPERATIONAL_FLOW": "entity_outflow" } },
-                    "cash_sales_tax_splitter": { kind: "holding_gate", batch_size: 25, children: { "TAX_POSTED": "entity_outflow" } },
-                    "cash_payroll_withholding_gate": { kind: "holding_gate", batch_size: 10, children: { "RESUME": "entity_outflow" } },
-                    "accounts_payable": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-                    "equity": { kind: "holding_gate", batch_size: 20, children: { "OWNER_INVESTMENT": "entity_outflow", "OWNER_DRAW": "terminal_shareholder_draw_mitigation", "SHAREHOLDER_DISTRIBUTION": "terminal_shareholder_draw_mitigation" } },
-                    "terminal_shareholder_draw_mitigation": { kind: "terminal", batch_size: 0, children: {} },
-                    "income": { kind: "holding_gate", batch_size: 50, children: { "GROMENT_STRIPE_SQUARE_SPLIT": "merchant_payout_splitter", "STANDARD_CASH_RECEIPT": "entity_outflow" } },
-                    "merchant_payout_splitter": { kind: "holding_gate", batch_size: 25, children: { "MERCHANT_FEES_ISOLATED": "entity_outflow" } },
-                    "other_income": { kind: "holding_gate", batch_size: 50, children: { "INTEREST_DIVIDEND_INCOME": "entity_outflow", "STANDARD_OTHER_INCOME": "entity_outflow" } },
-                    "cost_of_goods_sold": { kind: "holding_gate", batch_size: 40, children: { "VALIDATED_DIRECT_COGS": "entity_outflow", "RECLASSIFY_TO_OVERHEAD_EXPENSE": "forced_overhead_reclassification" } },
-                    "forced_overhead_reclassification": { kind: "holding_gate", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-                    "expense": { kind: "holding_gate", batch_size: 50, children: { "STANDARD_OVERHEAD": "entity_outflow", "PERSONAL_MIXIN_DETECTED": "terminal_shareholder_draw_mitigation" } },
-                    "other_expense": { kind: "holding_gate", batch_size: 50, children: { "PENALTY_OR_FINE": "entity_outflow", "INTEREST_EXPENSE": "entity_outflow", "STANDARD_OTHER_EXPENSE": "entity_outflow" } },
-                    "entity_outflow": { kind: "entity", batch_size: 0, children: { "DEFAULT": "account_selection" } },
-                    "account_selection": { kind: "account_selection", batch_size: 15, children: {} }
+                    "direction_router": { kind: "cash_direction_router", property: "cash_direction", batch_size: 50, children: { "INFLOW": "macro_classifier_inflow", "OUTFLOW": "macro_classifier_outflow" } },
+
+                    "macro_classifier_inflow": { kind: "macro_classifier", prompt_key: "macro_classifier_inflow_specialist", property: "macro_class", batch_size: 50, children: { "ASSET": "account_type_asset", "LIABILITY": "account_type_liability", "EQUITY": "account_type_equity", "REVENUE": "account_type_revenue", "EXPENSE": "account_type_expense" } },
+                    "macro_classifier_outflow": { kind: "macro_classifier", prompt_key: "macro_classifier_outflow_specialist", property: "macro_class", batch_size: 50, children: { "ASSET": "account_type_asset", "LIABILITY": "account_type_liability", "EQUITY": "account_type_equity", "REVENUE": "account_type_revenue", "EXPENSE": "account_type_expense" } },
+
+                    "account_type_asset": { kind: "account_type", prompt_key: "account_type_asset_specialist", property: "account_type", batch_size: 0, children: { "Bank": "bank", "Fixed Assets": "fixed_assets", "Leasehold Improvements": "leasehold_improvements", "Other Current Assets": "other_current_assets", "Other Assets": "other_assets", "Accounts Receivable": "accounts_receivable" } },
+                    "account_type_liability": { kind: "account_type", prompt_key: "account_type_liability_specialist", property: "account_type", batch_size: 0, children: { "Credit Cards": "credit_cards", "Long Term Liability": "long_term_liability", "Other Current Liability": "other_current_liability", "Accounts Payable": "accounts_payable" } },
+                    "account_type_equity": { kind: "account_type", prompt_key: "account_type_equity_specialist", property: "account_type", batch_size: 0, children: { "Equity": "equity" } },
+                    "account_type_revenue": { kind: "account_type", prompt_key: "account_type_revenue_specialist", property: "account_type", batch_size: 0, children: { "Income": "income", "Other Income": "other_income" } },
+                    "account_type_expense": { kind: "account_type", prompt_key: "account_type_expense_specialist", property: "account_type", batch_size: 0, children: { "Cost of Goods Sold": "cost_of_goods_sold", "Expense": "expense", "Other Expense": "other_expense" } },
+
+                    "bank": { kind: "holding_gate", prompt_key: "bank_gate_specialist", property: "bank_gate_decision", batch_size: 50, children: { "INTERNAL_TRANSFER": "terminal_bank_transfer_collapse", "TREASURY_CASH_SWEEP": "terminal_bank_transfer_collapse", "STANDARD_LIQUIDITY_FLOW": "entity_outflow" } },
+                    "terminal_bank_transfer_collapse": { kind: "terminal", action_provider: "qbo_inter_bank_transfer_collapse", batch_size: 0, children: {} },
+
+                    "fixed_assets": { kind: "holding_gate", prompt_key: "fixed_assets_gate_specialist", property: "fixed_assets_gate_decision", batch_size: 20, children: { "CAPITALIZE_ASSET": "entity_outflow", "DE_MINIMIS_EXPENSE_TRIGGER": "forced_expense_reclassification" } },
+                    "forced_expense_reclassification": { kind: "holding_gate", action_provider: "reclassify_to_de_minimis_expense_account", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+
+                    "leasehold_improvements": { kind: "holding_gate", prompt_key: "leasehold_improvements_gate_specialist", property: "leasehold_improvements_gate_decision", batch_size: 10, children: { "CAPITALIZE_IMPROVEMENT": "entity_outflow", "REPAIRS_MAINTENANCE_EXPENSE": "forced_expense_reclassification" } },
+                    "other_current_assets": { kind: "holding_gate", prompt_key: "other_current_assets_gate_specialist", property: "other_current_assets_gate_decision", batch_size: 30, children: { "INVENTORY_PREPAYMENT": "inventory_deposit_quarantine", "SECURITY_DEPOSIT": "entity_outflow", "STANDARD_CURRENT_ASSET": "entity_outflow" } },
+                    "inventory_deposit_quarantine": { kind: "holding_gate", hold_state_signal: "HOLD_MISSING_CONTEXT", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+
+                    "other_assets": { kind: "holding_gate", prompt_key: "other_assets_gate_specialist", property: "other_assets_gate_decision", batch_size: 10, children: { "INTANGIBLE_ASSET": "entity_outflow", "LONG_TERM_SECURITY_DEPOSIT": "entity_outflow", "STANDARD_OTHER_ASSET": "entity_outflow" } },
+                    "accounts_receivable": { kind: "holding_gate", hold_state_signal: "HOLD_AMBIGUOUS", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+
+                    "credit_cards": { kind: "holding_gate", prompt_key: "credit_cards_gate_specialist", property: "credit_cards_gate_decision", batch_size: 50, children: { "CC_BALANCE_TRANSFER": "terminal_credit_card_transfer", "ANOMALOUS_CC_FLOW": "entity_outflow" } },
+                    "terminal_credit_card_transfer": { kind: "terminal", action_provider: "qbo_credit_card_payment_transfer_collapse", batch_size: 0, children: {} },
+
+                    "long_term_liability": { kind: "holding_gate", prompt_key: "long_term_liability_gate_specialist", property: "long_term_liability_gate_decision", batch_size: 1, children: { "LOAN_REPAYMENT_SPLIT": "loan_amortization", "UNIDENTIFIED_DEBT_FLOW": "entity_outflow" } },
+                    "loan_amortization": { kind: "holding_gate", action_provider: "db_loan_matrix_lookup", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+
+                    "other_current_liability": { kind: "holding_gate", prompt_key: "other_current_liability_gate_specialist", property: "other_current_liability_gate_decision", batch_size: 50, children: { "SALES_TAX_COLLECTED": "cash_sales_tax_splitter", "PAYROLL_TAX_WITHHELD": "cash_payroll_withholding_gate", "DEFAULT_OPERATIONAL_FLOW": "entity_outflow" } },
+                    "cash_sales_tax_splitter": { kind: "holding_gate", action_provider: "extract_and_post_cash_sales_tax_liability", batch_size: 25, children: { "TAX_POSTED": "entity_outflow" } },
+                    "cash_payroll_withholding_gate": { kind: "holding_gate", action_provider: "isolate_employee_withholding_from_cash_payout", batch_size: 10, children: { "RESUME": "entity_outflow" } },
+                    "accounts_payable": { kind: "holding_gate", hold_state_signal: "HOLD_AMBIGUOUS", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+
+                    "equity": { kind: "holding_gate", prompt_key: "equity_flow_specialist", property: "equity_flow_decision", batch_size: 20, children: { "OWNER_INVESTMENT": "entity_outflow", "OWNER_DRAW": "terminal_shareholder_draw_mitigation", "SHAREHOLDER_DISTRIBUTION": "terminal_shareholder_draw_mitigation" } },
+                    "terminal_shareholder_draw_mitigation": { kind: "terminal", action_provider: "equity_draw_balance_sheet_collapse", batch_size: 0, children: {} },
+
+                    "income": { kind: "holding_gate", prompt_key: "operating_income_specialist", property: "operating_income_decision", batch_size: 50, children: { "GROMENT_STRIPE_SQUARE_SPLIT": "merchant_payout_splitter", "STANDARD_CASH_RECEIPT": "entity_outflow" } },
+                    "merchant_payout_splitter": { kind: "holding_gate", action_provider: "gross_up_merchant_processing_fees_split", batch_size: 25, children: { "MERCHANT_FEES_ISOLATED": "entity_outflow" } },
+                    "other_income": { kind: "holding_gate", prompt_key: "other_income_gate_specialist", property: "other_income_gate_decision", batch_size: 50, children: { "INTEREST_DIVIDEND_INCOME": "entity_outflow", "STANDARD_OTHER_INCOME": "entity_outflow" } },
+
+                    "cost_of_goods_sold": { kind: "holding_gate", prompt_key: "cogs_validation_specialist", property: "cogs_validation_decision", batch_size: 40, children: { "VALIDATED_DIRECT_COGS": "entity_outflow", "RECLASSIFY_TO_OVERHEAD_EXPENSE": "forced_overhead_reclassification" } },
+                    "forced_overhead_reclassification": { kind: "holding_gate", action_provider: "reclassify_to_operating_overhead_expense", batch_size: 1, children: { "RESUME": "entity_outflow" } },
+
+                    "expense": { kind: "holding_gate", prompt_key: "operating_expense_specialist", property: "operating_expense_decision", batch_size: 50, children: { "STANDARD_OVERHEAD": "entity_outflow", "PERSONAL_MIXIN_DETECTED": "terminal_shareholder_draw_mitigation" } },
+
+                    "other_expense": { kind: "holding_gate", prompt_key: "other_expense_gate_specialist", property: "other_expense_gate_decision", batch_size: 50, children: { "PENALTY_OR_FINE": "entity_outflow", "INTEREST_EXPENSE": "entity_outflow", "STANDARD_OTHER_EXPENSE": "entity_outflow" } },
+
+                    "entity_outflow": { kind: "entity", prompt_key: "counterparty_resolver", property: "counterparty", batch_size: 0, children: { "DEFAULT": "account_selection" } },
+                    "account_selection": { kind: "account_selection", dynamic_edge_provider: "db_chart_of_accounts", batch_size: 15, children: {} }
                 };
 
                 const buildTree = (nodeId, visited = new Set()) => {
@@ -205,6 +301,9 @@
                         id: nodeId,
                         name: nodeId.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
                         kind: nodeDef.kind,
+                        prompt_key: nodeDef.prompt_key || "",
+                        property: nodeDef.property || "",
+                        action_provider: nodeDef.action_provider || "",
                         queue_length: Math.floor(Math.random() * (nodeDef.batch_size || 10)),
                         batch_size: nodeDef.batch_size || 0,
                     };
@@ -230,21 +329,42 @@
             const handleNodeMouseDown = (e, node) => {
                 e.stopPropagation(); // Prevent panning when clicking a node
                 setDraggingNode(node.id);
-                setDragStart({ 
-                    mouseX: e.clientX, 
-                    mouseY: e.clientY, 
-                    nodeX: node.position.x, 
-                    nodeY: node.position.y 
+                setDragStart({
+                    mouseX: e.clientX,
+                    mouseY: e.clientY,
+                    nodeX: node.position.x,
+                    nodeY: node.position.y
                 });
+            };
+
+            const handleNodeDoubleClick = (e, node) => {
+                e.stopPropagation();
+                setSelectedNode(node);
+
+                // Initialize default chat welcome message for this node if not present
+                if (!chatMessages[node.id]) {
+                    const metadata = MOCK_TRANSACTIONS[node.id] || MOCK_TRANSACTIONS.default;
+                    const topCand = metadata.candidates[0];
+                    setChatMessages(prev => ({
+                        ...prev,
+                        [node.id]: [
+                            {
+                                sender: 'agent',
+                                text: `Hello! I am the automated specialist agent for this node. I am currently evaluating the transaction description under the rule parameter constraints. Under current probability distributions, my top classification is "${topCand.value}" with a confidence of ${(topCand.confidence * 100).toFixed(0)}%. Let me know if you would like me to adjust my heuristic reasoning weight or override the routing.`,
+                                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                            }
+                        ]
+                    }));
+                }
             };
 
             const handleCanvasMouseDown = (e) => {
                 setIsPanning(true);
-                setPanStart({ 
-                    mouseX: e.clientX, 
-                    mouseY: e.clientY, 
-                    startX: transform.x, 
-                    startY: transform.y 
+                setPanStart({
+                    mouseX: e.clientX,
+                    mouseY: e.clientY,
+                    startX: transform.x,
+                    startY: transform.y
                 });
             };
 
@@ -259,7 +379,7 @@
                         const scaleAmount = -e.deltaY * 0.001;
                         let newScale = prev.scale * (1 + scaleAmount);
                         newScale = Math.min(Math.max(0.1, newScale), 4);
-                        
+
                         const rect = canvas.getBoundingClientRect();
                         const mouseX = e.clientX - rect.left;
                         const mouseY = e.clientY - rect.top;
@@ -284,8 +404,8 @@
                         const dx = (e.clientX - dragStart.mouseX) / transform.scale;
                         const dy = (e.clientY - dragStart.mouseY) / transform.scale;
 
-                        setNodes(prev => prev.map(n => 
-                            n.id === draggingNode 
+                        setNodes(prev => prev.map(n =>
+                            n.id === draggingNode
                                 ? { ...n, position: { x: dragStart.nodeX + dx, y: dragStart.nodeY + dy } }
                                 : n
                         ));
@@ -317,16 +437,58 @@
                     let newScale = prev.scale + delta;
                     newScale = Math.min(Math.max(0.1, newScale), 4);
                     if (!canvasRef.current) return { ...prev, scale: newScale };
-                    
+
                     const rect = canvasRef.current.getBoundingClientRect();
                     const mouseX = rect.width / 2;
                     const mouseY = rect.height / 2;
-                    
+
                     const newX = mouseX - (mouseX - prev.x) * (newScale / prev.scale);
                     const newY = mouseY - (mouseY - prev.y) * (newScale / prev.scale);
 
                     return { x: newX, y: newY, scale: newScale };
                 });
+            };
+
+            // --- Send Chat Message ---
+            const handleSendMessage = (e) => {
+                e.preventDefault();
+                if (!chatInput.trim() || !selectedNode) return;
+
+                const userMsg = {
+                    sender: 'user',
+                    text: chatInput,
+                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                };
+
+                const currentInput = chatInput.toLowerCase();
+                setChatMessages(prev => ({
+                    ...prev,
+                    [selectedNode.id]: [...(prev[selectedNode.id] || []), userMsg]
+                }));
+                setChatInput("");
+
+                // Simulated Intelligent Specialist Response
+                setTimeout(() => {
+                    let agentText = "I have updated my evaluation matrices based on your instructions. Let me recalibrate my unified confidence parameters for this transaction.";
+
+                    if (currentInput.includes("override") || currentInput.includes("change") || currentInput.includes("force")) {
+                        agentText = "Understood. Bypassing autonomous semantic heuristics. Initiating administrative override for node routing as requested. New classification locked for QuickBooks sync pipeline.";
+                    } else if (currentInput.includes("explain") || currentInput.includes("why")) {
+                        const metadata = MOCK_TRANSACTIONS[selectedNode.id] || MOCK_TRANSACTIONS.default;
+                        agentText = `I chose this path based on core statement signals: "${metadata.description}" which indicates a standard transaction type. Under industry-standard double-entry guidelines, this maps directly to this node's routing parameters.`;
+                    }
+
+                    const agentMsg = {
+                        sender: 'agent',
+                        text: agentText,
+                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    };
+
+                    setChatMessages(prev => ({
+                        ...prev,
+                        [selectedNode.id]: [...(prev[selectedNode.id] || []), agentMsg]
+                    }));
+                }, 1000);
             };
 
             // --- SVG Helpers ---
@@ -335,9 +497,17 @@
                 return `M ${startX} ${startY} C ${startX + offset} ${startY}, ${endX - offset} ${endY}, ${endX} ${endY}`;
             };
 
+            // Get selected node's enriched mock data
+            const getInspectorData = () => {
+                if (!selectedNode) return null;
+                return MOCK_TRANSACTIONS[selectedNode.id] || MOCK_TRANSACTIONS.default;
+            };
+
+            const inspectorData = getInspectorData();
+
             return (
                 <div className="flex h-screen w-full bg-[#1e1e1e]">
-                    
+
                     {/* Sidebar Configuration */}
                     <div className="w-80 bg-[#252526] border-r border-[#3c3c3c] flex flex-col z-20 shadow-2xl">
                         <div className="p-5 border-b border-[#3c3c3c] flex items-center gap-3">
@@ -349,16 +519,16 @@
                                 <p className="text-xs text-gray-400">Live Memory DAG</p>
                             </div>
                         </div>
-                        
+
                         <div className="p-5 space-y-6 flex-1">
                             {/* Connection Panel */}
                             <div className="space-y-3">
                                 <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Engine Connection</h2>
-                                
+
                                 <div>
                                     <label className="block text-xs text-gray-400 mb-1">WebSocket URL</label>
-                                    <input 
-                                        type="text" 
+                                    <input
+                                        type="text"
                                         value={wsUrl}
                                         onChange={(e) => setWsUrl(e.target.value)}
                                         disabled={wsStatus === 'connected'}
@@ -367,14 +537,14 @@
                                 </div>
 
                                 {wsStatus === 'disconnected' ? (
-                                    <button 
+                                    <button
                                         onClick={connectWs}
                                         className="w-full bg-blue-600 hover:bg-blue-500 text-white rounded py-2 text-sm font-medium transition-colors flex items-center justify-center gap-2"
                                     >
                                         <PlugIcon /> Connect to Live Stream
                                     </button>
                                 ) : (
-                                    <button 
+                                    <button
                                         onClick={disconnectWs}
                                         className="w-full bg-red-600/20 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 rounded py-2 text-sm font-medium transition-colors"
                                     >
@@ -394,7 +564,7 @@
 
                             <div className="space-y-3">
                                 <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Development</h2>
-                                <button 
+                                <button
                                     onClick={loadMockData}
                                     className="w-full bg-[#2d2d2d] hover:bg-[#3d3d3d] border border-[#3c3c3c] text-white rounded py-2 text-sm font-medium transition-colors"
                                 >
@@ -408,13 +578,13 @@
                     </div>
 
                     {/* Canvas Area */}
-                    <div 
+                    <div
                         className={`flex-1 relative bg-[#1e1e1e] overflow-hidden select-none ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
                         ref={canvasRef}
                         onMouseDown={handleCanvasMouseDown}
                     >
                         {/* Dot Grid Background */}
-                        <div 
+                        <div
                             className="absolute inset-0 pointer-events-none opacity-50"
                             style={{
                                 backgroundImage: 'radial-gradient(#3c3c3c 1.5px, transparent 1.5px)',
@@ -433,9 +603,9 @@
                         )}
 
                         {/* Transform Wrapper */}
-                        <div 
-                            style={{ 
-                                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`, 
+                        <div
+                            style={{
+                                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
                                 transformOrigin: '0 0',
                                 position: 'absolute',
                                 top: 0, left: 0, right: 0, bottom: 0,
@@ -445,8 +615,8 @@
                             {/* Edges Layer (SVG) */}
                             <svg style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible', pointerEvents: 'none' }}>
                                 <defs>
-                                    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                                        <polygon points="0 0, 10 3.5, 0 7" fill="#8b949e" />
+                                    <marker id="arrowhead" markerWidth="6" markerHeight="4" refX="4.5" refY="2" orient="auto">
+                                        <polygon points="0 0, 6 2, 0 4" fill="#525252" />
                                     </marker>
                                 </defs>
 
@@ -455,38 +625,55 @@
                                     const targetNode = nodes.find(n => n.id === edge.target);
                                     if (!sourceNode || !targetNode) return null;
 
-                                    const startX = sourceNode.position.x + NODE_WIDTH;
+                                    const startX = sourceNode.position.x + NODE_WIDTH + 4;
                                     const startY = sourceNode.position.y + (NODE_HEIGHT / 2);
-                                    const endX = targetNode.position.x;
+                                    const endX = targetNode.position.x - 4;
                                     const endY = targetNode.position.y + (NODE_HEIGHT / 2);
 
                                     const path = createBezierPath(startX, startY, endX, endY);
-                                    
+
                                     // Approximate text position (middle of horizontal space)
                                     const textX = (startX + endX) / 2;
-                                    const textY = (startY + endY) / 2 - 10;
+                                    const textY = (startY + endY) / 2;
+
+                                    const textLength = edge.label ? edge.label.length : 0;
+                                    const pillWidth = (textLength * 6.5) + 16;
 
                                     return (
                                         <g key={edge.id}>
-                                            <path 
-                                                d={path} 
-                                                stroke="#525252" 
-                                                strokeWidth="2" 
-                                                fill="none" 
+                                            <path
+                                                d={path}
+                                                stroke="#525252"
+                                                strokeWidth="2"
+                                                fill="none"
                                                 markerEnd="url(#arrowhead)"
                                             />
-                                            {/* Routing Key Label */}
-                                            <text 
-                                                x={textX} 
-                                                y={textY} 
-                                                fill="#a3a3a3" 
-                                                fontSize="11" 
-                                                textAnchor="middle"
-                                                className="font-mono"
-                                                style={{ pointerEvents: 'none' }}
-                                            >
-                                                ➔ {edge.label}
-                                            </text>
+                                            {/* Routing Key Label Pill */}
+                                            {edge.label && (
+                                                <g transform={`translate(${textX}, ${textY})`}>
+                                                    <rect
+                                                        x={-pillWidth / 2}
+                                                        y={-9}
+                                                        width={pillWidth}
+                                                        height={18}
+                                                        rx={4}
+                                                        fill="#1e1e1e"
+                                                        stroke="#444444"
+                                                        strokeWidth="1"
+                                                    />
+                                                    <text
+                                                        x={0}
+                                                        y={4}
+                                                        fill="#9ca3af"
+                                                        fontSize="10"
+                                                        textAnchor="middle"
+                                                        className="font-mono font-semibold"
+                                                        style={{ pointerEvents: 'none' }}
+                                                    >
+                                                        {edge.label}
+                                                    </text>
+                                                </g>
+                                            )}
                                         </g>
                                     );
                                 })}
@@ -497,13 +684,16 @@
                                 const colorClass = KIND_COLORS[node.data.kind] || KIND_COLORS.default;
                                 const isFull = node.data.queue_length >= node.data.batch_size && node.data.batch_size > 0;
                                 const fillPercentage = node.data.batch_size > 0 ? Math.min((node.data.queue_length / node.data.batch_size) * 100, 100) : 0;
+                                const isSelected = selectedNode && selectedNode.id === node.id;
 
                                 return (
                                     <div
                                         key={node.id}
                                         onMouseDown={(e) => handleNodeMouseDown(e, node)}
-                                        className={`absolute transition-shadow duration-200 z-10 cursor-move
-                                            ${isFull ? 'shadow-[0_0_20px_rgba(34,197,94,0.3)] ring-1 ring-green-500' : 'shadow-xl'}
+                                        onDoubleClick={(e) => handleNodeDoubleClick(e, node)}
+                                        className={`absolute transition-all duration-200 z-10 cursor-move rounded-xl
+                                            ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_25px_rgba(59,130,246,0.5)] scale-[1.02]' : ''}
+                                            ${isFull && !isSelected ? 'shadow-[0_0_20px_rgba(34,197,94,0.3)] ring-1 ring-green-500' : 'shadow-xl'}
                                         `}
                                         style={{
                                             left: node.position.x,
@@ -514,39 +704,58 @@
                                         }}
                                     >
                                         <div className="w-full h-full bg-[#252526] rounded-xl border border-[#3c3c3c] flex flex-col overflow-hidden relative group">
-                                            
+
                                             {/* Header Color Bar */}
                                             <div className={`h-1.5 w-full ${colorClass}`} />
-                                            
+
                                             <div className="flex-1 p-3 flex flex-col justify-between pointer-events-none">
                                                 {/* Top info */}
-                                                <div className="flex items-start justify-between">
-                                                    <div className="overflow-hidden">
-                                                        <div className="font-semibold text-gray-200 text-sm truncate">{node.data.name}</div>
+                                                <div className="flex items-start justify-between gap-1">
+                                                    <div className="overflow-hidden flex-1">
+                                                        <div className="font-semibold text-gray-200 text-sm truncate" title={node.data.name}>{node.data.name}</div>
                                                         <div className="text-[10px] text-gray-500 font-mono truncate">{node.id}</div>
-                                                        <div className="text-[10px] text-gray-400 font-mono truncate">({node.data.kind})</div>
+                                                        <div className="text-[9px] text-gray-400 font-mono uppercase tracking-wider">({node.data.kind})</div>
                                                     </div>
-                                                    <div className="flex-shrink-0 w-8 h-8 rounded bg-[#333] flex items-center justify-center">
+                                                    <div className="flex-shrink-0 w-7 h-7 rounded bg-[#333] flex items-center justify-center">
                                                         <ServerIcon />
                                                     </div>
                                                 </div>
 
-                                                {/* Queue Size Indicator */}
-                                                <div className="mt-2 bg-[#1e1e1e] rounded p-2 border border-[#333]">
-                                                    <div className="flex justify-between items-end mb-1">
-                                                        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Queue</span>
-                                                        <div className="flex items-baseline gap-1">
-                                                            <span className={`text-lg font-bold leading-none ${isFull ? 'text-green-400' : 'text-rose-500'}`}>
-                                                                {node.data.queue_length}
-                                                            </span>
-                                                            <span className="text-xs text-gray-600 font-medium">/ {node.data.batch_size || '∞'}</span>
+                                                {/* Dynamic Property Key & Prompts Metadata */}
+                                                <div className="mt-1 text-[10px] space-y-0.5 border-t border-[#333] pt-1.5 font-mono">
+                                                    {node.data.property && (
+                                                        <div className="flex justify-between items-center text-[#34d399] leading-none py-0.5">
+                                                            <span className="text-gray-500 text-[9px] uppercase">prop:</span>
+                                                            <span className="truncate max-w-[195px] font-medium" title={node.data.property}>{node.data.property}</span>
                                                         </div>
-                                                    </div>
-                                                    <div className="w-full h-1.5 bg-[#2d2d2d] rounded-full overflow-hidden">
-                                                        <div 
-                                                            className={`h-full transition-all duration-300 ${isFull ? 'bg-green-500' : 'bg-rose-500'}`}
-                                                            style={{ width: `${fillPercentage}%` }}
-                                                        />
+                                                    )}
+                                                    {node.data.prompt_key && (
+                                                        <div className="flex justify-between items-center text-[#818cf8] leading-none py-0.5">
+                                                            <span className="text-gray-500 text-[9px] uppercase">prompt:</span>
+                                                            <span className="truncate max-w-[195px] font-medium" title={node.data.prompt_key}>{node.data.prompt_key}</span>
+                                                        </div>
+                                                    )}
+                                                    {node.data.action_provider && (
+                                                        <div className="flex justify-between items-center text-[#fb923c] leading-none py-0.5">
+                                                            <span className="text-gray-500 text-[9px] uppercase">action:</span>
+                                                            <span className="truncate max-w-[195px] font-medium font-bold" title={node.data.action_provider}>{node.data.action_provider}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* Queue Size Indicator */}
+                                                <div className="mt-1 bg-[#1e1e1e] rounded p-1.5 border border-[#333] flex items-center justify-between gap-2">
+                                                    <div className="flex flex-col flex-1">
+                                                        <div className="flex justify-between items-center mb-0.5 text-[9px] text-gray-500 font-semibold">
+                                                            <span>QUEUE DEPTH</span>
+                                                            <span>{node.data.queue_length}/{node.data.batch_size || '∞'}</span>
+                                                        </div>
+                                                        <div className="w-full h-1 bg-[#2d2d2d] rounded-full overflow-hidden">
+                                                            <div
+                                                                className={`h-full transition-all duration-300 ${isFull ? 'bg-green-500' : 'bg-rose-500'}`}
+                                                                style={{ width: `${fillPercentage}%` }}
+                                                            />
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -559,7 +768,7 @@
                                 );
                             })}
                         </div>
-                        
+
                         {/* Floating Zoom Controls */}
                         <div className="absolute bottom-6 right-6 flex items-center bg-[#252526] border border-[#3c3c3c] rounded-lg shadow-xl z-50 text-gray-400">
                             <button onClick={() => handleZoom(-0.2)} className="p-2 hover:text-white hover:bg-[#3d3d3d] rounded-l-lg transition-colors border-r border-[#3c3c3c]" title="Zoom Out">
@@ -574,6 +783,140 @@
                             </button>
                         </div>
                     </div>
+
+                    {/* Premium Sliding Side Inspector Panel (n8n Style) */}
+                    {selectedNode && (
+                        <div className="w-[480px] bg-[#252526] border-l border-[#3c3c3c] flex flex-col z-30 shadow-2xl relative animate-slide-in">
+                            {/* Panel Header */}
+                            <div className="p-4 border-b border-[#3c3c3c] flex items-center justify-between bg-[#2d2d2d]">
+                                <div className="overflow-hidden">
+                                    <h2 className="text-white font-bold text-sm truncate">{selectedNode.data.name}</h2>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                        <span className="text-[10px] text-gray-500 font-mono">{selectedNode.id}</span>
+                                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-semibold text-white uppercase ${KIND_COLORS[selectedNode.data.kind] || KIND_COLORS.default}`}>
+                                            {selectedNode.data.kind}
+                                        </span>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setSelectedNode(null)}
+                                    className="w-6 h-6 rounded hover:bg-[#3d3d3d] text-gray-400 hover:text-white flex items-center justify-center transition-colors text-sm"
+                                    title="Close Panel"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            {/* Panel Content (Scrollable) */}
+                            <div className="flex-1 overflow-y-auto p-4 space-y-5 bg-[#1b1b1c]">
+
+                                {/* Section 1: Active Transaction Details */}
+                                <div className="space-y-2">
+                                    <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Active Transaction Agent</h3>
+                                    <div className="bg-[#252526] rounded-xl border border-[#3c3c3c] p-3 space-y-2.5">
+                                        <div>
+                                            <label className="text-[9px] text-gray-500 uppercase font-mono block">Description Statement</label>
+                                            <p className="text-sm font-semibold text-gray-100 font-mono mt-0.5 leading-snug break-words">
+                                                "{inspectorData.description}"
+                                            </p>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4 border-t border-[#3c3c3c] pt-2">
+                                            <div>
+                                                <label className="text-[9px] text-gray-500 uppercase font-mono block">Amount</label>
+                                                <p className="text-md font-bold text-emerald-400 mt-0.5">{inspectorData.amount}</p>
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-gray-500 uppercase font-mono block">Cash Direction</label>
+                                                <p className={`text-xs font-bold mt-1 inline-block px-2 py-0.5 rounded font-mono ${inspectorData.direction === 'INFLOW' ? 'bg-green-500/20 text-green-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                                                    {inspectorData.direction}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Section 2: LLM Probability Distributions */}
+                                <div className="space-y-2">
+                                    <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Probability Candidate Distributions</h3>
+                                    <div className="space-y-3 bg-[#252526] rounded-xl border border-[#3c3c3c] p-3">
+                                        {inspectorData.candidates.map((cand, idx) => {
+                                            const scorePercent = (cand.confidence * 100).toFixed(0);
+                                            const isTop = idx === 0;
+
+                                            return (
+                                                <div key={idx} className="space-y-1 pb-2 border-b border-[#3c3c3c] last:border-b-0 last:pb-0">
+                                                    <div className="flex justify-between items-baseline">
+                                                        <span className="font-mono text-xs text-gray-100 font-semibold truncate max-w-[320px]">{cand.value}</span>
+                                                        <span className={`text-xs font-bold font-mono ${isTop ? 'text-emerald-400' : 'text-gray-400'}`}>{scorePercent}%</span>
+                                                    </div>
+
+                                                    {/* Custom gradient Progress Bar */}
+                                                    <div className="w-full h-2 bg-[#1e1e1e] rounded-full overflow-hidden">
+                                                        <div
+                                                            className={`h-full transition-all duration-300 rounded-full ${isTop ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gray-600'}`}
+                                                            style={{ width: `${scorePercent}%` }}
+                                                        />
+                                                    </div>
+                                                    <p className="text-[10px] text-gray-400 italic leading-snug">
+                                                        "{cand.reasoning}"
+                                                    </p>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* Section 3: Live Agent Interactive Chat */}
+                                <div className="space-y-2 flex flex-col h-[320px]">
+                                    <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Specialist Human-in-the-loop Chat</h3>
+                                    <div className="flex-1 bg-[#252526] rounded-xl border border-[#3c3c3c] flex flex-col overflow-hidden">
+                                        {/* Messages Area */}
+                                        <div className="flex-1 p-3 overflow-y-auto space-y-3 flex flex-col">
+                                            {(chatMessages[selectedNode.id] || []).map((msg, idx) => {
+                                                const isAgent = msg.sender === 'agent';
+                                                return (
+                                                    <div
+                                                        key={idx}
+                                                        className="flex flex-col w-full border-b border-[#333] pb-2 last:border-0 last:pb-0"
+                                                    >
+                                                        <div className="flex justify-between items-center text-[10px] font-mono">
+                                                            <span className={isAgent ? 'text-indigo-400 font-bold' : 'text-blue-400 font-bold'}>
+                                                                {isAgent ? '🤖 Node Specialist Agent' : '👤 You'}
+                                                            </span>
+                                                            <span className="text-gray-600 text-[9px]">{msg.time}</span>
+                                                        </div>
+                                                        <div className="text-[13.5px] leading-relaxed font-sans text-gray-200 mt-1">
+                                                            {msg.text}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                            <div ref={messagesEndRef} />
+                                        </div>
+
+                                        {/* Input Box */}
+                                        <form onSubmit={handleSendMessage} className="p-2 bg-[#2d2d2d] border-t border-[#3c3c3c] flex items-center gap-2">
+                                            <input
+                                                type="text"
+                                                value={chatInput}
+                                                onChange={(e) => setChatInput(e.target.value)}
+                                                placeholder="Ask node to explain or send 'force override'..."
+                                                className="flex-1 bg-[#1e1e1e] border border-[#444] rounded-lg text-xs px-3 py-2 text-white focus:outline-none focus:border-blue-500 placeholder-gray-500"
+                                            />
+                                            <button
+                                                type="submit"
+                                                className="w-8 h-8 rounded-lg bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center transition-colors flex-shrink-0"
+                                                title="Send Instruction"
+                                            >
+                                                <SendIcon />
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
@@ -582,4 +925,5 @@
         root.render(<App />);
     </script>
 </body>
+
 </html>

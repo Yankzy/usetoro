@@ -61,6 +61,7 @@ type AutonomousSemanticEngineNode struct {
 	// Identity
 	NodeID    string `json:"node_id"`
 	TenantID  string `json:"tenant_id"`
+	RealmID   string `json:"realm_id"`
 
 	// Source data
 	SourceStatement string  `json:"source_statement"`
@@ -95,12 +96,13 @@ type AutonomousSemanticEngineNode struct {
 }
 
 // NewASENode creates a new transaction micro-agent from a staging transaction.
-func NewASENode(tenantID, rawDescription, cashDirection, rawAmount string) *AutonomousSemanticEngineNode {
+func NewASENode(tenantID, realmID, rawDescription, cashDirection, rawAmount string) *AutonomousSemanticEngineNode {
 	now := time.Now().UTC()
 	nodeID := uuid.New().String()
 	return &AutonomousSemanticEngineNode{
 		NodeID:          nodeID,
 		TenantID:        tenantID,
+		RealmID:         realmID,
 		RawDescription:  rawDescription,
 		CashDirection:   cashDirection,
 		RawAmount:       rawAmount,

@@ -74,9 +74,16 @@ type BatchPropertyResponse struct {
 
 func (cs *ClassifierService) classifyGeneric(ctx context.Context, promptKey string, batch []*AutonomousSemanticEngineNode) (map[string]NodeClassification, error) {
 	rows := cs.batchToRows(ctx, batch)
-	systemPrompt := GetPrompt(promptKey)
+	
+	tenantID, realmID := "", ""
+	if len(batch) > 0 {
+		tenantID = batch[0].TenantID
+		realmID = batch[0].RealmID
+	}
+	
+	systemPrompt := GetPrompt(tenantID, realmID, promptKey)
 	if systemPrompt == "" {
-		return nil, fmt.Errorf("prompt not found in configuration for key: %s", promptKey)
+		return nil, fmt.Errorf("prompt not found in configuration for key: %s (tenant: %s, realm: %s)", promptKey, tenantID, realmID)
 	}
 
 	macroClass := batchMacroClass(batch)

@@ -38,7 +38,15 @@ func (w *ASEResolutionWorker) Subscriptions() []SubscriptionConfig {
 	_, workerCfg := w.deps.Config.Workers.GetForWorker(w)
 	subject := workerCfg.Subject
 	if subject == "" {
-		subject = "workers.ase.resolve"
+		activityType := workerCfg.ActivityType
+		if activityType == "" {
+			activityType = "workers.ase_resolution"
+		}
+		if derived, err := core.BuildWorkerInboxFromActivity(activityType); err == nil {
+			subject = derived
+		} else {
+			subject = "worker.inbox.workers.ase_resolution"
+		}
 	}
 	group := workerCfg.Group
 	if group == "" {

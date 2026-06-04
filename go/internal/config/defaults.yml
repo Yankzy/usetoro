@@ -122,7 +122,6 @@ nats:
           - workflow.resume
           - ase.telemetry.>
           - ase.events.>
-          - workers.ase.>
 
     workflow_triggers:
       stream_name: WORKFLOW_TRIGGERS
@@ -387,6 +386,11 @@ workers:
 
   ase_bridge:
     activity_type: workers.ase_bridge
+    subject: ""
+    group: ""
+
+  ase_resolution:
+    activity_type: workers.ase_resolution
     subject: ""
     group: ""
 

@@ -9,6 +9,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 type QBOFetchRequest struct {
@@ -39,7 +40,15 @@ func (w *QBOFetchWorker) Subscriptions() []SubscriptionConfig {
 	_, workerCfg := w.deps.Config.Workers.GetForWorker(w)
 	subject := workerCfg.Subject
 	if subject == "" {
-		subject = "workers.qbo.fetch"
+		activityType := workerCfg.ActivityType
+		if activityType == "" {
+			activityType = "workers.qbo_fetch"
+		}
+		if derived, err := core.BuildWorkerInboxFromActivity(activityType); err == nil {
+			subject = derived
+		} else {
+			subject = "worker.inbox.workers.qbo_fetch"
+		}
 	}
 	group := workerCfg.Group
 	if group == "" {

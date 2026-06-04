@@ -394,6 +394,11 @@ workers:
     subject: ""
     group: ""
 
+  qbo_fetch:
+    activity_type: workers.qbo_fetch
+    subject: ""
+    group: ""
+
   vector_sync:
     subjects:
       - "ledger.accounts.*"

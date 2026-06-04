@@ -91,3 +91,26 @@ func (c *LLMClient) GenerateText(ctx context.Context, systemPrompt, userPrompt s
 
 	return strings.TrimSpace(resp.OutputText()), nil
 }
+
+// GenerateEmbedding produces a float64 embedding vector for the given text using
+// the specified OpenAI embedding model (e.g. "text-embedding-3-small").
+// The returned slice length matches the model's native dimensionality.
+func (c *LLMClient) GenerateEmbedding(ctx context.Context, model, text string) ([]float64, error) {
+	if text == "" {
+		return nil, fmt.Errorf("embedding input text cannot be empty")
+	}
+	resp, err := c.client.Embeddings.New(ctx, openai.EmbeddingNewParams{
+		Model: model,
+		Input: openai.EmbeddingNewParamsInputUnion{
+			OfString: openai.String(text),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("generate embedding: %w", err)
+	}
+	if len(resp.Data) == 0 {
+		return nil, fmt.Errorf("generate embedding: empty response from API")
+	}
+	return resp.Data[0].Embedding, nil
+}
+

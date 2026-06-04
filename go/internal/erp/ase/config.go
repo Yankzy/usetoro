@@ -203,8 +203,10 @@ func InitConfig(logger *slog.Logger) error {
 	var configDir string
 	for _, p := range paths {
 		if stat, err := os.Stat(p); err == nil && stat.IsDir() {
-			configDir = p
-			break
+			if matches, err := filepath.Glob(filepath.Join(p, "ase*.yml")); err == nil && len(matches) > 0 {
+				configDir = p
+				break
+			}
 		}
 	}
 

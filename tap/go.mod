@@ -12,7 +12,6 @@ require (
 	github.com/nats-io/nats.go v1.48.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/openai/openai-go/v3 v3.29.0
-	github.com/pgvector/pgvector-go v0.4.0
 	github.com/redis/go-redis/v9 v9.17.3
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/spf13/viper v1.21.0

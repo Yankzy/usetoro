@@ -6,7 +6,6 @@ package database
 
 import (
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/pgvector/pgvector-go"
 )
 
 type AseVectorMemory struct {
@@ -14,7 +13,7 @@ type AseVectorMemory struct {
 	RealmID     string
 	SourceType  string
 	RawText     string
-	Embedding   pgvector.Vector
+	Embedding   string
 	SourceRowID pgtype.UUID
 	Metadata    []byte
 	EmbeddedAt  pgtype.Timestamptz

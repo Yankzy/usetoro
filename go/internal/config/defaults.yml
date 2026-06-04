@@ -121,6 +121,8 @@ nats:
           - workflow.dlq.inbox
           - workflow.resume
           - ase.telemetry.>
+          - ase.events.>
+          - workers.ase.>
 
     workflow_triggers:
       stream_name: WORKFLOW_TRIGGERS

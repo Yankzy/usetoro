@@ -137,12 +137,19 @@ func (n *AutonomousSemanticEngineNode) SetOnStateChange(fn func(node *Autonomous
 	n.onStateChange = fn
 }
 
-// AppendExecutionStep adds a new step to the node's execution history.
 func (n *AutonomousSemanticEngineNode) AppendExecutionStep(step NodeExecutionStep) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.ExecutionTrace = append(n.ExecutionTrace, step)
 }
+
+// AppendContextUpdate safely appends a string to ContextUpdates.
+func (n *AutonomousSemanticEngineNode) AppendContextUpdate(update string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.ContextUpdates = append(n.ContextUpdates, update)
+}
+
 
 // transition updates the node's state and fires the callback.
 func (n *AutonomousSemanticEngineNode) transition(newState NodeState) {

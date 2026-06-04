@@ -423,6 +423,7 @@ func (w *AseBridgeWorker) mapToAgent(txn database.FignodeStagingTransaction, out
 
 	agent := ase.NewASENode(tenantID, realmID, desc, direction, txn.RawAmount)
 	agent.NodeID = uuid.UUID(txn.ID.Bytes).String()
+	agent.SetLogger(w.logger)
 	
 	if len(txn.AseExecutionTrace) > 0 {
 		_ = json.Unmarshal(txn.AseExecutionTrace, &agent.ExecutionTrace)

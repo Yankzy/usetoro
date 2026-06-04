@@ -467,20 +467,17 @@
                 }));
                 setChatInput("");
 
-                // Simulated Intelligent Specialist Response
-                setTimeout(() => {
-                    let agentText = "I have updated my evaluation matrices based on your instructions. Let me recalibrate my unified confidence parameters for this transaction.";
-
-                    if (currentInput.includes("override") || currentInput.includes("change") || currentInput.includes("force")) {
-                        agentText = "Understood. Bypassing autonomous semantic heuristics. Initiating administrative override for node routing as requested. New classification locked for QuickBooks sync pipeline.";
-                    } else if (currentInput.includes("explain") || currentInput.includes("why")) {
-                        const metadata = MOCK_TRANSACTIONS[selectedNode.id] || MOCK_TRANSACTIONS.default;
-                        agentText = `I chose this path based on core statement signals: "${metadata.description}" which indicates a standard transaction type. Under industry-standard double-entry guidelines, this maps directly to this node's routing parameters.`;
-                    }
-
+                // Send to backend if connected
+                if (wsRef.current && wsStatus === 'connected') {
+                    wsRef.current.send(JSON.stringify({
+                        type: 'chat',
+                        node_id: selectedNode.id,
+                        message: chatInput
+                    }));
+                    
                     const agentMsg = {
                         sender: 'agent',
-                        text: agentText,
+                        text: "I have received your context override. Resuming DAG execution with this updated reasoning. The transaction will now proceed through the semantic evaluation pipeline.",
                         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                     };
 
@@ -488,7 +485,17 @@
                         ...prev,
                         [selectedNode.id]: [...(prev[selectedNode.id] || []), agentMsg]
                     }));
-                }, 1000);
+                } else {
+                    const agentMsg = {
+                        sender: 'agent',
+                        text: "Error: WebSocket is not connected. Cannot dispatch context override.",
+                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    };
+                    setChatMessages(prev => ({
+                        ...prev,
+                        [selectedNode.id]: [...(prev[selectedNode.id] || []), agentMsg]
+                    }));
+                }
             };
 
             // --- SVG Helpers ---
@@ -744,7 +751,7 @@
                                                 </div>
 
                                                 {/* Queue Size Indicator */}
-                                                <div className="mt-1 bg-[#1e1e1e] rounded p-1.5 border border-[#333] flex items-center justify-between gap-2">
+                                                <div className="mt-1 bg-[#1e1e1e] rounded p-1.5 border border-[#333] flex flex-col gap-1">
                                                     <div className="flex flex-col flex-1">
                                                         <div className="flex justify-between items-center mb-0.5 text-[9px] text-gray-500 font-semibold">
                                                             <span>QUEUE DEPTH</span>
@@ -757,6 +764,12 @@
                                                             />
                                                         </div>
                                                     </div>
+                                                    {node.data.holding_length > 0 && (
+                                                        <div className="flex justify-between items-center text-[9px] text-amber-500 font-semibold mt-0.5 bg-amber-500/10 px-1 py-0.5 rounded">
+                                                            <span className="flex items-center gap-1"><ZapIcon /> WAITING FOR HUMAN</span>
+                                                            <span>{node.data.holding_length}</span>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
 

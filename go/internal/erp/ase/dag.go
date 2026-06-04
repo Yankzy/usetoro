@@ -28,6 +28,7 @@ type DAGNode struct {
 
 	// Batching
 	queue      []*AutonomousSemanticEngineNode
+	holding    []*AutonomousSemanticEngineNode
 	batchSize  int
 	batchFlush time.Duration
 	mu         sync.Mutex
@@ -100,6 +101,9 @@ func (d *DAG) GetNode(id string) *DAGNode {
 // NewDAGNode creates a new DAG node with batching configuration.
 func NewDAGNode(id string, kind DAGNodeKind, name string, batchSize int, batchFlush time.Duration, logger *slog.Logger, cfg DAGNodeConfig) *DAGNode {
 	ctx, cancel := context.WithCancel(context.Background())
+	if name == "" {
+		name = id
+	}
 	return &DAGNode{
 		ID:                  id,
 		Kind:                kind,
@@ -266,29 +270,41 @@ func (dn *DAGNode) flush() {
 		if closeStatus == "" {
 			closeStatus = string(StateCollapsed)
 		}
+		var wg sync.WaitGroup
 		for _, node := range batch {
-			node.transition(NodeState(closeStatus))
+			wg.Add(1)
+			go func(n *AutonomousSemanticEngineNode) {
+				defer wg.Done()
+				n.transition(NodeState(closeStatus))
+			}(node)
 		}
+		wg.Wait()
 		return
 	}
 
 	// 2) Fast-Path Cash Direction Router
 	// Hardware-level bypass of LLM to segregate batches by cash flow direction.
 	if dn.Kind == "cash_direction_router" {
+		var wg sync.WaitGroup
 		for _, node := range batch {
-			node.mu.RLock()
-			dir := node.CashDirection
-			node.mu.RUnlock()
-            
-			// Inject hardware state directly into the classification slot.
-			node.SetPropertyCandidates(string(dn.Kind), []ProbabilityCandidate{{
-				Value:      dir,
-				Confidence: 1.0,
-				Reasoning:  "Hardware property routing via cash_direction_router.",
-			}})
-			node.transition(StateActivating)
-			dn.routeToChild(node, string(dn.Kind))
+			wg.Add(1)
+			go func(n *AutonomousSemanticEngineNode) {
+				defer wg.Done()
+				n.mu.RLock()
+				dir := n.CashDirection
+				n.mu.RUnlock()
+
+				// Inject hardware state directly into the classification slot.
+				n.SetPropertyCandidates(string(dn.Kind), []ProbabilityCandidate{{
+					Value:      dir,
+					Confidence: 1.0,
+					Reasoning:  "Hardware property routing via cash_direction_router.",
+				}})
+				n.transition(StateActivating)
+				dn.routeToChild(n, string(dn.Kind))
+			}(node)
 		}
+		wg.Wait()
 		return
 	}
 
@@ -321,11 +337,19 @@ func (dn *DAGNode) flush() {
 				node.HoldReason = fmt.Sprintf("auto_advance disabled at DAG node %s", dn.Name)
 				node.mu.Unlock()
 				node.transition(StateHoldMissingCtx)
+				dn.holding = append(dn.holding, node)
 			} else {
 				// Clear the flag so it doesn't automatically bypass future nodes
 				node.mu.Lock()
 				node.HumanApproved = false
 				node.mu.Unlock()
+				// Remove from holding if it was there
+				for i, h := range dn.holding {
+					if h.NodeID == node.NodeID {
+						dn.holding = append(dn.holding[:i], dn.holding[i+1:]...)
+						break
+					}
+				}
 				thinkingBatch = append(thinkingBatch, node)
 			}
 		}
@@ -577,12 +601,13 @@ func (d *DAG) StopAll() {
 
 // DAGStats represents a snapshot of the current state of a DAG node.
 type DAGStats struct {
-	ID          string              `json:"id"`
-	Kind        string              `json:"kind"`
-	Name        string              `json:"name"`
-	QueueLength int                 `json:"queue_length"`
-	BatchSize   int                 `json:"batch_size"`
-	Children    map[string]DAGStats `json:"children"`
+	ID            string              `json:"id"`
+	Kind          string              `json:"kind"`
+	Name          string              `json:"name"`
+	QueueLength   int                 `json:"queue_length"`
+	HoldingLength int                 `json:"holding_length"`
+	BatchSize     int                 `json:"batch_size"`
+	Children      map[string]DAGStats `json:"children"`
 }
 
 // Stats returns a full recursive snapshot of the DAG topology and queues.
@@ -598,6 +623,7 @@ func (d *DAG) Stats() *DAGStats {
 func (dn *DAGNode) Stats() DAGStats {
 	dn.mu.Lock()
 	queueLen := len(dn.queue)
+	holdingLen := len(dn.holding)
 	childrenSnapshot := make(map[string]*DAGNode, len(dn.children))
 	for k, v := range dn.children {
 		childrenSnapshot[k] = v
@@ -606,12 +632,13 @@ func (dn *DAGNode) Stats() DAGStats {
 	dn.mu.Unlock()
 
 	stats := DAGStats{
-		ID:          dn.ID,
-		Kind:        string(dn.Kind),
-		Name:        dn.Name,
-		QueueLength: queueLen,
-		BatchSize:   dn.batchSize,
-		Children:    make(map[string]DAGStats),
+		ID:            dn.ID,
+		Kind:          string(dn.Kind),
+		Name:          dn.Name,
+		QueueLength:   queueLen,
+		HoldingLength: holdingLen,
+		BatchSize:     dn.batchSize,
+		Children:      make(map[string]DAGStats),
 	}
 
 	for k, child := range childrenSnapshot {
@@ -623,4 +650,16 @@ func (dn *DAGNode) Stats() DAGStats {
 	}
 
 	return stats
+}
+
+// PopHoldingAgent removes and returns the oldest holding agent, if any.
+func (dn *DAGNode) PopHoldingAgent() *AutonomousSemanticEngineNode {
+	dn.mu.Lock()
+	defer dn.mu.Unlock()
+	if len(dn.holding) == 0 {
+		return nil
+	}
+	agent := dn.holding[0]
+	dn.holding = dn.holding[1:]
+	return agent
 }

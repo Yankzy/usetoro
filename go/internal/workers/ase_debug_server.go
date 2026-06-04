@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/gorilla/websocket"
 )
 
@@ -38,6 +39,47 @@ func (w *AseBridgeWorker) startDebugServer() {
 		defer conn.Close()
 
 		w.logger.Info("debug_server: client connected to /ws/dag")
+
+		// Read incoming messages from client
+		go func() {
+			for {
+				_, msgBytes, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				
+				var req struct {
+					Type    string `json:"type"`
+					NodeID  string `json:"node_id"`
+					Message string `json:"message"`
+				}
+				if err := json.Unmarshal(msgBytes, &req); err == nil && req.Type == "chat" {
+					w.dagsMu.RLock()
+					defaultDag := w.dags["default"]
+					w.dagsMu.RUnlock()
+					
+					if defaultDag != nil {
+						if node, ok := defaultDag.Nodes[req.NodeID]; ok {
+							if agent := node.PopHoldingAgent(); agent != nil {
+								// Set the manual chat text as context override reason
+								agent.AppendExecutionStep(ase.NodeExecutionStep{
+									DAGNodeID:   node.ID,
+									Kind:        string(node.Kind),
+									PropertyKey: node.PromptKey,
+									Timestamp:   time.Now().UTC(),
+								})
+								
+								// We put the chat message in context updates
+								agent.AppendContextUpdate("User override/clarification via Debug UI: " + req.Message)
+								
+								agent.ApproveAndResume(r.Context(), defaultDag, w.store, req.NodeID)
+								w.logger.Info("debug_server: resumed holding agent", "node_id", req.NodeID, "agent_id", agent.NodeID)
+							}
+						}
+					}
+				}
+			}
+		}()
 
 		// Send updates every 500ms
 		ticker := time.NewTicker(500 * time.Millisecond)

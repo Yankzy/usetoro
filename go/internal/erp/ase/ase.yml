@@ -730,6 +730,7 @@ dag:
     # STEP 0: CASH DIRECTION ROUTING
     # ------------------------------------------------------------------
     direction_router:
+      batch_flush_seconds: 5
       kind: cash_direction_router
       batch_size: 50
       edge_type: static
@@ -770,6 +771,8 @@ dag:
     # STEP 2: SEGREGATED ACCOUNT TYPE CLASSIFICATION
     # ------------------------------------------------------------------
     account_type_asset:
+      batch_size: 25
+      batch_flush_seconds: 5
       kind: account_type
       prompt_key: account_type_asset_specialist
       edge_type: static
@@ -782,6 +785,8 @@ dag:
         "Accounts Receivable": accounts_receivable
 
     account_type_liability:
+      batch_size: 25
+      batch_flush_seconds: 5
       kind: account_type
       prompt_key: account_type_liability_specialist
       edge_type: static
@@ -792,6 +797,8 @@ dag:
         "Accounts Payable": accounts_payable
 
     account_type_equity:
+      batch_size: 25
+      batch_flush_seconds: 5
       kind: account_type
       prompt_key: account_type_equity_specialist
       edge_type: static
@@ -799,6 +806,8 @@ dag:
         "Equity": equity
 
     account_type_revenue:
+      batch_size: 25
+      batch_flush_seconds: 5
       kind: account_type
       prompt_key: account_type_revenue_specialist
       edge_type: static
@@ -807,6 +816,8 @@ dag:
         "Other Income": other_income
 
     account_type_expense:
+      batch_size: 25
+      batch_flush_seconds: 5
       kind: account_type
       prompt_key: account_type_expense_specialist
       edge_type: static
@@ -819,9 +830,10 @@ dag:
     # STEP 3: SPECIFIC ASSETS SUB-GRAPH GATES (CASH BASIS)
     # ==================================================================
     bank:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: bank_gate_specialist
-      batch_size: 50
+      batch_size: 5
       auto_advance: false
       edge_type: static
       children:
@@ -830,41 +842,47 @@ dag:
         STANDARD_LIQUIDITY_FLOW: entity_outflow
 
     terminal_bank_transfer_collapse:
+      batch_size: 5
+      batch_flush_seconds: 5
       kind: terminal
       execution_parameters:
         action_provider: "qbo_inter_bank_transfer_collapse"
         close_status: "COLLAPSED"
 
     fixed_assets:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: fixed_assets_gate_specialist
-      batch_size: 20
+      batch_size: 5
       edge_type: static
       children:
         CAPITALIZE_ASSET: entity_outflow
         DE_MINIMIS_EXPENSE_TRIGGER: forced_expense_reclassification
 
     forced_expense_reclassification:
+      batch_flush_seconds: 5
       kind: holding_gate
-      batch_size: 1
+      batch_size: 5
       edge_type: static
       execution_parameters:
         action_provider: "reclassify_to_de_minimis_expense_account"
       resume_child: entity_outflow
 
     leasehold_improvements:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: leasehold_improvements_gate_specialist
-      batch_size: 10
+      batch_size: 5
       edge_type: static
       children:
         CAPITALIZE_IMPROVEMENT: entity_outflow
         REPAIRS_MAINTENANCE_EXPENSE: forced_expense_reclassification
 
     other_current_assets:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: other_current_assets_gate_specialist
-      batch_size: 30
+      batch_size: 5
       edge_type: static
       children:
         INVENTORY_PREPAYMENT: inventory_deposit_quarantine
@@ -872,17 +890,19 @@ dag:
         STANDARD_CURRENT_ASSET: entity_outflow
 
     inventory_deposit_quarantine:
+      batch_flush_seconds: 5
       kind: holding_gate
-      batch_size: 1
+      batch_size: 5
       edge_type: static
       hold_state_signal: "HOLD_MISSING_CONTEXT"
       hold_reason_string: "Cash paid for inventory stock deployment. Awaiting ultimate vendor receipt verification."
       resume_child: entity_outflow
 
     other_assets:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: other_assets_gate_specialist
-      batch_size: 10
+      batch_size: 5
       edge_type: static
       children:
         INTANGIBLE_ASSET: entity_outflow
@@ -890,8 +910,9 @@ dag:
         STANDARD_OTHER_ASSET: entity_outflow
 
     accounts_receivable:
+      batch_flush_seconds: 5
       kind: holding_gate
-      batch_size: 1
+      batch_size: 5
       edge_type: static
       hold_state_signal: "HOLD_AMBIGUOUS"
       hold_reason_string: "CRITICAL: Accounts Receivable option triggered under active Cash-Basis execution pipeline. Halted for manual reconciliation compliance."
@@ -901,32 +922,37 @@ dag:
     # STEP 4: SPECIFIC LIABILITIES SUB-GRAPH GATES (CASH BASIS)
     # ==================================================================
     credit_cards:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: credit_cards_gate_specialist
-      batch_size: 50
+      batch_size: 5
       edge_type: static
       children:
         CC_BALANCE_TRANSFER: terminal_credit_card_transfer
         ANOMALOUS_CC_FLOW: entity_outflow
 
     terminal_credit_card_transfer:
+      batch_size: 5
+      batch_flush_seconds: 5
       kind: terminal
       execution_parameters:
         action_provider: "qbo_credit_card_payment_transfer_collapse"
         close_status: "COLLAPSED"
 
     long_term_liability:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: long_term_liability_gate_specialist
-      batch_size: 1
+      batch_size: 5
       edge_type: static
       children:
         LOAN_REPAYMENT_SPLIT: loan_amortization
         UNIDENTIFIED_DEBT_FLOW: entity_outflow
 
     loan_amortization:
+      batch_flush_seconds: 5
       kind: holding_gate
-      batch_size: 1
+      batch_size: 5
       edge_type: static
       hold_state_signal: "HOLD_AMORTIZATION_LOOKUP"
       hold_reason_string: "Cash loan repayment demands real-time split amortization lookup to isolate principal from interest expense lines."
@@ -935,9 +961,10 @@ dag:
       resume_child: entity_outflow
 
     other_current_liability:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: other_current_liability_gate_specialist
-      batch_size: 50
+      batch_size: 5
       edge_type: static
       children:
         SALES_TAX_COLLECTED: cash_sales_tax_splitter
@@ -945,8 +972,9 @@ dag:
         DEFAULT_OPERATIONAL_FLOW: entity_outflow
 
     cash_sales_tax_splitter:
+      batch_flush_seconds: 5
       kind: holding_gate
-      batch_size: 25
+      batch_size: 5
       edge_type: static
       execution_parameters:
         action_provider: "extract_and_post_cash_sales_tax_liability"
@@ -954,16 +982,18 @@ dag:
         TAX_POSTED: entity_outflow
 
     cash_payroll_withholding_gate:
+      batch_flush_seconds: 5
       kind: holding_gate
-      batch_size: 10
+      batch_size: 5
       edge_type: static
       execution_parameters:
         action_provider: "isolate_employee_withholding_from_cash_payout"
       resume_child: entity_outflow
 
     accounts_payable:
+      batch_flush_seconds: 5
       kind: holding_gate
-      batch_size: 1
+      batch_size: 5
       edge_type: static
       hold_state_signal: "HOLD_AMBIGUOUS"
       hold_reason_string: "CRITICAL: Accounts Payable option triggered under active Cash-Basis execution pipeline. Halted for manual reconciliation compliance."
@@ -973,9 +1003,10 @@ dag:
     # STEP 5: SPECIFIC EQUITY SUB-GRAPH GATES (CASH BASIS)
     # ==================================================================
     equity:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: equity_flow_specialist
-      batch_size: 20
+      batch_size: 5
       edge_type: static
       children:
         OWNER_INVESTMENT: entity_outflow
@@ -983,6 +1014,8 @@ dag:
         SHAREHOLDER_DISTRIBUTION: terminal_shareholder_draw_mitigation
 
     terminal_shareholder_draw_mitigation:
+      batch_size: 5
+      batch_flush_seconds: 5
       kind: terminal
       execution_parameters:
         action_provider: "equity_draw_balance_sheet_collapse"
@@ -992,17 +1025,19 @@ dag:
     # STEP 6: SPECIFIC REVENUE SUB-GRAPH GATES (CASH BASIS)
     # ==================================================================
     income:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: operating_income_specialist
-      batch_size: 50
+      batch_size: 5
       edge_type: static
       children:
         GROMENT_STRIPE_SQUARE_SPLIT: merchant_payout_splitter
         STANDARD_CASH_RECEIPT: entity_outflow
 
     merchant_payout_splitter:
+      batch_flush_seconds: 5
       kind: holding_gate
-      batch_size: 25
+      batch_size: 5
       edge_type: static
       execution_parameters:
         action_provider: "gross_up_merchant_processing_fees_split"
@@ -1010,9 +1045,10 @@ dag:
         MERCHANT_FEES_ISOLATED: entity_outflow
 
     other_income:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: other_income_gate_specialist
-      batch_size: 50
+      batch_size: 5
       edge_type: static
       children:
         INTEREST_DIVIDEND_INCOME: entity_outflow
@@ -1022,35 +1058,39 @@ dag:
     # STEP 7: SPECIFIC EXPENSE SUB-GRAPH GATES (CASH BASIS)
     # ==================================================================
     cost_of_goods_sold:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: cogs_validation_specialist
-      batch_size: 40
+      batch_size: 5
       edge_type: static
       children:
         VALIDATED_DIRECT_COGS: entity_outflow
         RECLASSIFY_TO_OVERHEAD_EXPENSE: forced_overhead_reclassification
 
     forced_overhead_reclassification:
+      batch_flush_seconds: 5
       kind: holding_gate
-      batch_size: 1
+      batch_size: 5
       edge_type: static
       execution_parameters:
         action_provider: "reclassify_to_operating_overhead_expense"
       resume_child: entity_outflow
 
     expense:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: operating_expense_specialist
-      batch_size: 50
+      batch_size: 5
       edge_type: static
       children:
         STANDARD_OVERHEAD: entity_outflow
         PERSONAL_MIXIN_DETECTED: terminal_shareholder_draw_mitigation
 
     other_expense:
+      batch_flush_seconds: 5
       kind: holding_gate
       prompt_key: other_expense_gate_specialist
-      batch_size: 50
+      batch_size: 5
       edge_type: static
       children:
         PENALTY_OR_FINE: entity_outflow
@@ -1061,6 +1101,8 @@ dag:
     # STEP 8: UNIVERSAL DATA CLOSING PIPELINE
     # ==================================================================
     entity_outflow:
+      batch_size: 5
+      batch_flush_seconds: 5
       kind: entity
       prompt_key: counterparty_resolver
       edge_type: static
@@ -1071,6 +1113,6 @@ dag:
       kind: account_selection
       edge_type: dynamic
       dynamic_edge_provider: "db_chart_of_accounts"
-      batch_size: 15
-      batch_flush_seconds: 3
+      batch_size: 5
+      batch_flush_seconds: 5
 

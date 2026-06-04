@@ -50,6 +50,7 @@ type DAGNode struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	stopped chan struct{}
+	started bool
 
 	// Callback when a node completes its lifecycle through this DAG node.
 	onNodeComplete func(node *AutonomousSemanticEngineNode, result string)
@@ -180,6 +181,14 @@ func (dn *DAGNode) Accept(node *AutonomousSemanticEngineNode) {
 
 // Start begins the periodic flush loop for this DAG node.
 func (dn *DAGNode) Start() {
+	dn.mu.Lock()
+	if dn.started {
+		dn.mu.Unlock()
+		return
+	}
+	dn.started = true
+	dn.mu.Unlock()
+
 	go dn.flushLoop()
 }
 
@@ -202,6 +211,14 @@ func (dn *DAGNode) flushLoop() {
 
 // Stop signals the DAG node to stop flushing and waits for completion.
 func (dn *DAGNode) Stop() {
+	dn.mu.Lock()
+	if !dn.started {
+		dn.mu.Unlock()
+		return
+	}
+	dn.started = false
+	dn.mu.Unlock()
+
 	dn.cancel()
 	<-dn.stopped
 }

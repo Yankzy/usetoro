@@ -233,13 +233,13 @@ func (dn *DAGNode) flush() {
 
 	// Extract up to batchSize items to prevent context window overflow.
 	extractSize := len(dn.queue)
-	if extractSize > dn.batchSize {
+	if dn.batchSize > 0 && extractSize > dn.batchSize {
 		extractSize = dn.batchSize
 	}
 	batch := make([]*AutonomousSemanticEngineNode, extractSize)
 	copy(batch, dn.queue[:extractSize])
 	dn.queue = dn.queue[extractSize:]
-	needsAnotherFlush := len(dn.queue) >= dn.batchSize
+	needsAnotherFlush := dn.batchSize > 0 && len(dn.queue) >= dn.batchSize
 	dn.mu.Unlock()
 
 	if needsAnotherFlush {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/nats-io/nats.go"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 type ASEResolutionRequest struct {

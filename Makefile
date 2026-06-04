@@ -199,11 +199,11 @@ rebuild_all:
 
 rebuild: fix-permissions
 	@if [ -n "$(RUN_ARGS)" ]; then \
-		$(MAKE) vndr && $(MAKE) sqlc && $(MAKE) down && $(DOCKER_COMPOSE) build $(RUN_ARGS) && $(MAKE) up; \
+		$(MAKE) down && $(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) build $(RUN_ARGS) && $(MAKE) up; \
 	else \
 		echo "Enter the service name: "; \
 		read SER_NAME; \
-		$(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) up --build --force-recreate $$SER_NAME; \
+		$(MAKE) down && $(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) up --build --force-recreate $$SER_NAME; \
 	fi
 
 ingest-messy:

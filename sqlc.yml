@@ -9,6 +9,12 @@ sql:
         out: "go/internal/database"
         sql_package: "pgx/v5"
         emit_interface: true
+        overrides:
+          - db_type: "vector"
+            go_type: "string"
+            nullable: false
+          - column: "ase.vector_memory.embedding"
+            go_type: "string"
   - schema: "sql/schema"
     queries: "sql/queries/agent_memory.sql"
     engine: "postgresql"
@@ -17,3 +23,9 @@ sql:
         package: "database"
         out: "tap/internal/database"
         sql_package: "pgx/v5"
+        overrides:
+          - db_type: "vector"
+            go_type: "string"
+            nullable: false
+          - column: "ase.vector_memory.embedding"
+            go_type: "string"

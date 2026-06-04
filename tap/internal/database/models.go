@@ -6,7 +6,21 @@ package database
 
 import (
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/pgvector/pgvector-go"
 )
+
+type AseVectorMemory struct {
+	ID          pgtype.UUID
+	RealmID     string
+	SourceType  string
+	RawText     string
+	Embedding   pgvector.Vector
+	SourceRowID pgtype.UUID
+	Metadata    []byte
+	EmbeddedAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
 
 type FignodeEmployeeProfile struct {
 	UserID           pgtype.UUID
@@ -403,14 +417,6 @@ type ToroCoreAgentMemoryRule struct {
 	Instruction string
 	Source      pgtype.Text
 	CreatedAt   pgtype.Timestamptz
-}
-
-type ToroCoreAgentPerformanceHourly struct {
-	Bucket        interface{}
-	AgentID       interface{}
-	TotalTasks    int64
-	AvgConfidence float64
-	TotalCost     int64
 }
 
 type ToroCoreConversation struct {

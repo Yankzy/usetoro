@@ -2,7 +2,7 @@
 -- +goose Up
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS timescaledb;
+-- CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- =========================================================================
 -- SCHEMA: toro_core
@@ -205,26 +205,26 @@ CREATE TABLE toro_core.telemetry_events (
 );
 
 -- Convert to Hypertable (Partition by time)
-SELECT create_hypertable('toro_core.telemetry_events', 'time');
+-- SELECT create_hypertable('toro_core.telemetry_events', 'time');
 
 -- Agent Performance (Aggregated View)
-CREATE MATERIALIZED VIEW toro_core.agent_performance_hourly
-WITH (timescaledb.continuous) AS
-SELECT
-    time_bucket('1 hour', time) AS bucket,
-    meta->>'agent_id' AS agent_id,
-    COUNT(*) AS total_tasks,
-    AVG((meta->>'confidence')::float) AS avg_confidence,
-    SUM((meta->>'cost_usd')::float) AS total_cost
-FROM toro_core.telemetry_events
-WHERE event_type = 'agent_decision'
-GROUP BY bucket, agent_id;
+-- CREATE MATERIALIZED VIEW toro_core.agent_performance_hourly
+-- WITH (timescaledb.continuous) AS
+-- SELECT
+--     time_bucket('1 hour', time) AS bucket,
+--     meta->>'agent_id' AS agent_id,
+--     COUNT(*) AS total_tasks,
+--     AVG((meta->>'confidence')::float) AS avg_confidence,
+--     SUM((meta->>'cost_usd')::float) AS total_cost
+-- FROM toro_core.telemetry_events
+-- WHERE event_type = 'agent_decision'
+-- GROUP BY bucket, agent_id;
 
 -- Refresh Policy (Keep the view updated every 30 mins)
-SELECT add_continuous_aggregate_policy('toro_core.agent_performance_hourly',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '30 minutes');
+-- SELECT add_continuous_aggregate_policy('toro_core.agent_performance_hourly',
+--     start_offset => INTERVAL '3 hours',
+--     end_offset => INTERVAL '1 hour',
+--     schedule_interval => INTERVAL '30 minutes');
 
 -- =========================================================================
 -- 11. Wallet & Micrion Ledger (from 005)

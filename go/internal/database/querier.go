@@ -178,6 +178,9 @@ type Querier interface {
 	// Transactions Batch
 	// =========================================================================
 	GetPendingFignodeTransactions(ctx context.Context) ([]FignodeStagingTransaction, error)
+	// Returns rows that have no embedding yet, ordered oldest-first.
+	// Used by the VectorHydrator to find work each tick.
+	GetPendingHydrationRows(ctx context.Context, limit int32) ([]GetPendingHydrationRowsRow, error)
 	GetPendingJobsWindow(ctx context.Context, arg GetPendingJobsWindowParams) ([]ToroCoreScheduledJob, error)
 	GetPendingRealmRows(ctx context.Context, arg GetPendingRealmRowsParams) ([]GetPendingRealmRowsRow, error)
 	GetPendingSessionRows(ctx context.Context, sessionID pgtype.UUID) ([]GetPendingSessionRowsRow, error)
@@ -260,6 +263,9 @@ type Querier interface {
 	InsertCleanupRow(ctx context.Context, arg InsertCleanupRowParams) (pgtype.UUID, error)
 	InsertConversationSession(ctx context.Context, arg InsertConversationSessionParams) (ToroCoreConversationSession, error)
 	InsertLeaderboardSnapshot(ctx context.Context, arg InsertLeaderboardSnapshotParams) error
+	// Registers a new source row for future hydration (embedding = NULL).
+	// The VectorHydrator will pick this up on its next tick.
+	InsertPendingVectorRow(ctx context.Context, arg InsertPendingVectorRowParams) error
 	InsertScheduledJob(ctx context.Context, arg InsertScheduledJobParams) (pgtype.UUID, error)
 	// =========================================================================
 	// Badges: Award & query (schema removed)

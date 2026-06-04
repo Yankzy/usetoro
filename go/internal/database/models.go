@@ -8,6 +8,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AseVectorMemory struct {
+	ID          pgtype.UUID
+	RealmID     string
+	SourceType  string
+	RawText     string
+	Embedding   string
+	SourceRowID pgtype.UUID
+	Metadata    []byte
+	EmbeddedAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type FignodeEmployeeProfile struct {
 	UserID           pgtype.UUID
 	FirstName        pgtype.Text
@@ -403,14 +416,6 @@ type ToroCoreAgentMemoryRule struct {
 	Instruction string
 	Source      pgtype.Text
 	CreatedAt   pgtype.Timestamptz
-}
-
-type ToroCoreAgentPerformanceHourly struct {
-	Bucket        interface{}
-	AgentID       interface{}
-	TotalTasks    int64
-	AvgConfidence float64
-	TotalCost     int64
 }
 
 type ToroCoreConversation struct {

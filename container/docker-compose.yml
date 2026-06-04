@@ -4,8 +4,10 @@ x-nats-common: &nats-common
     - toro-net
 
 services:
+
   db:
-    image: timescale/timescaledb:latest-pg18
+    #   image: timescale/timescaledb:latest-pg18
+    image: google/alloydbomni:17.7-ubi9
     restart: always
     command: [ "postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=5", "-c", "max_wal_senders=5" ]
     environment:

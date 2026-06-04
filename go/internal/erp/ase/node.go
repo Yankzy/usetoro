@@ -5,6 +5,7 @@ package ase
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"strings"
@@ -85,6 +86,7 @@ type AutonomousSemanticEngineNode struct {
 
 	// Lifecycle tracking
 	LifetimeProbes int       `json:"lifetime_probes"`
+	HumanApproved  bool      `json:"human_approved"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 
@@ -232,11 +234,18 @@ func (n *AutonomousSemanticEngineNode) TopCandidate(propertyKey string) *Probabi
 }
 
 // IsConfident returns true if the unified confidence score meets or exceeds
-// the State Collapse Guardrail threshold of 0.98.
+// the State Collapse Guardrail threshold.
 func (n *AutonomousSemanticEngineNode) IsConfident() bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	return n.UnifiedConfidence >= 0.98
+	
+	cfg := GetConfig(n.TenantID, n.RealmID)
+	threshold := 0.98
+	if cfg != nil {
+		threshold = cfg.HyperParameters.ConfidenceThreshold
+	}
+	
+	return n.UnifiedConfidence >= threshold
 }
 
 // GetConfidence returns the unified confidence score in a thread-safe manner.
@@ -263,6 +272,16 @@ func (n *AutonomousSemanticEngineNode) GetHoldReason() string {
 // Run executes the node's lifecycle loop from the very beginning.
 func (n *AutonomousSemanticEngineNode) Run(ctx context.Context, dag *DAG, store *StateStore) error {
 	return n.Resume(ctx, dag, store, "")
+}
+
+// ApproveAndResume manually overrides the auto_advance halt by marking the node as HumanApproved
+// and resuming its processing inside the DAG at the provided startNodeID.
+func (n *AutonomousSemanticEngineNode) ApproveAndResume(ctx context.Context, dag *DAG, store *StateStore, startNodeID string) error {
+	n.mu.Lock()
+	n.HumanApproved = true
+	n.HoldReason = ""
+	n.mu.Unlock()
+	return n.Resume(ctx, dag, store, startNodeID)
 }
 
 // Resume executes the node's lifecycle loop starting from the given DAG node ID.
@@ -340,12 +359,17 @@ func (n *AutonomousSemanticEngineNode) Resume(ctx context.Context, dag *DAG, sto
 		case StateCollapsed, StateReadyForSync, StateHoldAmbiguous, StateHoldMissingCtx:
 			return nil
 		case StateClassified:
-			// Check guardrail: must have confidence >= 0.98 to become READY_FOR_SYNC.
+			// Check guardrail: must have confidence >= threshold to become READY_FOR_SYNC.
 			if n.IsConfident() {
 				n.transition(StateReadyForSync)
 			} else {
 				n.mu.Lock()
-				n.HoldReason = "top candidate confidence below 0.98 sync guardrail"
+				cfg := GetConfig(n.TenantID, n.RealmID)
+				if cfg != nil {
+					n.HoldReason = fmt.Sprintf("top candidate confidence below %v sync guardrail", cfg.HyperParameters.ConfidenceThreshold)
+				} else {
+					n.HoldReason = "top candidate confidence below 0.98 sync guardrail"
+				}
 				n.mu.Unlock()
 				n.transition(StateHoldAmbiguous)
 			}

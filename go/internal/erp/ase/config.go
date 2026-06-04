@@ -15,9 +15,60 @@ import (
 
 // ASEConfig holds the unified configuration for the ASE layer.
 type ASEConfig struct {
-	Prompts map[string]string `mapstructure:"prompts"`
-	DAG     DAGConfig         `mapstructure:"dag"`
+	Prompts         map[string]string `mapstructure:"prompts"`
+	DAG             DAGConfig         `mapstructure:"dag"`
+	HyperParameters HyperParameters   `mapstructure:"hyper_parameters"`
 }
+
+// HyperParameters contains dynamically tunable variables that control ASE execution behavior.
+type HyperParameters struct {
+	ConfidenceThreshold   float64            `mapstructure:"confidence_threshold"`
+	AutoAdvance           bool               `mapstructure:"auto_advance"`
+	MaxLLMRetries         int                `mapstructure:"max_llm_retries"`
+	LLMTimeoutSeconds     int                `mapstructure:"llm_timeout_seconds"`
+	BatchFlushSeconds     int                `mapstructure:"batch_flush_seconds"`
+	ActiveAgentTTLMinutes int                `mapstructure:"active_agent_ttl_minutes"`
+	LockTTLSeconds        int                `mapstructure:"lock_ttl_seconds"`
+	VectorMemory          VectorMemoryConfig `mapstructure:"vector_memory"`
+}
+
+// VectorMemoryConfig controls the ASE semantic retrieval layer.
+// All fields are hot-reloadable via ase*.yml without a service restart.
+type VectorMemoryConfig struct {
+	// Enabled is the master switch for semantic retrieval.
+	// When false, the VectorStore is bypassed entirely in batchToRows.
+	Enabled bool `mapstructure:"enabled"`
+
+	// EmbeddingProvider selects the embedding backend: "openai" or "google".
+	EmbeddingProvider string `mapstructure:"embedding_provider"`
+
+	// OpenAIEmbeddingModel sets the OpenAI embedding model name.
+	// Only used when EmbeddingProvider = "openai".
+	OpenAIEmbeddingModel string `mapstructure:"openai_embedding_model"`
+
+	// EmbeddingDimensions is the vector size the model produces.
+	// Must match the column definition. Changing this requires a migration.
+	EmbeddingDimensions int `mapstructure:"embedding_dimensions"`
+
+	// ScaNNNumLeaves controls the num_leaves tuning knob for the ScaNN index.
+	// Best practice: sqrt(row_count). Cold-start default is 10.
+	ScaNNNumLeaves int `mapstructure:"scann_num_leaves"`
+
+	// RetrievalTopK is the number of semantically similar entries fetched
+	// per transaction and injected as company_rules into the LLM prompt.
+	RetrievalTopK int `mapstructure:"retrieval_top_k"`
+
+	// HydratorIntervalSeconds is how often the background VectorHydrator ticks.
+	HydratorIntervalSeconds int `mapstructure:"hydrator_interval_seconds"`
+
+	// HydratorMinConfidence is the minimum unified confidence required for a
+	// resolved staging_transaction to be eligible for vector hydration.
+	HydratorMinConfidence float64 `mapstructure:"hydrator_min_confidence"`
+
+	// HydratorBatchSize is the max rows processed per hydrator tick.
+	HydratorBatchSize int `mapstructure:"hydrator_batch_size"`
+}
+
 
 // DAGConfig represents the DAG topology configuration.
 type DAGConfig struct {
@@ -29,6 +80,7 @@ type DAGConfig struct {
 type DAGNodeConfig struct {
 	Kind                string            `mapstructure:"kind"`
 	Name                string            `mapstructure:"name"`
+	AutoAdvance         *bool             `mapstructure:"auto_advance"`
 	BatchSize           int               `mapstructure:"batch_size"`
 	BatchFlushSeconds   int               `mapstructure:"batch_flush_seconds"`
 	PromptKey           string            `mapstructure:"prompt_key"`
@@ -114,7 +166,31 @@ func parseConfig(file string) (*ASEConfig, error) {
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
 	}
-	var cfg ASEConfig
+	
+	// Initialize defaults before unmarshaling
+	cfg := ASEConfig{
+		HyperParameters: HyperParameters{
+			ConfidenceThreshold:   0.98,
+			AutoAdvance:           true,
+			MaxLLMRetries:         3,
+			LLMTimeoutSeconds:     120,
+			BatchFlushSeconds:     5,
+			ActiveAgentTTLMinutes: 10,
+			LockTTLSeconds:        30,
+			VectorMemory: VectorMemoryConfig{
+				Enabled:                 false,
+				EmbeddingProvider:       "openai",
+				OpenAIEmbeddingModel:    "text-embedding-3-small",
+				EmbeddingDimensions:     1536,
+				ScaNNNumLeaves:          10,
+				RetrievalTopK:           5,
+				HydratorIntervalSeconds: 30,
+				HydratorMinConfidence:   0.98,
+				HydratorBatchSize:       50,
+			},
+		},
+	}
+	
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, err
 	}

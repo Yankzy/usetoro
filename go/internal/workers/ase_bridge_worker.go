@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -127,11 +128,84 @@ func (w *AseBridgeWorker) Subscriptions() []SubscriptionConfig {
 				nats.AckExplicit(),
 			},
 		},
+		{
+			Subject: "ase.events.resume",
+			Group:   "ase-orchestrator-resume-group",
+			Options: []nats.SubOpt{
+				nats.Durable("ase-orchestrator-resume"),
+				nats.DeliverAll(),
+				nats.AckExplicit(),
+			},
+		},
 	}
 }
 
 func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	w.logger.Info("📡 [DEBUG] ase_orchestrator received TAP message", "topic", msg.Subject)
+
+	// 0. Intercept resume events directly
+	if msg.Subject == "ase.events.resume" {
+		var resumeEvt struct {
+			NodeID      string `json:"node_id"`
+			StartNodeID string `json:"start_node_id"`
+		}
+		if err := json.Unmarshal(msg.Data, &resumeEvt); err != nil {
+			w.logger.Error("ase_bridge: failed to parse resume event", "error", err)
+			return nil
+		}
+		w.logger.Info("ase_bridge: resuming DAG node", "node_id", resumeEvt.NodeID, "start_node", resumeEvt.StartNodeID)
+		
+		idUUID, err := uuid.Parse(resumeEvt.NodeID)
+		if err != nil {
+			return nil
+		}
+		pgID := pgtype.UUID{Bytes: idUUID, Valid: true}
+		dbTx, err := w.db.GetProposedTransactionByID(ctx, pgID)
+		if err != nil {
+			w.logger.Error("ase_bridge: failed to fetch tx for resume", "error", err)
+			return nil
+		}
+		
+		session, err := w.db.GetCleanupSession(ctx, dbTx.SessionID)
+		if err != nil {
+			return nil
+		}
+		
+		outflowIs := session.OutflowIs
+		realmID := ""
+		if session.RealmID.Valid {
+			realmID = session.RealmID.String
+		}
+		tenantID := ""
+		if session.CreatedBy.Valid {
+			tenantID = uuid.UUID(session.CreatedBy.Bytes).String()
+		}
+
+		w.dagsMu.RLock()
+		dagToUse := w.dags["default"]
+		if tenantID != "" && w.dags["tenant_"+tenantID] != nil {
+			dagToUse = w.dags["tenant_"+tenantID]
+		} else if realmID != "" && w.dags["realm_"+realmID] != nil {
+			dagToUse = w.dags["realm_"+realmID]
+		}
+		w.dagsMu.RUnlock()
+
+		agent := w.mapToAgent(dbTx, outflowIs, tenantID, realmID)
+		
+		// Fire off the asynchronous Goroutine to resume the agent
+		go func(a *ase.AutonomousSemanticEngineNode, start string, sID string) {
+			if err := a.ApproveAndResume(context.Background(), dagToUse, w.store, start); err != nil {
+				w.logger.Error("ase_bridge: agent crashed on resume", "node_id", a.NodeID, "error", err)
+			}
+			
+			state := a.GetState()
+			if state == ase.StateHoldMissingCtx || state == ase.StateHoldAmbiguous {
+				w.dispatchToContextGatheringAgent(context.Background(), a, sID)
+			}
+		}(agent, resumeEvt.StartNodeID, uuid.UUID(session.ID.Bytes).String())
+		
+		return nil
+	}
 
 	// 1. Unmarshal TAP Envelope
 	var env core.Envelope
@@ -208,101 +282,157 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 	// 4. Launch ASE Agents asynchronously
 	for _, txn := range pendingTxns {
-		// Use empty string fallback for invalid pgtype strings
-		desc := ""
-		if txn.RawDescription.Valid {
-			desc = txn.RawDescription.String
-		}
-
-		direction := "OUTFLOW"
-		if txn.CashDirection.Valid && txn.CashDirection.String != "" {
-			direction = txn.CashDirection.String
-		} else {
-			// Compute direction manually if missing
-			amtStr := strings.ReplaceAll(txn.RawAmount, ",", "")
-			amtStr = strings.ReplaceAll(amtStr, "$", "")
-			amtStr = strings.TrimSpace(amtStr)
-			if amt, err := strconv.ParseFloat(amtStr, 64); err == nil {
-				isOutflow := false
-				if outflowIs == "" || outflowIs == "NEGATIVE" {
-					isOutflow = amt < 0
-				} else {
-					isOutflow = amt > 0
-				}
-				if isOutflow {
-					direction = "OUTFLOW"
-				} else {
-					direction = "INFLOW"
-				}
-			}
-		}
-
-		agent := ase.NewASENode(
-			tenantID,
-			realmID,
-			desc,
-			direction,
-			txn.RawAmount,
-		)
-
-		// Pass the exact transaction ID to the agent so it can update the correct row in StateStore
-		agent.NodeID = uuid.UUID(txn.ID.Bytes).String()
+		agent := w.mapToAgent(txn, outflowIs, tenantID, realmID)
 
 		wg.Add(1)
 		// Fire off the asynchronous Goroutine
 		go func(a *ase.AutonomousSemanticEngineNode) {
 			defer wg.Done()
-			// Provide a background context since the worker Handle context might cancel
-			bgCtx := context.Background()
-			if err := a.Run(bgCtx, dagToUse, w.store); err != nil {
+			if err := a.Run(ctx, dagToUse, w.store); err != nil {
 				w.logger.Error("ase_bridge: agent crashed", "node_id", a.NodeID, "error", err)
+			}
+			
+			state := a.GetState()
+			if state == ase.StateHoldMissingCtx || state == ase.StateHoldAmbiguous {
+				w.dispatchToContextGatheringAgent(ctx, a, sessionID)
 			}
 		}(agent)
 	}
 
-	// 5. Reply to Orchestrator in the background to unblock the workflow
-	// Wait for all agents to finish classification or yield to HOLD state.
-	go func() {
-		wg.Wait()
+	// 5. Wait for all agents to finish, then reply to Orchestrator.
+	wg.Wait()
 
-		cid := env.ConversationID
-		if cid != "" {
-			replyEnv := core.Envelope{
-				ID:             uuid.New().String(),
-				Timestamp:      time.Now().UTC(),
-				SenderDID:      "did:toro:ase-bridge",
-				ReceiverDID:    workflows.OrchestratorDID,
-				Performative:   core.INFORM,
-				ConversationID: cid,
-				Body:           env.Body, // Echo back the body
-			}
-			
-			replyBytes, _ := json.Marshal(replyEnv)
+	cid := env.ConversationID
+	if cid != "" {
+		replyEnv := core.Envelope{
+			ID:             uuid.New().String(),
+			Timestamp:      time.Now().UTC(),
+			SenderDID:      "did:toro:ase-bridge",
+			ReceiverDID:    workflows.OrchestratorDID,
+			Performative:   core.INFORM,
+			ConversationID: cid,
+			Body:           env.Body, // Echo back the body
+		}
+		
+		replyBytes, _ := json.Marshal(replyEnv)
 
-			targetSubject := msg.Reply
-			isCoreReply := targetSubject != "" && !strings.HasPrefix(targetSubject, "$JS.ACK.")
-			if !isCoreReply {
-				targetSubject = workflows.OrchestratorInbox
-			}
+		targetSubject := msg.Reply
+		isCoreReply := targetSubject != "" && !strings.HasPrefix(targetSubject, "$JS.ACK.")
+		if !isCoreReply {
+			targetSubject = workflows.OrchestratorInbox
+		}
 
-			var pubErr error
-			if isCoreReply {
-				pubErr = w.nc.Publish(targetSubject, replyBytes)
+		var pubErr error
+		if isCoreReply {
+			pubErr = w.nc.Publish(targetSubject, replyBytes)
+		} else {
+			if js, err := w.nc.JetStream(); err == nil {
+				_, pubErr = js.Publish(targetSubject, replyBytes)
 			} else {
-				if js, err := w.nc.JetStream(); err == nil {
-					_, pubErr = js.Publish(targetSubject, replyBytes)
-				} else {
-					pubErr = err
-				}
-			}
-
-			if pubErr != nil {
-				w.logger.Error("ase_bridge: failed to notify target", "error", pubErr, "target", targetSubject)
-			} else {
-				w.logger.Info("ase_bridge: sent explicit INFORM back to target", "cid", cid)
+				pubErr = err
 			}
 		}
-	}()
+
+		if pubErr != nil {
+			w.logger.Error("ase_bridge: failed to notify target", "error", pubErr, "target", targetSubject)
+		} else {
+			w.logger.Info("ase_bridge: sent explicit INFORM back to target", "cid", cid)
+		}
+	}
 
 	return nil
+}
+
+func (w *AseBridgeWorker) dispatchToContextGatheringAgent(ctx context.Context, a *ase.AutonomousSemanticEngineNode, sessionID string) {
+	payload := map[string]interface{}{
+		"prompt": fmt.Sprintf("The following transaction requires context gathering to resolve ambiguity:\n\nDescription: %s\nAmount: %s\nCash Direction: %s\nHolding Reason: %s\nTenant ID: %s\nRealm ID: %s",
+			a.RawDescription, a.RawAmount, a.CashDirection, a.HoldReason, a.TenantID, a.RealmID),
+		"node_id":        a.NodeID,
+		"session_id":     sessionID,
+		"hold_reason":    a.HoldReason,
+		"cash_direction": a.CashDirection,
+		"description":    a.RawDescription,
+		"amount":         a.RawAmount,
+		"tenant_id":      a.TenantID,
+		"realm_id":       a.RealmID,
+	}
+
+	payloadBytes, _ := json.Marshal(payload)
+
+	env := core.Envelope{
+		ID:             uuid.New().String(),
+		Timestamp:      time.Now().UTC(),
+		SenderDID:      "did:toro:ase-bridge",
+		ReceiverDID:    "did:toro:context-gathering-agent",
+		Performative:   core.REQUEST,
+		ConversationID: a.NodeID, // using NodeID to group conversational turns
+		Body:           payloadBytes,
+	}
+	envBytes, _ := json.Marshal(env)
+
+	// Since ContextGatheringAgent is registered with ActivityType "agents.context_gathering",
+	// its inbox subject is "worker.inbox.agents.context_gathering"
+	targetSubject, _ := core.BuildWorkerInboxFromActivity("agents.context_gathering")
+	if targetSubject == "" {
+		targetSubject = "worker.inbox.agents.context_gathering"
+	}
+
+	err := w.nc.Publish(targetSubject, envBytes)
+	if err != nil {
+		w.logger.Error("ase_bridge: failed to dispatch to context gathering agent", "node", a.NodeID, "error", err)
+	} else {
+		w.logger.Info("ase_bridge: dispatched node to context gathering agent", "node", a.NodeID, "reason", a.HoldReason)
+	}
+}
+
+func (w *AseBridgeWorker) mapToAgent(txn database.FignodeStagingTransaction, outflowIs, tenantID, realmID string) *ase.AutonomousSemanticEngineNode {
+	desc := ""
+	if txn.RawDescription.Valid {
+		desc = txn.RawDescription.String
+	}
+
+	direction := "OUTFLOW"
+	if txn.CashDirection.Valid && txn.CashDirection.String != "" {
+		direction = txn.CashDirection.String
+	} else {
+		amtStr := strings.ReplaceAll(txn.RawAmount, ",", "")
+		amtStr = strings.ReplaceAll(amtStr, "$", "")
+		amtStr = strings.TrimSpace(amtStr)
+		isNegativeFormat := false
+		if strings.HasPrefix(amtStr, "(") && strings.HasSuffix(amtStr, ")") {
+			amtStr = strings.Trim(amtStr, "()")
+			isNegativeFormat = true
+		}
+		if amt, err := strconv.ParseFloat(amtStr, 64); err == nil {
+			if isNegativeFormat {
+				amt = -amt
+			}
+			isOutflow := false
+			if outflowIs == "" || outflowIs == "NEGATIVE" {
+				isOutflow = amt < 0
+			} else {
+				isOutflow = amt > 0
+			}
+			if isOutflow {
+				direction = "OUTFLOW"
+			} else {
+				direction = "INFLOW"
+			}
+		}
+	}
+
+	agent := ase.NewASENode(tenantID, realmID, desc, direction, txn.RawAmount)
+	agent.NodeID = uuid.UUID(txn.ID.Bytes).String()
+	
+	if len(txn.AseExecutionTrace) > 0 {
+		_ = json.Unmarshal(txn.AseExecutionTrace, &agent.ExecutionTrace)
+		// Rehydrate Candidates map to preserve previous properties during Resume
+		for _, step := range agent.ExecutionTrace {
+			if step.PropertyKey != "" && len(step.Candidates) > 0 {
+				agent.Candidates[step.PropertyKey] = step.Candidates
+			}
+		}
+	}
+	
+	return agent
 }

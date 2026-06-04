@@ -24,11 +24,19 @@ type ClassifierService struct {
 	logger         *slog.Logger
 	agentTaskQueue string
 	db             *database.Queries
+	vectorStore    *VectorStore
 }
 
 // SetDB injects the database connection needed for dynamic DB edge lookups.
 func (cs *ClassifierService) SetDB(db *database.Queries) {
 	cs.db = db
+}
+
+// SetVectorStore injects the VectorStore for semantic context retrieval.
+// When set and VectorMemoryConfig.Enabled is true, batchToRows enriches
+// each transaction's company_rules with semantically similar past decisions.
+func (cs *ClassifierService) SetVectorStore(vs *VectorStore) {
+	cs.vectorStore = vs
 }
 
 // NewClassifierService creates a new classification service configured with LLM
@@ -112,6 +120,9 @@ func (cs *ClassifierService) classifyGeneric(ctx context.Context, promptKey stri
 	var rowsMap map[string]PropertyResponse
 	var validationErr error
 	maxRetries := 3
+	if cfg := GetConfig(tenantID, realmID); cfg != nil {
+		maxRetries = cfg.HyperParameters.MaxLLMRetries
+	}
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		attemptSystemPrompt := systemPrompt
@@ -229,10 +240,12 @@ func (cs *ClassifierService) batchToRows(ctx context.Context, batch []*Autonomou
 	for _, node := range batch {
 		node.mu.RLock()
 		tenantID := node.TenantID
+		realmID := node.RealmID
 		desc := node.RawDescription
 		ctxUpdates := node.ContextUpdates
 		node.mu.RUnlock()
 
+		// --- Keyword-matched memory rules (existing mechanism) ---
 		dbRules, ok := tenantRules[tenantID]
 		if !ok && cs.db != nil {
 			fetched, err := cs.db.GetMemoryRules(ctx, tenantID)
@@ -247,6 +260,33 @@ func (cs *ClassifierService) batchToRows(ctx context.Context, batch []*Autonomou
 		for _, r := range dbRules {
 			if strings.ToUpper(r.EntityValue) == "GLOBAL" || strings.Contains(descLower, strings.ToLower(r.EntityValue)) {
 				activeRules = append(activeRules, r.Instruction)
+			}
+		}
+
+		// --- Semantic retrieval (vector memory layer) ---
+		// Reads VectorMemoryConfig at call-time so ase.yml hot-reloads are respected.
+		if cs.vectorStore != nil {
+			vcfg := cs.vectorStore.vectorCfg(tenantID, realmID)
+			if vcfg.Enabled && desc != "" && realmID != "" {
+				vec, err := cs.vectorStore.GenerateEmbedding(ctx, tenantID, realmID, desc)
+				if err != nil {
+					cs.logger.Warn("ase: vector embedding failed, skipping semantic retrieval",
+						"node_id", node.NodeID,
+						"error", err,
+					)
+				} else {
+					similar, err := cs.vectorStore.Search(ctx, tenantID, realmID, vec)
+					if err != nil {
+						cs.logger.Warn("ase: vector search failed, skipping semantic retrieval",
+							"node_id", node.NodeID,
+							"error", err,
+						)
+					} else {
+						for _, m := range similar {
+							activeRules = append(activeRules, m.RawText)
+						}
+					}
+				}
 			}
 		}
 
@@ -326,7 +366,12 @@ func (cs *ClassifierService) dispatchViaNATS(ctx context.Context, systemPrompt s
 		return nil, fmt.Errorf("publish cfp: %w", err)
 	}
 
-	timeout := time.NewTimer(120 * time.Second)
+	timeoutDuration := 120 * time.Second
+	// Use default config if tenant specific is not available at dispatch context.
+	if cfg := GetConfig("", ""); cfg != nil {
+		timeoutDuration = time.Duration(cfg.HyperParameters.LLMTimeoutSeconds) * time.Second
+	}
+	timeout := time.NewTimer(timeoutDuration)
 	defer timeout.Stop()
 
 	for {

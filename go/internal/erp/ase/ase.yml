@@ -1,3 +1,55 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  max_llm_retries: 3
+  llm_timeout_seconds: 120
+  batch_flush_seconds: 5
+  active_agent_ttl_minutes: 10
+  lock_ttl_seconds: 30
+
+  # -----------------------------------------------------------------------
+  # Vector Memory (ASE Semantic Retrieval Layer)
+  # -----------------------------------------------------------------------
+  vector_memory:
+    # Master switch — set to false to disable semantic retrieval entirely.
+    enabled: false
+
+    # Embedding provider: "openai" or "google"
+    # "openai" uses the existing LLMClient (text-embedding-3-small, 1536 dims)
+    # "google" requires google_ml_integration extension + Vertex AI credentials
+    embedding_provider: "openai"
+
+    # OpenAI embedding model. Only used when embedding_provider = "openai".
+    # text-embedding-3-small → 1536 dims (default, cost-efficient)
+    # text-embedding-3-large → 3072 dims (highest accuracy)
+    openai_embedding_model: "text-embedding-3-small"
+
+    # Embedding vector dimensionality.
+    # Must match the model: text-embedding-3-small=1536, text-embedding-3-large=3072
+    # WARNING: changing this requires dropping and recreating the vector column + ScaNN index.
+    embedding_dimensions: 1536
+
+    # ScaNN index num_leaves tuning knob.
+    # Best practice: start at sqrt(expected_row_count).
+    # With no initial data, 10 is a safe cold-start value; raise as volume grows.
+    # Valid range: 1–1048576.
+    scann_num_leaves: 10
+
+    # Number of semantically similar entries to retrieve per transaction during
+    # the batchToRows enrichment step and inject as company_rules context.
+    retrieval_top_k: 5
+
+    # How often (in seconds) the background VectorHydrator runs to generate
+    # embeddings for new memory_rules and high-confidence resolved transactions.
+    hydrator_interval_seconds: 30
+
+    # Minimum confidence score required for a resolved staging transaction to
+    # be eligible for hydration into the vector memory store.
+    hydrator_min_confidence: 0.98
+
+    # Batch size for the hydrator's embedding generation loop per tick.
+    hydrator_batch_size: 50
+
 prompts:
   macro_classifier_inflow_specialist: |
     You are an expert CPA acting as a macro-classification router inside a QuickBooks Online automated ledger engine. 
@@ -7,7 +59,9 @@ prompts:
     * Cash Direction for ALL items: INFLOW
     * Contra-Accounting Awareness: Bank direction alone does not determine macro class. Apply these structural rules:
       - INFLOW transactions that are refunds from merchants (vendors) are NOT revenue — they are contra-EXPENSE (money back from a prior purchase).
-      - Otherwise, INFLOWs are generally REVENUE, LIABILITY (taking a loan), or EQUITY (owner investment).
+        - Common examples of contra-expense are: Purchase discounts, Purchase Returns, rebates, cash-back rewards, Insurance proceeds for damaged equipment or inventory, employee payroll deductions for shared health insurance costs, payroll tax refunds, refunds for returned inventory, vendor credits, and other similar transactions.
+        - If a contra-expense is detected or probable, you MUST set the highest score below 0.90 for human-review.
+      - Otherwise, INFLOWs are generally REVENUE, LIABILITY (taking a loan) or EQUITY (owner investment).
     
     ### COMPANY RULES (CRITICAL)
     - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
@@ -37,6 +91,8 @@ prompts:
     * Cash Direction for ALL items: OUTFLOW
     * Contra-Accounting Awareness: Bank direction alone does not determine macro class. Apply these structural rules:
       - OUTFLOW transactions that are refunds/chargebacks to customers are NOT expenses — they are contra-REVENUE (money returned to a customer).
+        - Common examples of contra-revenue are: refunds to customers, chargebacks, insurance claims received for damaged equipment or inventory, customer returns, and other similar transactions.
+        - If a contra-revenue is detected or probable, you MUST set the highest score below 0.90 for human-review.
       - Otherwise, OUTFLOWs are generally EXPENSE, ASSET (buying hardware/inventory), LIABILITY (paying down a loan), or EQUITY (owner draw).
     
     ### COMPANY RULES (CRITICAL)
@@ -766,6 +822,7 @@ dag:
       kind: holding_gate
       prompt_key: bank_gate_specialist
       batch_size: 50
+      auto_advance: false
       edge_type: static
       children:
         INTERNAL_TRANSFER: terminal_bank_transfer_collapse

@@ -14,10 +14,6 @@ const (
 	// Redis key prefixes
 	activeAgentPrefix = "ase:active:"
 	lockPrefix        = "ase:lock:"
-
-	// Redis TTLs
-	activeAgentTTL = 10 * time.Minute
-	lockTTL        = 30 * time.Second
 )
 
 // StateStore persists transaction agent state to Postgres and Redis.
@@ -97,10 +93,15 @@ func (s *StateStore) PersistHoldReason(ctx context.Context, node *AutonomousSema
 }
 
 // PersistReadyForSync marks the transaction as ready for QBO sync.
-// This is the State Collapse point — only call when confidence >= 0.98.
+// This is the State Collapse point — only call when confidence >= threshold.
 func (s *StateStore) PersistReadyForSync(ctx context.Context, node *AutonomousSemanticEngineNode) error {
-	if node.GetConfidence() < 0.98 {
-		return fmt.Errorf("guardrail: cannot mark node %s as READY_FOR_SYNC with unified confidence %f below 0.98", node.NodeID, node.GetConfidence())
+	threshold := 0.98
+	if cfg := GetConfig(node.TenantID, node.RealmID); cfg != nil {
+		threshold = cfg.HyperParameters.ConfidenceThreshold
+	}
+
+	if node.GetConfidence() < threshold {
+		return fmt.Errorf("guardrail: cannot mark node %s as READY_FOR_SYNC with unified confidence %f below %v", node.NodeID, node.GetConfidence(), threshold)
 	}
 
 	query := `UPDATE fignode.staging_transactions
@@ -132,7 +133,13 @@ func (s *StateStore) CacheActiveAgent(ctx context.Context, node *AutonomousSeman
 		return fmt.Errorf("marshal agent for cache: %w", err)
 	}
 	key := activeAgentPrefix + node.NodeID
-	return s.redis.Set(ctx, key, data, activeAgentTTL).Err()
+	
+	ttl := 10 * time.Minute
+	if cfg := GetConfig(node.TenantID, node.RealmID); cfg != nil {
+		ttl = time.Duration(cfg.HyperParameters.ActiveAgentTTLMinutes) * time.Minute
+	}
+	
+	return s.redis.Set(ctx, key, data, ttl).Err()
 }
 
 // GetCachedAgent retrieves an active agent from Redis.
@@ -173,7 +180,13 @@ func (s *StateStore) AcquireLock(ctx context.Context, nodeID string) (bool, erro
 		return true, nil // No Redis = no distributed locking, always succeed.
 	}
 	key := lockPrefix + nodeID
-	ok, err := s.redis.SetNX(ctx, key, "1", lockTTL).Result()
+	
+	ttl := 30 * time.Second
+	if cfg := GetConfig("", ""); cfg != nil {
+		ttl = time.Duration(cfg.HyperParameters.LockTTLSeconds) * time.Second
+	}
+	
+	ok, err := s.redis.SetNX(ctx, key, "1", ttl).Result()
 	if err != nil {
 		return false, fmt.Errorf("acquire lock: %w", err)
 	}

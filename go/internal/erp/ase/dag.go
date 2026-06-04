@@ -2,6 +2,7 @@ package ase
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -15,10 +16,10 @@ type DAGNodeKind string
 // Each node accepts transaction agents, batches them, and routes results
 // to child nodes.
 type DAGNode struct {
-	// Identity
 	ID                  string      `json:"id"`
 	Kind                DAGNodeKind `json:"kind"`
 	Name                string      `json:"name"`
+	AutoAdvance         *bool       `json:"auto_advance"`
 	PromptKey           string      `json:"prompt_key"`
 	EdgeType            string      `json:"edge_type"`
 	DynamicEdgeProvider string      `json:"dynamic_edge_provider"`
@@ -102,6 +103,7 @@ func NewDAGNode(id string, kind DAGNodeKind, name string, batchSize int, batchFl
 		ID:                  id,
 		Kind:                kind,
 		Name:                name,
+		AutoAdvance:         cfg.AutoAdvance,
 		PromptKey:           cfg.PromptKey,
 		EdgeType:            cfg.EdgeType,
 		DynamicEdgeProvider: cfg.DynamicEdgeProvider,
@@ -212,11 +214,20 @@ func (dn *DAGNode) flush() {
 		return
 	}
 
-	// Snapshot the queue.
-	batch := make([]*AutonomousSemanticEngineNode, len(dn.queue))
-	copy(batch, dn.queue)
-	dn.queue = dn.queue[:0]
+	// Extract up to batchSize items to prevent context window overflow.
+	extractSize := len(dn.queue)
+	if extractSize > dn.batchSize {
+		extractSize = dn.batchSize
+	}
+	batch := make([]*AutonomousSemanticEngineNode, extractSize)
+	copy(batch, dn.queue[:extractSize])
+	dn.queue = dn.queue[extractSize:]
+	needsAnotherFlush := len(dn.queue) >= dn.batchSize
 	dn.mu.Unlock()
+
+	if needsAnotherFlush {
+		go dn.flush()
+	}
 
 	// 1) Fast-Path Dead-End Interceptor
 	// If this node defines a static hold signal, instantly transition and halt.
@@ -269,6 +280,43 @@ func (dn *DAGNode) flush() {
 			"kind", string(dn.Kind),
 			"batch_size", len(batch),
 		)
+	}
+
+	// 3) AutoAdvance Halt
+	// If auto_advance is false, halt the node BEFORE thinking, unless it was human approved.
+	autoAdv := true
+	if cfg := GetConfig("", ""); cfg != nil {
+		autoAdv = cfg.HyperParameters.AutoAdvance
+	}
+	if dn.AutoAdvance != nil {
+		autoAdv = *dn.AutoAdvance
+	}
+
+	if !autoAdv {
+		var thinkingBatch []*AutonomousSemanticEngineNode
+		for _, node := range batch {
+			node.mu.Lock()
+			approved := node.HumanApproved
+			node.mu.Unlock()
+
+			if !approved {
+				node.mu.Lock()
+				node.HoldReason = fmt.Sprintf("auto_advance disabled at DAG node %s", dn.Name)
+				node.mu.Unlock()
+				node.transition(StateHoldMissingCtx)
+			} else {
+				// Clear the flag so it doesn't automatically bypass future nodes
+				node.mu.Lock()
+				node.HumanApproved = false
+				node.mu.Unlock()
+				thinkingBatch = append(thinkingBatch, node)
+			}
+		}
+		batch = thinkingBatch
+	}
+
+	if len(batch) == 0 {
+		return
 	}
 
 	// Transition all nodes to Thinking.
@@ -366,7 +414,12 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 				node.transition(StateClassified)
 			} else {
 				node.mu.Lock()
-				node.HoldReason = "Unified Confidence Score below 0.98 structural threshold."
+				cfg := GetConfig(node.TenantID, node.RealmID)
+				if cfg != nil {
+					node.HoldReason = fmt.Sprintf("Unified Confidence Score below %v structural threshold.", cfg.HyperParameters.ConfidenceThreshold)
+				} else {
+					node.HoldReason = "Unified Confidence Score below 0.98 structural threshold."
+				}
 				node.mu.Unlock()
 				node.transition(StateHoldMissingCtx)
 			}
@@ -404,12 +457,17 @@ func BuildDAGFromConfig(cfg DAGConfig, logger *slog.Logger) *DAG {
 	}
 
 	nodesMap := make(map[string]*DAGNode)
+	
+	defaultBatchFlush := 5 * time.Second
+	if config := GetConfig("", ""); config != nil && config.HyperParameters.BatchFlushSeconds > 0 {
+		defaultBatchFlush = time.Duration(config.HyperParameters.BatchFlushSeconds) * time.Second
+	}
 
 	// Step 1: Instantiate all nodes without relationships
 	for id, nCfg := range cfg.Nodes {
 		batchFlush := time.Duration(nCfg.BatchFlushSeconds) * time.Second
 		if batchFlush == 0 {
-			batchFlush = 5 * time.Second // fallback default
+			batchFlush = defaultBatchFlush // fallback default
 		}
 		
 		node := NewDAGNode(id, DAGNodeKind(nCfg.Kind), nCfg.Name, nCfg.BatchSize, batchFlush, logger, nCfg)

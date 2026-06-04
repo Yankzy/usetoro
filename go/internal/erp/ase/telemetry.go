@@ -198,6 +198,11 @@ func (tp *TelemetryPublisher) requestContextViaOmniChat(node *AutonomousSemantic
 func (tp *TelemetryPublisher) PublishGuardrailBlock(node *AutonomousSemanticEngineNode, reason string) {
 
 
+	threshold := 0.98
+	if cfg := GetConfig(node.TenantID, node.RealmID); cfg != nil {
+		threshold = cfg.HyperParameters.ConfidenceThreshold
+	}
+
 	payload := TelemetryPayload{
 		EventType:   EventGuardrailBlock,
 		NodeID:      node.NodeID,
@@ -206,7 +211,7 @@ func (tp *TelemetryPublisher) PublishGuardrailBlock(node *AutonomousSemanticEngi
 		Entropy:     node.GetEntropy(),
 		Confidence:  node.GetConfidence(),
 		Probes:      node.GetProbes(),
-		Description: fmt.Sprintf("Guardrail blocked transition to READY_FOR_SYNC: unified confidence %.4f < 0.98 threshold. Requires human review or additional LLM probes.", node.GetConfidence()),
+		Description: fmt.Sprintf("Guardrail blocked transition to READY_FOR_SYNC: unified confidence %.4f < %v threshold. Requires human review or additional LLM probes.", node.GetConfidence(), threshold),
 		Timestamp:   time.Now().UTC(),
 	}
 
@@ -249,13 +254,18 @@ func (tp *TelemetryPublisher) PublishCollapseReady(node *AutonomousSemanticEngin
 // formatContextRequest builds a human-readable description of what context
 // is missing, suitable for routing to Slack or other virtual workforce channels.
 func formatContextRequest(node *AutonomousSemanticEngineNode) string {
+	threshold := 0.98
+	if cfg := GetConfig(node.TenantID, node.RealmID); cfg != nil {
+		threshold = cfg.HyperParameters.ConfidenceThreshold
+	}
+
 	switch node.GetState() {
 	case StateHoldAmbiguous:
 		return fmt.Sprintf(
-			"Transaction '%s' cannot be classified with confidence above 0.98. "+
+			"Transaction '%s' cannot be classified with confidence above %v. "+
 				"Current entropy: %.4f. Top candidate confidence below threshold. "+
 				"Human accountant review required. Raw description: '%s', Amount: '%s', Direction: '%s'.",
-			node.NodeID, node.GetEntropy(), node.RawDescription, node.RawAmount, node.CashDirection,
+			node.NodeID, threshold, node.GetEntropy(), node.RawDescription, node.RawAmount, node.CashDirection,
 		)
 	case StateHoldMissingCtx:
 		return fmt.Sprintf(

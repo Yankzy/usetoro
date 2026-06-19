@@ -148,6 +148,38 @@ func TestEnforceNoArrayMiddleware(t *testing.T) {
 			t.Fatalf("nested array was allowed: %v", err)
 		}
 	})
+
+	t.Run("System Wrapper Allowed with Arrays in System Fields", func(t *testing.T) {
+		state := map[string]interface{}{
+			"workflow_def":  "test_wf",
+			"instance_path": []interface{}{"uuid1"},
+			"variables": map[string]interface{}{
+				"TRIGGER": map[string]interface{}{
+					"rows": []interface{}{"row1"},
+				},
+			},
+			"status": "ENRICHED",
+		}
+		err := EnforceNoArrayMiddleware(state, metrics)
+		if err != nil {
+			t.Fatalf("system wrapper incorrectly denied: %v", err)
+		}
+	})
+
+	t.Run("System Wrapper Denied with Array in Domain Field", func(t *testing.T) {
+		state := map[string]interface{}{
+			"workflow_def":  "test_wf",
+			"instance_path": []interface{}{"uuid1"},
+			"status":        "ENRICHED",
+			"enrichments": map[string]interface{}{
+				"bad_domain_array": []interface{}{"item1"},
+			},
+		}
+		err := EnforceNoArrayMiddleware(state, metrics)
+		if err == nil || !strings.Contains(err.Error(), "no-array") {
+			t.Fatalf("system wrapper with domain array was allowed")
+		}
+	})
 }
 
 func TestEnforceSchemaMiddleware(t *testing.T) {

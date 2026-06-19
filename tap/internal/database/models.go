@@ -8,19 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type AseVectorMemory struct {
-	ID          pgtype.UUID
-	RealmID     string
-	SourceType  string
-	RawText     string
-	Embedding   string
-	SourceRowID pgtype.UUID
-	Metadata    []byte
-	EmbeddedAt  pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
-}
-
 type FignodeEmployeeProfile struct {
 	UserID           pgtype.UUID
 	FirstName        pgtype.Text
@@ -418,6 +405,41 @@ type ToroCoreAgentMemoryRule struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type ToroCoreAseDag struct {
+	ID              pgtype.UUID
+	TenantID        pgtype.UUID
+	RealmID         pgtype.Text
+	Name            string
+	DagConfig       []byte
+	HyperParameters []byte
+	Prompts         []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type ToroCoreAseDagVersion struct {
+	ID              pgtype.UUID
+	DagID           pgtype.UUID
+	VersionNumber   int32
+	DagConfig       []byte
+	HyperParameters []byte
+	Prompts         []byte
+	CreatedAt       pgtype.Timestamptz
+}
+
+type ToroCoreAseVectorMemory struct {
+	ID          pgtype.UUID
+	RealmID     string
+	SourceType  string
+	RawText     string
+	Embedding   string
+	SourceRowID pgtype.UUID
+	Metadata    []byte
+	EmbeddedAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type ToroCoreConversation struct {
 	ID           pgtype.UUID
 	EntityID     pgtype.UUID
@@ -501,6 +523,30 @@ type ToroCoreErpConnection struct {
 	UpdatedAt               pgtype.Timestamptz
 }
 
+type ToroCoreFinancialConnectionAttempt struct {
+	ID               pgtype.UUID
+	EntityID         pgtype.UUID
+	FcSessionID      string
+	StripeCustomerID string
+	Status           string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type ToroCoreLinkedBankAccount struct {
+	ID              pgtype.UUID
+	EntityID        pgtype.UUID
+	FcSessionID     string
+	StripeAccountID string
+	InstitutionName string
+	Last4           pgtype.Text
+	Subcategory     pgtype.Text
+	Status          string
+	Metadata        []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type ToroCoreRefreshToken struct {
 	TokenHash string
 	UserID    pgtype.UUID
@@ -537,6 +583,30 @@ type ToroCoreStalledMessage struct {
 	Payload         []byte
 	ErrorReason     string
 	CreatedAt       pgtype.Timestamptz
+}
+
+type ToroCoreStripeCheckoutSession struct {
+	ID              pgtype.UUID
+	EntityID        pgtype.UUID
+	StripeSessionID string
+	AmountCents     int64
+	ProductName     string
+	Status          string
+	Metadata        []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type ToroCoreSystemVectorConfig struct {
+	ID                      int32
+	EmbeddingProvider       string
+	EmbeddingModel          string
+	RetrievalTopK           int32
+	HydratorIntervalSeconds int32
+	HydratorBatchSize       int32
+	HydratorMinConfidence   float64
+	ScannNumLeaves          int32
+	UpdatedAt               pgtype.Timestamptz
 }
 
 type ToroCoreTeamInvite struct {
@@ -580,16 +650,19 @@ type ToroCoreTransaction struct {
 }
 
 type ToroCoreUser struct {
-	ID           pgtype.UUID
-	EntityID     pgtype.UUID
-	Email        string
-	PasswordHash string
-	FullName     pgtype.Text
-	Role         pgtype.Text
-	UserType     string
-	IsActive     pgtype.Bool
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	ID                 pgtype.UUID
+	EntityID           pgtype.UUID
+	Email              string
+	PasswordHash       string
+	FullName           pgtype.Text
+	Role               pgtype.Text
+	UserType           string
+	IsActive           pgtype.Bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	VcooActiveBlockers []string
+	VcooHistory        []byte
+	VcooState          []byte
 }
 
 type ToroCoreWallet struct {

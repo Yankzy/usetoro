@@ -235,8 +235,20 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 	if inReplyTo != "" {
 		ctx = context.WithValue(ctx, tools.MessageIDKey{}, inReplyTo)
 	}
+	realmID := extractRealmID(envlp.Body)
+	if realmID != "" {
+		ctx = agent.WithTenantID(ctx, realmID)
+	}
 
 	toolList := resolveToolsFromConfig(env.Config, ga.toolMap)
+	if realmID != "" {
+		dynamicTools, err := tools.ScanSkillsCatalog(ctx, realmID, env.Bus, env.Config.DID)
+		if err == nil {
+			toolList = append(toolList, dynamicTools...)
+		} else {
+			ga.BaseAgent.Logger.Warn("failed to scan skills catalog", "realm_id", realmID, "error", err)
+		}
+	}
 
 	// Use the task's system prompt if provided, otherwise fall back to config
 	systemPrompt := taskSysPrompt
@@ -652,6 +664,32 @@ func (t *delegateTool) Call(ctx context.Context, input map[string]any) (string, 
 		return "", fmt.Errorf("publish DELEGATE to orchestrator: %w", err)
 	}
 	return fmt.Sprintf("Dynamic workflow dispatched to Orchestrator with %d step(s). ConversationID: %s.", len(steps), convID), nil
+}
+
+func extractRealmID(body json.RawMessage) string {
+	var taskDef core.TaskDefinition
+	if err := json.Unmarshal(body, &taskDef); err == nil && len(taskDef.Payload) > 0 {
+		var payload map[string]any
+		if err := core.UnmarshalTaskPayload(taskDef.Payload, &payload); err == nil {
+			if rid, ok := payload["realm_id"].(string); ok && rid != "" {
+				return rid
+			}
+			if tid, ok := payload["tenant_id"].(string); ok && tid != "" {
+				return tid
+			}
+		}
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err == nil {
+		if rid, ok := m["realm_id"].(string); ok && rid != "" {
+			return rid
+		}
+		if tid, ok := m["tenant_id"].(string); ok && tid != "" {
+			return tid
+		}
+	}
+	return ""
 }
 
 func init() {

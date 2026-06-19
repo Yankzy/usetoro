@@ -263,6 +263,47 @@ func unmarshalTaskPayloadRecursive(payload []byte, target interface{}, depth int
 	return json.Unmarshal(payload, target)
 }
 
+// UnmarshalTaskConfig is a protocol-aware unmarshaler that extracts the "config"
+// block injected by the Orchestrator.
+func UnmarshalTaskConfig(payload []byte, target interface{}) error {
+	return unmarshalTaskConfigRecursive(payload, target, 0)
+}
+
+func unmarshalTaskConfigRecursive(payload []byte, target interface{}, depth int) error {
+	if len(payload) == 0 {
+		return fmt.Errorf("empty payload")
+	}
+	if depth > 5 {
+		return fmt.Errorf("payload nesting too deep")
+	}
+
+	var taskDef TaskDefinition
+	if err := json.Unmarshal(payload, &taskDef); err == nil && len(taskDef.Payload) > 0 && taskDef.Domain != "" {
+		return unmarshalTaskConfigRecursive(taskDef.Payload, target, depth+1)
+	}
+
+	var proof Proof
+	if err := json.Unmarshal(payload, &proof); err == nil && len(proof.Data) > 0 && proof.Type != "" {
+		return unmarshalTaskConfigRecursive(proof.Data, target, depth+1)
+	}
+
+	var wrapper struct {
+		Config json.RawMessage `json:"config"`
+	}
+	if err := json.Unmarshal(payload, &wrapper); err == nil && len(wrapper.Config) > 0 {
+		return json.Unmarshal(wrapper.Config, target)
+	}
+
+	var strPayload string
+	if err := json.Unmarshal(payload, &strPayload); err == nil {
+		if len(strPayload) > 0 && (strPayload[0] == '{' || strPayload[0] == '[') {
+			return unmarshalTaskConfigRecursive([]byte(strPayload), target, depth+1)
+		}
+	}
+
+	return fmt.Errorf("no config found in payload")
+}
+
 // RowString is a resilient helper to extract a string value from a row map,
 // checking multiple keys and trimming the result.
 func RowString(row map[string]interface{}, keys ...string) string {

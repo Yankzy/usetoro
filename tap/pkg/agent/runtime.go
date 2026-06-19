@@ -320,6 +320,9 @@ func (r *Runtime) execWithPagingResponses(ctx context.Context, client openai.Cli
 		}
 		if !hasToolCalls {
 			outputText := mapper.Restore(resp.OutputText())
+			// Explicitly release references for garbage collection
+			localMap = nil
+			toolOutputs = nil
 			if outputText != "" {
 				return outputText, nil
 			}
@@ -327,6 +330,9 @@ func (r *Runtime) execWithPagingResponses(ctx context.Context, client openai.Cli
 		}
 	}
 
+	// Explicitly release references for garbage collection
+	localMap = nil
+	toolOutputs = nil
 	return "", fmt.Errorf("exceeded max reasoning loops intrinsically mapped")
 }
 
@@ -385,6 +391,10 @@ func (r *Runtime) execWithPagingChat(ctx context.Context, client openai.Client, 
 
 		if len(choice.Message.ToolCalls) == 0 {
 			outputText := mapper.Restore(choice.Message.Content)
+			// Explicitly release references for garbage collection
+			localMap = nil
+			messages = nil
+			tools = nil
 			if outputText != "" {
 				return outputText, nil
 			}
@@ -435,6 +445,10 @@ func (r *Runtime) execWithPagingChat(ctx context.Context, client openai.Client, 
 		}
 	}
 
+	// Explicitly release references for garbage collection
+	localMap = nil
+	messages = nil
+	tools = nil
 	return "", fmt.Errorf("exceeded max reasoning loops intrinsically mapped")
 }
 

@@ -81,6 +81,41 @@ func EnforceRBACMiddleware(patchArray []json.RawMessage, actor string, policy RB
 
 // EnforceNoArrayMiddleware acts as a structural defense mechanism against JSON Array Shift bugs.
 func EnforceNoArrayMiddleware(data map[string]interface{}, metrics MetricsRecorder) error {
+	isSystemWrapper := false
+	if _, ok := data["instance_path"]; ok {
+		if _, ok2 := data["workflow_def"]; ok2 {
+			isSystemWrapper = true
+		}
+	}
+
+	if isSystemWrapper {
+		systemKeys := map[string]bool{
+			"workflow_def":      true,
+			"current_step_id":    true,
+			"instance_path":     true,
+			"active_steps":      true,
+			"completed_steps":   true,
+			"variables":         true,
+			"last_proof":        true,
+			"parent_step_id":     true,
+			"suspended":         true,
+			"suspension_step":   true,
+			"suspension_reason": true,
+			"suspension_route":  true,
+			"suspension_kind":   true,
+		}
+		for k, v := range data {
+			if systemKeys[k] {
+				continue
+			}
+			if hasArrayRuleViolation(v) {
+				metrics.RecordRuleViolation("ArrayBan")
+				return ErrArrayBan
+			}
+		}
+		return nil
+	}
+
 	if hasArrayRuleViolation(data) {
 		metrics.RecordRuleViolation("ArrayBan")
 		return ErrArrayBan

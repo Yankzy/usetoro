@@ -3,6 +3,10 @@ package general_agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +14,7 @@ import (
 	"github.com/Yankzy/usetoro/tap/pkg/redux"
 	"github.com/Yankzy/usetoro/tap/pkg/tools"
 	"github.com/Yankzy/usetoro/tap/pkg/tools/builtin"
+	"github.com/nats-io/nats.go"
 )
 
 func TestExtractTaskConfig_DirectString(t *testing.T) {
@@ -248,4 +253,200 @@ func TestReduxCircuitBreaker(t *testing.T) {
 		}
 	})
 }
+
+func TestExtractRealmID(t *testing.T) {
+	// 1. Test raw JSON task payload with TaskDefinition
+	taskBody := json.RawMessage(`{
+		"payload": {"realm_id": "realm-123"}
+	}`)
+	rid := extractRealmID(taskBody)
+	if rid != "realm-123" {
+		t.Errorf("expected realm-123, got %q", rid)
+	}
+
+	// 2. Test raw JSON payload directly
+	directBody := json.RawMessage(`{"realm_id": "realm-456"}`)
+	rid = extractRealmID(directBody)
+	if rid != "realm-456" {
+		t.Errorf("expected realm-456, got %q", rid)
+	}
+
+	// 3. Test tenant_id fallback
+	fallbackBody := json.RawMessage(`{"tenant_id": "tenant-789"}`)
+	rid = extractRealmID(fallbackBody)
+	if rid != "tenant-789" {
+		t.Errorf("expected tenant-789, got %q", rid)
+	}
+}
+
+func TestGeneralAgent_DynamicSkillsIntegration(t *testing.T) {
+	tenantID := "test-integration-realm"
+	testBaseDir := filepath.Join("docs", "skills", tenantID)
+	skillDir := filepath.Join(testBaseDir, "triple")
+	scriptsDir := filepath.Join(skillDir, "scripts")
+
+	err := os.MkdirAll(scriptsDir, 0755)
+	if err != nil {
+		t.Fatalf("failed to create scripts path: %v", err)
+	}
+	defer os.RemoveAll(testBaseDir)
+
+	manifestContent := `---
+name: triple
+description: Triple the number
+version: 1.0.0
+inputs:
+  type: object
+  properties:
+    x: {type: integer}
+  required: [x]
+entrypoint: scripts/triple.py
+---`
+	err = os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(manifestContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	pythonScript := `
+import sys
+import json
+data = sys.stdin.read()
+inputs = json.loads(data)
+x = inputs.get("x", 0)
+print(json.dumps({"result": x * 3}))
+`
+	err = os.WriteFile(filepath.Join(scriptsDir, "triple.py"), []byte(pythonScript), 0644)
+	if err != nil {
+		t.Fatalf("failed to write script: %v", err)
+	}
+
+	// Now scan the catalog and verify the dynamic tool is found and executable
+	ctx := context.Background()
+	bus := &mockEventBus{}
+
+	dynamicTools, err := tools.ScanSkillsCatalog(ctx, tenantID, bus, "did:toro:agent:test")
+	if err != nil {
+		t.Fatalf("ScanSkillsCatalog failed: %v", err)
+	}
+	if len(dynamicTools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(dynamicTools))
+	}
+
+	tool := dynamicTools[0]
+	if tool.Name() != "triple" {
+		t.Errorf("expected tool name 'triple', got %s", tool.Name())
+	}
+
+	res, err := tool.Call(ctx, map[string]any{"x": float64(5)})
+	if err != nil {
+		t.Fatalf("failed to call tool: %v", err)
+	}
+
+	expectedStatusMsg := "Task dispatched asynchronously to skill triple. I will suspend execution and wait. You will receive an INFORM message when the task completes."
+	if res != expectedStatusMsg {
+		t.Errorf("expected status output %q, got %q", expectedStatusMsg, res)
+	}
+
+	// Verify asynchronous task queueing envelope in mock event bus
+	if len(bus.PublishedMessages) != 1 {
+		t.Fatalf("expected 1 published message, got %d", len(bus.PublishedMessages))
+	}
+
+	published := bus.PublishedMessages[0]
+	expectedSubject := fmt.Sprintf("public_python.execute.%s.triple", tenantID)
+	if published.Subject != expectedSubject {
+		t.Errorf("expected subject %q, got %q", expectedSubject, published.Subject)
+	}
+
+	var env core.Envelope
+	if err := json.Unmarshal(published.Data, &env); err != nil {
+		t.Fatalf("failed to unmarshal FIPA envelope: %v", err)
+	}
+
+	if env.SenderDID != "did:toro:agent:test" {
+		t.Errorf("expected sender DID did:toro:agent:test, got %s", env.SenderDID)
+	}
+	if env.Performative != core.REQUEST {
+		t.Errorf("expected performative 'request', got %v", env.Performative)
+	}
+
+	var reqBody map[string]any
+	if err := json.Unmarshal(env.Body, &reqBody); err != nil {
+		t.Fatalf("failed to unmarshal envelope body: %v", err)
+	}
+
+	scriptCode, _ := reqBody["script"].(string)
+	scriptInput, _ := reqBody["input"].(map[string]any)
+	tID, _ := reqBody["tenant_id"].(string)
+	retSubject, _ := reqBody["return_subject"].(string)
+
+	expectedReturnSubject := core.BuildAgentInbox("did:toro:agent:test")
+	if retSubject != expectedReturnSubject {
+		t.Errorf("expected return subject %q, got %q", expectedReturnSubject, retSubject)
+	}
+
+	// Execute python code locally to check script logic correctness
+	tempFile, err := os.CreateTemp("", "mock_worker_*.py")
+	if err != nil {
+		t.Fatalf("failed temp file: %v", err)
+	}
+	defer os.Remove(tempFile.Name())
+
+	_, _ = tempFile.WriteString(scriptCode)
+	_ = tempFile.Close()
+
+	cmd := exec.CommandContext(ctx, "python3", tempFile.Name())
+	inputBytes, _ := json.Marshal(scriptInput)
+	cmd.Stdin = strings.NewReader(string(inputBytes))
+	cmd.Env = append(os.Environ(),
+		"TENANT_ID="+tID,
+		"REALM_ID="+tID,
+	)
+
+	stdoutBytes, execErr := cmd.CombinedOutput()
+	if execErr != nil {
+		t.Fatalf("simulated execution failed: %v, output: %s", execErr, string(stdoutBytes))
+	}
+
+	var result struct {
+		Result int `json:"result"`
+	}
+	if err := json.Unmarshal(stdoutBytes, &result); err != nil {
+		t.Fatalf("failed to unmarshal script output: %v, raw: %s", err, string(stdoutBytes))
+	}
+
+	if result.Result != 15 {
+		t.Errorf("expected 15, got %d", result.Result)
+	}
+}
+
+type mockEventBus struct {
+	OnRequest         func(ctx context.Context, subject string, data []byte) (*nats.Msg, error)
+	PublishedMessages []struct {
+		Subject string
+		Data    []byte
+	}
+}
+
+func (b *mockEventBus) Publish(subject string, data []byte) error {
+	b.PublishedMessages = append(b.PublishedMessages, struct {
+		Subject string
+		Data    []byte
+	}{Subject: subject, Data: data})
+	return nil
+}
+
+func (b *mockEventBus) PublishCore(subject string, data []byte) error { return nil }
+
+func (b *mockEventBus) RequestWithContext(ctx context.Context, subject string, data []byte) (*nats.Msg, error) {
+	if b.OnRequest != nil {
+		return b.OnRequest(ctx, subject, data)
+	}
+	return nil, nil
+}
+
+func (b *mockEventBus) QueueSubscribe(subj, queue string, cb nats.MsgHandler, opts ...nats.SubOpt) (*nats.Subscription, error) {
+	return nil, nil
+}
+
 

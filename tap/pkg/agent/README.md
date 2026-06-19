@@ -47,13 +47,21 @@ To display progress updates to users on the frontend, state changes stream over 
 3. **Web Gateway Proxy**: A core backend server maintains a WebSocket connection with the active client browser. It subscribes to `workflow.trace.{session_id}` and proxies the raw JSON bytes.
 4. **React Hydration**: The frontend client receives the payload, merges the JSON patch into its local Redux store component, and triggers a UI update.
 
-## Context Paging & Garbage Collection (Algorithm 2)
+## Context Paging, Multi-Tenancy & OKF Integration
 
-To prevent LLM token-bloat and recursive hallucination loops when evaluating massive documents (like bank PDFs), the `Runtime` embeds a "Virtual Memory" interceptor wrapped within `runtime.ExecWithPaging()`.
+To prevent LLM token-bloat and recursive hallucination loops, the SDK implements a two-front paging and obfuscation system:
 
-1. **The Ephemeral Pointer Map**: Before execution, `GenerateLocalContextMap()` iterates through available Postgres documents, binding their actual database UUIDs to lightweight 1-indexed integers (`local_ref`).
-2. **OpenAI Tool Interception**: The `PAGE_IN` Tool constraint is injected directly into the LLM logic limits. When the AI generates `{"tool_call": "PAGE_IN", "local_ref": 1}`, the Go Kernel intercepts the execution.
-3. **Execution Limits**: A hard OS circuit breaker (`MaxPages=3`) trips if the AI enters infinite fetching recursion. If safe, the `local_ref` is translated cleanly into the hidden UUID and resolved via the injected `DocumentFetcher` callback.
-4. **Organic Garbage Collection**: Because the bloated `[]openai.ChatCompletionMessageParamUnion` slice and pointer maps strictly reside within the `ExecWithPaging` function scope, the payload effortlessly falls out of scope upon the agent emitting its final `RFC6902` patch—triggering the Go Garbage Collector securely dropping the megabytes of memory footprint organically.
+### 1. BPE UUID Obfuscation (Layer A)
+To prevent the LLM from hallucinating or miscalculating standard UUIDs due to Byte-Pair Encoding (BPE) tokenization, the `UUIDMapper` ([mapper.go](file:///Users/Yankz/programming/usetoro/tap/pkg/agent/mapper.go)) intercepts raw input prompts and dynamically obfuscates all UUIDs to simple tags (`ref_1`, `ref_2`). Upon receiving the LLM's response, these refs are reconstructed back into the original UUIDs on the way in.
 
-NOTE: core.Environment correctly passes env.Memory down from the Supervisor. This means a custom agent that explicitly needs long-term memory can simply call env.Memory.Recall() directly inside the structured llmCallback or tool, giving it 100% granular control over when, where, and how it spends tokens on database lookups!
+### 2. Dynamic Context Paging (Layer B)
+When evaluating large datasets, the `Runtime` embeds a "Virtual Memory" interceptor wrapped within `runtime.ExecWithPaging()`.
+- **Ephemeral Pointer Map**: `GenerateLocalContextMap()` maps the available documents to simple integers (`local_ref: 1, 2`), isolating the LLM from processing raw identifiers.
+- **OpenAI Tool Interception**: The `PAGE_IN` tool is exposed to the LLM. When the AI generates `{"tool_call": "PAGE_IN", "local_ref": 1}`, the Go Kernel intercepts execution, translates the `local_ref` to the target path/UUID, and fetches the data using the registered `DocumentFetcher`.
+- **Circuit Breaker**: A hard limit (`MaxPages=3`) trips if the AI enters infinite fetching recursion to prevent loop costs.
+- **Organic Garbage Collection**: Large message slices and pointer maps reside strictly within the execution block, falling out of scope once the agent completes its run, allowing the Go Garbage Collector to drop the memory footprint.
+
+### 3. Open Knowledge Format (OKF) & Multi-Tenancy
+To allow tenants to manage playbooks, rules, and reference guides via their own GitHub repositories, the system integrates the **Open Knowledge Format (OKF)**:
+- **Tenant Isolation**: Static OKF files are partitioned on disk by tenant UUID under `docs/knowledge/<realm_id>/`.
+- **Tenant-Aware Fetcher**: The [OKFDocumentFetcher](file:///Users/Yankz/programming/usetoro/tap/pkg/agent/paging.go#L80-L109) extracts the tenant's `realm_id` from the context (via `WithRealmID`), cleans and validates paths to protect against directory traversal, and reads the markdown file—automatically stripping the YAML frontmatter before returning the body text.

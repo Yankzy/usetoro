@@ -81,7 +81,11 @@ func (t *ClientLookupTool) Call(ctx context.Context, input map[string]any) (stri
 	// Format results for the LLM
 	response := "Found the following matching clients:\n"
 	for _, r := range results {
-		response += fmt.Sprintf("- Name: %s (RealmID: %s)\n", r.CompanyName, r.RealmID)
+		emailStr := "Unknown"
+		if info, err := t.queries.GetCompanyInfo(ctx, r.RealmID); err == nil && info.Email.Valid {
+			emailStr = info.Email.String
+		}
+		response += fmt.Sprintf("- Name: %s (RealmID: %s, Email: %s)\n", r.CompanyName, r.RealmID, emailStr)
 	}
 	response += "\nIf there is exactly one match, you can proceed with the task using that RealmID. If there are multiple, you MUST reply to the CPA asking them to clarify which one they meant."
 

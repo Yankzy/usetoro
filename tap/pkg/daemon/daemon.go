@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/tap/agents"
@@ -88,7 +89,8 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 	}
 
 	// 1.5 Load ASE Prompts Configuration
-	if err := ase.InitConfig(d.Logger); err != nil {
+	dbQueries := database.New(d.DBPool)
+	if err := ase.InitConfig(dbQueries, nil, d.Logger); err != nil {
 		d.Logger.Warn("Failed to initialize ASE prompts config, using fallback or defaults", "error", err)
 	}
 

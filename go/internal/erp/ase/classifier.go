@@ -189,8 +189,10 @@ Your task is to select the exact account ID from the company's Chart of Accounts
 COMPANY CHART OF ACCOUNTS:
 %s
 
-Select the SINGLE BEST account ID (the ID field) that matches. Do not make up an ID.
-If no account fits perfectly, select the closest general category.`, strings.Join(coaLines, "\n"))
+You MUST select the SINGLE BEST account ID (the ID field) that matches. Do not make up an ID.
+If no account fits perfectly, select the closest general category.
+CRITICAL: Do NOT output just the ID. You MUST format your entire response exactly as a JSON Patch array as described below.`, strings.Join(coaLines, "\n"))
+
 
 	systemPrompt += "\n\nCRITICAL RULES FOR BATCH PROCESSING:\n" +
 		"1. The USER REQUEST provides a map of transactions under the 'rows' key. The keys in this map are unique identifiers for each transaction.\n" +

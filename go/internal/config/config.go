@@ -62,8 +62,9 @@ type Config struct {
 	CDCSyncInterval time.Duration `mapstructure:"cdc_sync_interval"`
 
 	// Stripe Config
-	StripeSecretKey     string `mapstructure:"stripe_secret_key"`
-	StripeWebhookSecret string `mapstructure:"stripe_webhook_secret"`
+	StripeSecretKey       string `mapstructure:"stripe_secret_key"`
+	StripeWebhookSecret   string `mapstructure:"stripe_webhook_secret"`
+	StripePublishableKey  string `mapstructure:"stripe_publishable_key"`
 
 	// AI/Vector Config
 	PineconeIndex       string  `mapstructure:"pinecone_index"`
@@ -105,8 +106,17 @@ type Config struct {
 	SlackBotToken      string `mapstructure:"slack_bot_token"`
 	SlackSigningSecret string `mapstructure:"slack_signing_secret"`
 
+	// Virtual AP/AR/COO Config
+	VCOOFounderEmail   string `mapstructure:"vcoo_founder_email"`
+
 	// Virtual Employees Config (Stateless email/system prompt aliases)
 	VirtualEmployees map[string]AgentAlias `mapstructure:"virtual_employees"`
+
+	// AWS & S3 Config
+	AWSAccessKeyID     string `mapstructure:"aws_access_key_id"`
+	AWSSecretAccessKey string `mapstructure:"aws_secret_access_key"`
+	AWSS3BucketName    string `mapstructure:"aws_s3_bucket_name"`
+	AWSS3RegionName    string `mapstructure:"aws_s3_region_name"`
 }
 
 type RuleEngineConfig struct {
@@ -285,6 +295,12 @@ func Load() (*Config, *viper.Viper, error) {
 	_ = v.BindEnv("slack_signing_secret", "SLACK_SIGNING_SECRET")
 	_ = v.BindEnv("stripe_secret_key", "STRIPE_SECRET_KEY")
 	_ = v.BindEnv("stripe_webhook_secret", "STRIPE_WEBHOOK_SECRET")
+	_ = v.BindEnv("stripe_publishable_key", "STRIPE_PUBLISHABLE_KEY")
+	_ = v.BindEnv("vcoo_founder_email", "VCOO_FOUNDER_EMAIL")
+	_ = v.BindEnv("aws_access_key_id", "AWS_ACCESS_KEY_ID")
+	_ = v.BindEnv("aws_secret_access_key", "AWS_SECRET_ACCESS_KEY")
+	_ = v.BindEnv("aws_s3_bucket_name", "AWS_S3_BUCKET_NAME")
+	_ = v.BindEnv("aws_s3_region_name", "AWS_S3_REGION_NAME")
 
 	// Set defaults corresponding to the old getEnv fallbacks
 	v.SetDefault("port", "8080")
@@ -305,6 +321,7 @@ func Load() (*Config, *viper.Viper, error) {
 	v.SetDefault("workers.erp_event.subject", "toro.erp.events.*")
 	v.SetDefault("rule_engine.target_rank", 1)
 	v.SetDefault("rule_engine.min_usage_count", 3)
+	v.SetDefault("vcoo_founder_email", "founder@yourplatform.com")
 
 	// 3. Actually read the file from disk
 	if err := v.ReadInConfig(); err != nil {

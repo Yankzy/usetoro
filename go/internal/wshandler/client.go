@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
 
@@ -243,7 +244,11 @@ func (c *Client) cardPump() {
 						}
 					}
 				} else {
-					c.logger.Warn("Failed to map Entity ID to QBO Realm ID", "entity", entityID, "error", dbErr)
+					if errors.Is(dbErr, pgx.ErrNoRows) {
+						c.logger.Debug("No ERP connection found for entity, skipping QBO real-time hydration", "entity", entityID)
+					} else {
+						c.logger.Warn("Failed to map Entity ID to QBO Realm ID", "entity", entityID, "error", dbErr)
+					}
 				}
 			}
 		}
@@ -532,7 +537,11 @@ func (c *Client) joinRealmRoom() {
 	}
 	conn, dbErr := c.hub.db.GetERPConnection(c.ctx, entityPgUUID)
 	if dbErr != nil || conn.RealmID == "" {
-		c.logger.Warn("joinRealmRoom: could not resolve realm ID", "entity_id", c.entityID, "error", dbErr)
+		if errors.Is(dbErr, pgx.ErrNoRows) {
+			c.logger.Debug("joinRealmRoom: no ERP connection found for entity, skipping room join", "entity_id", c.entityID)
+		} else {
+			c.logger.Warn("joinRealmRoom: could not resolve realm ID", "entity_id", c.entityID, "error", dbErr)
+		}
 		return
 	}
 	c.hub.JoinRoom(c, conn.RealmID)

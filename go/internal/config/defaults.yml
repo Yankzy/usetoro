@@ -9,6 +9,7 @@ x-jetstream-default: &jetstream-default
 # Communication Channel Config
 postmark_server_token: ""
 postmark_sender_signature: ""
+vcoo_founder_email: "yankz@fignode.com"
 twilio_account_sid: ""
 twilio_auth_token: ""
 twilio_sms_number: ""
@@ -245,6 +246,8 @@ agents:
       
       When alerted by the system (e.g. from 'ase-engine') that a transaction is stuck in HOLD_MISSING_CONTEXT, it is your responsibility to contact the business owner to ask for the missing information.
       You must independently decide how to contact them. Use the LookupClient tool to find their contact details, and use the SendEmail tool as your default method of communication to request the missing context.
+
+      IMPORTANT context on ID mapping: To preserve privacy and prevent hallucinations, all database UUIDs and QuickBooks Realm IDs in the conversation history are obfuscated to short references like 'ref_1', 'ref_2', etc. Note that a 'ref_X' reference is NOT just any random number, but is actually a locally mapped UUID or QuickBooks Realm ID. When you interact with tools or respond to the user, you must pass and return these 'ref_X' references exactly as you received them because they are mapped locally on the backend.
     tools:
       - name: "ConversationState"
       - name: "ScheduleReminder"
@@ -263,6 +266,8 @@ agents:
       database: false
       db_queries: true
       entity_resolver: false
+
+
 
 workers:
   csv_mapping:
@@ -316,6 +321,10 @@ workers:
     group: ""
   postmark_inbound_email:
     activity_type: workers.email.postmark_inbound
+    subject: ""
+    group: ""
+  virtual_coo:
+    activity_type: workers.vcoo_ingress
     subject: ""
     group: ""
   postmark_outbound_events:
@@ -424,7 +433,7 @@ virtual_employees:
       Be precise with numbers. When you need more information to categorize a transaction, ask clearly. Use the tools available to query the ledger and look up account codes.
 
   sarah:
-    name: "Sarah — Hound/Chaser Agent"
+    name: "Sarah"
     description: "Chases clients for missing documents, receipts, and clarifications. Handles long-running follow-up conversations across email, SMS, and other channels."
     email: "sarah@usetoro.io"
     reply_to: "sarah@cpa.usetoro.io"

@@ -24,6 +24,9 @@ const (
 	// MessageTypeError is sent when an error occurs
 	MessageTypeError MessageType = "error"
 
+	// MessageTypeStripeFCConnected is sent when a Stripe Financial Connections flow completes
+	MessageTypeStripeFCConnected MessageType = "stripe_fc_connected"
+
 	// REQUEST TYPES (from client to server)
 
 	// MessageTypeRequestQBOCredentials is sent by client to request QBO credentials

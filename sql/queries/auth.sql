@@ -32,3 +32,6 @@ LIMIT $1 OFFSET $2;
 
 -- name: CountEntities :one
 SELECT COUNT(*) FROM toro_core.entities;
+
+-- name: GetUsersByEntityID :many
+SELECT * FROM toro_core.users WHERE entity_id = $1 AND is_active = true;

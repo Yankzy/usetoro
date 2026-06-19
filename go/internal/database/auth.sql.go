@@ -207,6 +207,44 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (ToroCoreUser
 	return i, err
 }
 
+const getUsersByEntityID = `-- name: GetUsersByEntityID :many
+SELECT id, entity_id, email, password_hash, full_name, role, user_type, is_active, created_at, updated_at, vcoo_active_blockers, vcoo_history, vcoo_state FROM toro_core.users WHERE entity_id = $1 AND is_active = true
+`
+
+func (q *Queries) GetUsersByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreUser, error) {
+	rows, err := q.db.Query(ctx, getUsersByEntityID, entityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreUser
+	for rows.Next() {
+		var i ToroCoreUser
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.Email,
+			&i.PasswordHash,
+			&i.FullName,
+			&i.Role,
+			&i.UserType,
+			&i.IsActive,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.VcooActiveBlockers,
+			&i.VcooHistory,
+			&i.VcooState,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUsersByIDs = `-- name: GetUsersByIDs :many
 SELECT id, entity_id, email, password_hash, full_name, role, user_type, is_active, created_at, updated_at, vcoo_active_blockers, vcoo_history, vcoo_state FROM toro_core.users WHERE id = ANY($1::uuid[])
 `

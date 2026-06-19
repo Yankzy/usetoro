@@ -153,28 +153,67 @@ func (cs *ClassifierService) dynamicChartOfAccounts(ctx context.Context, batch [
 	if cs.db == nil {
 		return nil, fmt.Errorf("database not injected for dynamic edge provider")
 	}
-	results := make(map[string]NodeClassification, len(batch))
 
-	for _, node := range batch {
-		accounts, err := cs.db.GetAccountsByRealm(ctx, node.RealmID)
-		if err != nil {
+	if len(batch) == 0 {
+		return nil, nil
+	}
+
+	// We'll partition the batch by RealmID because Chart of Accounts is realm-specific.
+	// In practice, a DAG instance runs per realm, so the batch usually has 1 RealmID.
+	realmID := batch[0].RealmID
+	tenantID := batch[0].TenantID
+	dagName := batch[0].DagName
+	cashDirection := batchCashDirection(batch)
+
+	accounts, err := cs.db.GetAccountsByRealm(ctx, realmID)
+	if err != nil {
+		for _, node := range batch {
 			node.mu.Lock()
 			node.HoldReason = "dynamic COA lookup failed: " + err.Error()
 			node.mu.Unlock()
-			continue
 		}
+		// Return empty map to let caller handle hold state
+		return make(map[string]NodeClassification), nil
+	}
 
-		var candidates []ProbabilityCandidate
-		if len(accounts) > 0 {
-			candidates = append(candidates, ProbabilityCandidate{
-				Value:      accounts[0].ErpID,
-				Confidence: 1.0,
-				Reasoning:  "Dynamically selected from Chart of Accounts DB query.",
-			})
-		}
-		results[node.NodeID] = NodeClassification{
-			Property:   PropAccountRef,
-			Candidates: candidates,
+	// Format the Chart of Accounts for the LLM
+	var coaLines []string
+	for _, acc := range accounts {
+		coaLines = append(coaLines, fmt.Sprintf("- ID: %s | Name: %s | Type: %s | SubType: %s", 
+			acc.ErpID, acc.Name, acc.Classification.String, acc.AccountSubType.String))
+	}
+
+	systemPrompt := fmt.Sprintf(`You are an expert accountant acting as the dynamic Chart of Accounts selection node.
+Your task is to select the exact account ID from the company's Chart of Accounts that best matches the transaction description and context.
+
+COMPANY CHART OF ACCOUNTS:
+%s
+
+Select the SINGLE BEST account ID (the ID field) that matches. Do not make up an ID.
+If no account fits perfectly, select the closest general category.`, strings.Join(coaLines, "\n"))
+
+	rows := cs.batchToRows(ctx, batch)
+
+	genericResp, err := cs.dispatchViaNATS(ctx, systemPrompt, rows, cashDirection, tenantID, realmID, dagName)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make(map[string]NodeClassification, len(batch))
+	for _, node := range batch {
+		if result, ok := genericResp.Rows[node.NodeID]; ok {
+			var candidates []ProbabilityCandidate
+			for _, c := range result.CandidatesMap {
+				candidates = append(candidates, ProbabilityCandidate{
+					Value:      c.Value,
+					Confidence: c.Confidence,
+					Reasoning:  "LLM COA Selection: " + c.Reasoning,
+				})
+			}
+			results[node.NodeID] = NodeClassification{
+				Property:   PropAccountRef,
+				Candidates: candidates,
+			}
 		}
 	}
 	return results, nil

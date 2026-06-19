@@ -477,11 +477,49 @@ func (w *ClassificationStageWorker) Handle(ctx context.Context, msg *nats.Msg) e
 	written := 0
 	for _, patch := range allPatches {
 		rowID, _ := patch["id"].(string)
-		value, _ := patch[stageCfg.DBWriteColumn].(string)
-		if rowID == "" || value == "" {
+		valueStr, ok := patch[stageCfg.DBWriteColumn].(string)
+		if !ok {
+			// Try to parse candidates object
+			if obj, isObj := patch[stageCfg.DBWriteColumn].(map[string]interface{}); isObj {
+				if cands, hasCands := obj["candidates"].(map[string]interface{}); hasCands {
+					var maxConf float64 = -1
+					var bestVal string
+					var bestReasoning string
+					for _, cand := range cands {
+						candObj, isCandObj := cand.(map[string]interface{})
+						if !isCandObj {
+							continue
+						}
+						var conf float64
+						switch v := candObj["confidence"].(type) {
+						case float64:
+							conf = v
+						case int:
+							conf = float64(v)
+						case string:
+							conf, _ = strconv.ParseFloat(v, 64)
+						}
+						if conf > maxConf {
+							maxConf = conf
+							bestVal, _ = candObj["value"].(string)
+							bestReasoning, _ = candObj["reasoning"].(string)
+						}
+					}
+					if maxConf >= 0 {
+						valueStr = bestVal
+						patch["match_confidence"] = maxConf
+						if bestReasoning != "" {
+							patch["reasoning"] = bestReasoning
+						}
+					}
+				}
+			}
+		}
+
+		if rowID == "" || valueStr == "" {
 			continue
 		}
-		if err := w.updateColumn(ctx, rowID, stageCfg.DBWriteColumn, value, patch, stageCfg.DBWriteReasoning, realmID, stageCfg.Stage); err != nil {
+		if err := w.updateColumn(ctx, rowID, stageCfg.DBWriteColumn, valueStr, patch, stageCfg.DBWriteReasoning, realmID, stageCfg.Stage); err != nil {
 			w.logger.Warn("classification_stage: failed to write column",
 				"stage", stageCfg.Stage, "column", stageCfg.DBWriteColumn, "id", rowID, "error", err)
 			continue
@@ -1106,15 +1144,22 @@ func (w *ClassificationStageWorker) updateColumn(ctx context.Context, rowID, col
 			// Store as numeric; convert string labels.
 			if mc, ok := patch[patchField]; ok {
 				var numericVal float64
-				switch strings.ToUpper(fmt.Sprint(mc)) {
-				case "HIGH":
-					numericVal = 0.9
-				case "MEDIUM":
-					numericVal = 0.5
-				case "LOW":
-					numericVal = 0.1
-				default:
-					numericVal = 0.5
+				switch v := mc.(type) {
+				case float64:
+					numericVal = v
+				case int:
+					numericVal = float64(v)
+				case string:
+					switch strings.ToUpper(v) {
+					case "HIGH":
+						numericVal = 0.9
+					case "MEDIUM":
+						numericVal = 0.5
+					case "LOW":
+						numericVal = 0.1
+					default:
+						numericVal, _ = strconv.ParseFloat(v, 64)
+					}
 				}
 				setClauses = append(setClauses, fmt.Sprintf("%s = $%d", dbCol, argIdx))
 				args = append(args, numericVal)

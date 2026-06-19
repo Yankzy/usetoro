@@ -242,6 +242,7 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id pgtype.UUID) (ToroCoreUser, error)
 	GetUserVCOOData(ctx context.Context, id pgtype.UUID) (GetUserVCOODataRow, error)
 	GetUserVCOODataByEmail(ctx context.Context, email string) (GetUserVCOODataByEmailRow, error)
+	GetUsersByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreUser, error)
 	GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]ToroCoreUser, error)
 	// =========================================================================
 	// AI Vector Sync State

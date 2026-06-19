@@ -3,7 +3,6 @@ package workers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 
 	"github.com/nats-io/nats.go"
@@ -79,38 +78,35 @@ func (w *AseTelemetryWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	// 1. Construct the system prompt for the General Agent
-	alertPrompt := fmt.Sprintf(
-		"SYSTEM ALERT: A transaction (ID: %s) for Tenant ID '%s' is stuck in %s.\n\nReason: %s\nDetails: %s\nAmount: %s\nCash Direction: %s\n\nPlease contact the business owner to ask for clarification to properly categorize this transaction. You can use the LookupClient tool if needed to find their contact details, and use the SendEmail tool as the default communication channel.",
-		payload.NodeID, payload.TenantID, payload.ToState, payload.HoldReason, payload.Description, payload.Amount, payload.CashDirection,
-	)
+	// alertPrompt := fmt.Sprintf(
+	// 	"SYSTEM ALERT: A transaction (ID: %s) for Tenant ID '%s' is stuck in %s.\n\nReason: %s\nDetails: %s\nAmount: %s\nCash Direction: %s\n\nPlease contact the business owner to ask for clarification to properly categorize this transaction. You can use the LookupClient tool if needed to find their contact details, and use the SendEmail tool as the default communication channel.",
+	// 	payload.NodeID, payload.TenantID, payload.ToState, payload.HoldReason, payload.Description, payload.Amount, payload.CashDirection,
+	// )
 
 	// 2. Build the payload expected by the GeneralAgentIngressWorker
-	ingressPayload := map[string]any{
-		"prompt":      alertPrompt,
-		"body_text":   alertPrompt,
-		"entity_id":   payload.TenantID,
-		"source":      "system",
-		"from_handle": "ase-engine:" + payload.NodeID,
-		"to_handle":   "general-agent",
-	}
-	ingressBytes, _ := json.Marshal(ingressPayload)
+	// ingressPayload := map[string]any{
+	// 	"prompt":      alertPrompt,
+	// 	"body_text":   alertPrompt,
+	// 	"entity_id":   payload.TenantID,
+	// 	"source":      "system",
+	// 	"from_handle": "ase-engine:" + payload.NodeID,
+	// 	"to_handle":   "general-agent",
+	// }
+
+	// ingressBytes, _ := json.Marshal(ingressPayload)
 
 	// 3. Resolve the inbox subject for the General Agent Ingress Worker
-	ingressSubject, err := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
+	_, err := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
 	if err != nil {
 		w.logger.Error("ase_telemetry: failed to derive general agent ingress subject", "error", err)
 		return err
 	}
 
-	// 4. Publish the alert to the general agent ingress
-	if err := w.nc.Publish(ingressSubject, ingressBytes); err != nil {
-		w.logger.Error("ase_telemetry: failed to publish alert to general agent", "error", err)
-		return err
-	}
-
-	w.logger.Info("ase_telemetry: dispatched system alert to general agent",
+	// 4. We DO NOT publish the alert to the general agent ingress here.
+	// This is handled by ase_bridge_worker.go to avoid duplicate LLM invocations and duplicate emails.
+	w.logger.Info("ase_telemetry: ignoring general agent dispatch (handled by bridge)",
 		"node_id", payload.NodeID,
-		"tenant_id", payload.TenantID,
+		"event_type", payload.EventType,
 	)
 
 	return nil

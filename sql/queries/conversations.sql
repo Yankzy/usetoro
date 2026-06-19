@@ -25,10 +25,9 @@ SELECT id FROM toro_core.entities WHERE name = $1 AND status = 'active' LIMIT 1;
 
 -- name: GetRecentConversations :many
 SELECT * FROM toro_core.conversations
-WHERE (from_handle = $1 AND to_handle = $2)
-   OR (from_handle = $2 AND to_handle = $1)
+WHERE (from_handle = $1 OR to_handle = $1)
 ORDER BY created_at DESC
-LIMIT $3;
+LIMIT $2;
 
 -- name: InsertConversationSession :one
 INSERT INTO toro_core.conversation_sessions (

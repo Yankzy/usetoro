@@ -411,6 +411,25 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 		return
 	}
 
+	// Take a snapshot of the candidates for the property to store in the trace.
+	node.mu.RLock()
+	candidatesCopy := make([]ProbabilityCandidate, len(node.Candidates[propertyKey]))
+	copy(candidatesCopy, node.Candidates[propertyKey])
+	node.mu.RUnlock()
+
+	// Determine routing key based on this DAG node's kind (even if we hold, we can record what it *would* have been or just use top.Value).
+	routeKey := dn.routingKey(top)
+
+	// Append the execution step to the node's trace regardless of whether we hold or not.
+	node.AppendExecutionStep(NodeExecutionStep{
+		DAGNodeID:    dn.ID,
+		Kind:         string(dn.Kind),
+		PropertyKey:  propertyKey,
+		Candidates:   candidatesCopy,
+		SelectedEdge: routeKey,
+		Timestamp:    time.Now().UTC(),
+	})
+
 	// Enforce strict top candidate confidence guardrail at each routing step.
 	threshold := 0.98
 	cfg := GetConfig(node.TenantID, node.RealmID, node.DagName)
@@ -421,31 +440,17 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 	if top.Confidence < threshold {
 		node.mu.Lock()
 		node.HoldReason = fmt.Sprintf("top candidate '%s' confidence (%v) below %v guardrail during routing at %s. AI Reasoning: %s", top.Value, top.Confidence, threshold, dn.Name, top.Reasoning)
+		// We can explicitly update UnifiedConfidence to match the failing node's confidence
+		// so the UI clearly shows the drop in confidence.
+		node.UnifiedConfidence = top.Confidence
 		node.mu.Unlock()
 		node.transition(StateHoldAmbiguous)
 		return
 	}
 
-	// Determine routing key based on this DAG node's kind.
-	routeKey := dn.routingKey(top)
-
-	// Take a snapshot of the candidates for the property to store in the trace.
-	node.mu.RLock()
-	candidatesCopy := make([]ProbabilityCandidate, len(node.Candidates[propertyKey]))
-	copy(candidatesCopy, node.Candidates[propertyKey])
-	node.mu.RUnlock()
-
-	// Append the execution step to the node's trace.
-	node.AppendExecutionStep(NodeExecutionStep{
-		DAGNodeID:    dn.ID,
-		Kind:         string(dn.Kind),
-		PropertyKey:  propertyKey,
-		Candidates:   candidatesCopy,
-		SelectedEdge: routeKey,
-		Timestamp:    time.Now().UTC(),
-	})
-
 	searchKey := strings.ToLower(routeKey)
+
+
 
 	dn.mu.Lock()
 	child, exists := dn.children[searchKey]

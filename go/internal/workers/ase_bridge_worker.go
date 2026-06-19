@@ -347,6 +347,11 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 			state := a.GetState()
 			if state == ase.StateHoldMissingCtx || state == ase.StateHoldAmbiguous {
+				var pgNodeID pgtype.UUID
+				_ = pgNodeID.Scan(a.NodeID)
+				if err := w.db.SetTransactionInReview(ctx, pgNodeID); err != nil {
+					w.logger.Error("ase_bridge: failed to set transaction in review", "error", err)
+				}
 				w.dispatchToGeneralAgent(ctx, a, sessionID)
 			}
 		}(agent)
@@ -418,7 +423,9 @@ func (w *AseBridgeWorker) dispatchToGeneralAgent(ctx context.Context, a *ase.Aut
 	}
 
 	alertPrompt := fmt.Sprintf(
-		"SYSTEM ALERT: A transaction (ID: %s) for Client '%s' (Realm ID: %s) under Tenant ID '%s' is stuck in %s.\n\nReason: %s\nDetails: %s\nAmount: %s\nCash Direction: %s\n\nPlease contact the business owner to ask for clarification to properly categorize this transaction. You can use the LookupClient tool if needed to find their contact details, and use the SendEmail tool as the default communication channel.",
+		"SYSTEM ALERT: A transaction (ID: %s) for Client '%s' (Realm ID: %s) under Tenant ID '%s' is stuck in %s.\n\nReason: %s\nDetails: %s\nAmount: %s\nCash Direction: %s\n\n"+
+			"Please contact the business owner to ask for clarification to properly categorize this transaction. You can use the LookupClient tool if needed to find their contact details, and use the SendEmail tool as the default communication channel.\n\n"+
+			"IMPORTANT: Before sending an email, you MUST use the FetchCommunicationHistory tool to check if we have already sent an email to this client about this exact transaction (same amount, customer, and description) within the last 24 hours. If an email has already been sent about this specific transaction recently, DO NOT send a duplicate email.",
 		a.NodeID, clientName, a.RealmID, entityID, string(a.GetState()), a.HoldReason, a.RawDescription, a.RawAmount, a.CashDirection,
 	)
 
@@ -429,6 +436,7 @@ func (w *AseBridgeWorker) dispatchToGeneralAgent(ctx context.Context, a *ase.Aut
 		"source":      "system",
 		"from_handle": "ase-engine:" + a.NodeID,
 		"to_handle":   "general-agent",
+		"session_id":  sessionID,
 	}
 
 	payloadBytes, _ := json.Marshal(payload)

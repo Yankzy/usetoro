@@ -158,7 +158,7 @@ func (q *Queries) GetRefreshToken(ctx context.Context, tokenHash string) (ToroCo
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, entity_id, email, password_hash, full_name, role, user_type, is_active, created_at, updated_at FROM toro_core.users WHERE email = $1
+SELECT id, entity_id, email, password_hash, full_name, role, user_type, is_active, created_at, updated_at, vcoo_active_blockers, vcoo_history, vcoo_state FROM toro_core.users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (ToroCoreUser, error) {
@@ -175,12 +175,15 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (ToroCoreUse
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VcooActiveBlockers,
+		&i.VcooHistory,
+		&i.VcooState,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, entity_id, email, password_hash, full_name, role, user_type, is_active, created_at, updated_at FROM toro_core.users WHERE id = $1
+SELECT id, entity_id, email, password_hash, full_name, role, user_type, is_active, created_at, updated_at, vcoo_active_blockers, vcoo_history, vcoo_state FROM toro_core.users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (ToroCoreUser, error) {
@@ -197,12 +200,15 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (ToroCoreUser
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VcooActiveBlockers,
+		&i.VcooHistory,
+		&i.VcooState,
 	)
 	return i, err
 }
 
 const getUsersByIDs = `-- name: GetUsersByIDs :many
-SELECT id, entity_id, email, password_hash, full_name, role, user_type, is_active, created_at, updated_at FROM toro_core.users WHERE id = ANY($1::uuid[])
+SELECT id, entity_id, email, password_hash, full_name, role, user_type, is_active, created_at, updated_at, vcoo_active_blockers, vcoo_history, vcoo_state FROM toro_core.users WHERE id = ANY($1::uuid[])
 `
 
 func (q *Queries) GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]ToroCoreUser, error) {
@@ -225,6 +231,9 @@ func (q *Queries) GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]
 			&i.IsActive,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.VcooActiveBlockers,
+			&i.VcooHistory,
+			&i.VcooState,
 		); err != nil {
 			return nil, err
 		}

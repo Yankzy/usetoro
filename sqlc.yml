@@ -13,7 +13,7 @@ sql:
           - db_type: "vector"
             go_type: "string"
             nullable: false
-          - column: "ase.vector_memory.embedding"
+          - column: "toro_core.ase_vector_memory.embedding"
             go_type: "string"
   - schema: "sql/schema"
     queries: "sql/queries/agent_memory.sql"
@@ -27,5 +27,5 @@ sql:
           - db_type: "vector"
             go_type: "string"
             nullable: false
-          - column: "ase.vector_memory.embedding"
+          - column: "toro_core.ase_vector_memory.embedding"
             go_type: "string"

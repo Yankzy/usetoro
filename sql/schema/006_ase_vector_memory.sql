@@ -12,9 +12,8 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS alloydb_scann;
 
 -- =========================================================================
--- Phase 2: ASE schema
+-- Phase 2: Removed (toro_core schema already exists)
 -- =========================================================================
-CREATE SCHEMA IF NOT EXISTS ase;
 
 -- =========================================================================
 -- Phase 3: Vector memory table
@@ -34,7 +33,7 @@ CREATE SCHEMA IF NOT EXISTS ase;
 --                     Avoids JOIN overhead at retrieval time.
 --   • embedded_at   — timestamp of last successful embedding generation.
 -- =========================================================================
-CREATE TABLE IF NOT EXISTS ase.vector_memory (
+CREATE TABLE IF NOT EXISTS toro_core.ase_vector_memory (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     realm_id      TEXT        NOT NULL,
     source_type   TEXT        NOT NULL CHECK (source_type IN ('memory_rule', 'resolved_tx')),
@@ -46,7 +45,6 @@ CREATE TABLE IF NOT EXISTS ase.vector_memory (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    -- Idempotency: one vector row per (realm, source_type, source_row_id)
     UNIQUE (realm_id, source_type, source_row_id)
 );
 
@@ -58,11 +56,11 @@ CREATE TABLE IF NOT EXISTS ase.vector_memory (
 -- ScaNN scan, achieving Bitmap-Assisted Inline Filtering.
 -- Also used by the hydrator to find un-embedded rows efficiently.
 CREATE INDEX IF NOT EXISTS idx_ase_vector_memory_realm
-    ON ase.vector_memory (realm_id, source_type);
+    ON toro_core.ase_vector_memory (realm_id, source_type);
 
 -- Partial index: helps the hydrator quickly find rows pending embedding.
 CREATE INDEX IF NOT EXISTS idx_ase_vector_memory_pending
-    ON ase.vector_memory (created_at)
+    ON toro_core.ase_vector_memory (created_at)
     WHERE embedding IS NULL;
 
 -- NOTE: The ScaNN ANN index (idx_ase_vector_memory_scann) is NOT created here.
@@ -72,31 +70,18 @@ CREATE INDEX IF NOT EXISTS idx_ase_vector_memory_pending
 -- See: vector_store.go → EnsureScaNNIndex()
 
 
--- Standard updated_at trigger
--- +goose StatementBegin
-CREATE OR REPLACE FUNCTION ase.update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ LANGUAGE 'plpgsql';
--- +goose StatementEnd
-
 CREATE TRIGGER update_ase_vector_memory_updated_at
-    BEFORE UPDATE ON ase.vector_memory
-    FOR EACH ROW EXECUTE FUNCTION ase.update_updated_at_column();
+    BEFORE UPDATE ON toro_core.ase_vector_memory
+    FOR EACH ROW EXECUTE FUNCTION toro_core.update_updated_at_column();
 
 
 -- +goose Down
-DROP TRIGGER IF EXISTS update_ase_vector_memory_updated_at ON ase.vector_memory;
-DROP FUNCTION IF EXISTS ase.update_updated_at_column();
+DROP TRIGGER IF EXISTS update_ase_vector_memory_updated_at ON toro_core.ase_vector_memory;
 -- ScaNN index is created lazily at runtime; drop it if it exists.
 DROP INDEX IF EXISTS idx_ase_vector_memory_scann;
 DROP INDEX IF EXISTS idx_ase_vector_memory_pending;
 DROP INDEX IF EXISTS idx_ase_vector_memory_realm;
-DROP TABLE IF EXISTS ase.vector_memory;
-DROP SCHEMA IF EXISTS ase CASCADE;
+DROP TABLE IF EXISTS toro_core.ase_vector_memory;
 DROP EXTENSION IF EXISTS alloydb_scann;
 DROP EXTENSION IF EXISTS vector;
 

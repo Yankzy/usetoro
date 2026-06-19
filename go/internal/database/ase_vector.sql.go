@@ -13,7 +13,7 @@ import (
 
 const getPendingHydrationRows = `-- name: GetPendingHydrationRows :many
 SELECT id, realm_id, source_type, raw_text, source_row_id
-FROM ase.vector_memory
+FROM toro_core.ase_vector_memory
 WHERE embedding IS NULL
 ORDER BY created_at ASC
 LIMIT $1
@@ -56,7 +56,7 @@ func (q *Queries) GetPendingHydrationRows(ctx context.Context, limit int32) ([]G
 }
 
 const insertPendingVectorRow = `-- name: InsertPendingVectorRow :exec
-INSERT INTO ase.vector_memory (realm_id, source_type, raw_text, source_row_id, metadata)
+INSERT INTO toro_core.ase_vector_memory (realm_id, source_type, raw_text, source_row_id, metadata)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (realm_id, source_type, source_row_id) DO NOTHING
 `

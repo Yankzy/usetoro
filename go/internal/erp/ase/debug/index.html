@@ -1,39 +1,41 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ASE Memory Visualizer (n8n Style)</title>
+    <title>ASE Config Editor</title>
 
-    <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-
-    <!-- Babel for in-browser JSX transpilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- Tailwind CSS for styling -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.41.0/min/vs/loader.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-
 <body class="bg-[#1e1e1e] text-gray-300 font-sans overflow-hidden">
     <div id="root"></div>
 
-    <script type="text/babel">
+    <script>
+        Babel.registerPreset('env-plus', {
+            presets: [
+                [Babel.availablePresets['env']],
+                [Babel.availablePresets['react'], { runtime: 'classic' }]
+            ]
+        });
+    </script>
+    <script type="text/babel" data-presets="env-plus">
         const { useState, useEffect, useRef, useCallback } = React;
-
-        // --- Icons (Inline SVGs to avoid CDN module issues) ---
-        const ZapIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>;
+        
+        // --- Icons ---
         const ServerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>;
-        const PlugIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" /></svg>;
         const ActivityIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>;
         const PlusIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
         const MinusIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
         const MaximizeIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>;
-        const SendIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>;
+        const CodeIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>;
+        const ShareIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>;
+        const HistoryIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>;
 
-        // --- Constants & Config ---
         const NODE_WIDTH = 290;
         const NODE_HEIGHT = 160;
 
@@ -45,365 +47,650 @@
             terminal: 'bg-rose-500',
             entity: 'bg-cyan-500',
             account_selection: 'bg-purple-500',
-            trigger: 'bg-green-500',
-            action: 'bg-blue-500',
-            db: 'bg-orange-500',
+            passthrough: 'bg-slate-500',
             default: 'bg-gray-500'
         };
 
-        // --- Rich Mock Transaction and Distribution Data (Keyed by node ID/type) ---
-        const MOCK_TRANSACTIONS = {
-            "direction_router": {
-                description: "DIRECT DEBIT FROM STRIPE INFLOW POOL SWEEP",
-                amount: "$15,240.50",
-                direction: "INFLOW",
-                candidates: [
-                    { value: "INFLOW", confidence: 1.0, reasoning: "Positive ledger sweep indicator matches corporate merchant payout API registry." }
-                ]
-            },
-            "macro_classifier_inflow": {
-                description: "DIRECT DEBIT FROM STRIPE INFLOW POOL SWEEP",
-                amount: "$15,240.50",
-                direction: "INFLOW",
-                candidates: [
-                    { value: "REVENUE", confidence: 0.99, reasoning: "Positive settlement matches customer fee allocation criteria." },
-                    { value: "ASSET", confidence: 0.01, reasoning: "High security pool deposit bypass limit ambiguity." }
-                ]
-            },
-            "expense": {
-                description: "AWS Billing - Batch Data US-East-1 (Invoice #981240)",
-                amount: "$2,481.50",
-                direction: "OUTFLOW",
-                candidates: [
-                    { value: "STANDARD_OVERHEAD", confidence: 0.99, reasoning: "Subscription utility matches known core operational SaaS hosting patterns." },
-                    { value: "PERSONAL_MIXIN_DETECTED", confidence: 0.01, reasoning: "Extremely low probability of personal cloud consumption mix-in." }
-                ]
-            },
-            "cogs_validation_specialist": {
-                description: "TSMC WAFER FABRICATION INC - PROTO BATCH D9",
-                amount: "$42,500.00",
-                direction: "OUTFLOW",
-                candidates: [
-                    { value: "VALIDATED_DIRECT_COGS", confidence: 0.98, reasoning: "Direct micro-controller wafer supply matches core physical device product line inventory pipeline." },
-                    { value: "RECLASSIFY_TO_OVERHEAD_EXPENSE", confidence: 0.02, reasoning: "Unlikely administrative overhead allocation." }
-                ]
-            },
-            "bank": {
-                description: "INTERNAL FUNDS TRANSFER CHK 910 -> SAV 881",
-                amount: "$5,000.00",
-                direction: "OUTFLOW",
-                candidates: [
-                    { value: "INTERNAL_TRANSFER", confidence: 1.0, reasoning: "Dual ledger footprint sweeps matched cleanly between bank institutions." }
-                ]
-            },
-            "fixed_assets": {
-                description: "APPLE RETAIL - MACBOOK PRO WORKSTATION",
-                amount: "$3,299.00",
-                direction: "OUTFLOW",
-                candidates: [
-                    { value: "CAPITALIZE_ASSET", confidence: 0.99, reasoning: "Single hardware item value exceed standard corporate de-minimis threshold of $2,500." },
-                    { value: "DE_MINIMIS_EXPENSE_TRIGGER", confidence: 0.01, reasoning: "Capitalization limits strictly enforced." }
-                ]
-            },
-            "default": {
-                description: "ACME CORP ONLINE UTILITIES & CLOUD ACCESS",
-                amount: "$350.00",
-                direction: "OUTFLOW",
-                candidates: [
-                    { value: "STANDARD_OVERHEAD", confidence: 0.95, reasoning: "Matches SaaS utility heuristics." },
-                    { value: "OTHER_EXPENSE", confidence: 0.05, reasoning: "Minor non-operating operational risk." }
-                ]
+        const createBezierPath = (startX, startY, endX, endY) => {
+            const offset = Math.max(Math.abs(endX - startX) / 2, 50);
+            return `M ${startX} ${startY} C ${startX + offset} ${startY}, ${endX - offset} ${endY}, ${endX} ${endY}`;
+        };
+
+        const MonacoEditor = ({ value, onChange, readOnly }) => {
+            const editorRef = useRef(null);
+            const monacoRef = useRef(null);
+            const isInternalChange = useRef(false);
+            const ignoreNextModelChange = useRef(false);
+
+            useEffect(() => {
+                if (!window.require) return;
+                window.require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.41.0/min/vs' }});
+                window.require(['vs/editor/editor.main'], () => {
+                    if (editorRef.current && !monacoRef.current) {
+                        monacoRef.current = window.monaco.editor.create(editorRef.current, {
+                            value: value,
+                            language: 'yaml',
+                            theme: 'vs-dark',
+                            minimap: { enabled: false },
+                            automaticLayout: true,
+                            tabSize: 2,
+                            insertSpaces: true,
+                            scrollBeyondLastLine: false,
+                            renderIndentGuides: true,
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                            fontSize: 13,
+                            readOnly: readOnly,
+                        });
+                        
+                        monacoRef.current.onDidChangeModelContent(() => {
+                            if (ignoreNextModelChange.current) {
+                                ignoreNextModelChange.current = false;
+                                return;
+                            }
+                            isInternalChange.current = true;
+                            onChange(monacoRef.current.getValue());
+                            isInternalChange.current = false;
+                        });
+                    }
+                });
+                
+                return () => {
+                    if (monacoRef.current) {
+                        monacoRef.current.dispose();
+                        monacoRef.current = null;
+                    }
+                };
+            }, []);
+
+            useEffect(() => {
+                if (monacoRef.current) {
+                    monacoRef.current.updateOptions({ readOnly: readOnly });
+                }
+            }, [readOnly]);
+
+            useEffect(() => {
+                if (monacoRef.current && !isInternalChange.current && monacoRef.current.getValue() !== value) {
+                    ignoreNextModelChange.current = true;
+                    monacoRef.current.setValue(value);
+                }
+            }, [value]);
+
+            return <div ref={editorRef} className="w-full h-full" />;
+        };
+
+        const getFilteredConfig = (config, hide) => {
+            if (!config || !hide) return config;
+
+            const dag = { ...config.dag };
+            const nodes = { ...dag.nodes };
+            const filteredNodes = {};
+
+            // Helper to resolve children recursively, skipping passthrough nodes
+            const resolveChildren = (nodeId) => {
+                const resolved = {};
+                const node = nodes[nodeId];
+                if (!node) return resolved;
+
+                if (node.children) {
+                    Object.entries(node.children).forEach(([routingKey, childId]) => {
+                        const childNode = nodes[childId];
+                        if (!childNode) return;
+
+                        if (childNode.kind === 'passthrough') {
+                            const grandChildren = resolveChildren(childId);
+                            Object.entries(grandChildren).forEach(([gk, gv]) => {
+                                resolved[gk] = gv;
+                            });
+                        } else {
+                            resolved[routingKey] = childId;
+                        }
+                    });
+                }
+                return resolved;
+            };
+
+            // Filter and update nodes
+            Object.entries(nodes).forEach(([id, node]) => {
+                if (node.kind === 'passthrough') {
+                    return; // skip passthrough nodes
+                }
+
+                // Resolve children for non-passthrough nodes
+                const resolvedChildren = resolveChildren(id);
+                filteredNodes[id] = {
+                    ...node,
+                    children: resolvedChildren
+                };
+            });
+
+            // If entry node is passthrough, resolve it to its first non-passthrough child/children (usually not needed)
+            let entryNode = dag.entry_node;
+            if (nodes[entryNode] && nodes[entryNode].kind === 'passthrough') {
+                const res = resolveChildren(entryNode);
+                const values = Object.values(res);
+                if (values.length > 0) entryNode = values[0];
             }
+
+            return {
+                ...config,
+                dag: {
+                    ...dag,
+                    entry_node: entryNode,
+                    nodes: filteredNodes
+                }
+            };
         };
 
         function App() {
-            // --- State ---
+            const [configsList, setConfigsList] = useState([]);
+            const [activeTenant, setActiveTenant] = useState("");
+            const [activeName, setActiveName] = useState("default");
+            const [toast, setToast] = useState(null);
+            
+            const [configData, setConfigData] = useState(null);
+            
             const [nodes, setNodes] = useState([]);
             const [edges, setEdges] = useState([]);
-
-            const [wsUrl, setWsUrl] = useState('ws://localhost:8084/ws/dag');
-            const [wsStatus, setWsStatus] = useState('disconnected'); // 'disconnected', 'connecting', 'connected'
-            const wsRef = useRef(null);
-
-            // Inspector/Side Panel State
-            const [selectedNode, setSelectedNode] = useState(null);
-            const [chatMessages, setChatMessages] = useState({}); // Keyed by node ID
-            const [chatInput, setChatInput] = useState("");
-
-            // Transform & Pan State
+            
+            const [selectedNodeId, setSelectedNodeId] = useState(null);
+            
+            const [viewMode, setViewMode] = useState('visual');
+            const [yamlInput, setYamlInput] = useState('');
+            const [yamlError, setYamlError] = useState(null);
+            const [hidePassthrough, setHidePassthrough] = useState(false);
+            
+            // Canvas state
             const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
             const [isPanning, setIsPanning] = useState(false);
             const [panStart, setPanStart] = useState({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
-
-            // Dragging State
             const [draggingNode, setDraggingNode] = useState(null);
             const [dragStart, setDragStart] = useState({ mouseX: 0, mouseY: 0, nodeX: 0, nodeY: 0 });
-
             const canvasRef = useRef(null);
-            const messagesEndRef = useRef(null);
+            
+            // Connecting state
+            const [connectingSourceId, setConnectingSourceId] = useState(null);
+            const [connectingLocalPos, setConnectingLocalPos] = useState({ x: 0, y: 0 });
 
-            // --- Auto-Layout Algorithm for Tree Data ---
-            const parseDagState = useCallback((rootNode) => {
+            // Connection modal state
+            const [pendingConnection, setPendingConnection] = useState(null);
+            const [routingKeyInput, setRoutingKeyInput] = useState('');
+            const routingKeyRef = useRef(null);
+            const connectDropTargetRef = useRef(null);
+            
+            const saveTimeoutRef = useRef(null);
+            const latestRequestRef = useRef({ tenant_id: "", name: "default" });
+
+            const [showVersionsPanel, setShowVersionsPanel] = useState(false);
+            const [versions, setVersions] = useState([]);
+            const [selectedVersion, setSelectedVersion] = useState(null);
+            const [selectedVersionData, setSelectedVersionData] = useState(null);
+
+            const getUUIDString = (val) => {
+                if (!val) return "";
+                if (typeof val === 'string') return val;
+                if (val.Bytes && Array.isArray(val.Bytes)) {
+                    const hex = val.Bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+                    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+                }
+                return "";
+            };
+
+            const fetchVersions = (dagId) => {
+                if (!dagId) return;
+                fetch(`/api/ase/config/versions?dag_id=${dagId}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (Array.isArray(data)) {
+                            setVersions(data);
+                        }
+                    })
+                    .catch(e => console.error("Error fetching versions:", e));
+            };
+
+            const fetchVersionDetail = (versionId) => {
+                fetch(`/api/ase/config/version?id=${versionId}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        setSelectedVersionData(data);
+                    })
+                    .catch(e => console.error("Error fetching version detail:", e));
+            };
+
+            const restoreVersion = (versionId) => {
+                if (!confirm("Are you sure you want to restore this version? This will update the active DAG configuration.")) {
+                    return;
+                }
+                fetch('/api/ase/config/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: versionId })
+                })
+                .then(r => {
+                    if (!r.ok) throw new Error("Failed to restore version");
+                    return r.json();
+                })
+                .then(data => {
+                    setToast("Version restored successfully!");
+                    setTimeout(() => setToast(null), 3000);
+                    const tId = getUUIDString(data.tenant_id);
+                    const rId = data.realm_id || "";
+                    const cName = data.name || "default";
+                    loadConfig(tId, rId, cName);
+                    setShowVersionsPanel(false);
+                    setSelectedVersion(null);
+                    setSelectedVersionData(null);
+                })
+                .catch(e => {
+                    console.error("Error restoring version:", e);
+                    setToast("Failed to restore version.");
+                    setTimeout(() => setToast(null), 3000);
+                });
+            };
+
+            const computeDiff = (current, version) => {
+                if (!current || !version) return null;
+                const diffs = {
+                    nodes: [],
+                    hyper_parameters: [],
+                    prompts: []
+                };
+                const isDeepEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+                const curNodes = current.dag?.nodes || {};
+                const verNodes = version.dag?.nodes || {};
+                const allNodeKeys = new Set([...Object.keys(curNodes), ...Object.keys(verNodes)]);
+                allNodeKeys.forEach(nodeId => {
+                    const curN = curNodes[nodeId];
+                    const verN = verNodes[nodeId];
+                    if (!verN && curN) {
+                        diffs.nodes.push({
+                            id: nodeId,
+                            type: 'added',
+                            name: curN.name || nodeId,
+                            details: `Node was added to the active configuration.`
+                        });
+                    } else if (verN && !curN) {
+                        diffs.nodes.push({
+                            id: nodeId,
+                            type: 'deleted',
+                            name: verN.name || nodeId,
+                            details: `Node was deleted from the active configuration.`
+                        });
+                    } else if (verN && curN && !isDeepEqual(curN, verN)) {
+                        const fieldChanges = [];
+                        ['name', 'kind', 'property', 'prompt_key', 'action_provider', 'batch_size'].forEach(field => {
+                            if (curN[field] !== verN[field]) {
+                                fieldChanges.push(`${field}: "${verN[field] || ''}" → "${curN[field] || ''}"`);
+                            }
+                        });
+                        if (!isDeepEqual(curN.children, verN.children)) {
+                            fieldChanges.push(`routing configuration changed`);
+                        }
+                        diffs.nodes.push({
+                            id: nodeId,
+                            type: 'modified',
+                            name: curN.name || nodeId,
+                            details: fieldChanges.join(', ') || 'Structural changes'
+                        });
+                    }
+                });
+                const curH = current.hyper_parameters || {};
+                const verH = version.hyper_parameters || {};
+                const hFields = ['confidence_threshold', 'auto_advance', 'max_llm_retries', 'llm_timeout_seconds', 'batch_flush_seconds', 'active_agent_ttl_minutes', 'lock_ttl_seconds'];
+                hFields.forEach(field => {
+                    if (curH[field] !== verH[field]) {
+                        diffs.hyper_parameters.push({
+                            name: field,
+                            oldVal: verH[field],
+                            newVal: curH[field]
+                        });
+                    }
+                });
+                const curV = curH.vector_memory || {};
+                const verV = verH.vector_memory || {};
+                const vFields = ['enabled', 'embedding_provider', 'openai_embedding_model', 'embedding_dimensions', 'retrieval_top_k', 'hydrator_interval_seconds', 'hydrator_min_confidence', 'hydrator_batch_size'];
+                vFields.forEach(field => {
+                    if (curV[field] !== verV[field]) {
+                        diffs.hyper_parameters.push({
+                            name: `vector_memory.${field}`,
+                            oldVal: verV[field],
+                            newVal: curV[field]
+                        });
+                    }
+                });
+                const curP = current.prompts || {};
+                const verP = version.prompts || {};
+                const allPromptKeys = new Set([...Object.keys(curP), ...Object.keys(verP)]);
+                allPromptKeys.forEach(key => {
+                    if (!verP[key] && curP[key]) {
+                        diffs.prompts.push({
+                            name: key,
+                            type: 'added',
+                            details: `Prompt added.`
+                        });
+                    } else if (verP[key] && !curP[key]) {
+                        diffs.prompts.push({
+                            name: key,
+                            type: 'deleted',
+                            details: `Prompt deleted.`
+                        });
+                    } else if (verP[key] !== curP[key]) {
+                        diffs.prompts.push({
+                            name: key,
+                            type: 'modified',
+                            details: `Prompt text was updated.`
+                        });
+                    }
+                });
+                return diffs;
+            };
+
+            useEffect(() => {
+                const dagId = getUUIDString(configData?.id);
+                if (showVersionsPanel && dagId) {
+                    fetchVersions(dagId);
+                }
+            }, [showVersionsPanel, configData?.id]);
+
+            useEffect(() => {
+                fetch('/api/ase/configs')
+                    .then(r => r.json())
+                    .then(data => {
+                        if(data && Array.isArray(data)) setConfigsList(data);
+                    })
+                    .catch(e => console.error("Error fetching configs:", e));
+            }, []);
+            
+            const loadConfig = (tenant_id, realm_id, name) => {
+                if (saveTimeoutRef.current) {
+                    clearTimeout(saveTimeoutRef.current);
+                    saveTimeoutRef.current = null;
+                }
+                latestRequestRef.current = { tenant_id, name };
+
+                let url = `/api/ase/config?name=${encodeURIComponent(name || 'default')}`;
+                if(tenant_id && tenant_id !== "global") url += `&tenant_id=${tenant_id}`;
+                if(realm_id) url += `&realm_id=${realm_id}`;
+                
+                fetch(url)
+                    .then(r => {
+                        if (!r.ok) {
+                            r.text().then(text => console.error("Config fetch error:", text));
+                            throw new Error(`HTTP error ${r.status}`);
+                        }
+                        return r.json();
+                    })
+                    .then(data => {
+                        if (latestRequestRef.current.tenant_id !== tenant_id || latestRequestRef.current.name !== name) {
+                            return;
+                        }
+                        setConfigData(data);
+                        const filtered = getFilteredConfig(data, hidePassthrough);
+                        rebuildDAGRender(filtered?.dag?.nodes || {}, filtered?.dag?.entry_node);
+                        if (viewMode === 'code') {
+                            setYamlInput(jsyaml.dump({
+                                dag: filtered.dag,
+                                hyper_parameters: filtered.hyper_parameters,
+                                prompts: filtered.prompts
+                            }, { indent: 2, lineWidth: -1 }));
+                            setYamlError(null);
+                        }
+                    })
+                    .catch(err => {
+                        if (latestRequestRef.current.tenant_id !== tenant_id || latestRequestRef.current.name !== name) {
+                            return;
+                        }
+                        console.error("Error fetching config:", err);
+                        setToast("Failed to load config.");
+                        setTimeout(() => setToast(null), 3000);
+                    });
+            };
+
+            // Calculate auto-layout for missing nodes
+            const rebuildDAGRender = (dagNodes, entryNodeId) => {
                 const newNodesMap = new Map();
                 const newEdgesMap = new Map();
                 const levelYTracker = {};
 
-                const traverse = (node, level = 0) => {
-                    if (!newNodesMap.has(node.id)) {
-                        const x = 50 + (level * 390);
+                const traverse = (nodeId, level = 0) => {
+                    const node = dagNodes[nodeId];
+                    if (!node) return;
 
+                    if (!newNodesMap.has(nodeId)) {
+                        const x = 50 + (level * 390);
                         if (levelYTracker[level] === undefined) levelYTracker[level] = 80;
                         const y = levelYTracker[level];
+                        levelYTracker[level] += NODE_HEIGHT + 70;
 
-                        levelYTracker[level] += NODE_HEIGHT + 70; // Add vertical spacing
-
-                        newNodesMap.set(node.id, {
-                            id: node.id,
-                            position: { x, y }, // Default calculated position
+                        newNodesMap.set(nodeId, {
+                            id: nodeId,
+                            position: { x, y },
                             data: node
                         });
                     }
 
-                    if (node.children && typeof node.children === 'object') {
-                        Object.entries(node.children).forEach(([routingKey, childNode]) => {
-                            const edgeId = `edge_${node.id}_${childNode.id}_${routingKey}`;
+                    if (node.children) {
+                        Object.entries(node.children).forEach(([routingKey, childId]) => {
+                            const edgeId = `edge_${nodeId}_${childId}_${routingKey}`;
                             if (!newEdgesMap.has(edgeId)) {
                                 newEdgesMap.set(edgeId, {
                                     id: edgeId,
-                                    source: node.id,
-                                    target: childNode.id,
+                                    source: nodeId,
+                                    target: childId,
                                     label: routingKey
                                 });
                             }
-                            traverse(childNode, level + 1);
+                            traverse(childId, level + 1);
                         });
                     }
                 };
 
-                if (rootNode) traverse(rootNode);
+                if (entryNodeId) traverse(entryNodeId);
+                
+                // Add unlinked nodes as well
+                Object.keys(dagNodes).forEach(id => {
+                    if(!newNodesMap.has(id)) {
+                        newNodesMap.set(id, {
+                            id, 
+                            position: { x: 50, y: 80 }, 
+                            data: dagNodes[id]
+                        });
+                    }
+                });
 
-                // Merge new nodes with existing ones to preserve dragged positions
                 setNodes(currentNodes => {
                     const newNodesList = Array.from(newNodesMap.values());
                     return newNodesList.map(newNode => {
                         const existingNode = currentNodes.find(cn => cn.id === newNode.id);
-                        if (existingNode) {
-                            return { ...newNode, position: existingNode.position }; // keep old position
-                        }
+                        if (existingNode) return { ...newNode, position: existingNode.position };
                         return newNode;
                     });
                 });
-
                 setEdges(Array.from(newEdgesMap.values()));
-            }, []);
-
-            // --- Scroll Chat to Bottom ---
-            useEffect(() => {
-                if (messagesEndRef.current) {
-                    messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-                }
-            }, [chatMessages, selectedNode]);
-
-            // --- WebSocket Logic ---
-            const connectWs = () => {
-                if (wsRef.current) wsRef.current.close();
-                setWsStatus('connecting');
-
-                try {
-                    const ws = new WebSocket(wsUrl);
-
-                    ws.onopen = () => setWsStatus('connected');
-
-                    ws.onmessage = (event) => {
-                        const stats = JSON.parse(event.data);
-                        parseDagState(stats);
-                    };
-
-                    ws.onclose = () => setWsStatus('disconnected');
-                    ws.onerror = () => setWsStatus('disconnected');
-
-                    wsRef.current = ws;
-                } catch (e) {
-                    alert('Invalid WebSocket URL');
-                    setWsStatus('disconnected');
-                }
             };
-
-            const disconnectWs = () => {
-                if (wsRef.current) {
-                    wsRef.current.close();
-                    wsRef.current = null;
-                }
-                setWsStatus('disconnected');
-            };
-
-            // --- Mock Data Loader (from ase.yml) ---
-            const loadMockData = () => {
-                const flatNodes = {
-                    "direction_router": { kind: "cash_direction_router", property: "cash_direction", batch_size: 50, children: { "INFLOW": "macro_classifier_inflow", "OUTFLOW": "macro_classifier_outflow" } },
-
-                    "macro_classifier_inflow": { kind: "macro_classifier", prompt_key: "macro_classifier_inflow_specialist", property: "macro_class", batch_size: 50, children: { "ASSET": "account_type_asset", "LIABILITY": "account_type_liability", "EQUITY": "account_type_equity", "REVENUE": "account_type_revenue", "EXPENSE": "account_type_expense" } },
-                    "macro_classifier_outflow": { kind: "macro_classifier", prompt_key: "macro_classifier_outflow_specialist", property: "macro_class", batch_size: 50, children: { "ASSET": "account_type_asset", "LIABILITY": "account_type_liability", "EQUITY": "account_type_equity", "REVENUE": "account_type_revenue", "EXPENSE": "account_type_expense" } },
-
-                    "account_type_asset": { kind: "account_type", prompt_key: "account_type_asset_specialist", property: "account_type", batch_size: 0, children: { "Bank": "bank", "Fixed Assets": "fixed_assets", "Leasehold Improvements": "leasehold_improvements", "Other Current Assets": "other_current_assets", "Other Assets": "other_assets", "Accounts Receivable": "accounts_receivable" } },
-                    "account_type_liability": { kind: "account_type", prompt_key: "account_type_liability_specialist", property: "account_type", batch_size: 0, children: { "Credit Cards": "credit_cards", "Long Term Liability": "long_term_liability", "Other Current Liability": "other_current_liability", "Accounts Payable": "accounts_payable" } },
-                    "account_type_equity": { kind: "account_type", prompt_key: "account_type_equity_specialist", property: "account_type", batch_size: 0, children: { "Equity": "equity" } },
-                    "account_type_revenue": { kind: "account_type", prompt_key: "account_type_revenue_specialist", property: "account_type", batch_size: 0, children: { "Income": "income", "Other Income": "other_income" } },
-                    "account_type_expense": { kind: "account_type", prompt_key: "account_type_expense_specialist", property: "account_type", batch_size: 0, children: { "Cost of Goods Sold": "cost_of_goods_sold", "Expense": "expense", "Other Expense": "other_expense" } },
-
-                    "bank": { kind: "holding_gate", prompt_key: "bank_gate_specialist", property: "bank_gate_decision", batch_size: 50, children: { "INTERNAL_TRANSFER": "terminal_bank_transfer_collapse", "TREASURY_CASH_SWEEP": "terminal_bank_transfer_collapse", "STANDARD_LIQUIDITY_FLOW": "entity_outflow" } },
-                    "terminal_bank_transfer_collapse": { kind: "terminal", action_provider: "qbo_inter_bank_transfer_collapse", batch_size: 0, children: {} },
-
-                    "fixed_assets": { kind: "holding_gate", prompt_key: "fixed_assets_gate_specialist", property: "fixed_assets_gate_decision", batch_size: 20, children: { "CAPITALIZE_ASSET": "entity_outflow", "DE_MINIMIS_EXPENSE_TRIGGER": "forced_expense_reclassification" } },
-                    "forced_expense_reclassification": { kind: "holding_gate", action_provider: "reclassify_to_de_minimis_expense_account", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-
-                    "leasehold_improvements": { kind: "holding_gate", prompt_key: "leasehold_improvements_gate_specialist", property: "leasehold_improvements_gate_decision", batch_size: 10, children: { "CAPITALIZE_IMPROVEMENT": "entity_outflow", "REPAIRS_MAINTENANCE_EXPENSE": "forced_expense_reclassification" } },
-                    "other_current_assets": { kind: "holding_gate", prompt_key: "other_current_assets_gate_specialist", property: "other_current_assets_gate_decision", batch_size: 30, children: { "INVENTORY_PREPAYMENT": "inventory_deposit_quarantine", "SECURITY_DEPOSIT": "entity_outflow", "STANDARD_CURRENT_ASSET": "entity_outflow" } },
-                    "inventory_deposit_quarantine": { kind: "holding_gate", hold_state_signal: "HOLD_MISSING_CONTEXT", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-
-                    "other_assets": { kind: "holding_gate", prompt_key: "other_assets_gate_specialist", property: "other_assets_gate_decision", batch_size: 10, children: { "INTANGIBLE_ASSET": "entity_outflow", "LONG_TERM_SECURITY_DEPOSIT": "entity_outflow", "STANDARD_OTHER_ASSET": "entity_outflow" } },
-                    "accounts_receivable": { kind: "holding_gate", hold_state_signal: "HOLD_AMBIGUOUS", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-
-                    "credit_cards": { kind: "holding_gate", prompt_key: "credit_cards_gate_specialist", property: "credit_cards_gate_decision", batch_size: 50, children: { "CC_BALANCE_TRANSFER": "terminal_credit_card_transfer", "ANOMALOUS_CC_FLOW": "entity_outflow" } },
-                    "terminal_credit_card_transfer": { kind: "terminal", action_provider: "qbo_credit_card_payment_transfer_collapse", batch_size: 0, children: {} },
-
-                    "long_term_liability": { kind: "holding_gate", prompt_key: "long_term_liability_gate_specialist", property: "long_term_liability_gate_decision", batch_size: 1, children: { "LOAN_REPAYMENT_SPLIT": "loan_amortization", "UNIDENTIFIED_DEBT_FLOW": "entity_outflow" } },
-                    "loan_amortization": { kind: "holding_gate", action_provider: "db_loan_matrix_lookup", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-
-                    "other_current_liability": { kind: "holding_gate", prompt_key: "other_current_liability_gate_specialist", property: "other_current_liability_gate_decision", batch_size: 50, children: { "SALES_TAX_COLLECTED": "cash_sales_tax_splitter", "PAYROLL_TAX_WITHHELD": "cash_payroll_withholding_gate", "DEFAULT_OPERATIONAL_FLOW": "entity_outflow" } },
-                    "cash_sales_tax_splitter": { kind: "holding_gate", action_provider: "extract_and_post_cash_sales_tax_liability", batch_size: 25, children: { "TAX_POSTED": "entity_outflow" } },
-                    "cash_payroll_withholding_gate": { kind: "holding_gate", action_provider: "isolate_employee_withholding_from_cash_payout", batch_size: 10, children: { "RESUME": "entity_outflow" } },
-                    "accounts_payable": { kind: "holding_gate", hold_state_signal: "HOLD_AMBIGUOUS", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-
-                    "equity": { kind: "holding_gate", prompt_key: "equity_flow_specialist", property: "equity_flow_decision", batch_size: 20, children: { "OWNER_INVESTMENT": "entity_outflow", "OWNER_DRAW": "terminal_shareholder_draw_mitigation", "SHAREHOLDER_DISTRIBUTION": "terminal_shareholder_draw_mitigation" } },
-                    "terminal_shareholder_draw_mitigation": { kind: "terminal", action_provider: "equity_draw_balance_sheet_collapse", batch_size: 0, children: {} },
-
-                    "income": { kind: "holding_gate", prompt_key: "operating_income_specialist", property: "operating_income_decision", batch_size: 50, children: { "GROMENT_STRIPE_SQUARE_SPLIT": "merchant_payout_splitter", "STANDARD_CASH_RECEIPT": "entity_outflow" } },
-                    "merchant_payout_splitter": { kind: "holding_gate", action_provider: "gross_up_merchant_processing_fees_split", batch_size: 25, children: { "MERCHANT_FEES_ISOLATED": "entity_outflow" } },
-                    "other_income": { kind: "holding_gate", prompt_key: "other_income_gate_specialist", property: "other_income_gate_decision", batch_size: 50, children: { "INTEREST_DIVIDEND_INCOME": "entity_outflow", "STANDARD_OTHER_INCOME": "entity_outflow" } },
-
-                    "cost_of_goods_sold": { kind: "holding_gate", prompt_key: "cogs_validation_specialist", property: "cogs_validation_decision", batch_size: 40, children: { "VALIDATED_DIRECT_COGS": "entity_outflow", "RECLASSIFY_TO_OVERHEAD_EXPENSE": "forced_overhead_reclassification" } },
-                    "forced_overhead_reclassification": { kind: "holding_gate", action_provider: "reclassify_to_operating_overhead_expense", batch_size: 1, children: { "RESUME": "entity_outflow" } },
-
-                    "expense": { kind: "holding_gate", prompt_key: "operating_expense_specialist", property: "operating_expense_decision", batch_size: 50, children: { "STANDARD_OVERHEAD": "entity_outflow", "PERSONAL_MIXIN_DETECTED": "terminal_shareholder_draw_mitigation" } },
-
-                    "other_expense": { kind: "holding_gate", prompt_key: "other_expense_gate_specialist", property: "other_expense_gate_decision", batch_size: 50, children: { "PENALTY_OR_FINE": "entity_outflow", "INTEREST_EXPENSE": "entity_outflow", "STANDARD_OTHER_EXPENSE": "entity_outflow" } },
-
-                    "entity_outflow": { kind: "entity", prompt_key: "counterparty_resolver", property: "counterparty", batch_size: 0, children: { "DEFAULT": "account_selection" } },
-                    "account_selection": { kind: "account_selection", dynamic_edge_provider: "db_chart_of_accounts", batch_size: 15, children: {} }
-                };
-
-                const buildTree = (nodeId, visited = new Set()) => {
-                    const nodeDef = flatNodes[nodeId];
-                    if (!nodeDef) return null;
-
-                    const obj = {
-                        id: nodeId,
-                        name: nodeId.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
-                        kind: nodeDef.kind,
-                        prompt_key: nodeDef.prompt_key || "",
-                        property: nodeDef.property || "",
-                        action_provider: nodeDef.action_provider || "",
-                        queue_length: Math.floor(Math.random() * (nodeDef.batch_size || 10)),
-                        batch_size: nodeDef.batch_size || 0,
-                    };
-
-                    if (visited.has(nodeId)) return obj;
-                    visited.add(nodeId);
-
-                    if (nodeDef.children && Object.keys(nodeDef.children).length > 0) {
-                        obj.children = {};
-                        for (const [key, childId] of Object.entries(nodeDef.children)) {
-                            obj.children[key] = buildTree(childId, new Set(visited));
-                        }
-                    }
-                    return obj;
-                };
-
-                const mockStats = buildTree("direction_router");
-                parseDagState(mockStats);
-                setTransform({ x: 0, y: 0, scale: 0.8 });
-            };
-
-            // --- Mouse Handlers for Dragging and Panning ---
-            const handleNodeMouseDown = (e, node) => {
-                e.stopPropagation(); // Prevent panning when clicking a node
-                setDraggingNode(node.id);
-                setDragStart({
-                    mouseX: e.clientX,
-                    mouseY: e.clientY,
-                    nodeX: node.position.x,
-                    nodeY: node.position.y
-                });
-            };
-
-            const handleNodeDoubleClick = (e, node) => {
-                e.stopPropagation();
-                setSelectedNode(node);
-
-                // Initialize default chat welcome message for this node if not present
-                if (!chatMessages[node.id]) {
-                    const metadata = MOCK_TRANSACTIONS[node.id] || MOCK_TRANSACTIONS.default;
-                    const topCand = metadata.candidates[0];
-                    setChatMessages(prev => ({
-                        ...prev,
-                        [node.id]: [
-                            {
-                                sender: 'agent',
-                                text: `Hello! I am the automated specialist agent for this node. I am currently evaluating the transaction description under the rule parameter constraints. Under current probability distributions, my top classification is "${topCand.value}" with a confidence of ${(topCand.confidence * 100).toFixed(0)}%. Let me know if you would like me to adjust my heuristic reasoning weight or override the routing.`,
-                                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                            }
-                        ]
-                    }));
-                }
-            };
-
-            const handleCanvasMouseDown = (e) => {
-                setIsPanning(true);
-                setPanStart({
-                    mouseX: e.clientX,
-                    mouseY: e.clientY,
-                    startX: transform.x,
-                    startY: transform.y
-                });
-            };
-
-            // Wheel Zoom Logic
-            useEffect(() => {
-                const canvas = canvasRef.current;
-                if (!canvas) return;
-
-                const handleWheel = (e) => {
-                    e.preventDefault();
-                    setTransform(prev => {
-                        const scaleAmount = -e.deltaY * 0.001;
-                        let newScale = prev.scale * (1 + scaleAmount);
-                        newScale = Math.min(Math.max(0.1, newScale), 4);
-
-                        const rect = canvas.getBoundingClientRect();
-                        const mouseX = e.clientX - rect.left;
-                        const mouseY = e.clientY - rect.top;
-
-                        // Center zoom scaling relative to mouse pointer
-                        const newX = mouseX - (mouseX - prev.x) * (newScale / prev.scale);
-                        const newY = mouseY - (mouseY - prev.y) * (newScale / prev.scale);
-
-                        return { x: newX, y: newY, scale: newScale };
+            
+            const triggerAutoSave = (newConfig) => {
+                setConfigData(newConfig);
+                rebuildDAGRender(newConfig.dag.nodes, newConfig.dag.entry_node);
+                
+                const targetTenant = activeTenant;
+                const targetName = activeName;
+                
+                if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+                saveTimeoutRef.current = setTimeout(() => {
+                    fetch('/api/ase/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            tenant_id: targetTenant === "global" ? "" : targetTenant,
+                            name: targetName,
+                            dag: newConfig.dag,
+                            hyper_parameters: newConfig.hyper_parameters,
+                            prompts: newConfig.prompts
+                        })
+                    }).then(res => {
+                        console.log("Auto-saved!", res.status);
+                        setToast("Auto-saved!");
+                        setTimeout(() => setToast(null), 3000);
                     });
-                };
+                }, 1000);
+            };
+            
+            const updateSelectedNodeField = (field, value) => {
+                if(hidePassthrough || !selectedNodeId || !configData) return;
+                const newConfig = { ...configData };
+                const newNodes = { ...newConfig.dag.nodes };
+                newNodes[selectedNodeId] = { ...newNodes[selectedNodeId], [field]: value };
+                newConfig.dag.nodes = newNodes;
+                triggerAutoSave(newConfig);
+            };
 
-                canvas.addEventListener('wheel', handleWheel, { passive: false });
-                return () => canvas.removeEventListener('wheel', handleWheel);
-            }, []);
+            const updateSelectedNodeChild = (key, value) => {
+                 if(hidePassthrough || !selectedNodeId || !configData) return;
+                 const newConfig = { ...configData };
+                 const newNodes = { ...newConfig.dag.nodes };
+                 const node = { ...newNodes[selectedNodeId] };
+                 node.children = { ...(node.children || {}), [key]: value };
+                 newNodes[selectedNodeId] = node;
+                 newConfig.dag.nodes = newNodes;
+                 triggerAutoSave(newConfig);
+            };
 
-            // Drag & Pan Movement Logic
+            const deleteSelectedNodeChild = (key) => {
+                 if(hidePassthrough || !selectedNodeId || !configData) return;
+                 const newConfig = { ...configData };
+                 const newNodes = { ...newConfig.dag.nodes };
+                 const node = { ...newNodes[selectedNodeId] };
+                 const newChildren = { ...node.children };
+                 delete newChildren[key];
+                 node.children = newChildren;
+                 newNodes[selectedNodeId] = node;
+                 newConfig.dag.nodes = newNodes;
+                 triggerAutoSave(newConfig);
+            };
+
+            const addNewNode = () => {
+                if(hidePassthrough || !configData) return;
+                const newId = "new_node_" + Date.now();
+                const newConfig = { ...configData };
+                const newNodes = { ...newConfig.dag.nodes };
+                newNodes[newId] = { name: "New Node", kind: "holding_gate", children: {} };
+                newConfig.dag.nodes = newNodes;
+                triggerAutoSave(newConfig);
+                setSelectedNodeId(newId);
+            };
+
+            const addNodeConnection = (sourceId, key, targetId) => {
+                if(hidePassthrough || !configData) return;
+                const newConfig = { ...configData };
+                const newNodes = { ...newConfig.dag.nodes };
+                const node = { ...newNodes[sourceId] };
+                if (!node) return;
+                node.children = { ...(node.children || {}), [key]: targetId };
+                newNodes[sourceId] = node;
+                newConfig.dag.nodes = newNodes;
+                triggerAutoSave(newConfig);
+            };
+
+            const handleConnectStart = (e, nodeId) => {
+                if (hidePassthrough) return;
+                e.stopPropagation();
+                e.preventDefault();
+                setConnectingSourceId(nodeId);
+                const rect = canvasRef.current.getBoundingClientRect();
+                const localX = (e.clientX - rect.left - transform.x) / transform.scale;
+                const localY = (e.clientY - rect.top - transform.y) / transform.scale;
+                setConnectingLocalPos({ x: localX, y: localY });
+            };
+
+            const handleHidePassthroughToggle = (val) => {
+                setHidePassthrough(val);
+                setSelectedNodeId(null); // Deselect active node to prevent edit issues
+                if (!configData) return;
+                
+                const filtered = getFilteredConfig(configData, val);
+                
+                if (viewMode === 'code') {
+                    setYamlInput(jsyaml.dump({
+                        dag: filtered.dag,
+                        hyper_parameters: filtered.hyper_parameters,
+                        prompts: filtered.prompts
+                    }, { indent: 2, lineWidth: -1 }));
+                    setYamlError(null);
+                } else {
+                    rebuildDAGRender(filtered?.dag?.nodes || {}, filtered?.dag?.entry_node);
+                }
+            };
+
+            const toggleViewMode = () => {
+                if (viewMode === 'visual') {
+                    if (configData) {
+                        const filtered = getFilteredConfig(configData, hidePassthrough);
+                        const yamlStr = jsyaml.dump({
+                            dag: filtered.dag,
+                            hyper_parameters: filtered.hyper_parameters,
+                            prompts: filtered.prompts
+                        }, { indent: 2, lineWidth: -1 });
+                        setYamlInput(yamlStr);
+                        setYamlError(null);
+                    }
+                    setViewMode('code');
+                } else {
+                    setViewMode('visual');
+                    if (configData) {
+                        const filtered = getFilteredConfig(configData, hidePassthrough);
+                        rebuildDAGRender(filtered?.dag?.nodes || {}, filtered?.dag?.entry_node);
+                    }
+                }
+            };
+
+            const handleYamlChange = (newVal) => {
+                if (hidePassthrough) return;
+                // If the event comes from the old textarea it might be an object, but Monaco passes the string directly.
+                const val = typeof newVal === 'object' && newVal.target ? newVal.target.value : newVal;
+                setYamlInput(val);
+                
+                const targetTenant = activeTenant;
+                const targetName = activeName;
+                
+                if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+                saveTimeoutRef.current = setTimeout(() => {
+                    try {
+                        const parsed = jsyaml.load(val);
+                        if (parsed && typeof parsed === 'object' && parsed.dag && parsed.dag.nodes) {
+                            setYamlError(null);
+                            const newConfig = { ...configData, ...parsed };
+                            setConfigData(newConfig);
+                            rebuildDAGRender(newConfig.dag.nodes, newConfig.dag.entry_node);
+                            
+                            fetch('/api/ase/config', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    tenant_id: targetTenant === "global" ? "" : targetTenant,
+                                    name: targetName,
+                                    dag: newConfig.dag,
+                                    hyper_parameters: newConfig.hyper_parameters,
+                                    prompts: newConfig.prompts
+                                })
+                            }).then(() => {
+                                setToast("Auto-saved!");
+                                setTimeout(() => setToast(null), 3000);
+                            });
+                        } else {
+                            setYamlError("Invalid structure: missing 'dag' or 'dag.nodes'");
+                        }
+                    } catch (err) {
+                        setYamlError(err.message);
+                    }
+                }, 1000);
+            };
+
+            // Canvas interaction logic
             useEffect(() => {
                 const handleMouseMove = (e) => {
                     if (draggingNode) {
-                        // Adjust drag offset by the current zoom scale
                         const dx = (e.clientX - dragStart.mouseX) / transform.scale;
                         const dy = (e.clientY - dragStart.mouseY) / transform.scale;
-
                         setNodes(prev => prev.map(n =>
                             n.id === draggingNode
                                 ? { ...n, position: { x: dragStart.nodeX + dx, y: dragStart.nodeY + dy } }
@@ -413,15 +700,27 @@
                         const dx = e.clientX - panStart.mouseX;
                         const dy = e.clientY - panStart.mouseY;
                         setTransform(prev => ({ ...prev, x: panStart.startX + dx, y: panStart.startY + dy }));
+                    } else if (connectingSourceId) {
+                        const rect = canvasRef.current.getBoundingClientRect();
+                        const localX = (e.clientX - rect.left - transform.x) / transform.scale;
+                        const localY = (e.clientY - rect.top - transform.y) / transform.scale;
+                        setConnectingLocalPos({ x: localX, y: localY });
                     }
                 };
-
-                const handleMouseUp = () => {
+                const handleMouseUp = (e) => {
+                    if (connectingSourceId) {
+                        const dropTarget = connectDropTargetRef.current;
+                        if (dropTarget && dropTarget !== connectingSourceId) {
+                            setPendingConnection({ sourceId: connectingSourceId, targetId: dropTarget });
+                            setRoutingKeyInput('');
+                        }
+                        setConnectingSourceId(null);
+                        connectDropTargetRef.current = null;
+                    }
                     setDraggingNode(null);
                     setIsPanning(false);
                 };
-
-                if (draggingNode || isPanning) {
+                if (draggingNode || isPanning || connectingSourceId) {
                     window.addEventListener('mousemove', handleMouseMove);
                     window.addEventListener('mouseup', handleMouseUp);
                 }
@@ -429,168 +728,189 @@
                     window.removeEventListener('mousemove', handleMouseMove);
                     window.removeEventListener('mouseup', handleMouseUp);
                 };
-            }, [draggingNode, isPanning, dragStart, panStart, transform.scale]);
+            }, [draggingNode, isPanning, connectingSourceId, dragStart, panStart, transform.x, transform.y, transform.scale]);
 
-            // --- Zoom Controls ---
-            const handleZoom = (delta) => {
-                setTransform(prev => {
-                    let newScale = prev.scale + delta;
-                    newScale = Math.min(Math.max(0.1, newScale), 4);
-                    if (!canvasRef.current) return { ...prev, scale: newScale };
-
-                    const rect = canvasRef.current.getBoundingClientRect();
-                    const mouseX = rect.width / 2;
-                    const mouseY = rect.height / 2;
-
-                    const newX = mouseX - (mouseX - prev.x) * (newScale / prev.scale);
-                    const newY = mouseY - (mouseY - prev.y) * (newScale / prev.scale);
-
-                    return { x: newX, y: newY, scale: newScale };
-                });
-            };
-
-            // --- Send Chat Message ---
-            const handleSendMessage = (e) => {
-                e.preventDefault();
-                if (!chatInput.trim() || !selectedNode) return;
-
-                const userMsg = {
-                    sender: 'user',
-                    text: chatInput,
-                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const handleWheel = (e) => {
+                    e.preventDefault();
+                    setTransform(prev => {
+                        const scaleAmount = -e.deltaY * 0.001;
+                        let newScale = prev.scale * (1 + scaleAmount);
+                        newScale = Math.min(Math.max(0.1, newScale), 4);
+                        const rect = canvas.getBoundingClientRect();
+                        const mouseX = e.clientX - rect.left;
+                        const mouseY = e.clientY - rect.top;
+                        const newX = mouseX - (mouseX - prev.x) * (newScale / prev.scale);
+                        const newY = mouseY - (mouseY - prev.y) * (newScale / prev.scale);
+                        return { x: newX, y: newY, scale: newScale };
+                    });
                 };
+                canvas.addEventListener('wheel', handleWheel, { passive: false });
+                return () => canvas.removeEventListener('wheel', handleWheel);
+            }, []);
 
-                const currentInput = chatInput.toLowerCase();
-                setChatMessages(prev => ({
-                    ...prev,
-                    [selectedNode.id]: [...(prev[selectedNode.id] || []), userMsg]
-                }));
-                setChatInput("");
+            // Focus the routing key input when the modal opens
+            useEffect(() => {
+                if (pendingConnection && routingKeyRef.current) {
+                    routingKeyRef.current.focus();
+                }
+            }, [pendingConnection]);
 
-                // Send to backend if connected
-                if (wsRef.current && wsStatus === 'connected') {
-                    wsRef.current.send(JSON.stringify({
-                        type: 'chat',
-                        node_id: selectedNode.id,
-                        message: chatInput
-                    }));
-                    
-                    const agentMsg = {
-                        sender: 'agent',
-                        text: "I have received your context override. Resuming DAG execution with this updated reasoning. The transaction will now proceed through the semantic evaluation pipeline.",
-                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    };
-
-                    setChatMessages(prev => ({
-                        ...prev,
-                        [selectedNode.id]: [...(prev[selectedNode.id] || []), agentMsg]
-                    }));
-                } else {
-                    const agentMsg = {
-                        sender: 'agent',
-                        text: "Error: WebSocket is not connected. Cannot dispatch context override.",
-                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    };
-                    setChatMessages(prev => ({
-                        ...prev,
-                        [selectedNode.id]: [...(prev[selectedNode.id] || []), agentMsg]
-                    }));
+            const confirmConnection = () => {
+                if (pendingConnection && routingKeyInput.trim()) {
+                    addNodeConnection(pendingConnection.sourceId, routingKeyInput.trim(), pendingConnection.targetId);
+                    setPendingConnection(null);
+                    setRoutingKeyInput('');
                 }
             };
 
-            // --- SVG Helpers ---
-            const createBezierPath = (startX, startY, endX, endY) => {
-                const offset = Math.max(Math.abs(endX - startX) / 2, 50);
-                return `M ${startX} ${startY} C ${startX + offset} ${startY}, ${endX - offset} ${endY}, ${endX} ${endY}`;
+            const cancelConnection = () => {
+                setPendingConnection(null);
+                setRoutingKeyInput('');
             };
 
-            // Get selected node's enriched mock data
-            const getInspectorData = () => {
-                if (!selectedNode) return null;
-                return MOCK_TRANSACTIONS[selectedNode.id] || MOCK_TRANSACTIONS.default;
+            const deleteNode = () => {
+                if (hidePassthrough || !configData || !selectedNodeId) return;
+                if (configData.dag.entry_node === selectedNodeId) {
+                    setToast('Cannot delete the entry node!');
+                    setTimeout(() => setToast(null), 3000);
+                    return;
+                }
+                const newConfig = JSON.parse(JSON.stringify(configData));
+                delete newConfig.dag.nodes[selectedNodeId];
+                // Remove all references to this node from other nodes' children
+                Object.values(newConfig.dag.nodes).forEach(node => {
+                    if (node.children) {
+                        Object.keys(node.children).forEach(key => {
+                            if (node.children[key] === selectedNodeId) {
+                                delete node.children[key];
+                            }
+                        });
+                    }
+                });
+                setSelectedNodeId(null);
+                triggerAutoSave(newConfig);
             };
 
-            const inspectorData = getInspectorData();
+            const handleNodeMouseDown = (e, node) => {
+                if (hidePassthrough) return;
+                e.stopPropagation();
+                setDraggingNode(node.id);
+                setDragStart({ mouseX: e.clientX, mouseY: e.clientY, nodeX: node.position.x, nodeY: node.position.y });
+            };
+
+            const selectedNodeData = configData?.dag?.nodes?.[selectedNodeId];
 
             return (
                 <div className="flex h-screen w-full bg-[#1e1e1e]">
-
-                    {/* Sidebar Configuration */}
-                    <div className="w-80 bg-[#252526] border-r border-[#3c3c3c] flex flex-col z-20 shadow-2xl">
-                        <div className="p-5 border-b border-[#3c3c3c] flex items-center gap-3">
-                            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                                <ActivityIcon />
-                            </div>
-                            <div>
-                                <h1 className="font-bold text-white text-md">ASE Visualizer</h1>
-                                <p className="text-xs text-gray-400">Live Memory DAG</p>
-                            </div>
+                    {toast && (
+                        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-500 text-white px-4 py-2 rounded shadow-lg z-50 transition-opacity font-semibold">
+                            {toast}
                         </div>
-
-                        <div className="p-5 space-y-6 flex-1">
-                            {/* Connection Panel */}
-                            <div className="space-y-3">
-                                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Engine Connection</h2>
-
+                    )}
+                    
+                    {/* Connection Routing Key Modal */}
+                    {pendingConnection && (
+                        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]" onClick={cancelConnection}>
+                            <div className="bg-[#2d2d2d] border border-[#3c3c3c] rounded-xl shadow-2xl p-6 w-[380px] space-y-4" onClick={(e) => e.stopPropagation()}>
                                 <div>
-                                    <label className="block text-xs text-gray-400 mb-1">WebSocket URL</label>
+                                    <h3 className="text-white font-bold text-sm">New Connection</h3>
+                                    <p className="text-gray-400 text-xs mt-1">
+                                        <span className="text-blue-400 font-mono">{pendingConnection.sourceId}</span>
+                                        {' → '}
+                                        <span className="text-green-400 font-mono">{pendingConnection.targetId}</span>
+                                    </p>
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-400 block mb-1.5">Routing Key</label>
                                     <input
+                                        ref={routingKeyRef}
                                         type="text"
-                                        value={wsUrl}
-                                        onChange={(e) => setWsUrl(e.target.value)}
-                                        disabled={wsStatus === 'connected'}
-                                        className="w-full bg-[#1e1e1e] border border-[#3c3c3c] rounded text-sm px-3 py-2 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                                        value={routingKeyInput}
+                                        onChange={(e) => setRoutingKeyInput(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') confirmConnection(); if (e.key === 'Escape') cancelConnection(); }}
+                                        placeholder="e.g. true, false, inflow, revenue..."
+                                        className="w-full bg-[#1e1e1e] border border-[#444] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 placeholder-gray-600 font-mono"
                                     />
                                 </div>
-
-                                {wsStatus === 'disconnected' ? (
-                                    <button
-                                        onClick={connectWs}
-                                        className="w-full bg-blue-600 hover:bg-blue-500 text-white rounded py-2 text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                                    >
-                                        <PlugIcon /> Connect to Live Stream
+                                <div className="flex justify-end gap-2 pt-1">
+                                    <button onClick={cancelConnection} className="px-4 py-1.5 text-xs text-gray-400 hover:text-white rounded border border-[#444] hover:bg-[#3d3d3d] transition-colors">
+                                        Cancel
                                     </button>
-                                ) : (
-                                    <button
-                                        onClick={disconnectWs}
-                                        className="w-full bg-red-600/20 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 rounded py-2 text-sm font-medium transition-colors"
-                                    >
-                                        Disconnect
+                                    <button onClick={confirmConnection} disabled={!routingKeyInput.trim()} className="px-4 py-1.5 text-xs text-white bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 disabled:cursor-not-allowed rounded font-semibold transition-colors">
+                                        Connect
                                     </button>
-                                )}
-
-                                <div className="flex items-center gap-2 text-xs mt-2">
-                                    <span className="text-gray-500">Status:</span>
-                                    {wsStatus === 'connected' && <span className="text-green-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Connected (Live)</span>}
-                                    {wsStatus === 'connecting' && <span className="text-yellow-500">Connecting...</span>}
-                                    {wsStatus === 'disconnected' && <span className="text-gray-400">Disconnected</span>}
                                 </div>
                             </div>
+                        </div>
+                    )}
 
-                            <hr className="border-[#3c3c3c]" />
-
-                            <div className="space-y-3">
-                                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Development</h2>
-                                <button
-                                    onClick={loadMockData}
-                                    className="w-full bg-[#2d2d2d] hover:bg-[#3d3d3d] border border-[#3c3c3c] text-white rounded py-2 text-sm font-medium transition-colors"
-                                >
-                                    Load Mock Graph Data
-                                </button>
-                                <p className="text-xs text-gray-500 leading-relaxed">
-                                    Clicking this will populate the canvas with a dummy memory tree representing what the WebSocket payload looks like.
-                                </p>
+                    {/* Left Sidebar: Configurations */}
+                    <div className="w-64 bg-[#252526] border-r border-[#3c3c3c] flex flex-col z-20 shadow-2xl">
+                        <div className="p-4 border-b border-[#3c3c3c] flex items-center gap-3">
+                            <ActivityIcon />
+                            <h1 className="font-bold text-white">ASE Graphs</h1>
+                        </div>
+                        <div className="p-4 space-y-4">
+                            <button onClick={() => { setActiveTenant(""); setActiveName("default"); loadConfig("", "", "default"); }} className="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm text-white font-semibold">
+                                Load Global Default
+                            </button>
+                            <hr className="border-[#3c3c3c]"/>
+                            <h2 className="text-xs font-semibold text-gray-500 uppercase">Saved DAGs</h2>
+                            <div className="space-y-2">
+                                {configsList.map(c => {
+                                    const tId = (c.tenant_id && c.tenant_id.Valid !== undefined) ? (c.tenant_id.Valid ? "tenant_obj" : null) : c.tenant_id; // we can't easily parse byte array back to uuid, but if it's string we are good. pgx v5 outputs string.
+                                    const tStr = typeof tId === 'string' ? tId : "global";
+                                    const rStr = c.realm_id || "";
+                                    const cName = c.name || "default";
+                                    const displayTenant = tStr !== "global" ? tStr.split("-")[0] : "Global";
+                                    return (
+                                    <div 
+                                        key={c.id || tStr + cName} 
+                                        className={`p-2 rounded text-xs cursor-pointer border ${(activeTenant === tStr && activeName === cName) ? 'border-blue-500 bg-blue-500/10' : 'border-[#3c3c3c] bg-[#1e1e1e] hover:bg-[#2d2d2d]'}`}
+                                        onClick={() => { setActiveTenant(tStr); setActiveName(cName); loadConfig(tStr, typeof rStr === 'string' ? rStr : "", cName); }}
+                                    >
+                                        <div className="text-white font-semibold truncate">{cName}</div>
+                                        <div className="text-gray-500 text-[10px]">Tenant: {displayTenant}</div>
+                                    </div>
+                                )})}
                             </div>
+                            <button onClick={() => {
+                                const newTenant = prompt("Enter Tenant ID (leave empty for global):");
+                                const newName = prompt("Enter DAG name (default: 'default'):") || "default";
+                                if (newName) {
+                                    fetch('/api/ase/config', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            tenant_id: newTenant || "",
+                                            name: newName,
+                                            dag: { nodes: {}, entry_node: "" },
+                                            hyper_parameters: { confidence_threshold: 0.98 },
+                                            prompts: {}
+                                        })
+                                    }).then(() => {
+                                        fetch('/api/ase/configs')
+                                            .then(r => r.json())
+                                            .then(data => {
+                                                if(data && Array.isArray(data)) setConfigsList(data);
+                                            });
+                                    });
+                                }
+                            }} className="w-full py-2 bg-green-600 hover:bg-green-500 rounded text-sm text-white font-semibold mt-4">
+                                + Create New DAG
+                            </button>
                         </div>
                     </div>
 
-                    {/* Canvas Area */}
-                    <div
-                        className={`flex-1 relative bg-[#1e1e1e] overflow-hidden select-none ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+                    {/* Canvas */}
+                    <div 
+                        className={`flex-1 relative overflow-hidden bg-[#1e1e1e] ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
                         ref={canvasRef}
-                        onMouseDown={handleCanvasMouseDown}
+                        onMouseDown={(e) => { setIsPanning(true); setPanStart({ mouseX: e.clientX, mouseY: e.clientY, startX: transform.x, startY: transform.y }); }}
                     >
-                        {/* Dot Grid Background */}
                         <div
                             className="absolute inset-0 pointer-events-none opacity-50"
                             style={{
@@ -599,335 +919,398 @@
                                 backgroundPosition: `${transform.x}px ${transform.y}px`
                             }}
                         ></div>
-
-                        {nodes.length === 0 && (
-                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                <div className="text-[#3c3c3c] text-xl font-medium flex flex-col items-center gap-4">
-                                    <ServerIcon />
-                                    No data received yet.
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Transform Wrapper */}
-                        <div
-                            style={{
-                                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-                                transformOrigin: '0 0',
-                                position: 'absolute',
-                                top: 0, left: 0, right: 0, bottom: 0,
-                                pointerEvents: 'none'
-                            }}
-                        >
-                            {/* Edges Layer (SVG) */}
+                        
+                        {viewMode === 'visual' ? (
+                            <>
+                                <div
+                                    style={{
+                                        transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+                                        transformOrigin: '0 0', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none'
+                                    }}
+                                >
                             <svg style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible', pointerEvents: 'none' }}>
                                 <defs>
                                     <marker id="arrowhead" markerWidth="6" markerHeight="4" refX="4.5" refY="2" orient="auto">
                                         <polygon points="0 0, 6 2, 0 4" fill="#525252" />
                                     </marker>
+                                    <marker id="blue-arrowhead" markerWidth="6" markerHeight="4" refX="4.5" refY="2" orient="auto">
+                                        <polygon points="0 0, 6 2, 0 4" fill="#3b82f6" />
+                                    </marker>
                                 </defs>
-
                                 {edges.map(edge => {
                                     const sourceNode = nodes.find(n => n.id === edge.source);
                                     const targetNode = nodes.find(n => n.id === edge.target);
                                     if (!sourceNode || !targetNode) return null;
-
                                     const startX = sourceNode.position.x + NODE_WIDTH + 4;
                                     const startY = sourceNode.position.y + (NODE_HEIGHT / 2);
                                     const endX = targetNode.position.x - 4;
                                     const endY = targetNode.position.y + (NODE_HEIGHT / 2);
-
-                                    const path = createBezierPath(startX, startY, endX, endY);
-
-                                    // Approximate text position (middle of horizontal space)
                                     const textX = (startX + endX) / 2;
                                     const textY = (startY + endY) / 2;
-
-                                    const textLength = edge.label ? edge.label.length : 0;
-                                    const pillWidth = (textLength * 6.5) + 16;
-
                                     return (
                                         <g key={edge.id}>
-                                            <path
-                                                d={path}
-                                                stroke="#525252"
-                                                strokeWidth="2"
-                                                fill="none"
-                                                markerEnd="url(#arrowhead)"
-                                            />
-                                            {/* Routing Key Label Pill */}
+                                            <path d={createBezierPath(startX, startY, endX, endY)} stroke="#525252" strokeWidth="2" fill="none" markerEnd="url(#arrowhead)" />
                                             {edge.label && (
                                                 <g transform={`translate(${textX}, ${textY})`}>
-                                                    <rect
-                                                        x={-pillWidth / 2}
-                                                        y={-9}
-                                                        width={pillWidth}
-                                                        height={18}
-                                                        rx={4}
-                                                        fill="#1e1e1e"
-                                                        stroke="#444444"
-                                                        strokeWidth="1"
-                                                    />
-                                                    <text
-                                                        x={0}
-                                                        y={4}
-                                                        fill="#9ca3af"
-                                                        fontSize="10"
-                                                        textAnchor="middle"
-                                                        className="font-mono font-semibold"
-                                                        style={{ pointerEvents: 'none' }}
-                                                    >
-                                                        {edge.label}
-                                                    </text>
+                                                    <rect x={-((edge.label.length * 6.5) + 16) / 2} y={-9} width={(edge.label.length * 6.5) + 16} height={18} rx={4} fill="#1e1e1e" stroke="#444444" strokeWidth="1"/>
+                                                    <text x={0} y={4} fill="#9ca3af" fontSize="10" textAnchor="middle" className="font-mono">{edge.label}</text>
                                                 </g>
                                             )}
                                         </g>
                                     );
                                 })}
+                                {connectingSourceId && (() => {
+                                    const sourceNode = nodes.find(n => n.id === connectingSourceId);
+                                    if (!sourceNode) return null;
+                                    const startX = sourceNode.position.x + NODE_WIDTH + 6;
+                                    const startY = sourceNode.position.y + (NODE_HEIGHT / 2);
+                                    return (
+                                        <g>
+                                            <path 
+                                                d={createBezierPath(startX, startY, connectingLocalPos.x, connectingLocalPos.y)} 
+                                                stroke="#3b82f6" 
+                                                strokeWidth="2.5" 
+                                                strokeDasharray="4 4" 
+                                                fill="none" 
+                                                markerEnd="url(#blue-arrowhead)" 
+                                            />
+                                        </g>
+                                    );
+                                })()}
                             </svg>
 
-                            {/* Nodes Layer */}
                             {nodes.map(node => {
+                                const isSelected = selectedNodeId === node.id;
                                 const colorClass = KIND_COLORS[node.data.kind] || KIND_COLORS.default;
-                                const isFull = node.data.queue_length >= node.data.batch_size && node.data.batch_size > 0;
-                                const fillPercentage = node.data.batch_size > 0 ? Math.min((node.data.queue_length / node.data.batch_size) * 100, 100) : 0;
-                                const isSelected = selectedNode && selectedNode.id === node.id;
-
+                                const isDropTarget = connectingSourceId && connectingSourceId !== node.id;
                                 return (
                                     <div
                                         key={node.id}
                                         onMouseDown={(e) => handleNodeMouseDown(e, node)}
-                                        onDoubleClick={(e) => handleNodeDoubleClick(e, node)}
-                                        className={`absolute transition-all duration-200 z-10 cursor-move rounded-xl
-                                            ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_25px_rgba(59,130,246,0.5)] scale-[1.02]' : ''}
-                                            ${isFull && !isSelected ? 'shadow-[0_0_20px_rgba(34,197,94,0.3)] ring-1 ring-green-500' : 'shadow-xl'}
-                                        `}
-                                        style={{
-                                            left: node.position.x,
-                                            top: node.position.y,
-                                            width: NODE_WIDTH,
-                                            height: NODE_HEIGHT,
-                                            pointerEvents: 'auto'
-                                        }}
+                                        onMouseEnter={() => { connectDropTargetRef.current = node.id; }}
+                                        onMouseLeave={() => { if (connectDropTargetRef.current === node.id) connectDropTargetRef.current = null; }}
+                                        onClick={(e) => { e.stopPropagation(); setSelectedNodeId(node.id); setShowVersionsPanel(false); }}
+                                        className={`absolute transition-all duration-200 z-10 cursor-pointer rounded-xl ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_25px_rgba(59,130,246,0.5)] scale-[1.02]' : 'shadow-xl'} ${isDropTarget ? 'ring-2 ring-blue-400/60 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : ''}`}
+                                        style={{ left: node.position.x, top: node.position.y, width: NODE_WIDTH, height: NODE_HEIGHT, pointerEvents: 'auto' }}
                                     >
-                                        <div className="w-full h-full bg-[#252526] rounded-xl border border-[#3c3c3c] flex flex-col overflow-hidden relative group">
-
-                                            {/* Header Color Bar */}
+                                        <div className="w-full h-full bg-[#252526] rounded-xl border border-[#3c3c3c] flex flex-col overflow-hidden">
                                             <div className={`h-1.5 w-full ${colorClass}`} />
-
-                                            <div className="flex-1 p-3 flex flex-col justify-between pointer-events-none">
-                                                {/* Top info */}
-                                                <div className="flex items-start justify-between gap-1">
-                                                    <div className="overflow-hidden flex-1">
-                                                        <div className="font-semibold text-gray-200 text-sm truncate" title={node.data.name}>{node.data.name}</div>
-                                                        <div className="text-[10px] text-gray-500 font-mono truncate">{node.id}</div>
-                                                        <div className="text-[9px] text-gray-400 font-mono uppercase tracking-wider">({node.data.kind})</div>
-                                                    </div>
-                                                    <div className="flex-shrink-0 w-7 h-7 rounded bg-[#333] flex items-center justify-center">
-                                                        <ServerIcon />
-                                                    </div>
-                                                </div>
-
-                                                {/* Dynamic Property Key & Prompts Metadata */}
+                                            <div className="p-3 flex flex-col gap-1 pointer-events-none">
+                                                <div className="font-semibold text-gray-200 truncate">{node.data.name || "Unnamed"}</div>
+                                                <div className="text-[10px] text-gray-500 font-mono truncate">{node.id}</div>
+                                                <div className="text-[9px] text-gray-400 font-mono uppercase">({node.data.kind})</div>
+                                                
                                                 <div className="mt-1 text-[10px] space-y-0.5 border-t border-[#333] pt-1.5 font-mono">
-                                                    {node.data.property && (
-                                                        <div className="flex justify-between items-center text-[#34d399] leading-none py-0.5">
-                                                            <span className="text-gray-500 text-[9px] uppercase">prop:</span>
-                                                            <span className="truncate max-w-[195px] font-medium" title={node.data.property}>{node.data.property}</span>
-                                                        </div>
-                                                    )}
-                                                    {node.data.prompt_key && (
-                                                        <div className="flex justify-between items-center text-[#818cf8] leading-none py-0.5">
-                                                            <span className="text-gray-500 text-[9px] uppercase">prompt:</span>
-                                                            <span className="truncate max-w-[195px] font-medium" title={node.data.prompt_key}>{node.data.prompt_key}</span>
-                                                        </div>
-                                                    )}
-                                                    {node.data.action_provider && (
-                                                        <div className="flex justify-between items-center text-[#fb923c] leading-none py-0.5">
-                                                            <span className="text-gray-500 text-[9px] uppercase">action:</span>
-                                                            <span className="truncate max-w-[195px] font-medium font-bold" title={node.data.action_provider}>{node.data.action_provider}</span>
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                {/* Queue Size Indicator */}
-                                                <div className="mt-1 bg-[#1e1e1e] rounded p-1.5 border border-[#333] flex flex-col gap-1">
-                                                    <div className="flex flex-col flex-1">
-                                                        <div className="flex justify-between items-center mb-0.5 text-[9px] text-gray-500 font-semibold">
-                                                            <span>QUEUE DEPTH</span>
-                                                            <span>{node.data.queue_length}/{node.data.batch_size || '∞'}</span>
-                                                        </div>
-                                                        <div className="w-full h-1 bg-[#2d2d2d] rounded-full overflow-hidden">
-                                                            <div
-                                                                className={`h-full transition-all duration-300 ${isFull ? 'bg-green-500' : 'bg-rose-500'}`}
-                                                                style={{ width: `${fillPercentage}%` }}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                    {node.data.holding_length > 0 && (
-                                                        <div className="flex justify-between items-center text-[9px] text-amber-500 font-semibold mt-0.5 bg-amber-500/10 px-1 py-0.5 rounded">
-                                                            <span className="flex items-center gap-1"><ZapIcon /> WAITING FOR HUMAN</span>
-                                                            <span>{node.data.holding_length}</span>
-                                                        </div>
-                                                    )}
+                                                    {node.data.property && <div className="text-[#34d399] truncate">prop: {node.data.property}</div>}
+                                                    {node.data.prompt_key && <div className="text-[#818cf8] truncate">prompt: {node.data.prompt_key}</div>}
+                                                    {node.data.action_provider && <div className="text-[#fb923c] truncate">action: {node.data.action_provider}</div>}
                                                 </div>
                                             </div>
-
-                                            {/* Input/Output visual stubs */}
-                                            <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 bg-[#252526] border border-[#525252] rounded-full pointer-events-none" />
-                                            <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3 h-3 bg-[#252526] border border-[#525252] rounded-full pointer-events-none" />
                                         </div>
+
+                                        {/* Left Handle (Input) */}
+                                        <div 
+                                            className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-[#252526] border border-[#525252] rounded-full hover:bg-blue-500 hover:border-blue-400 transition-colors z-20"
+                                            style={{ pointerEvents: 'auto' }}
+                                            onMouseDown={(e) => e.stopPropagation()}
+                                        />
+
+                                        {/* Right Handle (Output) */}
+                                        <div 
+                                            className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 bg-[#252526] border border-[#525252] rounded-full cursor-crosshair hover:bg-blue-500 hover:border-blue-400 transition-colors z-20"
+                                            style={{ pointerEvents: 'auto' }}
+                                            onMouseDown={(e) => handleConnectStart(e, node.id)}
+                                        />
                                     </div>
                                 );
                             })}
-                        </div>
-
-                        {/* Floating Zoom Controls */}
-                        <div className="absolute bottom-6 right-6 flex items-center bg-[#252526] border border-[#3c3c3c] rounded-lg shadow-xl z-50 text-gray-400">
-                            <button onClick={() => handleZoom(-0.2)} className="p-2 hover:text-white hover:bg-[#3d3d3d] rounded-l-lg transition-colors border-r border-[#3c3c3c]" title="Zoom Out">
-                                <MinusIcon />
-                            </button>
-                            <div className="px-3 text-xs font-mono w-[55px] text-center select-none">{Math.round(transform.scale * 100)}%</div>
-                            <button onClick={() => handleZoom(0.2)} className="p-2 hover:text-white hover:bg-[#3d3d3d] transition-colors border-l border-[#3c3c3c]" title="Zoom In">
-                                <PlusIcon />
-                            </button>
-                            <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="p-2 hover:text-white hover:bg-[#3d3d3d] rounded-r-lg border-l border-[#3c3c3c] transition-colors" title="Reset Zoom">
-                                <MaximizeIcon />
-                            </button>
+                                </div>
+                                
+                                <div className="absolute bottom-6 right-6 flex items-center bg-[#252526] border border-[#3c3c3c] rounded-lg shadow-xl z-50 text-gray-400">
+                                    <button onClick={() => setTransform(p => ({...p, scale: Math.max(0.1, p.scale - 0.2)}))} className="p-2 hover:text-white border-r border-[#3c3c3c]"><MinusIcon /></button>
+                                    <div className="px-3 text-xs font-mono w-[55px] text-center">{Math.round(transform.scale * 100)}%</div>
+                                    <button onClick={() => setTransform(p => ({...p, scale: Math.min(4, p.scale + 0.2)}))} className="p-2 hover:text-white border-l border-[#3c3c3c]"><PlusIcon /></button>
+                                    <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="p-2 hover:text-white border-l border-[#3c3c3c]"><MaximizeIcon /></button>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="absolute inset-0 bg-[#1e1e1e] p-6 pt-20 flex flex-col z-40">
+                                <div className="flex-1 flex flex-col bg-[#1e1e1e] border border-[#3c3c3c] rounded-xl overflow-hidden shadow-2xl relative">
+                                    <div className="bg-[#2d2d2d] border-b border-[#3c3c3c] px-4 py-2 flex justify-between items-center">
+                                        <div className="flex items-center gap-2 text-gray-300 font-mono text-xs">
+                                            <CodeIcon /> {activeName}.yml
+                                        </div>
+                                        {yamlError ? (
+                                            <div className="text-red-400 text-xs font-mono bg-red-400/10 px-2 py-1 rounded">
+                                                Error: {yamlError}
+                                            </div>
+                                        ) : (
+                                            <div className="text-green-400 text-xs font-mono bg-green-400/10 px-2 py-1 rounded">
+                                                Valid YAML (Auto-saving)
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="flex-1 w-full relative">
+                                        <MonacoEditor value={yamlInput} onChange={handleYamlChange} readOnly={hidePassthrough} />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        
+                        <div className="absolute top-6 right-6 z-50 flex items-center gap-2">
+                             {configData && (
+                                 <button 
+                                     onClick={() => handleHidePassthroughToggle(!hidePassthrough)} 
+                                     className={`border text-white px-4 py-2 rounded shadow-xl text-sm font-semibold flex items-center gap-2 transition-all ${hidePassthrough ? 'bg-orange-600 hover:bg-orange-500 border-orange-500' : 'bg-[#2d2d2d] hover:bg-[#3d3d3d] border-[#444]'}`}
+                                 >
+                                     {hidePassthrough ? 'Show Passthrough' : 'Hide Passthrough'}
+                                 </button>
+                             )}
+                             <button onClick={toggleViewMode} className="bg-[#2d2d2d] hover:bg-[#3d3d3d] border border-[#444] text-white px-4 py-2 rounded shadow-xl text-sm font-semibold flex items-center gap-2">
+                                 {viewMode === 'visual' ? <CodeIcon /> : <ShareIcon />}
+                                 {viewMode === 'visual' ? 'Code Mode' : 'Visual Mode'}
+                             </button>
+                             {viewMode === 'visual' && configData && !hidePassthrough && (
+                                 <button onClick={() => { setShowVersionsPanel(!showVersionsPanel); setSelectedNodeId(null); }} className={`border text-white px-4 py-2 rounded shadow-xl text-sm font-semibold flex items-center gap-2 transition-all ${showVersionsPanel ? 'bg-blue-600 hover:bg-blue-500 border-blue-500' : 'bg-[#2d2d2d] hover:bg-[#3d3d3d] border-[#444]'}`}>
+                                     <HistoryIcon /> Versions
+                                 </button>
+                             )}
+                             {viewMode === 'visual' && !hidePassthrough && (
+                                  <button onClick={addNewNode} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded shadow-xl text-sm font-semibold flex items-center gap-2">
+                                     <PlusIcon /> Add Node
+                                  </button>
+                             )}
                         </div>
                     </div>
 
-                    {/* Premium Sliding Side Inspector Panel (n8n Style) */}
-                    {selectedNode && (
-                        <div className="w-[480px] bg-[#252526] border-l border-[#3c3c3c] flex flex-col z-30 shadow-2xl relative animate-slide-in">
-                            {/* Panel Header */}
-                            <div className="p-4 border-b border-[#3c3c3c] flex items-center justify-between bg-[#2d2d2d]">
-                                <div className="overflow-hidden">
-                                    <h2 className="text-white font-bold text-sm truncate">{selectedNode.data.name}</h2>
-                                    <div className="flex items-center gap-2 mt-0.5">
-                                        <span className="text-[10px] text-gray-500 font-mono">{selectedNode.id}</span>
-                                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-semibold text-white uppercase ${KIND_COLORS[selectedNode.data.kind] || KIND_COLORS.default}`}>
-                                            {selectedNode.data.kind}
-                                        </span>
-                                    </div>
+                    {/* Right Sidebar: Editor */}
+                    {viewMode === 'visual' && selectedNodeId && selectedNodeData && (
+                        <div className="w-80 bg-[#252526] border-l border-[#3c3c3c] flex flex-col z-30 shadow-2xl overflow-y-auto">
+                            <div className="p-4 border-b border-[#3c3c3c] flex justify-between items-center bg-[#2d2d2d]">
+                                <div>
+                                    <h2 className="text-white font-bold text-sm">Edit Node</h2>
+                                    <div className="text-[10px] text-gray-500 font-mono mt-1">{selectedNodeId}</div>
                                 </div>
-                                <button
-                                    onClick={() => setSelectedNode(null)}
-                                    className="w-6 h-6 rounded hover:bg-[#3d3d3d] text-gray-400 hover:text-white flex items-center justify-center transition-colors text-sm"
-                                    title="Close Panel"
-                                >
-                                    ✕
-                                </button>
+                                <button onClick={() => setSelectedNodeId(null)} className="text-gray-400 hover:text-white">✕</button>
                             </div>
-
-                            {/* Panel Content (Scrollable) */}
-                            <div className="flex-1 overflow-y-auto p-4 space-y-5 bg-[#1b1b1c]">
-
-                                {/* Section 1: Active Transaction Details */}
-                                <div className="space-y-2">
-                                    <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Active Transaction Agent</h3>
-                                    <div className="bg-[#252526] rounded-xl border border-[#3c3c3c] p-3 space-y-2.5">
-                                        <div>
-                                            <label className="text-[9px] text-gray-500 uppercase font-mono block">Description Statement</label>
-                                            <p className="text-sm font-semibold text-gray-100 font-mono mt-0.5 leading-snug break-words">
-                                                "{inspectorData.description}"
-                                            </p>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4 border-t border-[#3c3c3c] pt-2">
-                                            <div>
-                                                <label className="text-[9px] text-gray-500 uppercase font-mono block">Amount</label>
-                                                <p className="text-md font-bold text-emerald-400 mt-0.5">{inspectorData.amount}</p>
+                            <div className="p-4 space-y-4">
+                                {hidePassthrough && (
+                                    <div className="bg-orange-500/10 border border-orange-500/30 text-orange-400 rounded p-2.5 text-xs font-semibold font-mono">
+                                        ⚠️ Read-only (Passthrough nodes are hidden)
+                                    </div>
+                                )}
+                                <div>
+                                    <label className="text-xs text-gray-400 block mb-1">Name</label>
+                                    <input type="text" disabled={hidePassthrough} value={selectedNodeData.name || ""} onChange={e => updateSelectedNodeField("name", e.target.value)} className="w-full bg-[#1e1e1e] border border-[#3c3c3c] rounded px-3 py-1.5 text-sm text-white focus:border-blue-500 disabled:opacity-50" />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-400 block mb-1">Kind</label>
+                                    <select disabled={hidePassthrough} value={selectedNodeData.kind || ""} onChange={e => updateSelectedNodeField("kind", e.target.value)} className="w-full bg-[#1e1e1e] border border-[#3c3c3c] rounded px-3 py-1.5 text-sm text-white focus:border-blue-500 disabled:opacity-50">
+                                        {Object.keys(KIND_COLORS).map(k => <option key={k} value={k}>{k}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-400 block mb-1">Property</label>
+                                    <input type="text" disabled={hidePassthrough} value={selectedNodeData.property || ""} onChange={e => updateSelectedNodeField("property", e.target.value)} className="w-full bg-[#1e1e1e] border border-[#3c3c3c] rounded px-3 py-1.5 text-sm text-white focus:border-blue-500 disabled:opacity-50" />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-400 block mb-1">Prompt Key</label>
+                                    <input type="text" disabled={hidePassthrough} value={selectedNodeData.prompt_key || ""} onChange={e => updateSelectedNodeField("prompt_key", e.target.value)} className="w-full bg-[#1e1e1e] border border-[#3c3c3c] rounded px-3 py-1.5 text-sm text-white focus:border-blue-500 disabled:opacity-50" />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-400 block mb-1">Action Provider</label>
+                                    <input type="text" disabled={hidePassthrough} value={selectedNodeData.action_provider || ""} onChange={e => updateSelectedNodeField("action_provider", e.target.value)} className="w-full bg-[#1e1e1e] border border-[#3c3c3c] rounded px-3 py-1.5 text-sm text-white focus:border-blue-500 disabled:opacity-50" />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-400 block mb-1">Batch Size</label>
+                                    <input type="number" disabled={hidePassthrough} value={selectedNodeData.batch_size || 0} onChange={e => updateSelectedNodeField("batch_size", parseInt(e.target.value))} className="w-full bg-[#1e1e1e] border border-[#3c3c3c] rounded px-3 py-1.5 text-sm text-white focus:border-blue-500 disabled:opacity-50" />
+                                </div>
+                                
+                                <hr className="border-[#3c3c3c]" />
+                                <div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-xs text-gray-400">Children (Routing)</label>
+                                        {!hidePassthrough && (
+                                            <button onClick={() => updateSelectedNodeChild("NEW_KEY", "target_node_id")} className="text-xs text-blue-400 hover:text-blue-300">+ Add</button>
+                                        )}
+                                    </div>
+                                    <div className="space-y-2">
+                                        {Object.entries(selectedNodeData.children || {}).map(([key, childId]) => (
+                                            <div key={key} className="flex flex-col gap-1 p-2 bg-[#1e1e1e] rounded border border-[#3c3c3c]">
+                                                <div className="flex justify-between">
+                                                    <input type="text" disabled={hidePassthrough} defaultValue={key} onBlur={e => {
+                                                        const val = e.target.value;
+                                                        if(val !== key) {
+                                                            deleteSelectedNodeChild(key);
+                                                            updateSelectedNodeChild(val, childId);
+                                                        }
+                                                    }} className="bg-transparent text-xs text-gray-300 w-full outline-none border-b border-[#444] pb-1 mr-2 font-mono disabled:opacity-50" />
+                                                    {!hidePassthrough && (
+                                                        <button onClick={() => deleteSelectedNodeChild(key)} className="text-red-500 hover:text-red-400 text-xs">✕</button>
+                                                    )}
+                                                </div>
+                                                <input type="text" disabled={hidePassthrough} value={childId} onChange={e => updateSelectedNodeChild(key, e.target.value)} className="bg-transparent text-xs text-blue-400 w-full outline-none font-mono disabled:opacity-50" placeholder="Target Node ID" />
                                             </div>
-                                            <div>
-                                                <label className="text-[9px] text-gray-500 uppercase font-mono block">Cash Direction</label>
-                                                <p className={`text-xs font-bold mt-1 inline-block px-2 py-0.5 rounded font-mono ${inspectorData.direction === 'INFLOW' ? 'bg-green-500/20 text-green-400' : 'bg-rose-500/20 text-rose-400'}`}>
-                                                    {inspectorData.direction}
-                                                </p>
-                                            </div>
-                                        </div>
+                                        ))}
                                     </div>
                                 </div>
-
-                                {/* Section 2: LLM Probability Distributions */}
-                                <div className="space-y-2">
-                                    <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Probability Candidate Distributions</h3>
-                                    <div className="space-y-3 bg-[#252526] rounded-xl border border-[#3c3c3c] p-3">
-                                        {inspectorData.candidates.map((cand, idx) => {
-                                            const scorePercent = (cand.confidence * 100).toFixed(0);
-                                            const isTop = idx === 0;
-
+ 
+                                {configData?.dag?.entry_node !== selectedNodeId && !hidePassthrough && (
+                                    <button onClick={() => {
+                                        const newConfig = {...configData};
+                                        newConfig.dag.entry_node = selectedNodeId;
+                                        triggerAutoSave(newConfig);
+                                    }} className="w-full py-2 bg-[#2d2d2d] hover:bg-[#3d3d3d] border border-[#444] rounded text-xs text-white mt-4">
+                                        Set as Entry Node
+                                    </button>
+                                )}
+ 
+                                {!hidePassthrough && (
+                                    <>
+                                        <hr className="border-[#3c3c3c]" />
+                                        <button onClick={deleteNode} className="w-full py-2.5 bg-red-600 hover:bg-red-500 rounded text-sm text-white font-semibold transition-colors">
+                                            Delete Node
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                    {viewMode === 'visual' && showVersionsPanel && (
+                        <div className="w-96 bg-[#252526] border-l border-[#3c3c3c] flex flex-col z-30 shadow-2xl overflow-y-auto">
+                            <div className="p-4 border-b border-[#3c3c3c] flex justify-between items-center bg-[#2d2d2d]">
+                                <div>
+                                    <h2 className="text-white font-bold text-sm">Version History</h2>
+                                    <div className="text-[10px] text-gray-500 font-mono mt-1">
+                                        DAG ID: {getUUIDString(configData?.id).slice(0, 8)}...
+                                    </div>
+                                </div>
+                                <button onClick={() => { setShowVersionsPanel(false); setSelectedVersion(null); setSelectedVersionData(null); }} className="text-gray-400 hover:text-white">✕</button>
+                            </div>
+                            
+                            {!selectedVersion ? (
+                                <div className="p-4 space-y-2 flex-1 overflow-y-auto">
+                                    {versions.length === 0 ? (
+                                        <div className="text-gray-500 text-sm text-center py-8">No version history found.</div>
+                                    ) : (
+                                        versions.map(v => {
+                                            const vId = getUUIDString(v.id);
+                                            const dateStr = v.created_at?.Time ? new Date(v.created_at.Time).toLocaleString() : new Date(v.created_at).toLocaleString();
                                             return (
-                                                <div key={idx} className="space-y-1 pb-2 border-b border-[#3c3c3c] last:border-b-0 last:pb-0">
-                                                    <div className="flex justify-between items-baseline">
-                                                        <span className="font-mono text-xs text-gray-100 font-semibold truncate max-w-[320px]">{cand.value}</span>
-                                                        <span className={`text-xs font-bold font-mono ${isTop ? 'text-emerald-400' : 'text-gray-400'}`}>{scorePercent}%</span>
+                                                <div 
+                                                    key={vId}
+                                                    onClick={() => { setSelectedVersion(v); fetchVersionDetail(vId); }}
+                                                    className="p-3 bg-[#1e1e1e] hover:bg-[#2d2d2d] rounded-lg border border-[#3c3c3c] cursor-pointer space-y-1 transition-all"
+                                                >
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-white font-semibold text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded">
+                                                            v{v.version_number}
+                                                        </span>
+                                                        <span className="text-gray-500 text-[10px]">{dateStr}</span>
                                                     </div>
-
-                                                    {/* Custom gradient Progress Bar */}
-                                                    <div className="w-full h-2 bg-[#1e1e1e] rounded-full overflow-hidden">
-                                                        <div
-                                                            className={`h-full transition-all duration-300 rounded-full ${isTop ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gray-600'}`}
-                                                            style={{ width: `${scorePercent}%` }}
-                                                        />
-                                                    </div>
-                                                    <p className="text-[10px] text-gray-400 italic leading-snug">
-                                                        "{cand.reasoning}"
-                                                    </p>
+                                                    <div className="text-gray-400 text-[10px] truncate">ID: {vId}</div>
                                                 </div>
                                             );
-                                        })}
-                                    </div>
+                                        })
+                                    )}
                                 </div>
-
-                                {/* Section 3: Live Agent Interactive Chat */}
-                                <div className="space-y-2 flex flex-col h-[320px]">
-                                    <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Specialist Human-in-the-loop Chat</h3>
-                                    <div className="flex-1 bg-[#252526] rounded-xl border border-[#3c3c3c] flex flex-col overflow-hidden">
-                                        {/* Messages Area */}
-                                        <div className="flex-1 p-3 overflow-y-auto space-y-3 flex flex-col">
-                                            {(chatMessages[selectedNode.id] || []).map((msg, idx) => {
-                                                const isAgent = msg.sender === 'agent';
-                                                return (
-                                                    <div
-                                                        key={idx}
-                                                        className="flex flex-col w-full border-b border-[#333] pb-2 last:border-0 last:pb-0"
-                                                    >
-                                                        <div className="flex justify-between items-center text-[10px] font-mono">
-                                                            <span className={isAgent ? 'text-indigo-400 font-bold' : 'text-blue-400 font-bold'}>
-                                                                {isAgent ? '🤖 Node Specialist Agent' : '👤 You'}
-                                                            </span>
-                                                            <span className="text-gray-600 text-[9px]">{msg.time}</span>
-                                                        </div>
-                                                        <div className="text-[13.5px] leading-relaxed font-sans text-gray-200 mt-1">
-                                                            {msg.text}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                            <div ref={messagesEndRef} />
+                            ) : (
+                                <div className="flex flex-col flex-1 overflow-y-auto">
+                                    <div className="p-4 bg-[#2d2d2d] border-b border-[#3c3c3c] flex items-center justify-between">
+                                        <button onClick={() => { setSelectedVersion(null); setSelectedVersionData(null); }} className="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1">
+                                            ← Back to list
+                                        </button>
+                                        <button onClick={() => restoreVersion(getUUIDString(selectedVersion.id))} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded font-semibold transition-all shadow-md">
+                                            Restore Version
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="p-4 space-y-6">
+                                        <div className="space-y-1">
+                                            <div className="text-white font-bold text-xs uppercase text-gray-500 tracking-wider">Viewing Version</div>
+                                            <div className="text-sm text-white font-semibold">Version {selectedVersion.version_number}</div>
+                                            <div className="text-[10px] text-gray-400">
+                                                Created: {selectedVersion.created_at?.Time ? new Date(selectedVersion.created_at.Time).toLocaleString() : new Date(selectedVersion.created_at).toLocaleString()}
+                                            </div>
                                         </div>
 
-                                        {/* Input Box */}
-                                        <form onSubmit={handleSendMessage} className="p-2 bg-[#2d2d2d] border-t border-[#3c3c3c] flex items-center gap-2">
-                                            <input
-                                                type="text"
-                                                value={chatInput}
-                                                onChange={(e) => setChatInput(e.target.value)}
-                                                placeholder="Ask node to explain or send 'force override'..."
-                                                className="flex-1 bg-[#1e1e1e] border border-[#444] rounded-lg text-xs px-3 py-2 text-white focus:outline-none focus:border-blue-500 placeholder-gray-500"
-                                            />
-                                            <button
-                                                type="submit"
-                                                className="w-8 h-8 rounded-lg bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center transition-colors flex-shrink-0"
-                                                title="Send Instruction"
-                                            >
-                                                <SendIcon />
-                                            </button>
-                                        </form>
+                                        <hr className="border-[#3c3c3c]" />
+
+                                        <div className="space-y-4">
+                                            <div className="text-white font-bold text-xs uppercase text-gray-500 tracking-wider">Changes Highlights</div>
+                                            
+                                            {!selectedVersionData ? (
+                                                <div className="text-gray-500 text-xs">Computing structural diff...</div>
+                                            ) : (
+                                                (() => {
+                                                    const diffs = computeDiff(configData, selectedVersionData);
+                                                    if (!diffs || (diffs.nodes.length === 0 && diffs.hyper_parameters.length === 0 && diffs.prompts.length === 0)) {
+                                                        return <div className="text-green-400 text-xs font-semibold bg-green-500/10 p-2.5 rounded border border-green-500/20">This version is identical to the current active configuration.</div>;
+                                                    }
+
+                                                    return (
+                                                        <div className="space-y-4 text-xs">
+                                                            {diffs.nodes.length > 0 && (
+                                                                <div className="space-y-2">
+                                                                    <div className="font-bold text-gray-300 border-b border-[#3c3c3c] pb-1">Nodes</div>
+                                                                    <div className="space-y-1.5">
+                                                                        {diffs.nodes.map(d => (
+                                                                            <div key={d.id} className="p-2 bg-[#1e1e1e] rounded border border-[#3c3c3c] space-y-1">
+                                                                                <div className="flex justify-between items-center">
+                                                                                    <span className="font-semibold text-white truncate max-w-[150px]">{d.name}</span>
+                                                                                    <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-mono ${d.type === 'added' ? 'bg-green-500/10 text-green-400' : d.type === 'deleted' ? 'bg-red-500/10 text-red-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
+                                                                                        {d.type}
+                                                                                    </span>
+                                                                                </div>
+                                                                                <div className="text-gray-400 text-[10px]">{d.details}</div>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {diffs.hyper_parameters.length > 0 && (
+                                                                <div className="space-y-2">
+                                                                    <div className="font-bold text-gray-300 border-b border-[#3c3c3c] pb-1">Hyperparameters</div>
+                                                                    <div className="space-y-1.5">
+                                                                        {diffs.hyper_parameters.map(d => (
+                                                                            <div key={d.name} className="p-2 bg-[#1e1e1e] rounded border border-[#3c3c3c] flex justify-between items-center">
+                                                                                <span className="font-mono text-gray-400 text-[10px]">{d.name}</span>
+                                                                                <span className="text-white font-mono text-[10px]">
+                                                                                    {String(d.oldVal)} → {String(d.newVal)}
+                                                                                </span>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {diffs.prompts.length > 0 && (
+                                                                <div className="space-y-2">
+                                                                    <div className="font-bold text-gray-300 border-b border-[#3c3c3c] pb-1">Prompts</div>
+                                                                    <div className="space-y-1.5">
+                                                                        {diffs.prompts.map(d => (
+                                                                            <div key={d.name} className="p-2 bg-[#1e1e1e] rounded border border-[#3c3c3c] space-y-1">
+                                                                                <div className="flex justify-between items-center">
+                                                                                    <span className="font-mono text-gray-300">{d.name}</span>
+                                                                                    <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-mono ${d.type === 'added' ? 'bg-green-500/10 text-green-400' : d.type === 'deleted' ? 'bg-red-500/10 text-red-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
+                                                                                        {d.type}
+                                                                                    </span>
+                                                                                </div>
+                                                                                <div className="text-gray-400 text-[10px]">{d.details}</div>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
-
-                            </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -938,5 +1321,4 @@
         root.render(<App />);
     </script>
 </body>
-
 </html>

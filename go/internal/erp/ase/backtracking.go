@@ -71,7 +71,6 @@ func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, no
 		if err != nil {
 			cs.logger.Error("failed to save extracted memory rule", "node_id", node.NodeID, "error", err)
 		} else {
-			cs.logger.Info("autonomous compounding rule saved", "node_id", node.NodeID, "keyword", resp.RuleKeyword)
 		}
 	}
 
@@ -79,7 +78,6 @@ func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, no
 		if err := node.Backtrack(resp.TargetDAGNodeID); err != nil {
 			return fmt.Errorf("failed to backtrack to %s: %w", resp.TargetDAGNodeID, err)
 		}
-		cs.logger.Info("autonomous backtracking applied", "node_id", node.NodeID, "target_dag_node_id", resp.TargetDAGNodeID)
 		return node.Resume(ctx, dag, store, resp.TargetDAGNodeID)
 	}
 
@@ -97,7 +95,6 @@ func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, no
 		lastNode := dag.GetNode(lastStepDAGNodeID)
 		if lastNode != nil {
 			if resumeChild := lastNode.ResumeChild(); resumeChild != nil {
-				cs.logger.Info("resuming directly to hold gate's resume child", "node_id", node.NodeID, "child", resumeChild.ID)
 				resumeChild.Accept(node)
 				return nil
 			}
@@ -144,19 +141,25 @@ func (n *AutonomousSemanticEngineNode) Backtrack(targetDAGNodeID string) error {
 	n.HoldReason = ""
 
 	// Recalculate unified confidence with dynamic denominator.
-	var sumEntropy float64
-	for _, h := range n.PropertyEntropies {
-		sumEntropy += h
+	var sumConfidence float64
+	for _, candidates := range n.Candidates {
+		if len(candidates) > 0 {
+			best := candidates[0]
+			for i := 1; i < len(candidates); i++ {
+				if candidates[i].Confidence > best.Confidence {
+					best = candidates[i]
+				}
+			}
+			sumConfidence += best.Confidence
+		}
 	}
 
-	totalProperties := len(n.PropertyEntropies)
+	totalProperties := len(n.Candidates)
 	if totalProperties < 4 {
 		totalProperties = 4
-		sumEntropy += float64(4 - len(n.PropertyEntropies))
 	}
 
-	n.CurrentEntropy = sumEntropy
-	n.UnifiedConfidence = 1.0 - (sumEntropy / float64(totalProperties))
+	n.UnifiedConfidence = sumConfidence / float64(totalProperties)
 	n.UpdatedAt = time.Now().UTC()
 
 	return nil

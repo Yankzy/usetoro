@@ -22,14 +22,14 @@ const (
 	VectorSourceResolvedTx VectorSourceType = "resolved_tx"
 )
 
-// VectorMemoryRow is a retrieved result from the ase.vector_memory table.
+// VectorMemoryRow is a retrieved result from the toro_core.ase_vector_memory table.
 type VectorMemoryRow struct {
 	RawText    string          `json:"raw_text"`
 	Metadata   json.RawMessage `json:"metadata"`
 	Similarity float64         `json:"similarity"`
 }
 
-// VectorStore handles semantic retrieval against the ase.vector_memory table.
+// VectorStore handles semantic retrieval against the toro_core.ase_vector_memory table.
 // It is safe for concurrent use.
 type VectorStore struct {
 	pool      *pgxpool.Pool
@@ -48,13 +48,13 @@ func NewVectorStore(pool *pgxpool.Pool, llmClient *ai.LLMClient, logger *slog.Lo
 }
 
 // GenerateEmbedding calls the OpenAI Embeddings API using the model specified
-// in the ase.yml hyper_parameters.vector_memory block.
+// in the hyper_parameters.vector_memory configuration.
 // The tenantID / realmID pair is used to look up the active config.
 func (vs *VectorStore) GenerateEmbedding(ctx context.Context, tenantID, realmID, text string) ([]float64, error) {
 	if vs.llmClient == nil {
 		return nil, fmt.Errorf("vector store: llmClient not configured")
 	}
-	cfg := vs.vectorCfg(tenantID, realmID)
+	cfg := vs.vectorCfg()
 	if cfg.EmbeddingProvider != "openai" {
 		return nil, fmt.Errorf("vector store: unsupported embedding provider %q (only 'openai' is supported)", cfg.EmbeddingProvider)
 	}
@@ -84,7 +84,7 @@ func (vs *VectorStore) Upsert(
 	if embedding != nil {
 		// Full upsert with embedding.
 		_, err = vs.pool.Exec(ctx, `
-			INSERT INTO ase.vector_memory
+			INSERT INTO toro_core.ase_vector_memory
 				(realm_id, source_type, raw_text, embedding, source_row_id, metadata, embedded_at)
 			VALUES ($1, $2, $3, $4, $5, $6, NOW())
 			ON CONFLICT (realm_id, source_type, source_row_id)
@@ -101,7 +101,7 @@ func (vs *VectorStore) Upsert(
 	} else {
 		// Register as pending (hydrator will fill embedding later).
 		_, err = vs.pool.Exec(ctx, `
-			INSERT INTO ase.vector_memory (realm_id, source_type, raw_text, source_row_id, metadata)
+			INSERT INTO toro_core.ase_vector_memory (realm_id, source_type, raw_text, source_row_id, metadata)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (realm_id, source_type, source_row_id) DO NOTHING`,
 			realmID, string(sourceType), rawText, sourceRowID, metaBytes,
@@ -117,7 +117,7 @@ func (vs *VectorStore) Upsert(
 // Called by the VectorHydrator after generating the embedding.
 func (vs *VectorStore) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float64) error {
 	_, err := vs.pool.Exec(ctx, `
-		UPDATE ase.vector_memory
+		UPDATE toro_core.ase_vector_memory
 		SET embedding = $2, embedded_at = NOW(), updated_at = NOW()
 		WHERE id = $1`,
 		id, floatsToVectorLiteral(embedding),
@@ -133,14 +133,14 @@ func (vs *VectorStore) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedd
 //     building a tight in-memory bitmap for only that tenant's vectors.
 //  2. The ScaNN index then performs ANN cosine search over the bitmap.
 //
-// topK and the embedding model are read from the ase.yml config for the
+// topK and the embedding model are read from the dynamically loaded config for the
 // given tenant / realm pair, making retrieval fully hot-reloadable.
 func (vs *VectorStore) Search(
 	ctx context.Context,
 	tenantID, realmID string,
 	queryEmbedding []float64,
 ) ([]VectorMemoryRow, error) {
-	cfg := vs.vectorCfg(tenantID, realmID)
+	cfg := vs.vectorCfg()
 	topK := cfg.RetrievalTopK
 	if topK <= 0 {
 		topK = 5
@@ -148,7 +148,7 @@ func (vs *VectorStore) Search(
 
 	rows, err := vs.pool.Query(ctx, `
 		SELECT raw_text, metadata, 1 - (embedding <=> $2) AS similarity
-		FROM ase.vector_memory
+		FROM toro_core.ase_vector_memory
 		WHERE realm_id = $1
 		  AND embedding IS NOT NULL
 		ORDER BY embedding <=> $2
@@ -184,7 +184,7 @@ type PendingVectorRow struct {
 func (vs *VectorStore) PendingRows(ctx context.Context, limit int) ([]PendingVectorRow, error) {
 	rows, err := vs.pool.Query(ctx, `
 		SELECT id, realm_id, source_type, raw_text, source_row_id
-		FROM ase.vector_memory
+		FROM toro_core.ase_vector_memory
 		WHERE embedding IS NULL
 		ORDER BY created_at ASC
 		LIMIT $1`, limit)
@@ -206,17 +206,9 @@ func (vs *VectorStore) PendingRows(ctx context.Context, limit int) ([]PendingVec
 	return results, rows.Err()
 }
 
-// vectorCfg returns the VectorMemoryConfig for the given tenant/realm,
-// with a safe zero-value fallback so callers never need to nil-check.
-func (vs *VectorStore) vectorCfg(tenantID, realmID string) VectorMemoryConfig {
-	cfg := GetConfig(tenantID, realmID)
-	if cfg == nil {
-		return VectorMemoryConfig{
-			OpenAIEmbeddingModel: "text-embedding-3-small",
-			RetrievalTopK:        5,
-		}
-	}
-	return cfg.HyperParameters.VectorMemory
+// vectorCfg returns the VectorMemoryConfig from the global system config.
+func (vs *VectorStore) vectorCfg() VectorMemoryConfig {
+	return GetSystemVectorConfig()
 }
 
 // EnsureScaNNIndex creates the ScaNN ANN index if:
@@ -225,7 +217,7 @@ func (vs *VectorStore) vectorCfg(tenantID, realmID string) VectorMemoryConfig {
 //
 // This is called by the VectorHydrator after each successful embed batch.
 // num_leaves is read from VectorMemoryConfig at call time so tuning changes
-// in ase.yml take effect on the next index creation (requires DROP + recreate).
+// in the configuration take effect on the next index creation (requires DROP + recreate).
 func (vs *VectorStore) EnsureScaNNIndex(ctx context.Context, tenantID, realmID string) error {
 	// 1. Check whether the index already exists.
 	var exists bool
@@ -246,7 +238,7 @@ func (vs *VectorStore) EnsureScaNNIndex(ctx context.Context, tenantID, realmID s
 	// 2. Confirm the table is non-empty (AlloyDB Omni requirement).
 	var count int64
 	err = vs.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM ase.vector_memory WHERE embedding IS NOT NULL
+		SELECT COUNT(*) FROM toro_core.ase_vector_memory WHERE embedding IS NOT NULL
 	`).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("ensure scann index: count check: %w", err)
@@ -257,7 +249,7 @@ func (vs *VectorStore) EnsureScaNNIndex(ctx context.Context, tenantID, realmID s
 	}
 
 	// 3. Read num_leaves from the hot-reloadable config.
-	cfg := vs.vectorCfg(tenantID, realmID)
+	cfg := vs.vectorCfg()
 	numLeaves := cfg.ScaNNNumLeaves
 	if numLeaves <= 0 {
 		numLeaves = 10
@@ -265,19 +257,14 @@ func (vs *VectorStore) EnsureScaNNIndex(ctx context.Context, tenantID, realmID s
 
 	// 4. Create the index. This is a DDL statement, so it cannot be run inside
 	// a regular transaction block (hence pool.Exec is used directly).
-	vs.logger.Info("ase vector store: creating ScaNN index",
-		"num_leaves", numLeaves,
-		"embedded_rows", count,
-	)
 	_, err = vs.pool.Exec(ctx, fmt.Sprintf(`
 		CREATE INDEX IF NOT EXISTS idx_ase_vector_memory_scann
-		ON ase.vector_memory USING scann (embedding cosine)
+		ON toro_core.ase_vector_memory USING scann (embedding cosine)
 		WITH (num_leaves = %d)
 		WHERE embedding IS NOT NULL`, numLeaves))
 	if err != nil {
 		return fmt.Errorf("ensure scann index: create: %w", err)
 	}
-	vs.logger.Info("ase vector store: ScaNN index created successfully", "num_leaves", numLeaves)
 	return nil
 }
 

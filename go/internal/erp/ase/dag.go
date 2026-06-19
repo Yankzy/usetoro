@@ -168,15 +168,7 @@ func (dn *DAGNode) Accept(node *AutonomousSemanticEngineNode) {
 	dn.mu.Lock()
 	dn.queue = append(dn.queue, node)
 	shouldFlush := len(dn.queue) >= dn.batchSize
-	queueDepth := len(dn.queue)
 	dn.mu.Unlock()
-
-	if dn.logger != nil {
-		dn.logger.Info("dag node accepted transaction agent",
-			"node_id", node.NodeID,
-			"queue_depth", queueDepth,
-		)
-	}
 
 	if shouldFlush {
 		go dn.flush()
@@ -308,18 +300,18 @@ func (dn *DAGNode) flush() {
 		return
 	}
 
-	if dn.logger != nil {
-		dn.logger.Info("dag node flushing batch",
-			"kind", string(dn.Kind),
-			"batch_size", len(batch),
-		)
-	}
-
 	// 3) AutoAdvance Halt
 	// If auto_advance is false, halt the node BEFORE thinking, unless it was human approved.
 	autoAdv := true
-	if cfg := GetConfig("", ""); cfg != nil {
-		autoAdv = cfg.HyperParameters.AutoAdvance
+	if len(batch) > 0 {
+		node := batch[0]
+		if cfg := GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
+			autoAdv = cfg.HyperParameters.AutoAdvance
+		}
+	} else {
+		if cfg := GetConfig("", "", "default"); cfg != nil {
+			autoAdv = cfg.HyperParameters.AutoAdvance
+		}
 	}
 	if dn.AutoAdvance != nil {
 		autoAdv = *dn.AutoAdvance
@@ -419,6 +411,21 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 		return
 	}
 
+	// Enforce strict top candidate confidence guardrail at each routing step.
+	threshold := 0.98
+	cfg := GetConfig(node.TenantID, node.RealmID, node.DagName)
+	if cfg != nil && cfg.HyperParameters.ConfidenceThreshold > 0 {
+		threshold = cfg.HyperParameters.ConfidenceThreshold
+	}
+
+	if top.Confidence < threshold {
+		node.mu.Lock()
+		node.HoldReason = fmt.Sprintf("top candidate '%s' confidence (%v) below %v guardrail during routing at %s. AI Reasoning: %s", top.Value, top.Confidence, threshold, dn.Name, top.Reasoning)
+		node.mu.Unlock()
+		node.transition(StateHoldAmbiguous)
+		return
+	}
+
 	// Determine routing key based on this DAG node's kind.
 	routeKey := dn.routingKey(top)
 
@@ -455,7 +462,7 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 				node.transition(StateClassified)
 			} else {
 				node.mu.Lock()
-				cfg := GetConfig(node.TenantID, node.RealmID)
+				cfg := GetConfig(node.TenantID, node.RealmID, node.DagName)
 				if cfg != nil {
 					node.HoldReason = fmt.Sprintf("Unified Confidence Score below %v structural threshold.", cfg.HyperParameters.ConfidenceThreshold)
 				} else {
@@ -490,6 +497,36 @@ func (dn *DAGNode) routingKey(candidate *ProbabilityCandidate) string {
 	return candidate.Value
 }
 
+// resolveChildren recursively traverses child configurations, bypassing any nodes of Kind == "passthrough".
+func resolveChildren(nodeID string, nodesMap map[string]*DAGNode, cfgNodes map[string]DAGNodeConfig, logger *slog.Logger) map[string]*DAGNode {
+	resolved := make(map[string]*DAGNode)
+	nCfg, ok := cfgNodes[nodeID]
+	if !ok {
+		return resolved
+	}
+
+	for key, childID := range nCfg.Children {
+		childNode, exists := nodesMap[childID]
+		if !exists {
+			if logger != nil {
+				logger.Warn("DAG routing child not found during resolution", "parent", nodeID, "key", key, "missing_child", childID)
+			}
+			continue
+		}
+
+		if childNode.Kind == "passthrough" {
+			// Recursively resolve children of the passthrough node
+			passthroughChildren := resolveChildren(childID, nodesMap, cfgNodes, logger)
+			for pk, pv := range passthroughChildren {
+				resolved[pk] = pv
+			}
+		} else {
+			resolved[key] = childNode
+		}
+	}
+	return resolved
+}
+
 // BuildDAGFromConfig dynamically constructs the DAG topology from YAML configuration.
 func BuildDAGFromConfig(cfg DAGConfig, logger *slog.Logger) *DAG {
 	if len(cfg.Nodes) == 0 {
@@ -498,9 +535,9 @@ func BuildDAGFromConfig(cfg DAGConfig, logger *slog.Logger) *DAG {
 	}
 
 	nodesMap := make(map[string]*DAGNode)
-	
+
 	defaultBatchFlush := 5 * time.Second
-	if config := GetConfig("", ""); config != nil && config.HyperParameters.BatchFlushSeconds > 0 {
+	if config := GetConfig("", "", "default"); config != nil && config.HyperParameters.BatchFlushSeconds > 0 {
 		defaultBatchFlush = time.Duration(config.HyperParameters.BatchFlushSeconds) * time.Second
 	}
 
@@ -510,7 +547,7 @@ func BuildDAGFromConfig(cfg DAGConfig, logger *slog.Logger) *DAG {
 		if batchFlush == 0 {
 			batchFlush = defaultBatchFlush // fallback default
 		}
-		
+
 		node := NewDAGNode(id, DAGNodeKind(nCfg.Kind), nCfg.Name, nCfg.BatchSize, batchFlush, logger, nCfg)
 		nodesMap[id] = node
 	}
@@ -531,14 +568,12 @@ func BuildDAGFromConfig(cfg DAGConfig, logger *slog.Logger) *DAG {
 			}
 		}
 
-		// Map specific children keys
-		for key, childID := range nCfg.Children {
-			childNode, exists := nodesMap[childID]
-			if !exists {
-				logger.Warn("DAG routing child not found", "parent", id, "key", key, "missing_child", childID)
-				continue
+		// Map specific children keys, bypassing passthrough nodes at runtime
+		if node.Kind != "passthrough" {
+			resolved := resolveChildren(id, nodesMap, cfg.Nodes, logger)
+			for key, childNode := range resolved {
+				node.AddChild(key, childNode)
 			}
-			node.AddChild(key, childNode)
 		}
 
 		// Map default fallback child
@@ -596,6 +631,84 @@ func (d *DAG) StartAll() {
 func (d *DAG) StopAll() {
 	if d.EntryNode != nil {
 		d.EntryNode.StopAll()
+	}
+}
+
+// UpdateFromConfig updates the existing DAG nodes in memory with new configuration values.
+// This allows hot-reloading properties like batch_size without dropping queues or stopping the flush loops.
+func (d *DAG) UpdateFromConfig(cfg DAGConfig, logger *slog.Logger) {
+	if d.Nodes == nil {
+		return
+	}
+
+	// First pass: update properties and clear wiring
+	for id, nCfg := range cfg.Nodes {
+		node, exists := d.Nodes[id]
+		if !exists {
+			if logger != nil {
+				logger.Warn("DAG node added in hot-reload is ignored", "node", id)
+			}
+			continue
+		}
+
+		node.mu.Lock()
+		node.AutoAdvance = nCfg.AutoAdvance
+		node.PromptKey = nCfg.PromptKey
+		node.EdgeType = nCfg.EdgeType
+		node.DynamicEdgeProvider = nCfg.DynamicEdgeProvider
+		node.HoldStateSignal = nCfg.HoldStateSignal
+		node.HoldReasonString = nCfg.HoldReasonString
+		node.ExecutionParams = nCfg.ExecutionParams
+		node.batchSize = nCfg.BatchSize
+		node.batchFlush = time.Duration(nCfg.BatchFlushSeconds) * time.Second
+
+		// Clear wiring for rewire
+		node.children = make(map[string]*DAGNode)
+		node.defaultChild = nil
+		node.resumeChild = nil
+		node.mu.Unlock()
+	}
+
+	// Second pass: rewire children
+	for id, nCfg := range cfg.Nodes {
+		node, exists := d.Nodes[id]
+		if !exists {
+			continue
+		}
+
+		// Wire resume child
+		if nCfg.ResumeChild != "" {
+			resumeNode, exists := d.Nodes[nCfg.ResumeChild]
+			if exists {
+				node.mu.Lock()
+				node.resumeChild = resumeNode
+				node.mu.Unlock()
+			}
+		}
+
+		// Map specific children keys, bypassing passthrough nodes at runtime
+		if node.Kind != "passthrough" {
+			resolved := resolveChildren(id, d.Nodes, cfg.Nodes, logger)
+			for key, childNode := range resolved {
+				node.AddChild(key, childNode)
+			}
+		}
+
+		// Map default fallback child
+		if nCfg.DefaultChild != "" {
+			defaultNode, exists := d.Nodes[nCfg.DefaultChild]
+			if exists {
+				node.SetDefaultChild(defaultNode)
+			}
+		}
+
+		// Check if the new batch size should trigger an immediate flush
+		node.mu.Lock()
+		shouldFlush := node.batchSize > 0 && len(node.queue) >= node.batchSize
+		node.mu.Unlock()
+		if shouldFlush {
+			go node.flush()
+		}
 	}
 }
 

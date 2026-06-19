@@ -63,6 +63,8 @@ type AutonomousSemanticEngineNode struct {
 	NodeID    string `json:"node_id"`
 	TenantID  string `json:"tenant_id"`
 	RealmID   string `json:"realm_id"`
+	DagName   string `json:"dag_name"`
+
 
 	// Source data
 	SourceStatement string  `json:"source_statement"`
@@ -98,13 +100,17 @@ type AutonomousSemanticEngineNode struct {
 }
 
 // NewASENode creates a new transaction micro-agent from a staging transaction.
-func NewASENode(tenantID, realmID, rawDescription, cashDirection, rawAmount string) *AutonomousSemanticEngineNode {
+func NewASENode(tenantID, realmID, dagName, rawDescription, cashDirection, rawAmount string) *AutonomousSemanticEngineNode {
 	now := time.Now().UTC()
 	nodeID := uuid.New().String()
+	if dagName == "" {
+		dagName = "default"
+	}
 	return &AutonomousSemanticEngineNode{
 		NodeID:          nodeID,
 		TenantID:        tenantID,
 		RealmID:         realmID,
+		DagName:         dagName,
 		RawDescription:  rawDescription,
 		CashDirection:   cashDirection,
 		RawAmount:       rawAmount,
@@ -160,13 +166,6 @@ func (n *AutonomousSemanticEngineNode) transition(newState NodeState) {
 	cb := n.onStateChange
 	n.mu.Unlock()
 
-	if n.logger != nil {
-		n.logger.Info("ase node state transition",
-			"old", string(oldState),
-			"new", string(newState),
-			"entropy", n.GetEntropy(),
-		)
-	}
 
 	if cb != nil {
 		cb(n, oldState, newState)
@@ -205,17 +204,28 @@ func (n *AutonomousSemanticEngineNode) SetPropertyCandidates(propertyKey string,
 		sumEntropy += h
 	}
 
-	// Adapt the denominator to the actual number of properties evaluated.
-	// A path may evaluate more than 4 (e.g., cash_direction_router + holding_gates).
-	totalProperties := len(n.PropertyEntropies)
-	if totalProperties < 4 {
-		totalProperties = 4
-		// Assume maximum entropy (1.0) for any unseen canonical properties.
-		sumEntropy += float64(4 - len(n.PropertyEntropies))
+	var sumConfidence float64
+	for _, candidates := range n.Candidates {
+		if len(candidates) > 0 {
+			best := candidates[0]
+			for i := 1; i < len(candidates); i++ {
+				if candidates[i].Confidence > best.Confidence {
+					best = candidates[i]
+				}
+			}
+			sumConfidence += best.Confidence
+		}
 	}
 
-	n.CurrentEntropy = sumEntropy
-	n.UnifiedConfidence = 1.0 - (sumEntropy / float64(totalProperties))
+	// Adapt the denominator to the actual number of properties evaluated.
+	totalProperties := len(n.Candidates)
+	if totalProperties < 4 {
+		totalProperties = 4
+		// Assume 0.0 confidence for any unseen canonical properties to penalize incomplete dags.
+	}
+
+	n.CurrentEntropy = sumEntropy // keep entropy for logging/debugging
+	n.UnifiedConfidence = sumConfidence / float64(totalProperties)
 	n.LifetimeProbes++
 	n.mu.Unlock()
 	
@@ -246,7 +256,7 @@ func (n *AutonomousSemanticEngineNode) IsConfident() bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	
-	cfg := GetConfig(n.TenantID, n.RealmID)
+	cfg := GetConfig(n.TenantID, n.RealmID, n.DagName)
 	threshold := 0.98
 	if cfg != nil {
 		threshold = cfg.HyperParameters.ConfidenceThreshold
@@ -365,13 +375,13 @@ func (n *AutonomousSemanticEngineNode) Resume(ctx context.Context, dag *DAG, sto
 		switch state {
 		case StateCollapsed, StateReadyForSync, StateHoldAmbiguous, StateHoldMissingCtx:
 			return nil
-		case StateClassified:
+			case StateClassified:
 			// Check guardrail: must have confidence >= threshold to become READY_FOR_SYNC.
 			if n.IsConfident() {
 				n.transition(StateReadyForSync)
 			} else {
 				n.mu.Lock()
-				cfg := GetConfig(n.TenantID, n.RealmID)
+				cfg := GetConfig(n.TenantID, n.RealmID, n.DagName)
 				if cfg != nil {
 					n.HoldReason = fmt.Sprintf("top candidate confidence below %v sync guardrail", cfg.HyperParameters.ConfidenceThreshold)
 				} else {

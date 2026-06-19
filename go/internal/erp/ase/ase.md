@@ -1,6 +1,6 @@
 # Autonomous Semantic Engine (ASE) Architecture
 
-The Autonomous Semantic Engine (ASE) is a high-performance, concurrent, and event-driven transaction classification system. Transactions function as autonomous micro-agents (`AutonomousSemanticEngineNode`), managing their own classification dimensions, Shannon entropy states, and routing logic through a Directed Acyclic Graph (DAG) topology defined in `ase.yml`.
+The Autonomous Semantic Engine (ASE) is a high-performance, concurrent, and event-driven transaction classification system. Transactions function as autonomous micro-agents (`AutonomousSemanticEngineNode`), managing their own classification dimensions, Shannon entropy states, and routing logic through a dynamically loaded Directed Acyclic Graph (DAG) topology.
 
 ---
 
@@ -30,7 +30,7 @@ graph TD
 ```
 
 ### 1.1 `DAGNodeID` (The Topology Node)
-Identifies the specific step/node within the routing pipeline in `ase.yml` (e.g., `direction_router`, `expense`, `fixed_assets`). Each node defines:
+Identifies the specific step/node within the dynamic routing pipeline (e.g., `direction_router`, `expense`, `fixed_assets`). Each node defines:
 * A `prompt_key` to map to LLM system instructions.
 * A `children` routing map mapping candidate values to downstream nodes.
 

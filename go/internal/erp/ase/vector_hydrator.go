@@ -14,7 +14,7 @@ import (
 )
 
 // VectorHydrator is a background worker that:
-//  1. Reads un-embedded rows from ase.vector_memory (pending hydration).
+//  1. Reads un-embedded rows from toro_core.ase_vector_memory (pending hydration).
 //  2. Scans toro_core.agent_memory_rules for new rules not yet registered.
 //  3. Scans fignode.staging_transactions for high-confidence resolved rows.
 //  4. Generates embeddings via OpenAI and upserts them back into the store.
@@ -48,14 +48,12 @@ func NewVectorHydrator(
 //
 //	go hydrator.Run(ctx)
 func (h *VectorHydrator) Run(ctx context.Context) {
-	h.logger.Info("ase vector hydrator started")
 	for {
 		cfg := h.activeCfg()
 		if !cfg.Enabled {
 			// Vector memory is disabled — sleep and check again.
 			select {
 			case <-ctx.Done():
-				h.logger.Info("ase vector hydrator stopped")
 				return
 			case <-time.After(30 * time.Second):
 				continue
@@ -73,7 +71,6 @@ func (h *VectorHydrator) Run(ctx context.Context) {
 
 		select {
 		case <-ctx.Done():
-			h.logger.Info("ase vector hydrator stopped")
 			return
 		case <-time.After(interval):
 		}
@@ -85,7 +82,7 @@ func (h *VectorHydrator) Run(ctx context.Context) {
 //  2. Embeds pending rows.
 //  3. Creates the ScaNN index lazily (once data exists).
 func (h *VectorHydrator) tick(ctx context.Context, cfg VectorMemoryConfig) error {
-	// Phase A: register new memory rules that aren't in ase.vector_memory yet.
+	// Phase A: register new memory rules that aren't in toro_core.ase_vector_memory yet.
 	if err := h.registerMemoryRules(ctx); err != nil {
 		h.logger.Warn("hydrator: failed to register memory rules", "error", err)
 	}
@@ -115,14 +112,14 @@ func (h *VectorHydrator) tick(ctx context.Context, cfg VectorMemoryConfig) error
 }
 
 
-// registerMemoryRules inserts a pending row into ase.vector_memory for each
+// registerMemoryRules inserts a pending row into toro_core.ase_vector_memory for each
 // toro_core.agent_memory_rules row that isn't already registered.
 func (h *VectorHydrator) registerMemoryRules(ctx context.Context) error {
 	rows, err := h.pool.Query(ctx, `
 		SELECT amr.id, amr.realm_id, amr.instruction
 		FROM toro_core.agent_memory_rules amr
 		WHERE NOT EXISTS (
-			SELECT 1 FROM ase.vector_memory vm
+			SELECT 1 FROM toro_core.ase_vector_memory vm
 			WHERE vm.realm_id     = amr.realm_id
 			  AND vm.source_type  = 'memory_rule'
 			  AND vm.source_row_id = amr.id
@@ -165,7 +162,7 @@ func (h *VectorHydrator) registerResolvedTx(ctx context.Context, minConfidence f
 		  AND st.raw_description IS NOT NULL
 		  AND ss.realm_id IS NOT NULL
 		  AND NOT EXISTS (
-			  SELECT 1 FROM ase.vector_memory vm
+			  SELECT 1 FROM toro_core.ase_vector_memory vm
 			  WHERE vm.realm_id      = ss.realm_id
 			    AND vm.source_type   = 'resolved_tx'
 			    AND vm.source_row_id = st.id
@@ -233,25 +230,13 @@ func (h *VectorHydrator) embedPending(ctx context.Context, cfg VectorMemoryConfi
 	}
 
 	if embedded > 0 || skipped > 0 {
-		h.logger.Info("ase vector hydrator tick complete",
-			"embedded", embedded,
-			"skipped", skipped,
-		)
 	}
 	return nil
 }
 
-// activeCfg returns the VectorMemoryConfig from the default ASE config.
+// activeCfg returns the VectorMemoryConfig from the global system config.
 func (h *VectorHydrator) activeCfg() VectorMemoryConfig {
-	cfg := GetConfig("", "")
-	if cfg == nil {
-		return VectorMemoryConfig{
-			HydratorIntervalSeconds: 30,
-			HydratorBatchSize:       50,
-			OpenAIEmbeddingModel:    "text-embedding-3-small",
-		}
-	}
-	return cfg.HyperParameters.VectorMemory
+	return GetSystemVectorConfig()
 }
 
 // metaToJSON is a helper for converting metadata maps to JSON bytes.

@@ -27,11 +27,73 @@ func NewStateStore(pool *pgxpool.Pool, rdb *redis.Client) *StateStore {
 	return &StateStore{pool: pool, redis: rdb}
 }
 
-// PersistNode writes the current ASENode state to fignode.staging_transactions.
-// It updates v2_status, v2_transfer_hold_reason, confidence_score, macro_class,
-// and account_type based on the node's top candidate.
-func (s *StateStore) PersistNode(ctx context.Context, node *AutonomousSemanticEngineNode) error {
-	query := `UPDATE fignode.staging_transactions
+func (s *StateStore) prepareUpdateArgs(ctx context.Context, node *AutonomousSemanticEngineNode) (
+	macroClass string, accountType string, entityName string,
+	vendorID *string, customerID *string, accountID *string, accountName string,
+	reasoning string,
+) {
+	if topMacro := node.TopCandidate(PropMacroClass); topMacro != nil {
+		macroClass = topMacro.Value
+		if topMacro.Reasoning != "" {
+			reasoning += "[Macro Class]: " + topMacro.Reasoning + "\n"
+		}
+	}
+	if topAccType := node.TopCandidate(PropAccountType); topAccType != nil {
+		accountType = topAccType.Value
+		if topAccType.Reasoning != "" {
+			reasoning += "[Account Type]: " + topAccType.Reasoning + "\n"
+		}
+	}
+	if topEntity := node.TopCandidate(PropCounterparty); topEntity != nil {
+		entityName = topEntity.Value
+		if topEntity.Reasoning != "" {
+			reasoning += "[Counterparty]: " + topEntity.Reasoning + "\n"
+		}
+	}
+
+	// Resolve IDs
+	if entityName != "" {
+		if node.CashDirection == "OUTFLOW" {
+			var vID string
+			err := s.pool.QueryRow(ctx, "SELECT id::text FROM shadow_erp.vendors WHERE realm_id = $1 AND (display_name ILIKE $2 OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(ai_synonyms) s WHERE $2 ILIKE s)) LIMIT 1", node.RealmID, entityName).Scan(&vID)
+			if err == nil {
+				vendorID = &vID
+			}
+		} else if node.CashDirection == "INFLOW" {
+			var cID string
+			err := s.pool.QueryRow(ctx, "SELECT id::text FROM shadow_erp.customers WHERE realm_id = $1 AND display_name ILIKE $2 LIMIT 1", node.RealmID, entityName).Scan(&cID)
+			if err == nil {
+				customerID = &cID
+			}
+		}
+	}
+
+	if topAccountRef := node.TopCandidate(PropAccountRef); topAccountRef != nil {
+		if topAccountRef.Reasoning != "" {
+			reasoning += "[Account Ref]: " + topAccountRef.Reasoning + "\n"
+		}
+		var aID string
+		var aName string
+		err := s.pool.QueryRow(ctx, "SELECT id::text, name FROM shadow_erp.accounts WHERE realm_id = $1 AND erp_id = $2 LIMIT 1", node.RealmID, topAccountRef.Value).Scan(&aID, &aName)
+		if err == nil {
+			accountID = &aID
+			accountName = aName
+		}
+	}
+	
+	if accountID == nil && accountType != "" {
+		var aID string
+		var aName string
+		err := s.pool.QueryRow(ctx, "SELECT id::text, name FROM shadow_erp.accounts WHERE realm_id = $1 AND name ILIKE $2 LIMIT 1", node.RealmID, accountType).Scan(&aID, &aName)
+		if err == nil {
+			accountID = &aID
+			accountName = aName
+		}
+	}
+	return
+}
+
+const updateStagingTxnQuery = `UPDATE fignode.staging_transactions
 		SET status = $2,
 		    error_message = $3,
 		    confidence_score = $4,
@@ -39,34 +101,41 @@ func (s *StateStore) PersistNode(ctx context.Context, node *AutonomousSemanticEn
 		    account_type = CASE WHEN $6::text != '' THEN $6::text ELSE account_type END,
 		    predicted_vendor_name = CASE WHEN $7::text != '' AND $8::text = 'OUTFLOW' THEN $7::text ELSE predicted_vendor_name END,
 		    predicted_customer_name = CASE WHEN $7::text != '' AND $8::text = 'INFLOW' THEN $7::text ELSE predicted_customer_name END,
+		    cash_direction = CASE WHEN $8::text != '' THEN $8::text ELSE cash_direction END,
 		    ase_execution_trace = $9::jsonb,
+		    predicted_vendor_id = CASE WHEN $10::uuid IS NOT NULL THEN $10::uuid ELSE predicted_vendor_id END,
+		    predicted_customer_id = CASE WHEN $11::uuid IS NOT NULL THEN $11::uuid ELSE predicted_customer_id END,
+		    predicted_account_id = CASE WHEN $12::uuid IS NOT NULL THEN $12::uuid ELSE predicted_account_id END,
+		    predicted_account_name = CASE WHEN $13::text != '' THEN $13::text ELSE predicted_account_name END,
+		    ai_reasoning = CASE WHEN $14::text != '' THEN $14::text ELSE ai_reasoning END,
 		    updated_at = NOW()
 		WHERE id = $1`
-	var macroClass, accountType, entityName string
-	if topMacro := node.TopCandidate(PropMacroClass); topMacro != nil {
-		macroClass = topMacro.Value
-	}
-	if topAccType := node.TopCandidate(PropAccountType); topAccType != nil {
-		accountType = topAccType.Value
-	}
-	if topEntity := node.TopCandidate(PropCounterparty); topEntity != nil {
-		entityName = topEntity.Value
-	}
+
+// PersistNode writes the current ASENode state to fignode.staging_transactions.
+// It updates v2_status, v2_transfer_hold_reason, confidence_score, macro_class,
+// and account_type based on the node's top candidate.
+func (s *StateStore) PersistNode(ctx context.Context, node *AutonomousSemanticEngineNode) error {
+	macroClass, accountType, entityName, vendorID, customerID, accountID, accountName, reasoning := s.prepareUpdateArgs(ctx, node)
 
 	node.mu.RLock()
 	traceBytes, _ := json.Marshal(node.ExecutionTrace)
 	node.mu.RUnlock()
 
-	_, err := s.pool.Exec(ctx, query,
+	_, err := s.pool.Exec(ctx, updateStagingTxnQuery,
 		node.NodeID,
 		string(node.GetState()),
 		node.GetHoldReason(),
-		node.GetConfidence(), // Unified confidence C replaces single-property confidence
+		node.GetConfidence(),
 		macroClass,
 		accountType,
 		entityName,
 		node.CashDirection,
 		traceBytes,
+		vendorID,
+		customerID,
+		accountID,
+		accountName,
+		reasoning,
 	)
 	if err != nil {
 		return fmt.Errorf("persist ase node: %w", err)
@@ -75,17 +144,30 @@ func (s *StateStore) PersistNode(ctx context.Context, node *AutonomousSemanticEn
 	return nil
 }
 
-// PersistHoldReason updates only the hold reason and v2_status for a stalled agent.
+// PersistHoldReason updates the hold reason, status, and intermediate classifications for a stalled agent.
 func (s *StateStore) PersistHoldReason(ctx context.Context, node *AutonomousSemanticEngineNode) error {
-	query := `UPDATE fignode.staging_transactions
-		SET status = $2, error_message = $3, ase_execution_trace = $4::jsonb, updated_at = NOW()
-		WHERE id = $1`
+	macroClass, accountType, entityName, vendorID, customerID, accountID, accountName, reasoning := s.prepareUpdateArgs(ctx, node)
 
 	node.mu.RLock()
 	traceBytes, _ := json.Marshal(node.ExecutionTrace)
 	node.mu.RUnlock()
 
-	_, err := s.pool.Exec(ctx, query, node.NodeID, string(node.GetState()), node.GetHoldReason(), traceBytes)
+	_, err := s.pool.Exec(ctx, updateStagingTxnQuery,
+		node.NodeID,
+		string(node.GetState()),
+		node.GetHoldReason(),
+		node.GetConfidence(),
+		macroClass,
+		accountType,
+		entityName,
+		node.CashDirection,
+		traceBytes,
+		vendorID,
+		customerID,
+		accountID,
+		accountName,
+		reasoning,
+	)
 	if err != nil {
 		return fmt.Errorf("persist hold reason: %w", err)
 	}
@@ -96,7 +178,7 @@ func (s *StateStore) PersistHoldReason(ctx context.Context, node *AutonomousSema
 // This is the State Collapse point — only call when confidence >= threshold.
 func (s *StateStore) PersistReadyForSync(ctx context.Context, node *AutonomousSemanticEngineNode) error {
 	threshold := 0.98
-	if cfg := GetConfig(node.TenantID, node.RealmID); cfg != nil {
+	if cfg := GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
 		threshold = cfg.HyperParameters.ConfidenceThreshold
 	}
 
@@ -104,19 +186,28 @@ func (s *StateStore) PersistReadyForSync(ctx context.Context, node *AutonomousSe
 		return fmt.Errorf("guardrail: cannot mark node %s as READY_FOR_SYNC with unified confidence %f below %v", node.NodeID, node.GetConfidence(), threshold)
 	}
 
-	query := `UPDATE fignode.staging_transactions
-		SET status = $2,
-		    error_message = NULL,
-		    confidence_score = $3,
-		    ase_execution_trace = $4::jsonb,
-		    updated_at = NOW()
-		WHERE id = $1`
+	macroClass, accountType, entityName, vendorID, customerID, accountID, accountName, reasoning := s.prepareUpdateArgs(ctx, node)
 
 	node.mu.RLock()
 	traceBytes, _ := json.Marshal(node.ExecutionTrace)
 	node.mu.RUnlock()
 
-	_, err := s.pool.Exec(ctx, query, node.NodeID, string(StateReadyForSync), node.GetConfidence(), traceBytes)
+	_, err := s.pool.Exec(ctx, updateStagingTxnQuery,
+		node.NodeID,
+		string(StateReadyForSync),
+		"", // error_message
+		node.GetConfidence(),
+		macroClass,
+		accountType,
+		entityName,
+		node.CashDirection,
+		traceBytes,
+		vendorID,
+		customerID,
+		accountID,
+		accountName,
+		reasoning,
+	)
 	if err != nil {
 		return fmt.Errorf("persist ready for sync: %w", err)
 	}
@@ -135,7 +226,7 @@ func (s *StateStore) CacheActiveAgent(ctx context.Context, node *AutonomousSeman
 	key := activeAgentPrefix + node.NodeID
 	
 	ttl := 10 * time.Minute
-	if cfg := GetConfig(node.TenantID, node.RealmID); cfg != nil {
+	if cfg := GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
 		ttl = time.Duration(cfg.HyperParameters.ActiveAgentTTLMinutes) * time.Minute
 	}
 	
@@ -182,7 +273,7 @@ func (s *StateStore) AcquireLock(ctx context.Context, nodeID string) (bool, erro
 	key := lockPrefix + nodeID
 	
 	ttl := 30 * time.Second
-	if cfg := GetConfig("", ""); cfg != nil {
+	if cfg := GetConfig("", "", "default"); cfg != nil {
 		ttl = time.Duration(cfg.HyperParameters.LockTTLSeconds) * time.Second
 	}
 	

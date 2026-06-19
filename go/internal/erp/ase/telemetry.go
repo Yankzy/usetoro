@@ -34,10 +34,12 @@ type TelemetryPayload struct {
 	ToState     string             `json:"to_state,omitempty"`
 	HoldReason  string             `json:"hold_reason,omitempty"`
 	Entropy     float64            `json:"entropy"`
-	Confidence  float64            `json:"confidence,omitempty"`
-	Description string             `json:"description,omitempty"`
-	Probes      int                `json:"lifetime_probes"`
-	Timestamp   time.Time          `json:"timestamp"`
+	Confidence    float64            `json:"confidence,omitempty"`
+	Description   string             `json:"description,omitempty"`
+	Amount        string             `json:"amount,omitempty"`
+	CashDirection string             `json:"cash_direction,omitempty"`
+	Probes        int                `json:"lifetime_probes"`
+	Timestamp     time.Time          `json:"timestamp"`
 }
 
 // TelemetryPublisher emits ASE lifecycle events to NATS for observability
@@ -90,13 +92,6 @@ func (tp *TelemetryPublisher) PublishStateTransition(node *AutonomousSemanticEng
 		return
 	}
 
-	tp.logger.Info("telemetry published",
-		"subject", subject,
-		"node_id", node.NodeID,
-		"from", string(oldState),
-		"to", string(newState),
-		"entropy", payload.Entropy,
-	)
 }
 
 // PublishHold emits an event when a node enters a HOLD state, requesting
@@ -110,10 +105,12 @@ func (tp *TelemetryPublisher) PublishHold(node *AutonomousSemanticEngineNode) {
 		TenantID:    node.TenantID,
 		ToState:     string(node.GetState()),
 		HoldReason:  node.GetHoldReason(),
-		Entropy:     node.GetEntropy(),
-		Probes:      node.GetProbes(),
-		Description: desc,
-		Timestamp:   time.Now().UTC(),
+		Entropy:       node.GetEntropy(),
+		Probes:        node.GetProbes(),
+		Description:   desc,
+		Amount:        node.RawAmount,
+		CashDirection: node.CashDirection,
+		Timestamp:     time.Now().UTC(),
 	}
 
 	data, _ := json.Marshal(payload)
@@ -189,7 +186,6 @@ func (tp *TelemetryPublisher) requestContextViaOmniChat(node *AutonomousSemantic
 	if err := tp.nc.Publish("proof.outgoing.chat", outBytes); err != nil {
 		tp.logger.Error("failed to publish context request to omni_chat", "error", err)
 	} else {
-		tp.logger.Info("dispatched context request via omni_chat", "to", toEmail)
 	}
 }
 
@@ -199,7 +195,7 @@ func (tp *TelemetryPublisher) PublishGuardrailBlock(node *AutonomousSemanticEngi
 
 
 	threshold := 0.98
-	if cfg := GetConfig(node.TenantID, node.RealmID); cfg != nil {
+	if cfg := GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
 		threshold = cfg.HyperParameters.ConfidenceThreshold
 	}
 
@@ -245,17 +241,13 @@ func (tp *TelemetryPublisher) PublishCollapseReady(node *AutonomousSemanticEngin
 	subject := tp.subjectForEvent(EventCollapseReady)
 	_ = tp.nc.Publish(subject, data)
 
-	tp.logger.Info("ase node ready for sync",
-		"node_id", node.NodeID,
-		"confidence", node.GetConfidence(),
-	)
 }
 
 // formatContextRequest builds a human-readable description of what context
 // is missing, suitable for routing to Slack or other virtual workforce channels.
 func formatContextRequest(node *AutonomousSemanticEngineNode) string {
 	threshold := 0.98
-	if cfg := GetConfig(node.TenantID, node.RealmID); cfg != nil {
+	if cfg := GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
 		threshold = cfg.HyperParameters.ConfidenceThreshold
 	}
 

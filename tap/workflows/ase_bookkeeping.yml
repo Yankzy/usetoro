@@ -46,6 +46,8 @@ steps:
       - run_rule_engine
     timeout: "600s"
     description: "Fans out Autonomous Semantic Engine micro-agents for all pending transactions."
+    config:
+      dag_name: "default"
     workflow_schema: |
       {
         "type": "object",
@@ -54,3 +56,27 @@ steps:
         },
         "required": ["session_id"]
       }
+
+  - id: human_review
+    activity_type: hitl.review
+    depends_on:
+      - ase_bridge
+    timeout: "86400s"
+    config:
+      scope: "session"
+      prompt: "Review categorizations before posting to Ledger."
+      allow_edits: true
+      reject_action: "abort"
+      message_type: "bookkeeping_review"
+
+  # - id: sync_to_qbo
+  #   activity_type: workers.qbo_sync
+  #   depends_on:
+  #     - ase_bridge
+  #   workflow_schema: |
+  #     {
+  #       "type": "object",
+  #       "properties": {
+  #         "session_id": { "type": "string" }
+  #       }
+  #     }

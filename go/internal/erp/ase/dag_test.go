@@ -42,9 +42,9 @@ func TestDAGNode_AcceptAndFlush(t *testing.T) {
 	defer dagNode.Stop()
 
 	// Accept 3 nodes — should trigger immediate flush (batch size reached).
-	node1 := NewASENode("t1", "", "Office supplies", "OUTFLOW", "-100")
-	node2 := NewASENode("t2", "", "Client payment", "INFLOW", "500")
-	node3 := NewASENode("t3", "", "Software subscription", "OUTFLOW", "-29.99")
+	node1 := NewASENode("t1", "", "default", "Office supplies", "OUTFLOW", "-100")
+	node2 := NewASENode("t2", "", "default", "Client payment", "INFLOW", "500")
+	node3 := NewASENode("t3", "", "default", "Software subscription", "OUTFLOW", "-29.99")
 
 	// Pre-fill missing properties so entropy = 0 for them.
 	for _, n := range []*AutonomousSemanticEngineNode{node1, node2, node3} {
@@ -107,7 +107,7 @@ func TestDAGNode_FlushOnTimer(t *testing.T) {
 	defer dagNode.Stop()
 
 	// Accept only 1 node — timer should flush it.
-	node := NewASENode("t1", "", "Test", "OUTFLOW", "-10")
+	node := NewASENode("t1", "", "default", "Test", "OUTFLOW", "-10")
 	node.SetPropertyCandidates("macro_classifier", []ProbabilityCandidate{{Value: "M", Confidence: 1.0}})
 	node.SetPropertyCandidates("account_type", []ProbabilityCandidate{{Value: "A", Confidence: 1.0}})
 	node.SetPropertyCandidates("entity", []ProbabilityCandidate{{Value: "E", Confidence: 1.0}})
@@ -136,7 +136,7 @@ func TestDAGNode_ThinkFailureResultsInHold(t *testing.T) {
 	dagNode.Start()
 	defer dagNode.Stop()
 
-	node := NewASENode("t1", "", "Test", "OUTFLOW", "-10")
+	node := NewASENode("t1", "", "default", "Test", "OUTFLOW", "-10")
 	dagNode.Accept(node)
 
 	time.Sleep(150 * time.Millisecond)
@@ -215,8 +215,8 @@ func TestDAGNode_Routing(t *testing.T) {
 	macroNode.StartAll()
 	defer macroNode.StopAll()
 
-	nodeExpense := NewASENode("t1", "", "expense item", "OUTFLOW", "-50")
-	nodeRevenue := NewASENode("t1", "", "revenue item", "INFLOW", "200")
+	nodeExpense := NewASENode("t1", "", "default", "expense item", "OUTFLOW", "-50")
+	nodeRevenue := NewASENode("t1", "", "default", "revenue item", "INFLOW", "200")
 
 	macroNode.Accept(nodeExpense)
 	macroNode.Accept(nodeRevenue)
@@ -245,7 +245,7 @@ func TestDAGNode_NoChildResultsInHold(t *testing.T) {
 	dagNode.Start()
 	defer dagNode.Stop()
 
-	node := NewASENode("t1", "", "Owner draw", "OUTFLOW", "-5000")
+	node := NewASENode("t1", "", "default", "Owner draw", "OUTFLOW", "-5000")
 	dagNode.Accept(node)
 
 	time.Sleep(150 * time.Millisecond)
@@ -276,7 +276,7 @@ func TestDAG_TerminalNodeCollapse(t *testing.T) {
 	terminalNode.Start()
 	defer terminalNode.Stop()
 
-	node := NewASENode("t1", "", "Test", "OUTFLOW", "-10")
+	node := NewASENode("t1", "", "default", "Test", "OUTFLOW", "-10")
 	node.SetPropertyCandidates("macro_classifier", []ProbabilityCandidate{{Value: "M", Confidence: 1.0}})
 	node.SetPropertyCandidates("account_type", []ProbabilityCandidate{{Value: "A", Confidence: 1.0}})
 	node.SetPropertyCandidates("entity", []ProbabilityCandidate{{Value: "E", Confidence: 1.0}})
@@ -329,6 +329,159 @@ func TestBuildDAGFromConfig(t *testing.T) {
 		t.Errorf("expected 2 children, got %d", children)
 	}
 }
+
+func TestBuildDAGFromConfig_Passthrough(t *testing.T) {
+	logger := testLogger()
+	cfg := DAGConfig{
+		EntryNode: "root",
+		Nodes: map[string]DAGNodeConfig{
+			"root": {
+				Kind: "account_selection",
+				Children: map[string]string{
+					"group_a": "group_node",
+				},
+			},
+			"group_node": {
+				Kind: "passthrough",
+				Children: map[string]string{
+					"leaf_1": "leaf_node_1",
+					"leaf_2": "leaf_node_2",
+				},
+			},
+			"leaf_node_1": {
+				Kind: "terminal",
+			},
+			"leaf_node_2": {
+				Kind: "terminal",
+			},
+		},
+	}
+
+	dag := BuildDAGFromConfig(cfg, logger)
+
+	if dag.EntryNode == nil {
+		t.Fatal("expected non-nil entry node")
+	}
+
+	// Verify that "root" directly maps to leaf_node_1 and leaf_node_2
+	dag.EntryNode.mu.Lock()
+	children := dag.EntryNode.children
+	dag.EntryNode.mu.Unlock()
+
+	if len(children) != 2 {
+		t.Fatalf("expected 2 children resolved under root, got %d", len(children))
+	}
+
+	child1, ok := children["leaf_1"]
+	if !ok || child1.ID != "leaf_node_1" {
+		t.Errorf("expected leaf_1 to map to leaf_node_1, got %v", child1)
+	}
+
+	child2, ok := children["leaf_2"]
+	if !ok || child2.ID != "leaf_node_2" {
+		t.Errorf("expected leaf_2 to map to leaf_node_2, got %v", child2)
+	}
+
+	// Verify that the passthrough node is still in the nodes map
+	passthroughNode := dag.GetNode("group_node")
+	if passthroughNode == nil {
+		t.Fatal("expected group_node to exist in the DAG nodes list")
+	}
+}
+
+func TestMoroccanCOAPassthroughCompilation(t *testing.T) {
+	logger := testLogger()
+	cfg := DAGConfig{
+		EntryNode: "class_0_special_accounts",
+		Nodes: map[string]DAGNodeConfig{
+			"class_0_special_accounts": {
+				Kind: "account_type",
+				Children: map[string]string{
+					"OPENING BALANCE SHEET": "opening_balance_sheet_01",
+				},
+			},
+			"opening_balance_sheet_01": {
+				Kind: "account_type",
+				Children: map[string]string{
+					"Reopening of permanent financing accounts": "account_11",
+				},
+			},
+			"account_11": {
+				Kind: "passthrough",
+				Children: map[string]string{
+					"Reopening of equity accounts": "account_0111",
+					"Reopening of assimilated equity accounts": "account_0113",
+				},
+			},
+			"account_0111": {
+				Kind: "terminal",
+			},
+			"account_0113": {
+				Kind: "terminal",
+			},
+		},
+	}
+
+	dag := BuildDAGFromConfig(cfg, logger)
+
+	if dag.EntryNode == nil {
+		t.Fatal("expected non-nil entry node")
+	}
+	if dag.EntryNode.ID != "class_0_special_accounts" {
+		t.Errorf("expected entry node class_0_special_accounts, got %s", dag.EntryNode.ID)
+	}
+
+	subNode := dag.GetNode("opening_balance_sheet_01")
+	if subNode == nil {
+		t.Fatal("expected opening_balance_sheet_01 to exist")
+	}
+
+	subNode.mu.Lock()
+	children := subNode.children
+	subNode.mu.Unlock()
+
+	if len(children) != 2 {
+		t.Fatalf("expected 2 children resolved under opening_balance_sheet_01, got %d", len(children))
+	}
+
+	// children keys in memory are lowercased by AddChild
+	child1, ok := children["reopening of equity accounts"]
+	if !ok || child1.ID != "account_0111" {
+		t.Errorf("expected reopening of equity accounts to map to account_0111, got %v", child1)
+	}
+
+	child2, ok := children["reopening of assimilated equity accounts"]
+	if !ok || child2.ID != "account_0113" {
+		t.Errorf("expected reopening of assimilated equity accounts to map to account_0113, got %v", child2)
+	}
+}
+
+func TestBuildDAGFromConfig_DefaultChild(t *testing.T) {
+	logger := testLogger()
+	cfg := DAGConfig{
+		EntryNode: "root",
+		Nodes: map[string]DAGNodeConfig{
+			"root": {
+				Kind:         "entity",
+				DefaultChild: "next_node",
+			},
+			"next_node": {
+				Kind: "terminal",
+			},
+		},
+	}
+	dag := BuildDAGFromConfig(cfg, logger)
+	if dag.EntryNode == nil {
+		t.Fatal("expected non-nil entry node")
+	}
+	if dag.EntryNode.defaultChild == nil {
+		t.Fatal("expected non-nil defaultChild on root node")
+	}
+	if dag.EntryNode.defaultChild.ID != "next_node" {
+		t.Errorf("expected defaultChild ID to be next_node, got %s", dag.EntryNode.defaultChild.ID)
+	}
+}
+
 
 type testError struct {
 	msg string

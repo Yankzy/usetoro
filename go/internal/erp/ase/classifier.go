@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 
@@ -16,10 +17,15 @@ import (
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
+// llmGenerator defines the interface for making structured JSON calls to the LLM.
+type llmGenerator interface {
+	GenerateJSON(ctx context.Context, systemPrompt, userPrompt string, output interface{}) error
+}
+
 // ClassifierService handles interactions with LLMs and external classification services.
 // It dispatches batches of transactions to specialized micro-agents for classification.
 type ClassifierService struct {
-	llmClient      *ai.LLMClient
+	llmClient      llmGenerator
 	nc             *nats.Conn
 	logger         *slog.Logger
 	agentTaskQueue string
@@ -42,12 +48,15 @@ func (cs *ClassifierService) SetVectorStore(vs *VectorStore) {
 // NewClassifierService creates a new classification service configured with LLM
 // and NATS capabilities.
 func NewClassifierService(llmClient *ai.LLMClient, nc *nats.Conn, agentTaskQueue string, logger *slog.Logger) *ClassifierService {
-	return &ClassifierService{
-		llmClient:      llmClient,
+	cs := &ClassifierService{
 		nc:             nc,
 		agentTaskQueue: agentTaskQueue,
 		logger:         logger,
 	}
+	if llmClient != nil {
+		cs.llmClient = llmClient
+	}
+	return cs
 }
 
 // BuildGenericThinkFunc creates a generic LLM Think dispatch function for a DAG node.
@@ -69,27 +78,23 @@ func (cs *ClassifierService) BuildDynamicThinkFunc(provider string) ThinkFunc {
 	}
 }
 
-// PropertyResponse represents the LLM output structure for a single classification row.
-type PropertyResponse struct {
-	Property   string                 `json:"property"`
-	Candidates []ProbabilityCandidate `json:"candidates"`
-}
-
-// BatchPropertyResponse represents the unified JSON output from an LLM batch operation.
-type BatchPropertyResponse struct {
-	Rows map[string]PropertyResponse `json:"rows"`
+// PropertyResponseMap represents the LLM output structure mapped with dictionary candidates.
+type PropertyResponseMap struct {
+	Property      string                          `json:"property"`
+	CandidatesMap map[string]ProbabilityCandidate `json:"candidates"`
 }
 
 func (cs *ClassifierService) classifyGeneric(ctx context.Context, promptKey string, batch []*AutonomousSemanticEngineNode) (map[string]NodeClassification, error) {
 	rows := cs.batchToRows(ctx, batch)
-	
-	tenantID, realmID := "", ""
+
+	tenantID, realmID, dagName := "", "", ""
 	if len(batch) > 0 {
 		tenantID = batch[0].TenantID
 		realmID = batch[0].RealmID
+		dagName = batch[0].DagName
 	}
-	
-	systemPrompt := GetPrompt(tenantID, realmID, promptKey)
+
+	systemPrompt := GetPrompt(tenantID, realmID, dagName, promptKey)
 	if systemPrompt == "" {
 		return nil, fmt.Errorf("prompt not found in configuration for key: %s (tenant: %s, realm: %s)", promptKey, tenantID, realmID)
 	}
@@ -107,89 +112,37 @@ func (cs *ClassifierService) classifyGeneric(ctx context.Context, promptKey stri
 	}
 	systemPrompt = strings.ReplaceAll(systemPrompt, "{{.CompanyIndustry}}", companyIndustry)
 
-	systemPrompt += "\n\nSince you are processing a batch of rows, output your JSON as a map of row ID to the expected output format. Example:\n{\"rows\": {\"uuid-1\": {\"property\": \"output_property\", \"candidates\": [{\"value\": \"VALUE\", \"confidence\": 0.85, \"reasoning\": \"...\"}]}}}"
+	systemPrompt += "\n\nCRITICAL RULES FOR BATCH PROCESSING:\n" +
+		"1. The USER REQUEST provides a map of transactions under the 'rows' key. The keys in this map are unique identifiers for each transaction.\n" +
+		"2. Your output MUST be a valid JSON array containing exactly ONE RFC 6902 JSON patch operation.\n" +
+		"3. This single patch MUST use exactly \"op\": \"add\" and \"path\": \"/rows\".\n" +
+		"4. The \"value\" of the patch MUST be an object where the keys are EXACTLY the unique transaction identifiers from the input.\n" +
+		"5. Inside each row's classification object, you MUST return a 'property' string AND a 'candidates' map.\n" +
+		"6. The 'candidates' map MUST contain at least 2 numbered candidate entries (e.g. \"1\": {...}, \"2\": {...}) for that row."
 
-	userPrompt, err := json.Marshal(map[string]interface{}{
-		"rows":           rows,
-		"cash_direction": batchCashDirection(batch),
-	})
+	// Keep track of remaining rows to be processed/classified.
+	remainingRows := make(map[string]RowPayload, len(rows))
+	for k, v := range rows {
+		remainingRows[k] = v
+	}
+
+	// We removed the local LLM loop; dispatch directly via NATS to the generic agent
+	// which executes via the Redux engine circuit breaker.
+	genericResp, err := cs.dispatchViaNATS(ctx, systemPrompt, remainingRows, batchCashDirection(batch), tenantID, realmID, dagName)
 	if err != nil {
-		return nil, fmt.Errorf("marshal generic prompt: %w", err)
-	}
-
-	var rowsMap map[string]PropertyResponse
-	var validationErr error
-	maxRetries := 3
-	if cfg := GetConfig(tenantID, realmID); cfg != nil {
-		maxRetries = cfg.HyperParameters.MaxLLMRetries
-	}
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		attemptSystemPrompt := systemPrompt
-		if validationErr != nil {
-			attemptSystemPrompt += fmt.Sprintf("\n\nCRITICAL ERROR FROM PREVIOUS ATTEMPT: %v. You must fix this! The sum of 'confidence' scores for the candidates in EACH row MUST equal exactly 1.0. If you return 1 candidate, its confidence MUST be 1.0.", validationErr)
-			validationErr = nil // Reset for this attempt
-		}
-
-		if cs.llmClient != nil {
-			var resp BatchPropertyResponse
-			if err := cs.llmClient.GenerateJSON(ctx, attemptSystemPrompt, string(userPrompt), &resp); err != nil {
-				return nil, fmt.Errorf("generic llm call: %w", err)
-			}
-			rowsMap = resp.Rows
-		} else {
-			genericResp, err := cs.dispatchViaNATS(ctx, attemptSystemPrompt, rows)
-			if err != nil {
-				return nil, err
-			}
-			rowsMap = make(map[string]PropertyResponse, len(genericResp.Rows))
-			for k, v := range genericResp.Rows {
-				b, err := json.Marshal(v)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal row %s: %w", k, err)
-				}
-				var pr PropertyResponse
-				if err := json.Unmarshal(b, &pr); err != nil {
-					return nil, fmt.Errorf("failed to unmarshal row %s into PropertyResponse: %w", k, err)
-				}
-				rowsMap[k] = pr
-			}
-		}
-
-		// Validate probabilities
-		isValid := true
-		for rowID, resp := range rowsMap {
-			var sum float64
-			for _, c := range resp.Candidates {
-				sum += c.Confidence
-			}
-			if len(resp.Candidates) == 1 && (sum < 0.99 || sum > 1.01) {
-				validationErr = fmt.Errorf("row %s has only 1 candidate but confidence is %f (must be 1.0)", rowID, sum)
-				isValid = false
-				break
-			}
-			if len(resp.Candidates) > 1 && (sum < 0.98 || sum > 1.02) {
-				validationErr = fmt.Errorf("row %s candidates confidence sum is %f (must be 1.0)", rowID, sum)
-				isValid = false
-				break
-			}
-		}
-
-		if isValid {
-			break
-		}
-
-		if attempt == maxRetries-1 {
-			return nil, fmt.Errorf("failed to get valid probability distribution after %d attempts: %v", maxRetries, validationErr)
-		}
+		return nil, err
 	}
 
 	results := make(map[string]NodeClassification, len(batch))
 	for _, node := range batch {
-		if result, ok := rowsMap[node.NodeID]; ok {
+		if result, ok := genericResp.Rows[node.NodeID]; ok {
+			var candidates []ProbabilityCandidate
+			for _, c := range result.CandidatesMap {
+				candidates = append(candidates, c)
+			}
 			results[node.NodeID] = NodeClassification{
 				Property:   result.Property,
-				Candidates: result.Candidates,
+				Candidates: candidates,
 			}
 		}
 	}
@@ -203,7 +156,7 @@ func (cs *ClassifierService) dynamicChartOfAccounts(ctx context.Context, batch [
 	results := make(map[string]NodeClassification, len(batch))
 
 	for _, node := range batch {
-		accounts, err := cs.db.GetAccountsByRealm(ctx, node.TenantID)
+		accounts, err := cs.db.GetAccountsByRealm(ctx, node.RealmID)
 		if err != nil {
 			node.mu.Lock()
 			node.HoldReason = "dynamic COA lookup failed: " + err.Error()
@@ -229,6 +182,7 @@ func (cs *ClassifierService) dynamicChartOfAccounts(ctx context.Context, batch [
 
 type RowPayload struct {
 	Description  string   `json:"description"`
+	Amount       string   `json:"amount"`
 	Context      []string `json:"context,omitempty"`
 	CompanyRules []string `json:"company_rules,omitempty"`
 }
@@ -242,6 +196,7 @@ func (cs *ClassifierService) batchToRows(ctx context.Context, batch []*Autonomou
 		tenantID := node.TenantID
 		realmID := node.RealmID
 		desc := node.RawDescription
+		amount := node.RawAmount
 		ctxUpdates := node.ContextUpdates
 		node.mu.RUnlock()
 
@@ -264,9 +219,9 @@ func (cs *ClassifierService) batchToRows(ctx context.Context, batch []*Autonomou
 		}
 
 		// --- Semantic retrieval (vector memory layer) ---
-		// Reads VectorMemoryConfig at call-time so ase.yml hot-reloads are respected.
+		// Reads VectorMemoryConfig at call-time so hot-reloads from the database are respected.
 		if cs.vectorStore != nil {
-			vcfg := cs.vectorStore.vectorCfg(tenantID, realmID)
+			vcfg := cs.vectorStore.vectorCfg()
 			if vcfg.Enabled && desc != "" && realmID != "" {
 				vec, err := cs.vectorStore.GenerateEmbedding(ctx, tenantID, realmID, desc)
 				if err != nil {
@@ -292,6 +247,7 @@ func (cs *ClassifierService) batchToRows(ctx context.Context, batch []*Autonomou
 
 		rows[node.NodeID] = RowPayload{
 			Description:  desc,
+			Amount:       amount,
 			Context:      ctxUpdates,
 			CompanyRules: activeRules,
 		}
@@ -318,25 +274,60 @@ func batchMacroClass(batch []*AutonomousSemanticEngineNode) string {
 }
 
 type genericNatsResponse struct {
-	Rows map[string]interface{} `json:"rows"`
+	Rows map[string]PropertyResponseMap `json:"rows"`
 }
 
-func (cs *ClassifierService) dispatchViaNATS(ctx context.Context, systemPrompt string, rows map[string]RowPayload) (*genericNatsResponse, error) {
+func (cs *ClassifierService) dispatchViaNATS(ctx context.Context, systemPrompt string, rows map[string]RowPayload, cashDirection string, tenantID, realmID, dagName string) (*genericNatsResponse, error) {
 	reqData := map[string]interface{}{
-		"system_prompt": systemPrompt,
-		"rows":          rows,
+		"system_prompt":  systemPrompt,
+		"rows":           rows,
+		"cash_direction": cashDirection,
 	}
 	b, err := json.Marshal(reqData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal nats request: %w", err)
 	}
 
+	workflowSchema := `{
+		"type": "object",
+		"properties": {
+			"rows": {
+				"type": "object",
+				"patternProperties": {
+					"^.*$": {
+						"type": "object",
+						"properties": {
+							"property": { "type": "string" },
+							"candidates": {
+								"type": "object",
+								"patternProperties": {
+									"^.*$": {
+										"type": "object",
+										"properties": {
+											"value": { "type": "string" },
+											"confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+											"reasoning": { "type": "string" }
+										},
+										"required": ["value", "confidence"]
+									}
+								}
+							}
+						},
+						"required": ["property", "candidates"]
+					}
+				}
+			}
+		},
+		"required": ["rows"]
+	}`
+
 	taskDef := core.TaskDefinition{
-		ID:           uuid.New().String(),
-		Domain:       "agents.accounting.batch_categorization",
-		Payload:      json.RawMessage(b),
-		SystemPrompt: systemPrompt,
-		Model:        "gpt-5.4-mini",
+		ID:             uuid.New().String(),
+		Domain:         "agents.accounting.batch_categorization",
+		Payload:        json.RawMessage(b),
+		SystemPrompt:   systemPrompt,
+		Model:          "gpt-5.4-mini",
+		WorkflowSchema: workflowSchema,
 	}
 
 	replyDID := fmt.Sprintf("did:toro:reply:%s", uuid.New().String())
@@ -368,7 +359,11 @@ func (cs *ClassifierService) dispatchViaNATS(ctx context.Context, systemPrompt s
 
 	timeoutDuration := 120 * time.Second
 	// Use default config if tenant specific is not available at dispatch context.
-	if cfg := GetConfig("", ""); cfg != nil {
+	dagToUse := dagName
+	if dagToUse == "" {
+		dagToUse = "default"
+	}
+	if cfg := GetConfig(tenantID, realmID, dagToUse); cfg != nil {
 		timeoutDuration = time.Duration(cfg.HyperParameters.LLMTimeoutSeconds) * time.Second
 	}
 	timeout := time.NewTimer(timeoutDuration)
@@ -388,7 +383,6 @@ func (cs *ClassifierService) dispatchViaNATS(ctx context.Context, systemPrompt s
 
 			switch replyEnv.Performative {
 			case core.PROPOSE:
-				cs.logger.Info("ase_bridge: agent proposed task execution", "cid", replyEnv.ConversationID)
 				continue
 			case core.FAILURE:
 				return nil, fmt.Errorf("agent returned failure via NATS")
@@ -398,22 +392,45 @@ func (cs *ClassifierService) dispatchViaNATS(ctx context.Context, systemPrompt s
 					return nil, fmt.Errorf("failed to unmarshal agent INFORM proof: %w", err)
 				}
 
-				// The JSON patch might be wrapped in an array by extractJSONPatches
-				var patches []genericNatsResponse
-				if err := json.Unmarshal(proof.Data, &patches); err != nil {
-					// Fallback to single object
-					var single genericNatsResponse
-					if err2 := json.Unmarshal(proof.Data, &single); err2 != nil {
-						cs.logger.Warn("skipping unmarshalable nats INFORM proof payload", "error", err2)
-						return nil, fmt.Errorf("failed to unmarshal JSON patches from proof: %w", err2)
+				var outputBytes []byte
+				var proofData struct {
+					Output string `json:"output"`
+				}
+				// Check if the agent returned the raw LLM string inside {"output": "..."}
+				if err := json.Unmarshal(proof.Data, &proofData); err == nil && proofData.Output != "" {
+					outputStr := strings.TrimSpace(proofData.Output)
+					if strings.HasPrefix(outputStr, "```") {
+						outputStr = strings.TrimPrefix(outputStr, "```json")
+						outputStr = strings.TrimPrefix(outputStr, "```")
+						outputStr = strings.TrimSuffix(outputStr, "```")
+						outputStr = strings.TrimSpace(outputStr)
 					}
-					return &single, nil
+					if strings.HasPrefix(outputStr, "{") && strings.HasSuffix(outputStr, "}") {
+						outputStr = "[" + outputStr + "]"
+					}
+					outputBytes = []byte(outputStr)
+				} else {
+					// Otherwise, it's already a raw JSON patch array from generic_batch_agent
+					outputBytes = proof.Data
 				}
 
-				if len(patches) > 0 {
-					return &patches[0], nil
+				patch, err := jsonpatch.DecodePatch(outputBytes)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decode json patch from output: %w", err)
 				}
-				return nil, fmt.Errorf("agent returned empty patches in INFORM")
+				
+				// Apply to a document that already has a /rows key so that either "add" or "replace" operations succeed
+				modifiedJSON, err := patch.Apply([]byte(`{"rows":{}}`))
+				if err != nil {
+					return nil, fmt.Errorf("failed to apply json patch: %w", err)
+				}
+
+				var natsResp genericNatsResponse
+				if err := json.Unmarshal(modifiedJSON, &natsResp); err != nil {
+					return nil, fmt.Errorf("failed to unmarshal modified json into genericNatsResponse: %w", err)
+				}
+				
+				return &natsResp, nil
 			default:
 				// Ignore other performatives
 				continue

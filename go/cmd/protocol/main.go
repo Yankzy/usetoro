@@ -43,8 +43,12 @@ func main() {
 	flag.Parse()
 
 	// Structured Logging
+	var lvl slog.Level
+	if err := lvl.UnmarshalText([]byte(os.Getenv("LOG_LEVEL"))); err != nil {
+		lvl = slog.LevelWarn // Default to Warn to reduce noise
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: lvl,
 	}))
 
 	cfg, _, err := config.Load()
@@ -261,7 +265,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		logger.Info("✅ Connected to Redis")
 	}
 
-	if err := ase.InitConfig(logger); err != nil {
+	if err := ase.InitConfig(st.Queries, redisClient, logger); err != nil {
 		return fmt.Errorf("failed to init ASE config: %w", err)
 	}
 

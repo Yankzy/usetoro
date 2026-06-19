@@ -17,7 +17,7 @@ endif
 DOCKER_CONTEXT := docker --context droplet compose -f container/docker-compose.prod.yml
 
 # App Services
-SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker fignode protocol
+SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker fignode protocol python-worker
 
 # Allow passing service names as arguments, e.g., "make rebuild nginx" or "make restart nginx"
 ifneq ($(filter rebuild restart,$(firstword $(MAKECMDGOALS))),)
@@ -181,6 +181,7 @@ test:
 clean_db:
 	$(DOCKER_COMPOSE) down
 	rm -rf container/postgres/db_data
+	rm -rf container/postgres/alloydb_data
 	$(MAKE) sqlc && $(MAKE) upd && \
 	cd go && go build -o ../bin/store-webhook-secret ./cmd/store-webhook-secret/main.go && .. && ./bin/store-webhook-secret
 

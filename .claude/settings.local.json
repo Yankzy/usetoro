@@ -62,7 +62,11 @@
       "WebSearch",
       "Bash(make test *)",
       "Bash(echo \"Exit: $?\")",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(GOWORK=/Users/Yankz/programming/usetoro/go.work go test *)",
+      "Bash(GOWORK=off go vet -mod=vendor ./...)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(GOWORK=off go mod *)"
     ]
   }
 }

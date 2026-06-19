@@ -302,6 +302,14 @@ func main() {
 	}
 	defer workflowConsumer.Stop()
 
+	// Create and start Stripe event consumer
+	stripeConsumer := wshandler.NewStripeEventConsumer(queueClient, hub, logger, cfg)
+	if err := stripeConsumer.Start(); err != nil {
+		logger.Error("Failed to start stripe event consumer", "error", err)
+		os.Exit(1)
+	}
+	defer stripeConsumer.Stop()
+
 	// Create message handler
 	messageHandler := wshandler.NewMessageHandler(logger, qboConfig, queueClient)
 

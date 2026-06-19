@@ -25,6 +25,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 60s
     networks:
       - toro-net
 
@@ -44,6 +45,7 @@ services:
       QBO_REDIRECT_URI: ${QBO_REDIRECT_URI}
       QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION}
       AUTH_PUBLIC_KEY: ${AUTH_PUBLIC_KEY}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
@@ -65,10 +67,18 @@ services:
       context: ../
       dockerfile: python-worker/Dockerfile
     restart: always
+    ports:
+      - "8005:8000"
     environment:
-      # Use the cluster URL list so it knows all nodes
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY}
+      DATABASE_URL: ${DATABASE_URL}
       NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      PGOPTIONS: "-c search_path=toro_core,shadow_erp,fignode,public"
     depends_on:
+      db:
+        condition: service_healthy
       nats-1:
         condition: service_healthy
     networks:

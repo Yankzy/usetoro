@@ -10,7 +10,6 @@ import (
 	"github.com/Yankzy/usetoro/internal/ingest"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/nats-io/nats.go"
-	"github.com/stripe/stripe-go/v76"
 	"github.com/testcontainers/testcontainers-go"
 	nats_module "github.com/testcontainers/testcontainers-go/modules/nats"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -76,11 +75,12 @@ func TestPublisher_Integration(t *testing.T) {
 	// 5. Test Publish
 	connID := "conn_123"
 	toroEventID := "toro_evt_456"
-	stripeEvent := stripe.Event{ID: "evt_789", Type: "payment_intent.succeeded"}
+	providerEventID := "evt_789"
+	providerEventType := "payment_intent.succeeded"
 	body := []byte(`{"id": "evt_789", "type": "payment_intent.succeeded"}`)
 
 	reqCtx := context.WithValue(ctx, "request_id", "req_abc")
-	err = publisher.PublishStripeEvent(reqCtx, connID, toroEventID, stripeEvent.ID, string(stripeEvent.Type), body)
+	err = publisher.PublishStripeEvent(reqCtx, connID, toroEventID, providerEventID, providerEventType, body)
 	if err != nil {
 		t.Fatalf("failed to publish stripe event: %s", err)
 	}
@@ -109,8 +109,8 @@ func TestPublisher_Integration(t *testing.T) {
 		t.Errorf("expected Toro-Event-ID %s, got %s", toroEventID, msg.Header.Get("Toro-Event-ID"))
 	}
 
-	if msg.Header.Get("Provider-Event-ID") != stripeEvent.ID {
-		t.Errorf("expected Provider-Event-ID %s, got %s", stripeEvent.ID, msg.Header.Get("Provider-Event-ID"))
+	if msg.Header.Get("Provider-Event-ID") != providerEventID {
+		t.Errorf("expected Provider-Event-ID %s, got %s", providerEventID, msg.Header.Get("Provider-Event-ID"))
 	}
 
 	if msg.Header.Get("Request-ID") != "req_abc" {

@@ -110,11 +110,21 @@ func (w *ConversationSchedulerWorker) Handle(ctx context.Context, msg *nats.Msg)
 
 	// Parse the payload — supports both raw JSON and FIPA envelopes
 	var payload map[string]interface{}
-	if err := json.Unmarshal(msg.Data, &payload); err != nil {
-		// Try unwrapping a FIPA envelope
-		var envlp core.Envelope
-		if err2 := json.Unmarshal(msg.Data, &envlp); err2 == nil {
-			_ = json.Unmarshal(envlp.Body, &payload)
+	var envlp core.Envelope
+
+	if err := json.Unmarshal(msg.Data, &envlp); err == nil && envlp.Performative != "" && len(envlp.Body) > 0 {
+		// It's a FIPA envelope, unwrap the body
+		if err := json.Unmarshal(envlp.Body, &payload); err != nil {
+			w.logger.Error("scheduler: failed to parse FIPA body", "error", err)
+			msg.Ack()
+			return nil
+		}
+	} else {
+		// Try as raw JSON
+		if err := json.Unmarshal(msg.Data, &payload); err != nil {
+			w.logger.Error("scheduler: invalid message format", "error", err)
+			msg.Ack()
+			return nil
 		}
 	}
 	if payload == nil {

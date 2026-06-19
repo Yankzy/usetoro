@@ -117,11 +117,13 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		EntityID:   entityUUID,
 		Source:     response.Source,
 		ExternalID: tempExternalID,
-		FromHandle: response.FromHandle,
-		ToHandle:   response.ToHandle,
-		BodyText:   pgtype.Text{String: response.BodyText, Valid: true},
-		SessionID:  sessionUUID,
-		Role:       "assistant",
+		FromHandle:   response.FromHandle,
+		ToHandle:     response.ToHandle,
+		Subject:      pgtype.Text{String: response.Subject, Valid: response.Subject != ""},
+		BodyText:     pgtype.Text{String: response.BodyText, Valid: response.BodyText != ""},
+		StrippedText: pgtype.Text{String: response.BodyText, Valid: response.BodyText != ""},
+		SessionID:    sessionUUID,
+		Role:         "assistant",
 	})
 
 	if err != nil {
@@ -132,7 +134,7 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	// 2. Dispatch to the appropriate channel
 	switch response.Source {
 	case "email":
-		msgID, err := w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText, response.InReplyTo, response.SlackChannelID, response.SlackThreadTS)
+		msgID, err := w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText, response.InReplyTo, response.SlackChannelID, response.SlackThreadTS, response.EntityID)
 		if err != nil {
 			return err
 		}
@@ -156,6 +158,9 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return w.sendTelegram(ctx, response.ToHandle, response.BodyText)
 	case "discord":
 		return w.sendDiscord(ctx, response.ToHandle, response.BodyText)
+	case "system":
+		// System source is used for internal orchestrator messages; we persist them but don't route them externally.
+		return nil
 	default:
 		w.logger.Warn("unknown source for outgoing chat", "source", response.Source)
 		return nil
@@ -166,7 +171,7 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 // When slackChannelID and slackParentTs are provided, this email is part of
 // a bridged Slack thread — the Postmark MessageID is used to update
 // toro_threads_mappings.email_latest_message_id on success.
-func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body, inReplyTo, slackChannelID, slackParentTs string) (string, error) {
+func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body, inReplyTo, slackChannelID, slackParentTs, entityID string) (string, error) {
 	if w.cfg.PostmarkServerToken == "" {
 		return "", fmt.Errorf("postmark server token not configured")
 	}
@@ -221,6 +226,19 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 		"TrackOpens":    true,
 		"TrackLinks":    "HtmlAndText",
 		"MessageStream": "outbound",
+	}
+
+	if entityID != "" {
+		var eUUID pgtype.UUID
+		if err := eUUID.Scan(entityID); err == nil {
+			if users, err := w.db.GetUsersByEntityID(ctx, eUUID); err == nil && len(users) > 0 {
+				var ccEmails []string
+				for _, u := range users {
+					ccEmails = append(ccEmails, u.Email)
+				}
+				payload["Cc"] = strings.Join(ccEmails, ",")
+			}
+		}
 	}
 
 	if inReplyTo != "" {

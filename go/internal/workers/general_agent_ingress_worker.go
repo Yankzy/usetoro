@@ -268,7 +268,9 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 	if len(structuredMessages) > 0 {
 		payload["messages"] = structuredMessages
 	}
-	if req.SessionID != "" {
+	if sess.ID.Valid {
+		payload["session_id"] = uuidFromPG(sess.ID)
+	} else if req.SessionID != "" {
 		payload["session_id"] = req.SessionID
 	}
 	if req.Subject != "" {

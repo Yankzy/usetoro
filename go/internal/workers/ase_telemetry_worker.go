@@ -55,7 +55,7 @@ func (w *AseTelemetryWorker) Subscriptions() []SubscriptionConfig {
 			Subject: subject,
 			Group:   group,
 			Options: []nats.SubOpt{
-				nats.Durable("ase-telemetry-worker"),
+				nats.Durable(durableFromSubject(subject)),
 				nats.DeliverAll(),
 				nats.AckExplicit(),
 			},
@@ -80,8 +80,8 @@ func (w *AseTelemetryWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 	// 1. Construct the system prompt for the General Agent
 	alertPrompt := fmt.Sprintf(
-		"SYSTEM ALERT: A transaction (ID: %s) for Tenant ID '%s' is stuck in %s.\n\nReason: %s\nDetails: %s\n\nPlease contact the business owner to ask for clarification to resolve this transaction. You can use the LookupClient tool if needed to find their contact details, and use the SendEmail tool as the default communication channel.",
-		payload.NodeID, payload.TenantID, payload.ToState, payload.HoldReason, payload.Description,
+		"SYSTEM ALERT: A transaction (ID: %s) for Tenant ID '%s' is stuck in %s.\n\nReason: %s\nDetails: %s\nAmount: %s\nCash Direction: %s\n\nPlease contact the business owner to ask for clarification to properly categorize this transaction. You can use the LookupClient tool if needed to find their contact details, and use the SendEmail tool as the default communication channel.",
+		payload.NodeID, payload.TenantID, payload.ToState, payload.HoldReason, payload.Description, payload.Amount, payload.CashDirection,
 	)
 
 	// 2. Build the payload expected by the GeneralAgentIngressWorker
@@ -90,7 +90,7 @@ func (w *AseTelemetryWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		"body_text":   alertPrompt,
 		"entity_id":   payload.TenantID,
 		"source":      "system",
-		"from_handle": "ase-engine",
+		"from_handle": "ase-engine:" + payload.NodeID,
 		"to_handle":   "general-agent",
 	}
 	ingressBytes, _ := json.Marshal(ingressPayload)

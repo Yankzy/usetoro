@@ -61,7 +61,7 @@ func (w *OmniChatWorker) Subscriptions() []SubscriptionConfig {
 			Subject: subject,
 			Group:   group,
 			Options: []nats.SubOpt{
-				nats.Durable("omni-chat-worker"),
+				nats.Durable(durableFromSubject(subject)),
 				nats.DeliverAll(),
 				nats.AckExplicit(),
 			},
@@ -184,11 +184,7 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 
 	alias, _ := parseAgentEmail(from)
 	if cfg := agents.Lookup(alias); cfg != nil && cfg.Email != "" {
-		if !strings.Contains(from, "@") {
-			fromAddr = fmt.Sprintf(`"%s" <%s>`, from, cfg.Email)
-		} else {
-			fromAddr = cfg.Email
-		}
+		fromAddr = fmt.Sprintf(`"%s" <%s>`, cfg.Name, cfg.Email)
 		if cfg.ReplyTo != "" {
 			replyTo = cfg.ReplyTo
 		} else {

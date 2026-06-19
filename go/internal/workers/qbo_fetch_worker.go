@@ -60,7 +60,7 @@ func (w *QBOFetchWorker) Subscriptions() []SubscriptionConfig {
 			Subject: subject,
 			Group:   group,
 			Options: []nats.SubOpt{
-				nats.Durable("qbo-fetch"),
+				nats.Durable(durableFromSubject(subject)),
 				nats.DeliverAll(),
 				nats.AckExplicit(),
 			},

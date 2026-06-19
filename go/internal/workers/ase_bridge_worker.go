@@ -53,15 +53,36 @@ func init() {
 }
 
 func (w *AseBridgeWorker) Init(ctx context.Context) error {
-	// Start real-time debug visualizer server
-	w.startDebugServer()
-
 	// Initialize the Classifier Service (to generate ThinkFuncs)
 	classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
 	classifierService.SetDB(w.db) // Pass db for dynamic provider
 
 	// Helper to instantiate, wire, and start a DAG
 	wireAndStartDAG := func(key string, cfg *ase.ASEConfig) {
+		w.dagsMu.RLock()
+		existingDAG := w.dags[key]
+		w.dagsMu.RUnlock()
+
+		if existingDAG != nil {
+			// Update the DAG in memory
+			existingDAG.UpdateFromConfig(cfg.DAG, w.logger)
+
+			// Update the ThinkFuncs in case Prompts or EdgeType changed
+			for _, node := range existingDAG.Nodes {
+				if node.EdgeType == "dynamic" {
+					node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
+				} else if node.PromptKey != "" {
+					node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
+				} else {
+					node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
+						return nil, nil // No-op
+					})
+				}
+			}
+			w.logger.Info("ase_orchestrator: dynamically updated DAG nodes in memory", "key", key)
+			return
+		}
+
 		dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
 		for _, node := range dag.Nodes {
 			if node.EdgeType == "dynamic" {
@@ -96,7 +117,7 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 
 func (w *AseBridgeWorker) Subscriptions() []SubscriptionConfig {
 	_, workerCfg := w.cfg.Workers.GetForWorker(w)
-	
+
 	activityType := workerCfg.ActivityType
 	if activityType == "" {
 		w.logger.Error("ase_orchestrator: no activity_type configured")
@@ -123,7 +144,7 @@ func (w *AseBridgeWorker) Subscriptions() []SubscriptionConfig {
 			Subject: subject,
 			Group:   group,
 			Options: []nats.SubOpt{
-				nats.Durable("ase-orchestrator-worker"),
+				nats.Durable(durableFromSubject(subject)),
 				nats.DeliverAll(),
 				nats.AckExplicit(),
 			},
@@ -132,7 +153,7 @@ func (w *AseBridgeWorker) Subscriptions() []SubscriptionConfig {
 			Subject: "ase.events.resume",
 			Group:   "ase-orchestrator-resume-group",
 			Options: []nats.SubOpt{
-				nats.Durable("ase-orchestrator-resume"),
+				nats.Durable(durableFromSubject("ase.events.resume")),
 				nats.DeliverAll(),
 				nats.AckExplicit(),
 			},
@@ -154,7 +175,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			return nil
 		}
 		w.logger.Info("ase_bridge: resuming DAG node", "node_id", resumeEvt.NodeID, "start_node", resumeEvt.StartNodeID)
-		
+
 		idUUID, err := uuid.Parse(resumeEvt.NodeID)
 		if err != nil {
 			return nil
@@ -165,12 +186,12 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			w.logger.Error("ase_bridge: failed to fetch tx for resume", "error", err)
 			return nil
 		}
-		
+
 		session, err := w.db.GetCleanupSession(ctx, dbTx.SessionID)
 		if err != nil {
 			return nil
 		}
-		
+
 		outflowIs := session.OutflowIs
 		realmID := ""
 		if session.RealmID.Valid {
@@ -181,29 +202,40 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			tenantID = uuid.UUID(session.CreatedBy.Bytes).String()
 		}
 
+		// In resume flow, we might not have the dag_name explicitly in the event,
+		// but ideally it would be. For now, default to "default".
+		dagName := "default"
+
+		// Lazily trigger config fetch, which triggers wireAndStartDAG callback if missing
+		ase.GetConfig(tenantID, realmID, dagName)
+
 		w.dagsMu.RLock()
-		dagToUse := w.dags["default"]
-		if tenantID != "" && w.dags["tenant_"+tenantID] != nil {
-			dagToUse = w.dags["tenant_"+tenantID]
-		} else if realmID != "" && w.dags["realm_"+realmID] != nil {
-			dagToUse = w.dags["realm_"+realmID]
+		dagKey := dagName
+		if tenantID != "" {
+			dagKey = "tenant_" + tenantID + "_" + dagName
+		} else if realmID != "" {
+			dagKey = "realm_" + realmID + "_" + dagName
+		}
+		dagToUse := w.dags[dagKey]
+		if dagToUse == nil {
+			dagToUse = w.dags[dagName]
 		}
 		w.dagsMu.RUnlock()
 
-		agent := w.mapToAgent(dbTx, outflowIs, tenantID, realmID)
-		
+		agent := w.mapToAgent(dbTx, outflowIs, tenantID, realmID, dagName)
+
 		// Fire off the asynchronous Goroutine to resume the agent
 		go func(a *ase.AutonomousSemanticEngineNode, start string, sID string) {
 			if err := a.ApproveAndResume(context.Background(), dagToUse, w.store, start); err != nil {
 				w.logger.Error("ase_bridge: agent crashed on resume", "node_id", a.NodeID, "error", err)
 			}
-			
+
 			state := a.GetState()
 			if state == ase.StateHoldMissingCtx || state == ase.StateHoldAmbiguous {
-				w.dispatchToContextGatheringAgent(context.Background(), a, sID)
+				w.dispatchToGeneralAgent(context.Background(), a, sID)
 			}
 		}(agent, resumeEvt.StartNodeID, uuid.UUID(session.ID.Bytes).String())
-		
+
 		return nil
 	}
 
@@ -254,18 +286,39 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		tenantID = uuid.UUID(session.CreatedBy.Bytes).String()
 	}
 
+	var config map[string]interface{}
+	_ = core.UnmarshalTaskConfig(env.Body, &config)
+
+	dagName := ""
+	if config != nil {
+		if dName, ok := config["dag_name"].(string); ok && dName != "" {
+			dagName = dName
+		}
+	}
+
+	if dagName == "" {
+		w.logger.Error("ase_bridge: dag_name is missing from workflow config")
+		return fmt.Errorf("dag_name is required in workflow config")
+	}
+
+	// Lazily trigger config fetch, which triggers wireAndStartDAG callback if missing
+	ase.GetConfig(tenantID, realmID, dagName)
+
 	// Dynamically resolve the correct DAG instance for this tenant/realm
 	w.dagsMu.RLock()
-	dagToUse := w.dags["default"]
-	if tenantID != "" && w.dags["tenant_"+tenantID] != nil {
-		dagToUse = w.dags["tenant_"+tenantID]
-	} else if realmID != "" && w.dags["realm_"+realmID] != nil {
-		dagToUse = w.dags["realm_"+realmID]
+	dagKey := "tenant_" + tenantID + "_" + dagName
+	if tenantID == "" {
+		if realmID != "" {
+			dagKey = "realm_" + realmID + "_" + dagName
+		} else {
+			dagKey = "global_" + dagName
+		}
 	}
+	dagToUse := w.dags[dagKey]
 	w.dagsMu.RUnlock()
 
 	if dagToUse == nil {
-		w.logger.Error("ase_bridge: no matching DAG found, not even default", "tenantID", tenantID, "realmID", realmID)
+		w.logger.Error("ase_bridge: no matching DAG found", "tenantID", tenantID, "realmID", realmID, "dagName", dagName)
 		return nil
 	}
 
@@ -282,7 +335,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 	// 4. Launch ASE Agents asynchronously
 	for _, txn := range pendingTxns {
-		agent := w.mapToAgent(txn, outflowIs, tenantID, realmID)
+		agent := w.mapToAgent(txn, outflowIs, tenantID, realmID, dagName)
 
 		wg.Add(1)
 		// Fire off the asynchronous Goroutine
@@ -291,10 +344,10 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			if err := a.Run(ctx, dagToUse, w.store); err != nil {
 				w.logger.Error("ase_bridge: agent crashed", "node_id", a.NodeID, "error", err)
 			}
-			
+
 			state := a.GetState()
 			if state == ase.StateHoldMissingCtx || state == ase.StateHoldAmbiguous {
-				w.dispatchToContextGatheringAgent(ctx, a, sessionID)
+				w.dispatchToGeneralAgent(ctx, a, sessionID)
 			}
 		}(agent)
 	}
@@ -313,7 +366,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			ConversationID: cid,
 			Body:           env.Body, // Echo back the body
 		}
-		
+
 		replyBytes, _ := json.Marshal(replyEnv)
 
 		targetSubject := msg.Reply
@@ -343,49 +396,63 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	return nil
 }
 
-func (w *AseBridgeWorker) dispatchToContextGatheringAgent(ctx context.Context, a *ase.AutonomousSemanticEngineNode, sessionID string) {
+func (w *AseBridgeWorker) dispatchToGeneralAgent(ctx context.Context, a *ase.AutonomousSemanticEngineNode, sessionID string) {
+	clientName := "Unknown"
+	entityID := a.TenantID
+	if a.RealmID != "" && w.db != nil {
+		if companyInfo, err := w.db.GetCompanyInfo(ctx, a.RealmID); err == nil {
+			clientName = companyInfo.CompanyName
+		} else {
+			w.logger.Warn("ase_bridge: failed to fetch company info for client name", "realm_id", a.RealmID, "error", err)
+		}
+
+		conn, err := w.db.GetERPConnectionByRealm(ctx, database.GetERPConnectionByRealmParams{
+			ErpSystem: "quickbooks_online",
+			RealmID:   a.RealmID,
+		})
+		if err == nil && conn.EntityID.Valid {
+			entityID = uuid.UUID(conn.EntityID.Bytes).String()
+		} else {
+			w.logger.Warn("ase_bridge: failed to find ERP connection for firm entity ID lookup", "realm_id", a.RealmID, "error", err)
+		}
+	}
+
+	alertPrompt := fmt.Sprintf(
+		"SYSTEM ALERT: A transaction (ID: %s) for Client '%s' (Realm ID: %s) under Tenant ID '%s' is stuck in %s.\n\nReason: %s\nDetails: %s\nAmount: %s\nCash Direction: %s\n\nPlease contact the business owner to ask for clarification to properly categorize this transaction. You can use the LookupClient tool if needed to find their contact details, and use the SendEmail tool as the default communication channel.",
+		a.NodeID, clientName, a.RealmID, entityID, string(a.GetState()), a.HoldReason, a.RawDescription, a.RawAmount, a.CashDirection,
+	)
+
 	payload := map[string]interface{}{
-		"prompt": fmt.Sprintf("The following transaction requires context gathering to resolve ambiguity:\n\nDescription: %s\nAmount: %s\nCash Direction: %s\nHolding Reason: %s\nTenant ID: %s\nRealm ID: %s",
-			a.RawDescription, a.RawAmount, a.CashDirection, a.HoldReason, a.TenantID, a.RealmID),
-		"node_id":        a.NodeID,
-		"session_id":     sessionID,
-		"hold_reason":    a.HoldReason,
-		"cash_direction": a.CashDirection,
-		"description":    a.RawDescription,
-		"amount":         a.RawAmount,
-		"tenant_id":      a.TenantID,
-		"realm_id":       a.RealmID,
+		"prompt":      alertPrompt,
+		"body_text":   alertPrompt,
+		"entity_id":   entityID,
+		"source":      "system",
+		"from_handle": "ase-engine:" + a.NodeID,
+		"to_handle":   "general-agent",
 	}
 
 	payloadBytes, _ := json.Marshal(payload)
 
-	env := core.Envelope{
-		ID:             uuid.New().String(),
-		Timestamp:      time.Now().UTC(),
-		SenderDID:      "did:toro:ase-bridge",
-		ReceiverDID:    "did:toro:context-gathering-agent",
-		Performative:   core.REQUEST,
-		ConversationID: a.NodeID, // using NodeID to group conversational turns
-		Body:           payloadBytes,
-	}
-	envBytes, _ := json.Marshal(env)
-
-	// Since ContextGatheringAgent is registered with ActivityType "agents.context_gathering",
-	// its inbox subject is "worker.inbox.agents.context_gathering"
-	targetSubject, _ := core.BuildWorkerInboxFromActivity("agents.context_gathering")
-	if targetSubject == "" {
-		targetSubject = "worker.inbox.agents.context_gathering"
-	}
-
-	err := w.nc.Publish(targetSubject, envBytes)
+	ingressSubject, err := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
 	if err != nil {
-		w.logger.Error("ase_bridge: failed to dispatch to context gathering agent", "node", a.NodeID, "error", err)
+		w.logger.Error("ase_bridge: failed to derive general agent ingress subject", "error", err)
+		return
+	}
+
+	w.logger.Info("ase_bridge: dispatching system alert to general agent ingress",
+		"target_subject", ingressSubject,
+		"node_id", a.NodeID,
+	)
+
+	err = w.nc.Publish(ingressSubject, payloadBytes)
+	if err != nil {
+		w.logger.Error("ase_bridge: failed to dispatch to general agent ingress", "node", a.NodeID, "target", ingressSubject, "error", err)
 	} else {
-		w.logger.Info("ase_bridge: dispatched node to context gathering agent", "node", a.NodeID, "reason", a.HoldReason)
+		w.logger.Info("ase_bridge: successfully dispatched node to general agent ingress", "node", a.NodeID, "target", ingressSubject)
 	}
 }
 
-func (w *AseBridgeWorker) mapToAgent(txn database.FignodeStagingTransaction, outflowIs, tenantID, realmID string) *ase.AutonomousSemanticEngineNode {
+func (w *AseBridgeWorker) mapToAgent(txn database.FignodeStagingTransaction, outflowIs, tenantID, realmID, dagName string) *ase.AutonomousSemanticEngineNode {
 	desc := ""
 	if txn.RawDescription.Valid {
 		desc = txn.RawDescription.String
@@ -421,10 +488,14 @@ func (w *AseBridgeWorker) mapToAgent(txn database.FignodeStagingTransaction, out
 		}
 	}
 
-	agent := ase.NewASENode(tenantID, realmID, desc, direction, txn.RawAmount)
+	agent := ase.NewASENode(tenantID, realmID, dagName, desc, direction, txn.RawAmount)
 	agent.NodeID = uuid.UUID(txn.ID.Bytes).String()
 	agent.SetLogger(w.logger)
-	
+
+	if txn.HumanAction.Valid && txn.HumanAction.String != "" {
+		agent.ContextUpdates = append(agent.ContextUpdates, "User/Human Resolution: "+txn.HumanAction.String)
+	}
+
 	if len(txn.AseExecutionTrace) > 0 {
 		_ = json.Unmarshal(txn.AseExecutionTrace, &agent.ExecutionTrace)
 		// Rehydrate Candidates map to preserve previous properties during Resume
@@ -434,6 +505,6 @@ func (w *AseBridgeWorker) mapToAgent(txn database.FignodeStagingTransaction, out
 			}
 		}
 	}
-	
+
 	return agent
 }

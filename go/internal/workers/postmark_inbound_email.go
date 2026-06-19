@@ -3,6 +3,7 @@ package workers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/storage"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -58,21 +60,29 @@ type PostmarkInboundEmail struct {
 }
 
 type PostmarkInboundEmailWorker struct {
-	db     *database.Queries
-	logger *slog.Logger
-	cfg    *config.Config
-	nc     *nats.Conn
-	client *http.Client
+	db      *database.Queries
+	logger  *slog.Logger
+	cfg     *config.Config
+	nc      *nats.Conn
+	client  *http.Client
+	storage storage.Service
 }
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
+		storageSvc, err := storage.NewS3Service(deps.Config)
+		if err != nil {
+			deps.Logger.Warn("PostmarkInboundEmailWorker: S3 storage not configured", "error", err)
+			// We can proceed without it, but attachments won't upload to S3
+		}
+		
 		return &PostmarkInboundEmailWorker{
-			db:     deps.Store.Queries,
-			logger: deps.Logger,
-			cfg:    deps.Config,
-			nc:     deps.Queue,
-			client: &http.Client{},
+			db:      deps.Store.Queries,
+			logger:  deps.Logger,
+			cfg:     deps.Config,
+			nc:      deps.Queue,
+			client:  &http.Client{},
+			storage: storageSvc,
 		}, nil
 	})
 }
@@ -140,11 +150,23 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 		recipient = payload.To
 	}
 	agentAlias, _ := parseAgentEmail(recipient)
+	if agentAlias == "coo" {
+		w.logger.Info("routing inbound email directly to VCOO ingress", "from", payload.From, "to", recipient)
+		if w.nc != nil {
+			if err := w.nc.Publish("worker.inbox.vcoo_ingress", msg.Data); err != nil {
+				w.logger.Error("failed to publish VCOO ingress message", "error", err)
+				msg.Nak()
+				return err
+			}
+		}
+		msg.Ack()
+		return nil
+	}
 
-	// 2. Extract In-Reply-To and SMTP Message-ID from headers.
-	// We must use the SMTP Message-ID (with angle brackets) from the Headers
+	// 2. Extract In-Reply-To and Message-ID from headers.
+	// We parse the Message-ID (with angle brackets) from the HTTP API Headers
 	// array, not the top-level MessageID which is Postmark's internal ID.
-	// Email clients use the SMTP Message-ID for threading via In-Reply-To
+	// Email clients use the Message-ID for threading via In-Reply-To
 	// and References headers.
 	var inReplyTo string
 	var smtpMessageID string
@@ -157,7 +179,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 		}
 	}
 	if smtpMessageID == "" {
-		w.logger.Warn("SMTP Message-ID header not found in inbound payload, falling back to Postmark internal MessageID which will not support email threading",
+		w.logger.Warn("Message-ID header not found in inbound API payload, falling back to Postmark internal MessageID which will not support email threading",
 			"postmark_message_id", payload.MessageID,
 			"from", payload.From,
 			"subject", payload.Subject,
@@ -198,10 +220,51 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 		return nil
 	}
 
-	// 3. Prepare metadata
+	// 3. Prepare metadata and upload attachments to S3
 	metadata := make(map[string]interface{})
 	metadata["headers"] = payload.Headers
-	metadata["attachments"] = payload.Attachments
+	
+	processedAttachments := make([]map[string]interface{}, 0, len(payload.Attachments))
+	for i, att := range payload.Attachments {
+		attMeta := map[string]interface{}{
+			"Name":          att.Name,
+			"ContentType":   att.ContentType,
+			"ContentLength": att.ContentLength,
+		}
+		
+		if w.storage != nil && att.Content != "" {
+			// Decode base64
+			decodedBytes, err := base64.StdEncoding.DecodeString(att.Content)
+			if err != nil {
+				w.logger.Error("failed to decode attachment base64", "error", err, "name", att.Name)
+			} else {
+				// Upload to S3
+				safeEntityID := "unknown_entity"
+				if entityID.Valid {
+					safeEntityID = uuid.UUID(entityID.Bytes).String()
+				}
+				s3Key := fmt.Sprintf("attachments/%s/%s/%s-%s", safeEntityID, smtpMessageID, uuid.New().String(), att.Name)
+				
+				err = w.storage.UploadFile(ctx, s3Key, bytes.NewReader(decodedBytes), att.ContentType)
+				if err != nil {
+					w.logger.Error("failed to upload attachment to S3", "error", err, "name", att.Name)
+				} else {
+					attMeta["S3Key"] = s3Key
+				}
+			}
+		} else {
+			// Fallback if S3 is not configured (we keep the raw content just in case, though it's heavy)
+			attMeta["Content"] = att.Content
+		}
+		
+		// Ensure we don't save the raw base64 content back into the database if we uploaded it
+		// We already removed it from attMeta if it was uploaded to S3.
+		payload.Attachments[i].Content = "" 
+		
+		processedAttachments = append(processedAttachments, attMeta)
+	}
+	
+	metadata["attachments"] = processedAttachments
 	metadata["from_name"] = payload.FromName
 	metadata["date"] = payload.Date
 
@@ -406,6 +469,18 @@ func parseAgentEmail(email string) (alias, subdomain string) {
 
 	parts := strings.SplitN(email, "@", 2)
 	if len(parts) != 2 {
+		cleaned := strings.ToLower(strings.TrimSpace(email))
+		switch cleaned {
+		case "sarah", "mark", "alex", "quba", "michael", "robert", "jessica", "andrew", "rachel", "kevin", "laura", "thomas", "amanda":
+			return cleaned, ""
+		}
+		if idx := strings.Index(cleaned, " "); idx >= 0 {
+			firstWord := cleaned[:idx]
+			switch firstWord {
+			case "sarah", "mark", "alex", "quba", "michael", "robert", "jessica", "andrew", "rachel", "kevin", "laura", "thomas", "amanda":
+				return firstWord, ""
+			}
+		}
 		return "", ""
 	}
 	alias = strings.ToLower(strings.TrimSpace(parts[0]))

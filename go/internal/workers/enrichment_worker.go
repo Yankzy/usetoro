@@ -353,21 +353,6 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		*allRows[i] = val
 	}
 
-	// Native Redux Logging Patch Matrix manually executed decoupled from BaseAgent
-	schemaString := `{ "type": "object", "properties": { "enrichments": { "type": "object" }, "status": { "type": "string" } } }`
-	rbacRules := redux.RBACPolicy{
-		AllowedPrefixes: map[string][]string{
-			"accounting.cleanup": {"/enrichments", "/status"},
-		},
-	}
-	cfg := redux.EngineConfig{
-		MaxOperations:   500,
-		MaxPayloadBytes: 1048576,
-		SchemaString:    schemaString,
-		RBAC:            rbacRules,
-	}
-	store, _ := redux.NewStore(cfg)
-
 	var pgWorkflowID pgtype.UUID
 	if workflowID != "" {
 		_ = pgWorkflowID.Scan(workflowID)
@@ -384,22 +369,22 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 		currentSeq = uint64(wf.SequenceID)
 	}
 
-	enrichmentMap := make(map[string]reduxEnrichedTraceRow, len(allRows))
-	for _, ptr := range allRows {
-		enrichmentMap[ptr.ID] = buildReduxEnrichedTraceRow(ptr)
-	}
-	enrichmentsJSON, _ := json.Marshal(enrichmentMap)
-	patch1 := `{"op": "add", "path": "/status", "value": "ENRICHED"}`
-	patch2 := fmt.Sprintf(`{"op": "add", "path": "/enrichments", "value": %s}`, string(enrichmentsJSON))
-
-	event := redux.RFC6902Event{
-		SequenceID: currentSeq,
-		Actor:      "accounting.cleanup",
-		PatchArray: []json.RawMessage{[]byte(patch1), []byte(patch2)},
-	}
-
-	_, _, faults, reduceErr := store.Reduce(ctx, baseState, currentSeq, []redux.RFC6902Event{event})
+	_, _, faults, reduceErr := RunEnrichmentRedux(ctx, baseState, currentSeq, allRows)
 	if reduceErr == nil && len(faults) == 0 {
+		enrichmentMap := make(map[string]reduxEnrichedTraceRow, len(allRows))
+		for _, ptr := range allRows {
+			enrichmentMap[ptr.ID] = buildReduxEnrichedTraceRow(ptr)
+		}
+		enrichmentsJSON, _ := json.Marshal(enrichmentMap)
+		patch1 := `{"op": "add", "path": "/status", "value": "ENRICHED"}`
+		patch2 := fmt.Sprintf(`{"op": "add", "path": "/enrichments", "value": %s}`, string(enrichmentsJSON))
+
+		event := redux.RFC6902Event{
+			SequenceID: currentSeq,
+			Actor:      "accounting.cleanup",
+			PatchArray: []json.RawMessage{[]byte(patch1), []byte(patch2)},
+		}
+
 		eventBytes, _ := json.Marshal(event)
 		var uuidStr string
 		if pgWorkflowID.Valid {
@@ -693,6 +678,43 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 
 	er.ConfidenceScore = 1.0
 	return er, nil
+}
+
+// RunEnrichmentRedux wraps the Redux engine initialization and reduce invocation,
+// separating it from worker networking/persistence side-effects for testing.
+func RunEnrichmentRedux(ctx context.Context, baseState []byte, currentSeq uint64, allRows []*cleanup.EnrichedRow) ([]byte, uint64, []redux.DomainFault, error) {
+	schemaString := `{ "type": "object", "properties": { "enrichments": { "type": "object" }, "status": { "type": "string" } } }`
+	rbacRules := redux.RBACPolicy{
+		AllowedPrefixes: map[string][]string{
+			"accounting.cleanup": {"/enrichments", "/status"},
+		},
+	}
+	cfg := redux.EngineConfig{
+		MaxOperations:   500,
+		MaxPayloadBytes: 1048576,
+		SchemaString:    schemaString,
+		RBAC:            rbacRules,
+	}
+	store, err := redux.NewStore(cfg)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	enrichmentMap := make(map[string]reduxEnrichedTraceRow, len(allRows))
+	for _, ptr := range allRows {
+		enrichmentMap[ptr.ID] = buildReduxEnrichedTraceRow(ptr)
+	}
+	enrichmentsJSON, _ := json.Marshal(enrichmentMap)
+	patch1 := `{"op": "add", "path": "/status", "value": "ENRICHED"}`
+	patch2 := fmt.Sprintf(`{"op": "add", "path": "/enrichments", "value": %s}`, string(enrichmentsJSON))
+
+	event := redux.RFC6902Event{
+		SequenceID: currentSeq,
+		Actor:      "accounting.cleanup",
+		PatchArray: []json.RawMessage{[]byte(patch1), []byte(patch2)},
+	}
+
+	return store.Reduce(ctx, baseState, currentSeq, []redux.RFC6902Event{event})
 }
 
 func init() {

@@ -59,7 +59,7 @@ func (w *ASEResolutionWorker) Subscriptions() []SubscriptionConfig {
 			Subject: subject,
 			Group:   group,
 			Options: []nats.SubOpt{
-				nats.Durable("ase-resolution"),
+				nats.Durable(durableFromSubject(subject)),
 				nats.DeliverAll(),
 				nats.AckExplicit(),
 			},
@@ -104,8 +104,8 @@ func (w *ASEResolutionWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 	w.logger.Info("Executing ASE resolution tool", "node_id", req.NodeID, "start_node", req.StartNodeID)
 
-	query := `UPDATE fignode.staging_transactions SET status = $2, error_message = $3, updated_at = NOW() WHERE id = $1`
-	_, err := w.deps.DBPool.Exec(ctx, query, req.NodeID, "RESUME_PENDING", "")
+	query := `UPDATE fignode.staging_transactions SET status = $2, error_message = $3, human_action = CASE WHEN human_action IS NULL OR human_action = '' THEN $4::text ELSE human_action || '\n' || $4::text END, updated_at = NOW() WHERE id = $1`
+	_, err := w.deps.DBPool.Exec(ctx, query, req.NodeID, "RESUME_PENDING", "", req.ResolvedReason)
 	
 	if err != nil {
 		w.logger.Error("ase_resolution: failed to update staging transaction state", "error", err)

@@ -2,12 +2,14 @@ package workers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"reflect"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/nats-io/nats.go"
 
@@ -20,7 +22,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
-	
+
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
@@ -61,6 +63,36 @@ func NewManager(logger *slog.Logger, nc *nats.Conn) *Manager {
 	}
 }
 
+const workerDeliverLimit = 5
+
+func (m *Manager) emitWorkerDLQ(msg *nats.Msg, reason string, md *nats.MsgMetadata) {
+	dlqSubject := "worker.dlq"
+
+	payload := map[string]interface{}{
+		"subject":   msg.Subject,
+		"reason":    reason,
+		"data":      base64.StdEncoding.EncodeToString(msg.Data),
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+	if md != nil {
+		payload["metadata"] = map[string]interface{}{
+			"stream":            md.Stream,
+			"consumer":          md.Consumer,
+			"stream_sequence":   md.Sequence.Stream,
+			"consumer_sequence": md.Sequence.Consumer,
+			"num_delivered":     md.NumDelivered,
+			"timestamp":         md.Timestamp,
+		}
+	}
+	encoded, _ := json.Marshal(payload)
+	if err := m.nc.Publish(dlqSubject, encoded); err != nil {
+		m.logger.Error("failed to publish worker DLQ", "error", err)
+	}
+	if err := msg.Term(); err != nil {
+		m.logger.Error("failed to terminate worker msg after DLQ", "error", err)
+	}
+}
+
 // Register adds a worker to the manager
 func (m *Manager) Register(w Worker) {
 	m.workers = append(m.workers, w)
@@ -88,24 +120,82 @@ func (m *Manager) StartAll(ctx context.Context) error {
 		}
 
 		for _, subCfg := range worker.Subscriptions() {
-			sub, err := js.QueueSubscribe(subCfg.Subject, subCfg.Group, func(msg *nats.Msg) {
-				defer func() {
-					if r := recover(); r != nil {
-						m.logger.Error("worker panic recovered", "panic", r, "subject", msg.Subject, "stack", string(debug.Stack()))
-						msg.Nak()
+			opts := append([]nats.SubOpt{nats.MaxDeliver(workerDeliverLimit)}, subCfg.Options...)
+
+			subscribeFunc := func() (*nats.Subscription, error) {
+				return js.QueueSubscribe(subCfg.Subject, subCfg.Group, func(msg *nats.Msg) {
+					defer func() {
+						if r := recover(); r != nil {
+							m.logger.Error("worker panic recovered", "panic", r, "subject", msg.Subject, "stack", string(debug.Stack()))
+							msg.Nak()
+						}
+					}()
+
+					md, _ := msg.Metadata()
+					if md != nil && md.NumDelivered >= workerDeliverLimit {
+						m.emitWorkerDLQ(msg, "exceeded max deliveries", md)
+						return
 					}
-				}()
 
-				if err := worker.Handle(ctx, msg); err != nil {
-					m.logger.Error("worker handle error", "subject", msg.Subject, "error", err)
-					msg.Nak()
-					return
-				}
-				msg.Ack()
-			}, subCfg.Options...)
+					if err := worker.Handle(ctx, msg); err != nil {
+						m.logger.Error("worker handle error", "subject", msg.Subject, "error", err)
+						msg.Nak()
+						return
+					}
+					msg.Ack()
+				}, opts...)
+			}
 
+			sub, err := subscribeFunc()
 			if err != nil {
-				return fmt.Errorf("failed to subscribe worker %T to %s: %w", worker, subCfg.Subject, err)
+				errMsg := err.Error()
+				isMismatch := strings.Contains(errMsg, "consumer already exists") ||
+					strings.Contains(errMsg, "name already in use") ||
+					strings.Contains(errMsg, "subject does not match") ||
+					strings.Contains(errMsg, "configuration requests")
+
+				if isMismatch {
+					durable := durableFromSubject(subCfg.Subject)
+					durables := []string{durable}
+					if strings.Contains(subCfg.Subject, "ase_bridge") {
+						durables = append(durables, "ase-orchestrator-worker")
+					}
+					if subCfg.Subject == "ase.events.resume" {
+						durables = append(durables, "ase-orchestrator-resume")
+					}
+					if strings.Contains(subCfg.Subject, "ase_resolution") {
+						durables = append(durables, "ase-resolution")
+					}
+					if strings.Contains(subCfg.Subject, "vcoo") {
+						durables = append(durables, "vcoo-worker")
+					}
+					if strings.Contains(subCfg.Subject, "omni_chat") || strings.Contains(subCfg.Subject, "outgoing.chat") {
+						durables = append(durables, "omni-chat-worker")
+					}
+					if strings.Contains(subCfg.Subject, "telemetry") {
+						durables = append(durables, "ase-telemetry-worker")
+					}
+					if strings.Contains(subCfg.Subject, "qbo_fetch") {
+						durables = append(durables, "qbo-fetch")
+					}
+
+					streamName, sErr := findStreamForSubject(js, subCfg.Subject)
+					if sErr == nil {
+						for _, d := range durables {
+							m.logger.Warn("Consumer configuration mismatch detected, deleting consumer to recreate...", "durable", d, "stream", streamName, "error", err)
+							if delErr := js.DeleteConsumer(streamName, d); delErr != nil {
+								m.logger.Debug("failed to delete consumer during recovery", "durable", d, "stream", streamName, "error", delErr)
+							}
+						}
+						sub, err = subscribeFunc()
+					} else {
+						m.logger.Error("failed to resolve stream for subject during mismatch recovery", "subject", subCfg.Subject, "error", sErr)
+					}
+				}
+
+				if err != nil {
+					return fmt.Errorf("failed to subscribe worker %T to %s: %w", worker, subCfg.Subject, err)
+				}
 			}
 
 			m.subscriptions = append(m.subscriptions, sub)
@@ -236,7 +326,6 @@ func ExtractRows(data []byte) ([]map[string]interface{}, error) {
 	return nil, fmt.Errorf("data does not match standard row formats (array or mapped_rows)")
 }
 
-
 // InferToolConfigs iterates through all loaded workers, checks if they implement ToolExposer,
 // and dynamically infers their JSON schemas. It returns these as ToolConfigs for the LLM agents.
 func (m *Manager) InferToolConfigs(cfg *config.Config) []core.ToolConfig {
@@ -325,4 +414,50 @@ func inferSchema(v any) string {
 
 	b, _ := json.MarshalIndent(schema, "", "  ")
 	return string(b)
+}
+
+func findStreamForSubject(js nats.JetStreamContext, subject string) (string, error) {
+	namesChan := js.StreamNames()
+	var streams []string
+	for name := range namesChan {
+		streams = append(streams, name)
+	}
+
+	for _, streamName := range streams {
+		info, err := js.StreamInfo(streamName)
+		if err != nil {
+			continue
+		}
+		for _, s := range info.Config.Subjects {
+			if subjectIsCovered(subject, s) {
+				return streamName, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no stream found covering subject %q", subject)
+}
+
+func subjectIsCovered(req, existing string) bool {
+	if req == existing {
+		return true
+	}
+
+	reqTokens := strings.Split(req, ".")
+	exTokens := strings.Split(existing, ".")
+
+	for i, exToken := range exTokens {
+		if exToken == ">" {
+			return true
+		}
+
+		if i >= len(reqTokens) {
+			return false
+		}
+
+		if exToken != "*" && exToken != reqTokens[i] {
+			return false
+		}
+	}
+
+	return len(reqTokens) == len(exTokens)
 }

@@ -192,6 +192,15 @@ COMPANY CHART OF ACCOUNTS:
 Select the SINGLE BEST account ID (the ID field) that matches. Do not make up an ID.
 If no account fits perfectly, select the closest general category.`, strings.Join(coaLines, "\n"))
 
+	systemPrompt += "\n\nCRITICAL RULES FOR BATCH PROCESSING:\n" +
+		"1. The USER REQUEST provides a map of transactions under the 'rows' key. The keys in this map are unique identifiers for each transaction.\n" +
+		"2. Your output MUST be a valid JSON array containing exactly ONE RFC 6902 JSON patch operation.\n" +
+		"3. This single patch MUST use exactly \"op\": \"add\" and \"path\": \"/rows\".\n" +
+		"4. The \"value\" of the patch MUST be an object where the keys are EXACTLY the unique transaction identifiers from the input.\n" +
+		"5. Inside each row's classification object, you MUST return a 'property' string AND a 'candidates' map.\n" +
+		"6. The 'candidates' map MUST contain at least 2 numbered candidate entries (e.g. \"1\": {...}, \"2\": {...}) for that row."
+
+
 	rows := cs.batchToRows(ctx, batch)
 
 	genericResp, err := cs.dispatchViaNATS(ctx, systemPrompt, rows, cashDirection, tenantID, realmID, dagName)

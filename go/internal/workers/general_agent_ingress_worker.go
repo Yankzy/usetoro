@@ -414,18 +414,35 @@ func (w *GeneralAgentIngressWorker) resolveAgentInbox() (string, error) {
 		CapabilityType: "agents.general.purpose",
 	}
 	queryBytes, _ := json.Marshal(query)
-	resp, err := w.nc.Request(core.SubjectAlmanacQuery, queryBytes, 2*time.Second)
+
+	inbox := nats.NewInbox()
+	sub, err := w.nc.SubscribeSync(inbox)
 	if err != nil {
-		return "", fmt.Errorf("almanac query: %w", err)
+		return "", fmt.Errorf("subscribe sync: %w", err)
 	}
+	defer sub.Unsubscribe()
+
+	if err := w.nc.PublishRequest(core.SubjectAlmanacQuery, inbox, queryBytes); err != nil {
+		return "", fmt.Errorf("publish almanac query: %w", err)
+	}
+
 	var entries []lookup.AlmanacEntry
-	if err := json.Unmarshal(resp.Data, &entries); err != nil {
-		return "", fmt.Errorf("parse almanac: %w", err)
+	deadline := time.Now().Add(2 * time.Second)
+
+	for time.Now().Before(deadline) {
+		msg, err := sub.NextMsg(time.Until(deadline))
+		if err != nil {
+			break
+		}
+
+		if err := json.Unmarshal(msg.Data, &entries); err == nil {
+			if len(entries) > 0 && len(entries[0].Endpoints) > 0 {
+				return entries[0].Endpoints[0], nil
+			}
+		}
 	}
-	if len(entries) == 0 || len(entries[0].Endpoints) == 0 {
-		return "", fmt.Errorf("general agent not found in Almanac")
-	}
-	return entries[0].Endpoints[0], nil
+
+	return "", fmt.Errorf("general agent not found in Almanac or timeout")
 }
 
 func mustMarshalRaw(v any) json.RawMessage {

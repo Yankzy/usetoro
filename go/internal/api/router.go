@@ -2,6 +2,9 @@ package api
 
 import (
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
 
 	"github.com/Yankzy/usetoro/tap/pkg/micrion"
 )
@@ -49,11 +52,10 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	mux.HandleFunc("GET /files/{session_id}/audit", h.HandleAudit)
 
 	// Wallet Operations (Stripe / Checks)
-	mux.HandleFunc("GET /wallet/balance", h.HandleGetWalletBalance)
-	mux.HandleFunc("POST /wallet/topup", h.HandleCreateWalletTopUp)
-	mux.HandleFunc("POST /financial-connections/sessions", h.HandleCreateStripeSession)
-	mux.HandleFunc("GET /financial-connections/accounts/{account_id}", h.HandleGetStripeAccount)
-
+	mux.Handle("GET /wallet/balance", h.Authenticator.Middleware(http.HandlerFunc(h.HandleGetWalletBalance)))
+	mux.Handle("POST /wallet/topup", h.Authenticator.Middleware(http.HandlerFunc(h.HandleCreateWalletTopUp)))
+	mux.Handle("POST /wallet/payment-sheet", h.Authenticator.Middleware(http.HandlerFunc(h.HandleCreatePaymentSheet)))
+	
 	// Agent Tollbooth Endpoints (Strictly Metered)
 	agentToll := micrion.TollboothMiddleware(wm, 1616)
 	mux.Handle("GET /agent/realms/{realmId}/transactions", agentToll(http.HandlerFunc(h.HandleGetUnifiedTransactions)))
@@ -62,8 +64,24 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	mux.Handle("GET /agent/realms/{realmId}/customers", agentToll(http.HandlerFunc(h.HandleGetCustomers)))
 	mux.Handle("POST /agent/files/upload", agentToll(http.HandlerFunc(h.HandleFileIngestion)))
 
-	// Backward compatibility: specific Stripe endpoint
-	mux.HandleFunc("POST /webhooks/stripe/{conn_id}", h.HandleStripeWebhook)
+	// Stripe Reverse Proxy to Python Worker
+	stripeURL, _ := url.Parse("http://python-worker:8000")
+	stripeProxy := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(stripeURL)
+			if pr.Out.URL.Path == "/financial-connections/sessions" {
+				pr.Out.URL.Path = "/v1/financial-connections/session"
+			} else if strings.HasPrefix(pr.Out.URL.Path, "/financial-connections/") {
+				pr.Out.URL.Path = "/v1" + pr.Out.URL.Path
+			} else if strings.HasPrefix(pr.Out.URL.Path, "/webhooks/stripe") {
+				pr.Out.URL.Path = "/v1/webhooks/stripe"
+			}
+		},
+	}
+
+	mux.Handle("/financial-connections/", stripeProxy)
+	mux.Handle("POST /webhooks/stripe/{conn_id}", stripeProxy)
+	mux.Handle("POST /webhooks/stripe", stripeProxy)
 
 	// E2E Redux Test Flow (Global Entrypoint)
 	mux.HandleFunc("POST /test/redux", h.HandleTestRedux)
@@ -74,6 +92,15 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	// System & Actor Discovery
 	mux.HandleFunc("GET /v1/system/actors", h.HandleListActors)
 	mux.HandleFunc("GET /v1/workflows/{id}", h.HandleGetWorkflowStatus)
+
+	// ASE Configuration API
+	mux.HandleFunc("GET /ase/configs", h.HandleListASEConfigs)
+	mux.HandleFunc("GET /ase/config", h.HandleGetASEConfig)
+	mux.HandleFunc("POST /ase/config", h.HandleUpsertASEConfig)
+	mux.HandleFunc("GET /ase/editor", h.HandleASEDebugUI)
+	mux.HandleFunc("GET /ase/config/versions", h.HandleListASEDagVersions)
+	mux.HandleFunc("GET /ase/config/version", h.HandleGetASEDagVersion)
+	mux.HandleFunc("POST /ase/config/restore", h.HandleRestoreASEDagVersion)
 
 
 	// Marketing Lead Forms

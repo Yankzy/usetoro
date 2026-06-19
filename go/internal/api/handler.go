@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/auth"
-	"github.com/Yankzy/usetoro/internal/connectors"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/resilience"
@@ -79,9 +78,6 @@ type Handler struct {
 	NATS          *queue.Client
 	Exporter      Exporter
 	WalletManager *micrion.WalletManager
-
-	// Stripe Connector
-	Stripe *connectors.StripeConnector
 }
 
 // NewHandler creates a new Handler.
@@ -104,7 +100,6 @@ func NewHandler(
 	cleanupNATS *queue.Client,
 	cleanupExporter Exporter,
 	wm *micrion.WalletManager,
-	stripeConnector *connectors.StripeConnector,
 ) *Handler {
 	return &Handler{
 		Logger:             logger,
@@ -127,7 +122,6 @@ func NewHandler(
 		NATS:               cleanupNATS,
 		Exporter:           cleanupExporter,
 		WalletManager:      wm,
-		Stripe:             stripeConnector,
 	}
 }
 
@@ -299,14 +293,6 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Request-ID", requestID)
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
-}
-
-// HandleStripeWebhook is a backward-compatible wrapper for Stripe webhooks.
-// Deprecated: Use HandleWebhook with /webhooks/stripe/{conn_id} instead.
-func (h *Handler) HandleStripeWebhook(w http.ResponseWriter, r *http.Request) {
-	// Inject "stripe" as the provider for backward compatibility
-	r.SetPathValue("provider", "stripe")
-	h.HandleWebhook(w, r)
 }
 
 // HandleTestRedux triggers the E2E Redux agent via NATS globally.

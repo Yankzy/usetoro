@@ -12,6 +12,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/ingest"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
+	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/Yankzy/usetoro/tap/pkg/micrion"
 	"github.com/nats-io/nats.go"
@@ -43,7 +44,6 @@ func NewServer(
 	registry := NewVerifierRegistry()
 
 	// Register supported webhook providers
-	registry.Register(NewStripeVerifier())
 	registry.Register(NewHMACVerifier("qbo", "intuit-signature", crypto.SHA256))
 
 	connector := connectors.NewQBOConnector(logger, cfg, st, natsClient.Conn())
@@ -80,13 +80,15 @@ func NewServer(
 	transactionService := accounting.NewTransactionService(logger, st.Queries, nil, nil, nil, nil, natsConn, "toro.erp.events.*")
 	entityService := accounting.NewEntityService(logger, st.Queries)
 
-	stripeConnector := connectors.NewStripeConnector(logger, cfg)
+	if err := ase.InitConfig(st.Queries, redisClient, logger); err != nil {
+		logger.Error("Failed to initialize ASE config", "error", err)
+	}
 
 	h := NewHandler(
 		logger, st, pub, registry, cfg.MaxWebhookBodySize, qboConfig,
 		authenticator, redisClient, st.Queries, reconciler, attachableService,
 		transactionService, entityService,
-		st.Pool, st.Queries, natsClient, exporter, wm, stripeConnector,
+		st.Pool, st.Queries, natsClient, exporter, wm,
 	)
 	mux := NewRouter(h, wm)
 

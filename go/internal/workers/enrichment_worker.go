@@ -515,7 +515,7 @@ func (e *EnrichmentWorker) broadcastEnrichmentProof(ctx context.Context, msg *na
 		return err
 	}
 	e.logger.Info("🚀 [DEBUG] enrichment-worker sending message to JetStream", "topic", targetTopic, "data_length", len(finalBytes))
-	
+
 	if isCoreReply {
 		err = e.nc.Publish(targetTopic, finalBytes)
 	} else {

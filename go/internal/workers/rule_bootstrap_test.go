@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/nats-io/nats.go"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/nats-io/nats.go"
 )
 
 func TestRuleBootstrapWorker_Handle_UnwrapsEnvelope(t *testing.T) {

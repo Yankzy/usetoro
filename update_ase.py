@@ -1,6 +1,6 @@
 import re
 
-with open("go/internal/erp/ase/ase.yml", "r") as f:
+with open("go/internal/erp/ase/dags/ase.yml", "r") as f:
     content = f.read()
 
 def replacer(match):
@@ -34,7 +34,7 @@ def replacer(match):
 # Using a more robust regex that stops at the closing brace of the JSON
 new_content = re.sub(r'EXPECTED OUTPUT FORMAT:\s*(\{\s*"property".*?\n\s*\})', replacer, content, flags=re.DOTALL)
 
-with open("go/internal/erp/ase/ase.yml", "w") as f:
+with open("go/internal/erp/ase/dags/ase.yml", "w") as f:
     f.write(new_content)
 
 print(f"Replaced {len(re.findall(r'EXPECTED OUTPUT FORMAT:\s*(\{\s*\"property\".*?\n\s*\})', content, flags=re.DOTALL))} occurrences.")

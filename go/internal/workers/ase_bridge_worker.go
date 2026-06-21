@@ -105,7 +105,7 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 	}
 
 	// Register hot-reload callback to dynamically load tenant DAGs
-	ase.SetOnConfigLoaded(wireAndStartDAG)
+	ase.RegisterOnConfigLoaded(wireAndStartDAG)
 
 	// Process any already loaded configs
 	for key, cfg := range ase.GetAllConfigs() {
@@ -301,8 +301,8 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return fmt.Errorf("dag_name is required in workflow config")
 	}
 
-	// Lazily trigger config fetch, which triggers wireAndStartDAG callback if missing
-	ase.GetConfig(tenantID, realmID, dagName)
+	// Lazily trigger config fetch, which returns the config from DB or cache
+	cfg := ase.GetConfig(tenantID, realmID, dagName)
 
 	// Dynamically resolve the correct DAG instance for this tenant/realm
 	w.dagsMu.RLock()
@@ -316,6 +316,35 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 	dagToUse := w.dags[dagKey]
 	w.dagsMu.RUnlock()
+
+	// If the config is present but we haven't wired it yet, do it now
+	if dagToUse == nil && cfg != nil {
+		w.dagsMu.Lock()
+		if w.dags[dagKey] == nil {
+			dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
+			
+			// Initialize the Classifier Service (to generate ThinkFuncs)
+			classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
+			classifierService.SetDB(w.db)
+
+			for _, node := range dag.Nodes {
+				if node.EdgeType == "dynamic" {
+					node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
+				} else if node.PromptKey != "" {
+					node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
+				} else {
+					node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
+						return nil, nil // No-op
+					})
+				}
+			}
+			dag.StartAll()
+			w.dags[dagKey] = dag
+			w.logger.Info("ase_orchestrator: wired dynamic DAG nodes on demand", "key", dagKey)
+		}
+		dagToUse = w.dags[dagKey]
+		w.dagsMu.Unlock()
+	}
 
 	if dagToUse == nil {
 		w.logger.Error("ase_bridge: no matching DAG found", "tenantID", tenantID, "realmID", realmID, "dagName", dagName)
@@ -422,11 +451,19 @@ func (w *AseBridgeWorker) dispatchToGeneralAgent(ctx context.Context, a *ase.Aut
 		}
 	}
 
+	startNodeID := "default"
+	if len(a.ExecutionTrace) > 0 {
+		startNodeID = a.ExecutionTrace[len(a.ExecutionTrace)-1].DAGNodeID
+	}
+
 	alertPrompt := fmt.Sprintf(
 		"SYSTEM ALERT: A transaction (ID: %s) for Client '%s' (Realm ID: %s) under Tenant ID '%s' is stuck in %s.\n\nReason: %s\nDetails: %s\nAmount: %s\nCash Direction: %s\n\n"+
 			"Please contact the business owner to ask for clarification to properly categorize this transaction. You can use the LookupClient tool if needed to find their contact details, and use the SendEmail tool as the default communication channel.\n\n"+
-			"IMPORTANT: Before sending an email, you MUST use the FetchCommunicationHistory tool to check if we have already sent an email to this client about this exact transaction (same amount, customer, and description) within the last 24 hours. If an email has already been sent about this specific transaction recently, DO NOT send a duplicate email.",
-		a.NodeID, clientName, a.RealmID, entityID, string(a.GetState()), a.HoldReason, a.RawDescription, a.RawAmount, a.CashDirection,
+			"IMPORTANT: Before sending an email, you MUST use the FetchCommunicationHistory tool to check if we have already sent an email to this client about this exact transaction (same amount, customer, and description) within the last 24 hours. If an email has already been sent about this specific transaction recently, DO NOT send a duplicate email.\n\n"+
+			"When the user replies back with the requested information or clarification, you MUST use the UpdateTransactionClassification tool. This tool will pass the user's answer back to the DAG and unblock it so it can proceed. Use this tool only when you have gathered enough context from the user to confidently resolve the hold reason. \n\n"+
+			"CRITICAL LOOP PREVENTION: If you already used the UpdateTransactionClassification tool with the user's latest reply and the transaction generated ANOTHER system alert because it is STILL stuck, you MUST ask the user for more clarification. Do NOT repeatedly submit the same user reply using the tool over and over again.\n\n"+
+			"CRITICAL: When using the UpdateTransactionClassification tool, you MUST provide '%s' as the start_node_id. Do NOT invent or guess the start_node_id.",
+		a.NodeID, clientName, a.RealmID, entityID, string(a.GetState()), a.HoldReason, a.RawDescription, a.RawAmount, a.CashDirection, startNodeID,
 	)
 
 	payload := map[string]interface{}{

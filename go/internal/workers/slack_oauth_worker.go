@@ -171,7 +171,7 @@ func (w *SlackOAuthWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	data.Set("code", payload.Code)
 	data.Set("code_verifier", pkceState.CodeVerifier)
 	data.Set("redirect_uri", pkceState.RedirectURI)
-	
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/oauth.v2.access", strings.NewReader(data.Encode()))
 	if err != nil {
 		w.logger.Error("slack oauth: failed to create request", "error", err)

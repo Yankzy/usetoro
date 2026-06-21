@@ -1,6 +1,6 @@
 import re
 
-with open('go/internal/erp/ase/ase.yml', 'r') as f:
+with open('go/internal/erp/ase/dags/ase.yml', 'r') as f:
     content = f.read()
 
 def replace_expected_output(match):
@@ -43,6 +43,6 @@ def replace_expected_output(match):
 
 new_content = re.sub(r'EXPECTED OUTPUT FORMAT:\s*(\{.*?\n    \})', replace_expected_output, content, flags=re.DOTALL)
 
-with open('go/internal/erp/ase/ase.yml', 'w') as f:
+with open('go/internal/erp/ase/dags/ase.yml', 'w') as f:
     f.write(new_content)
 print("Done formatting EXPECTED OUTPUT FORMAT!")

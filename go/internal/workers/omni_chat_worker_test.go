@@ -49,9 +49,9 @@ func TestSendEmail_FallbackBranch_UsesSarahAddresses(t *testing.T) {
 	// Arrange: no virtual employees configured, no PostmarkSenderSignature.
 	// The fallback branch should use sarah@usetoro.io for From and sarah@cpa.usetoro.io for ReplyTo.
 	cfg := &config.Config{
-		PostmarkServerToken:      "test-token",
-		PostmarkSenderSignature:  "", // empty → fallback branch
-		VirtualEmployees:         map[string]config.AgentAlias{}, // no aliases
+		PostmarkServerToken:     "test-token",
+		PostmarkSenderSignature: "",                             // empty → fallback branch
+		VirtualEmployees:        map[string]config.AgentAlias{}, // no aliases
 	}
 	cleanup := setupTestConfig(cfg)
 	defer cleanup()
@@ -67,8 +67,8 @@ func TestSendEmail_FallbackBranch_UsesSarahAddresses(t *testing.T) {
 	// Act: send an email with a "from" handle that contains "@" but no matching alias.
 	msgID, err := w.sendEmail(
 		context.Background(),
-		"client@example.com",      // to
-		"General Purpose Agent",  // from — no "@", no alias match
+		"client@example.com",    // to
+		"General Purpose Agent", // from — no "@", no alias match
 		"Test Subject",
 		"Test body",
 		"", // no in-reply-to
@@ -124,9 +124,9 @@ func TestSendEmail_FallbackBranch_FromWithAtSign(t *testing.T) {
 	// When "from" contains "@" but no agent alias matches and no PostmarkSenderSignature,
 	// the From address should be the bare fallbackFrom ("sarah@usetoro.io").
 	cfg := &config.Config{
-		PostmarkServerToken:      "test-token",
-		PostmarkSenderSignature:  "",
-		VirtualEmployees:         map[string]config.AgentAlias{},
+		PostmarkServerToken:     "test-token",
+		PostmarkSenderSignature: "",
+		VirtualEmployees:        map[string]config.AgentAlias{},
 	}
 	cleanup := setupTestConfig(cfg)
 	defer cleanup()

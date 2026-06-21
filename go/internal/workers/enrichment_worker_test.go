@@ -89,9 +89,9 @@ func TestRunEnrichmentRedux_SystemWrapper(t *testing.T) {
 		// Instead of constructing it via Go struct, we can test by manually adding an array key
 		// to the baseState outside the systemKeys list.
 		badBaseStateMap := map[string]interface{}{
-			"workflow_def":  "CSV Cleaner Pipeline",
-			"instance_path": []interface{}{"u1"},
-			"variables":     map[string]interface{}{},
+			"workflow_def":        "CSV Cleaner Pipeline",
+			"instance_path":       []interface{}{"u1"},
+			"variables":           map[string]interface{}{},
 			"custom_domain_array": []interface{}{"violating_array"}, // Not a system key, so checked!
 		}
 		badBaseStateBytes, _ := json.Marshal(badBaseStateMap)

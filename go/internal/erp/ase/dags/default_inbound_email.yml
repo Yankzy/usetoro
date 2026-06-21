@@ -1,0 +1,98 @@
+hyper_parameters:
+  confidence_threshold: 0.95
+  auto_advance: true
+  max_llm_retries: 3
+  llm_timeout_seconds: 60
+  batch_flush_seconds: 1
+
+prompts:
+  intent_specialist:
+    - |
+      You are an Inbound Message Triage node. Your job is to classify the user's intent based on their email or message.
+      Read the incoming message and determine what the user is trying to accomplish.
+      
+      Select from the following intents:
+      1. PROVIDE_RECEIPT: The user has attached or pasted a receipt/invoice.
+      2. CLARIFICATION: The user is answering a question about a transaction (e.g., explaining a business purpose).
+      3. APPROVAL: The user is explicitly approving a transaction.
+      4. UNKNOWN: The intent is not clear or does not match the above.
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "intent",
+              "candidates": {
+              "1": { "value": "PROVIDE_RECEIPT", "confidence": 0.99, "reasoning": "User attached a receipt." },
+              "2": { "value": "UNKNOWN", "confidence": 0.01, "reasoning": "Fallback." }
+                }
+              }
+            }
+          }
+        ]
+
+  context_specialist:
+    - |
+      You are a Context Resolution node. Your job is to determine if the provided intent matches any active holding states for this user.
+      (In a fully implemented system, this node would use dynamic edge providers to query the database for pending states).
+      
+      For this default DAG, we will assume context is found if the intent was successfully parsed.
+      Select from: CONTEXT_FOUND, CONTEXT_MISSING.
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "context_resolution",
+              "candidates": {
+              "1": { "value": "CONTEXT_FOUND", "confidence": 0.99, "reasoning": "Context linked successfully." },
+              "2": { "value": "CONTEXT_MISSING", "confidence": 0.01, "reasoning": "Fallback." }
+                }
+              }
+            }
+          }
+        ]
+
+dag:
+  entry_node: "extract_intent"
+  nodes:
+    extract_intent:
+      kind: "classifier"
+      name: "extract_intent"
+      prompt_key: "intent_specialist"
+      children:
+        "PROVIDE_RECEIPT": "resolve_context"
+        "CLARIFICATION": "resolve_context"
+        "APPROVAL": "resolve_context"
+      default_child: "triage_failed"
+      
+    resolve_context:
+      kind: "classifier"
+      name: "resolve_context"
+      prompt_key: "context_specialist"
+      children:
+        "CONTEXT_FOUND": "route_and_trigger"
+      default_child: "triage_failed"
+      
+    route_and_trigger:
+      kind: "action"
+      name: "route_and_trigger"
+      execution_parameters:
+        action_type: "resume_bookkeeping_dag"
+      default_child: "triage_complete"
+
+    triage_failed:
+      kind: "terminal"
+      name: "triage_failed"
+
+    triage_complete:
+      kind: "terminal"
+      name: "triage_complete"

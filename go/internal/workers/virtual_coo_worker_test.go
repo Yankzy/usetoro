@@ -51,9 +51,9 @@ type mockVCOOQueryRows struct {
 	index int
 }
 
-func (r *mockVCOOQueryRows) Close() {}
-func (r *mockVCOOQueryRows) Err() error { return nil }
-func (r *mockVCOOQueryRows) CommandTag() pgconn.CommandTag { return pgconn.CommandTag{} }
+func (r *mockVCOOQueryRows) Close()                                       {}
+func (r *mockVCOOQueryRows) Err() error                                   { return nil }
+func (r *mockVCOOQueryRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
 func (r *mockVCOOQueryRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
 func (r *mockVCOOQueryRows) Next() bool {
 	r.index++
@@ -72,8 +72,8 @@ func (r *mockVCOOQueryRows) Scan(dest ...any) error {
 	return nil
 }
 func (r *mockVCOOQueryRows) Values() ([]any, error) { return nil, nil }
-func (r *mockVCOOQueryRows) RawValues() [][]byte { return nil }
-func (r *mockVCOOQueryRows) Conn() *pgx.Conn { return nil }
+func (r *mockVCOOQueryRows) RawValues() [][]byte    { return nil }
+func (r *mockVCOOQueryRows) Conn() *pgx.Conn        { return nil }
 
 type mockVCOORow struct {
 	row database.GetUserVCOODataByEmailRow
@@ -256,9 +256,9 @@ func TestVirtualCOOWorker_CronCheck(t *testing.T) {
 	defer server.Close()
 
 	cfg := &config.Config{
-		VCOOFounderEmail:         "founder@yourplatform.com",
-		PostmarkServerToken:      "test-token",
-		PostmarkSenderSignature:  "coo@inbound.yourplatform.com",
+		VCOOFounderEmail:        "founder@yourplatform.com",
+		PostmarkServerToken:     "test-token",
+		PostmarkSenderSignature: "coo@inbound.yourplatform.com",
 	}
 
 	var mockUUID pgtype.UUID

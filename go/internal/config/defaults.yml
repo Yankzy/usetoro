@@ -256,6 +256,7 @@ agents:
       - name: "LookupClient"
       - name: "SendEmail"
       - name: "FetchCommunicationHistory"
+      - name: "UpdateTransactionClassification"
       - name: "Bash"
       - name: "FileRead"
       - name: "FileWrite"

@@ -405,11 +405,11 @@ func (w *ClassificationStageWorker) Handle(ctx context.Context, msg *nats.Msg) e
 	groups := w.groupRows(rows, stageCfg.GroupBy, outflowIs)
 	w.logger.Info("classification_stage: grouped rows", "stage", stageCfg.Stage, "groups", len(groups))
 
-		// Extract opposing direction descriptions for cross-hinting within the session.
-		if stageCfg.GroupBy == "direction" {
-			ctxMap["opposing_descs_outflow"] = extractDescs(groups["INFLOW"])
-			ctxMap["opposing_descs_inflow"] = extractDescs(groups["OUTFLOW"])
-		}
+	// Extract opposing direction descriptions for cross-hinting within the session.
+	if stageCfg.GroupBy == "direction" {
+		ctxMap["opposing_descs_outflow"] = extractDescs(groups["INFLOW"])
+		ctxMap["opposing_descs_inflow"] = extractDescs(groups["OUTFLOW"])
+	}
 
 	// Find agent task queue.
 	agentTaskQueue := "tasks.accounting.1.batch_categorization"
@@ -527,7 +527,7 @@ func (w *ClassificationStageWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		written++
 	}
 
-		// Persist cash_direction for the macro stage with direction grouping.
+	// Persist cash_direction for the macro stage with direction grouping.
 	if stageCfg.GroupBy == "direction" {
 		for groupKey, gr := range groups {
 			for _, r := range gr {
@@ -548,9 +548,9 @@ func (w *ClassificationStageWorker) Handle(ctx context.Context, msg *nats.Msg) e
 // allowing only pre-approved db_filter strings defined in the workflow YAML.
 func (w *ClassificationStageWorker) isValidDBFilter(filter string) bool {
 	allowedFilters := map[string]bool{
-		"rule_group_id IS NULL AND macro_class IS NULL AND status = 'ENRICHED'": true,
-		"rule_group_id IS NULL AND macro_class IS NOT NULL AND account_type IS NULL": true,
-		"rule_group_id IS NULL AND account_type IS NOT NULL AND merchant_name IS NULL": true,
+		"rule_group_id IS NULL AND macro_class IS NULL AND status = 'ENRICHED'":                 true,
+		"rule_group_id IS NULL AND macro_class IS NOT NULL AND account_type IS NULL":            true,
+		"rule_group_id IS NULL AND account_type IS NOT NULL AND merchant_name IS NULL":          true,
 		"rule_group_id IS NULL AND account_type IS NOT NULL AND predicted_account_name IS NULL": true,
 	}
 	return allowedFilters[strings.TrimSpace(filter)]
@@ -603,17 +603,16 @@ func (w *ClassificationStageWorker) queryRows(ctx context.Context, sessionID pgt
 		if macroClass.Valid {
 			row["macro_class"] = macroClass.String
 		}
-			if accountType.Valid {
-				row["account_type"] = accountType.String
-			}
-			if erpTransactionID.Valid {
-				row["erp_transaction_id"] = erpTransactionID.String
-			}
-			result = append(result, row)
+		if accountType.Valid {
+			row["account_type"] = accountType.String
+		}
+		if erpTransactionID.Valid {
+			row["erp_transaction_id"] = erpTransactionID.String
+		}
+		result = append(result, row)
 	}
 	return result, rows.Err()
 }
-
 
 // splitByDirection segregates rows into OUTFLOWs and INFLOWs based on the row's
 // numeric amount and the session's outflow_is rule (whether negative or positive
@@ -704,16 +703,15 @@ func (w *ClassificationStageWorker) groupRows(rows []map[string]interface{}, gro
 			groups[mc] = append(groups[mc], r)
 		}
 
-		case "transaction_type":
-			for _, r := range rows {
-				mc, _ := r["macro_class"].(string)
-				if mc == "REVENUE" {
-					groups["INFLOW"] = append(groups["INFLOW"], r)
-				} else {
-					groups["OUTFLOW"] = append(groups["OUTFLOW"], r)
-				}
+	case "transaction_type":
+		for _, r := range rows {
+			mc, _ := r["macro_class"].(string)
+			if mc == "REVENUE" {
+				groups["INFLOW"] = append(groups["INFLOW"], r)
+			} else {
+				groups["OUTFLOW"] = append(groups["OUTFLOW"], r)
 			}
-
+		}
 
 	default: // "none" or empty
 		groups["default"] = rows
@@ -792,7 +790,7 @@ func (w *ClassificationStageWorker) resolveIntraFileTwins(ctx context.Context, r
 			if session.OutflowIs == "POSITIVE" {
 				isOutflowPos = true
 			}
-			
+
 			if isOutflowPos {
 				outflowRow = rPos
 				inflowRow = rNeg
@@ -868,11 +866,17 @@ func (w *ClassificationStageWorker) dispatchGroup(
 	if stageCfg.GroupBy == "direction" {
 		payload["cash_direction"] = groupKey
 		if groupKey == "OUTFLOW" {
-				customerNames, _ := ctxMap["customer_names"].([]string); dbHints := findEntityHints(rows, customerNames); intraHints := findIntraFileHints(rows, ctxMap["opposing_descs_outflow"].([]string), customerNames); payload["classification_rules"] = buildOutflowRules(dbHints, intraHints)
-				ctxMap["classification_rules"] = payload["classification_rules"].(string)
+			customerNames, _ := ctxMap["customer_names"].([]string)
+			dbHints := findEntityHints(rows, customerNames)
+			intraHints := findIntraFileHints(rows, ctxMap["opposing_descs_outflow"].([]string), customerNames)
+			payload["classification_rules"] = buildOutflowRules(dbHints, intraHints)
+			ctxMap["classification_rules"] = payload["classification_rules"].(string)
 		} else {
-				vendorNames, _ := ctxMap["vendor_names"].([]string); dbHints := findEntityHints(rows, vendorNames); intraHints := findIntraFileHints(rows, ctxMap["opposing_descs_inflow"].([]string), vendorNames); payload["classification_rules"] = buildInflowRules(dbHints, intraHints)
-				ctxMap["classification_rules"] = payload["classification_rules"].(string)
+			vendorNames, _ := ctxMap["vendor_names"].([]string)
+			dbHints := findEntityHints(rows, vendorNames)
+			intraHints := findIntraFileHints(rows, ctxMap["opposing_descs_inflow"].([]string), vendorNames)
+			payload["classification_rules"] = buildInflowRules(dbHints, intraHints)
+			ctxMap["classification_rules"] = payload["classification_rules"].(string)
 		}
 	}
 
@@ -1005,19 +1009,18 @@ func (w *ClassificationStageWorker) renderPrompt(tmpl string, groupKey string, c
 
 	// Direction-specific rules.
 
-
-		// Per-group entity list: OUTFLOW/EXPENSE → vendors only, INFLOW/REVENUE → customers only.
-		if strings.Contains(result, "{entity_list}") {
-			if groupKey == "OUTFLOW" || groupKey == "EXPENSE" || groupKey == "LIABILITY" || groupKey == "ASSET" || groupKey == "EQUITY" {
-				if vendors, ok := ctxMap["entity_list_vendors"].(string); ok {
-					result = strings.ReplaceAll(result, "{entity_list}", vendors)
-				}
-			} else if groupKey == "INFLOW" || groupKey == "REVENUE" {
-				if customers, ok := ctxMap["entity_list_customers"].(string); ok {
-					result = strings.ReplaceAll(result, "{entity_list}", customers)
-				}
+	// Per-group entity list: OUTFLOW/EXPENSE → vendors only, INFLOW/REVENUE → customers only.
+	if strings.Contains(result, "{entity_list}") {
+		if groupKey == "OUTFLOW" || groupKey == "EXPENSE" || groupKey == "LIABILITY" || groupKey == "ASSET" || groupKey == "EQUITY" {
+			if vendors, ok := ctxMap["entity_list_vendors"].(string); ok {
+				result = strings.ReplaceAll(result, "{entity_list}", vendors)
+			}
+		} else if groupKey == "INFLOW" || groupKey == "REVENUE" {
+			if customers, ok := ctxMap["entity_list_customers"].(string); ok {
+				result = strings.ReplaceAll(result, "{entity_list}", customers)
 			}
 		}
+	}
 	return result
 }
 

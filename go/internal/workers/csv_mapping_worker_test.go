@@ -21,7 +21,7 @@ func TestParseCSVDate(t *testing.T) {
 		{input: "05/18/2026", expected: time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC), expectErr: false}, // US MM/DD/YYYY
 		{input: "18/05/2026", expected: time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC), expectErr: false}, // EU DD/MM/YYYY
 		{input: "2026/05/18", expected: time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC), expectErr: false}, // YYYY/MM/DD
-		
+
 		// 2-digit years
 		{input: "05/18/26", expected: time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC), expectErr: false}, // MM/DD/YY
 		{input: "18/05/26", expected: time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC), expectErr: false}, // DD/MM/YY
@@ -100,7 +100,7 @@ func TestPgtypeDateIntegration(t *testing.T) {
 	}
 
 	dDate := pgtype.Date{Time: parsed, Valid: true}
-	
+
 	// Value returns driver.Value, which for pgtype.Date is time.Time
 	val, err := dDate.Value()
 	if err != nil {

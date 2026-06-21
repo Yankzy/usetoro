@@ -107,7 +107,7 @@ func (s *SwitchWorkerService) Handle(ctx context.Context, msg *nats.Msg) error {
 		rawData = proof.Data
 	}
 
-	// 2. Unmarshal into our payload struct. 
+	// 2. Unmarshal into our payload struct.
 	// This captures { "config": ..., "input": ... } if present.
 	if err := json.Unmarshal(rawData, &swPayload); err != nil {
 		return fmt.Errorf("switch worker: malformed payload: %w", err)
@@ -131,7 +131,6 @@ func (s *SwitchWorkerService) Handle(ctx context.Context, msg *nats.Msg) error {
 	if err != nil {
 		return fmt.Errorf("switch worker: evaluation failed: %w", err)
 	}
-
 
 	// If it was a single object, unwrap the result array to restore standard format
 	if !isOriginalArray {

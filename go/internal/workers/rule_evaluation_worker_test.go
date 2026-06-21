@@ -42,15 +42,15 @@ func (h *recordHandler) Handle(ctx context.Context, r slog.Record) error {
 	return nil
 }
 func (h *recordHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
-func (h *recordHandler) WithGroup(name string) slog.Handler     { return h }
+func (h *recordHandler) WithGroup(name string) slog.Handler       { return h }
 
 type mockStore struct {
-	GetPendingStagingTransactionsFunc func(context.Context, pgtype.UUID) ([]database.FignodeStagingTransaction, error)
+	GetPendingStagingTransactionsFunc    func(context.Context, pgtype.UUID) ([]database.FignodeStagingTransaction, error)
 	UpdateStagingTransactionWithRuleFunc func(context.Context, database.UpdateStagingTransactionWithRuleParams) error
-	GetCleanupSessionFunc func(context.Context, pgtype.UUID) (database.GetCleanupSessionRow, error)
-	GetAccountByIDFunc func(context.Context, pgtype.UUID) (database.ShadowErpAccount, error)
-	GetVendorByIDFunc func(context.Context, pgtype.UUID) (database.ShadowErpVendor, error)
-	GetCustomerByIDFunc func(context.Context, pgtype.UUID) (database.ShadowErpCustomer, error)
+	GetCleanupSessionFunc                func(context.Context, pgtype.UUID) (database.GetCleanupSessionRow, error)
+	GetAccountByIDFunc                   func(context.Context, pgtype.UUID) (database.ShadowErpAccount, error)
+	GetVendorByIDFunc                    func(context.Context, pgtype.UUID) (database.ShadowErpVendor, error)
+	GetCustomerByIDFunc                  func(context.Context, pgtype.UUID) (database.ShadowErpCustomer, error)
 }
 
 func (m *mockStore) GetPendingStagingTransactions(ctx context.Context, id pgtype.UUID) ([]database.FignodeStagingTransaction, error) {

@@ -1,0 +1,80 @@
+hyper_parameters:
+  confidence_threshold: 0.95
+  auto_advance: true
+  max_llm_retries: 3
+  llm_timeout_seconds: 60
+  batch_flush_seconds: 1
+
+prompts:
+  channel_specialist:
+    - |
+      You are the Toro Onboarding Assistant. Your goal is to determine which communication channels the user wants to set up for their bookkeeping triage.
+      Ask the user which channels they prefer (Email, WhatsApp, Slack, or any combination).
+      
+      Select from the following intents based on the user's response:
+      1. EMAIL_SELECTED: The user wants to set up Email triage.
+      2. WHATSAPP_SELECTED: The user wants to set up WhatsApp triage.
+      3. SLACK_SELECTED: The user wants to set up Slack triage.
+      4. MULTIPLE_SELECTED: The user wants to set up multiple channels. (For simplicity in this DAG, route this to generate_email_dag and then chain them, or just handle the first one mentioned. Let's assume they pick one at a time for the basic flow).
+      5. UNKNOWN: The intent is not clear, ask clarifying questions.
+
+      If UNKNOWN, provide a conversational reply asking them to choose.
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "channel_preference",
+              "candidates": {
+              "1": { "value": "EMAIL_SELECTED", "confidence": 0.99, "reasoning": "User explicitly asked for email." },
+              "2": { "value": "UNKNOWN", "confidence": 0.01, "reasoning": "Fallback." }
+                }
+              }
+            }
+          }
+        ]
+
+dag:
+  entry_node: "ask_channel_preference"
+  nodes:
+    ask_channel_preference:
+      kind: "classifier"
+      name: "ask_channel_preference"
+      prompt_key: "channel_specialist"
+      children:
+        "EMAIL_SELECTED": "generate_email_dag"
+        "WHATSAPP_SELECTED": "generate_whatsapp_dag"
+        "SLACK_SELECTED": "generate_slack_dag"
+      default_child: "ask_channel_preference"
+      
+    generate_email_dag:
+      kind: "action"
+      name: "generate_email_dag"
+      execution_parameters:
+        action_type: "generate_channel_dag"
+        channel: "email"
+      default_child: "onboarding_complete"
+
+    generate_whatsapp_dag:
+      kind: "action"
+      name: "generate_whatsapp_dag"
+      execution_parameters:
+        action_type: "generate_channel_dag"
+        channel: "whatsapp"
+      default_child: "onboarding_complete"
+
+    generate_slack_dag:
+      kind: "action"
+      name: "generate_slack_dag"
+      execution_parameters:
+        action_type: "generate_channel_dag"
+        channel: "slack"
+      default_child: "onboarding_complete"
+
+    onboarding_complete:
+      kind: "terminal"
+      name: "onboarding_complete"

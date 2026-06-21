@@ -83,7 +83,7 @@ func (w *QBOFetchWorker) PayloadStruct() any {
 func (w *QBOFetchWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	var req QBOFetchRequest
 	payloadBytes := msg.Data
-	
+
 	var env map[string]interface{}
 	if err := json.Unmarshal(msg.Data, &env); err == nil {
 		if body, ok := env["body"].(string); ok {
@@ -142,20 +142,20 @@ func (w *QBOFetchWorker) sendReply(msg *nats.Msg, result any, err error) {
 	if msg.Reply == "" {
 		return
 	}
-	
+
 	type resStruct struct {
 		Status string `json:"status"`
 		Result any    `json:"result,omitempty"`
 		Error  string `json:"error,omitempty"`
 	}
-	
+
 	var r resStruct
 	if err != nil {
 		r = resStruct{Status: "error", Error: err.Error()}
 	} else {
 		r = resStruct{Status: "success", Result: result}
 	}
-	
+
 	b, _ := json.Marshal(r)
 	_ = w.deps.Queue.Publish(msg.Reply, b)
 }

@@ -31,13 +31,13 @@ func TestLRUCaching(t *testing.T) {
 func TestConfigLoadedCallbackAssignment(t *testing.T) {
 	callbackFired := false
 	
-	SetOnConfigLoaded(func(key string, cfg *ASEConfig) {
+	RegisterOnConfigLoaded(func(key string, cfg *ASEConfig) {
 		callbackFired = true
 	})
 
 	assert.NotNil(t, onConfigLoaded)
 	
 	// Trigger it manually to verify it executes the closure
-	onConfigLoaded("test", nil)
+	onConfigLoaded[len(onConfigLoaded)-1]("test", nil)
 	assert.True(t, callbackFired)
 }

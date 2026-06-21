@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats.go"
-	"github.com/stretchr/testify/assert"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/nats-io/nats.go"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestAseBridgeWorker_DispatchToGeneralAgent(t *testing.T) {

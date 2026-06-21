@@ -224,7 +224,6 @@ func (w *SQLWorker) sendResult(msg *nats.Msg, result SQLWorkerResult, convID str
 	return nil
 }
 
-
 func (w *SQLWorker) publishCompletionProof(result SQLWorkerResult, cid string) error {
 	resultBytes, err := json.Marshal(result)
 	if err != nil {

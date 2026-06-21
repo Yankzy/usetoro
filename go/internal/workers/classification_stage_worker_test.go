@@ -251,10 +251,10 @@ func TestExtractDescs(t *testing.T) {
 func TestRenderPrompt_CtxMapKeys(t *testing.T) {
 	tmpl := "Industry: {company_industry_description}, Accounts: {json_list_of_bank_accounts}, Vendors: {json_list_of_existing_vendors_or_customers_with_ids}, COA: {json_list_of_all_filtered_accounts}"
 	ctx := map[string]interface{}{
-		"company_industry_description":              "Construction — B2B — Acme Corp",
-		"json_list_of_bank_accounts":                []string{"checking", "savings"},
+		"company_industry_description":                        "Construction — B2B — Acme Corp",
+		"json_list_of_bank_accounts":                          []string{"checking", "savings"},
 		"json_list_of_existing_vendors_or_customers_with_ids": "### VENDORS\n[id:1] Bob's",
-		"json_list_of_all_filtered_accounts":                 "### Expense\n[erp_id:42] Supplies",
+		"json_list_of_all_filtered_accounts":                  "### Expense\n[erp_id:42] Supplies",
 	}
 	got := clsTestWorker.renderPrompt(tmpl, "EXPENSE", ctx)
 

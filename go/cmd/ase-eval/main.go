@@ -27,7 +27,7 @@ type TestCase struct {
 }
 
 func loadPrompts() (map[string]string, error) {
-	b, err := os.ReadFile("../../internal/erp/ase/ase.yml")
+	b, err := os.ReadFile("../../internal/erp/ase/dags/ase.yml")
 	if err != nil {
 		return nil, err
 	}

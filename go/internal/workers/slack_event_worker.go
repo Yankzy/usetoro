@@ -87,15 +87,15 @@ type slackPayload struct {
 }
 
 type slackMessageEvent struct {
-	Type      string `json:"type"`
-	Subtype   string `json:"subtype"`
-	Channel   string `json:"channel"`
-	User      string `json:"user"`
-	Text      string `json:"text"`
-	TS        string `json:"ts"`
-	ThreadTS  string `json:"thread_ts"`
-	EventTS   string `json:"event_ts"`
-	BotID     string `json:"bot_id"`
+	Type     string `json:"type"`
+	Subtype  string `json:"subtype"`
+	Channel  string `json:"channel"`
+	User     string `json:"user"`
+	Text     string `json:"text"`
+	TS       string `json:"ts"`
+	ThreadTS string `json:"thread_ts"`
+	EventTS  string `json:"event_ts"`
+	BotID    string `json:"bot_id"`
 }
 
 func (w *SlackEventWorker) Handle(ctx context.Context, msg *nats.Msg) error {
@@ -119,7 +119,7 @@ func (w *SlackEventWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		msg.Ack()
 		return nil
 	}
-	
+
 	// Handle uninstall/revoke events to remove mapping
 	if payload.Type == "app_uninstalled" || payload.Type == "tokens_revoked" {
 		w.logger.Info("slack: received uninstall/revoke event", "team_id", payload.TeamID)
@@ -260,15 +260,15 @@ func (w *SlackEventWorker) handleBridgedReply(
 					Type:      core.ProofAPI,
 					Timestamp: time.Now().Unix(),
 					Data: mustMarshalRaw(map[string]interface{}{
-						"body_text":         event.Text,
-						"source":            "email",
-						"from_handle":       conv.ToHandle,   // from our agent email
-						"to_handle":         conv.FromHandle,  // reply to the original email sender
-						"subject":           conv.Subject.String,
-						"in_reply_to":       mapping.EmailLatestMessageID,
-						"entity_id":         entityID,
-						"slack_channel_id":  mapping.SlackChannelID,
-						"slack_parent_ts":   mapping.SlackParentTs,
+						"body_text":        event.Text,
+						"source":           "email",
+						"from_handle":      conv.ToHandle,   // from our agent email
+						"to_handle":        conv.FromHandle, // reply to the original email sender
+						"subject":          conv.Subject.String,
+						"in_reply_to":      mapping.EmailLatestMessageID,
+						"entity_id":        entityID,
+						"slack_channel_id": mapping.SlackChannelID,
+						"slack_parent_ts":  mapping.SlackParentTs,
 					}),
 				}
 				proofBytes, _ := json.Marshal(outProof)

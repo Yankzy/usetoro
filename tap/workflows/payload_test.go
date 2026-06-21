@@ -163,11 +163,21 @@ func TestReshapePayloadToSchema(t *testing.T) {
 				"extra":      "step1_extra",     // Auto-resolved from step1
 			},
 		},
+		{
+			name:    "Silences warnings for output fields defined in rbacPolicy",
+			payload: []byte(`{"session_id": "current_session"}`),
+			want: map[string]interface{}{
+				"realm_id":   "trigger_realm",   // Pulled from TRIGGER
+				"session_id": "current_session", // Kept from current payload
+				"extra":      "step1_extra",     // Pulled from step1
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := reshapePayloadToSchema(schema, tt.payload, state)
+			rbacPolicy := []string{"/mapped_rows", "/columns_mapped"}
+			got := reshapePayloadToSchema(schema, rbacPolicy, tt.payload, state)
 			var gotMap map[string]interface{}
 			json.Unmarshal(got, &gotMap)
 

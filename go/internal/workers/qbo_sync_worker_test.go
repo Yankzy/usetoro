@@ -22,14 +22,14 @@ import (
 // ─── mocks ───────────────────────────────────────────────────────────────────
 
 type qboSyncMockStore struct {
-	GetReadyFunc    func(context.Context, pgtype.UUID) ([]database.FignodeStagingTransaction, error)
-	MarkSyncedFunc  func(context.Context, database.MarkStagingTransactionSyncedParams) error
-	MarkFailedFunc  func(context.Context, database.MarkStagingTransactionFailedParams) error
-	GetSessionFunc  func(context.Context, pgtype.UUID) (database.GetCleanupSessionRow, error)
-	GetAccountFunc  func(context.Context, pgtype.UUID) (database.ShadowErpAccount, error)
-	GetVendorFunc   func(context.Context, pgtype.UUID) (database.ShadowErpVendor, error)
-	GetCustomerFunc func(context.Context, pgtype.UUID) (database.ShadowErpCustomer, error)
-	MarkTransferHoldFunc func(context.Context, pgtype.UUID) error
+	GetReadyFunc           func(context.Context, pgtype.UUID) ([]database.FignodeStagingTransaction, error)
+	MarkSyncedFunc         func(context.Context, database.MarkStagingTransactionSyncedParams) error
+	MarkFailedFunc         func(context.Context, database.MarkStagingTransactionFailedParams) error
+	GetSessionFunc         func(context.Context, pgtype.UUID) (database.GetCleanupSessionRow, error)
+	GetAccountFunc         func(context.Context, pgtype.UUID) (database.ShadowErpAccount, error)
+	GetVendorFunc          func(context.Context, pgtype.UUID) (database.ShadowErpVendor, error)
+	GetCustomerFunc        func(context.Context, pgtype.UUID) (database.ShadowErpCustomer, error)
+	MarkTransferHoldFunc   func(context.Context, pgtype.UUID) error
 	GetAccountsByRealmFunc func(context.Context, string) ([]database.ShadowErpAccount, error)
 }
 
@@ -265,6 +265,7 @@ func TestExtractSessionAndRealm(t *testing.T) {
 		}
 	})
 }
+
 // =============================================================================
 // resolveEntityERPID
 // =============================================================================
@@ -587,8 +588,8 @@ func TestHydrateBatchItems(t *testing.T) {
 		}
 		w := newQboTestWorker(store, nil)
 		row := database.FignodeStagingTransaction{
-			ID:           makeUUID("00000000-0000-0000-0000-000000000001"),
-			SessionID:    sid,
+			ID:            makeUUID("00000000-0000-0000-0000-000000000001"),
+			SessionID:     sid,
 			CashDirection: makeText("INFLOW"),
 		}
 		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
@@ -681,10 +682,10 @@ func TestHydrateBatchItems(t *testing.T) {
 	t.Run("TRANSFER_HOLD intercepts OUTFLOW matching credit card name", func(t *testing.T) {
 		holdCalled := false
 		store := &qboSyncMockStore{
-			GetReadyFunc: baseStore.GetReadyFunc,
-			GetSessionFunc: baseStore.GetSessionFunc,
-			GetAccountFunc: baseStore.GetAccountFunc,
-			GetVendorFunc: baseStore.GetVendorFunc,
+			GetReadyFunc:    baseStore.GetReadyFunc,
+			GetSessionFunc:  baseStore.GetSessionFunc,
+			GetAccountFunc:  baseStore.GetAccountFunc,
+			GetVendorFunc:   baseStore.GetVendorFunc,
 			GetCustomerFunc: baseStore.GetCustomerFunc,
 			GetAccountsByRealmFunc: func(ctx context.Context, realmID string) ([]database.ShadowErpAccount, error) {
 				return []database.ShadowErpAccount{
@@ -720,9 +721,9 @@ func TestHydrateBatchItems(t *testing.T) {
 
 	t.Run("Deposit Guardrail blocks Accounts Receivable", func(t *testing.T) {
 		store := &qboSyncMockStore{
-			GetReadyFunc: baseStore.GetReadyFunc,
-			GetSessionFunc: baseStore.GetSessionFunc,
-			GetVendorFunc: baseStore.GetVendorFunc,
+			GetReadyFunc:    baseStore.GetReadyFunc,
+			GetSessionFunc:  baseStore.GetSessionFunc,
+			GetVendorFunc:   baseStore.GetVendorFunc,
 			GetCustomerFunc: baseStore.GetCustomerFunc,
 			GetAccountFunc: func(ctx context.Context, id pgtype.UUID) (database.ShadowErpAccount, error) {
 				return database.ShadowErpAccount{ErpID: "ar-123", AccountType: "Accounts Receivable", AccountSubType: pgtype.Text{String: "AccountsReceivable", Valid: true}}, nil
@@ -730,12 +731,12 @@ func TestHydrateBatchItems(t *testing.T) {
 		}
 		w := newQboTestWorker(store, nil)
 		row := database.FignodeStagingTransaction{
-			ID:                 makeUUID("00000000-0000-0000-0000-000000000021"),
-			SessionID:          makeUUID("550e8400-e29b-41d4-a716-446655440000"),
-			CashDirection:      makeText("INFLOW"),
+			ID:                  makeUUID("00000000-0000-0000-0000-000000000021"),
+			SessionID:           makeUUID("550e8400-e29b-41d4-a716-446655440000"),
+			CashDirection:       makeText("INFLOW"),
 			PredictedCustomerID: makeUUID("880e8400-e29b-41d4-a716-446655440003"),
-			PredictedAccountID: makeUUID("990e8400-e29b-41d4-a716-446655440004"),
-			RawAmount:          "100.00",
+			PredictedAccountID:  makeUUID("990e8400-e29b-41d4-a716-446655440004"),
+			RawAmount:           "100.00",
 		}
 		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if len(items) != 0 {
@@ -748,9 +749,9 @@ func TestHydrateBatchItems(t *testing.T) {
 
 	t.Run("Deposit Guardrail blocks Retained Earnings", func(t *testing.T) {
 		store := &qboSyncMockStore{
-			GetReadyFunc: baseStore.GetReadyFunc,
-			GetSessionFunc: baseStore.GetSessionFunc,
-			GetVendorFunc: baseStore.GetVendorFunc,
+			GetReadyFunc:    baseStore.GetReadyFunc,
+			GetSessionFunc:  baseStore.GetSessionFunc,
+			GetVendorFunc:   baseStore.GetVendorFunc,
 			GetCustomerFunc: baseStore.GetCustomerFunc,
 			GetAccountFunc: func(ctx context.Context, id pgtype.UUID) (database.ShadowErpAccount, error) {
 				return database.ShadowErpAccount{ErpID: "eq-123", AccountType: "Equity", AccountSubType: pgtype.Text{String: "RetainedEarnings", Valid: true}}, nil
@@ -758,12 +759,12 @@ func TestHydrateBatchItems(t *testing.T) {
 		}
 		w := newQboTestWorker(store, nil)
 		row := database.FignodeStagingTransaction{
-			ID:                 makeUUID("00000000-0000-0000-0000-000000000022"),
-			SessionID:          makeUUID("550e8400-e29b-41d4-a716-446655440000"),
-			CashDirection:      makeText("INFLOW"),
+			ID:                  makeUUID("00000000-0000-0000-0000-000000000022"),
+			SessionID:           makeUUID("550e8400-e29b-41d4-a716-446655440000"),
+			CashDirection:       makeText("INFLOW"),
 			PredictedCustomerID: makeUUID("880e8400-e29b-41d4-a716-446655440003"),
-			PredictedAccountID: makeUUID("990e8400-e29b-41d4-a716-446655440004"),
-			RawAmount:          "100.00",
+			PredictedAccountID:  makeUUID("990e8400-e29b-41d4-a716-446655440004"),
+			RawAmount:           "100.00",
 		}
 		items, _, failures := w.hydrateBatchItems(context.Background(), "r", []database.FignodeStagingTransaction{row}, "acct-erp", false)
 		if len(items) != 0 {

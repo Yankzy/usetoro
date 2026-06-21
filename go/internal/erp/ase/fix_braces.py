@@ -1,6 +1,6 @@
 import re
 
-with open('go/internal/erp/ase/ase.yml', 'r') as f:
+with open('go/internal/erp/ase/dags/ase.yml', 'r') as f:
     text = f.read()
 
 def fix_end(match):
@@ -9,6 +9,6 @@ def fix_end(match):
 
 new_text = re.sub(r'reasoning": "([^"]*)"\n\s*\}\n\s*\}\n\s*\]', fix_end, text)
 
-with open('go/internal/erp/ase/ase.yml', 'w') as f:
+with open('go/internal/erp/ase/dags/ase.yml', 'w') as f:
     f.write(new_text)
 print("Done fixing braces!")

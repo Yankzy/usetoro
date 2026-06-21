@@ -114,9 +114,9 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		_ = sessionUUID.Scan(response.SessionID)
 	}
 	err := w.db.SaveConversationSessionMessage(ctx, database.SaveConversationSessionMessageParams{
-		EntityID:   entityUUID,
-		Source:     response.Source,
-		ExternalID: tempExternalID,
+		EntityID:     entityUUID,
+		Source:       response.Source,
+		ExternalID:   tempExternalID,
 		FromHandle:   response.FromHandle,
 		ToHandle:     response.ToHandle,
 		Subject:      pgtype.Text{String: response.Subject, Valid: response.Subject != ""},
@@ -134,8 +134,10 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	// 2. Dispatch to the appropriate channel
 	switch response.Source {
 	case "email":
+		w.logger.Info("omni_chat: dispatching email source", "to", response.ToHandle, "subject", response.Subject)
 		msgID, err := w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText, response.InReplyTo, response.SlackChannelID, response.SlackThreadTS, response.EntityID)
 		if err != nil {
+			w.logger.Error("omni_chat: failed to send email", "error", err, "to", response.ToHandle)
 			return err
 		}
 		if msgID != "" {
@@ -172,7 +174,9 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 // a bridged Slack thread — the Postmark MessageID is used to update
 // toro_threads_mappings.email_latest_message_id on success.
 func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body, inReplyTo, slackChannelID, slackParentTs, entityID string) (string, error) {
+	w.logger.Info("omni_chat: sendEmail triggered", "to", to, "from", from, "subject", subject)
 	if w.cfg.PostmarkServerToken == "" {
+		w.logger.Warn("omni_chat: postmark server token not configured")
 		return "", fmt.Errorf("postmark server token not configured")
 	}
 
@@ -260,6 +264,7 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 
 	resp, err := w.client.Do(req)
 	if err != nil {
+		w.logger.Error("omni_chat: postmark request failed", "error", err)
 		return "", fmt.Errorf("postmark request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -267,6 +272,7 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 	if resp.StatusCode != http.StatusOK {
 		var errResp map[string]interface{}
 		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+		w.logger.Error("omni_chat: postmark API error", "status", resp.StatusCode, "response", errResp)
 		return "", fmt.Errorf("postmark API error (status %d): %v", resp.StatusCode, errResp)
 	}
 

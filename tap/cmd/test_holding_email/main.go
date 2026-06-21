@@ -47,7 +47,7 @@ func main() {
 	queries := database.New(dbPool)
 
 	// Fetch a user from the DB to use as the entity_id
-	user, err := queries.GetUserByEmail(ctx, "yankz@usetoro.com")
+	user, err := queries.GetUserByEmail(ctx, "yankz@fignode.com")
 	if err != nil {
 		logger.Error("failed to fetch user", "error", err)
 		os.Exit(1)

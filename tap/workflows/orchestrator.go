@@ -1875,7 +1875,7 @@ func buildStepPayload(step WorkflowStep, state InstanceState, fallback []byte) [
 	}
 	unwrapped := unwrapStepPayload(payload)
 	if step.WorkflowSchema != "" {
-		unwrapped = reshapePayloadToSchema(step.WorkflowSchema, unwrapped, state)
+		unwrapped = reshapePayloadToSchema(step.WorkflowSchema, step.RBACPolicy, unwrapped, state)
 	}
 	raw := wrapPayloadWithConfig(step, unwrapped)
 	proof := core.Proof{
@@ -2003,7 +2003,7 @@ func wrapPayloadWithConfig(step WorkflowStep, payload []byte) []byte {
 	return final
 }
 
-func reshapePayloadToSchema(schemaStr string, payload []byte, state InstanceState) []byte {
+func reshapePayloadToSchema(schemaStr string, rbacPolicy []string, payload []byte, state InstanceState) []byte {
 	properties := gjson.Get(schemaStr, "properties").Map()
 	if len(properties) == 0 {
 		return payload
@@ -2068,13 +2068,23 @@ func reshapePayloadToSchema(schemaStr string, payload []byte, state InstanceStat
 		if found.Exists() {
 			result[key] = json.RawMessage(found.Raw)
 		} else {
-			// The schema declares this key but no source provides it.
-			// The downstream step will receive incomplete data.
-			slog.Warn("reshapePayloadToSchema: field not found in any source",
-				"key", key,
-				"trigger_available", triggerStr != "",
-				"prior_steps_searched", len(stepVars),
-			)
+			// Check if this field is an output field the agent is supposed to produce.
+			isOutput := false
+			for _, policy := range rbacPolicy {
+				if policy == "/"+key || strings.HasPrefix(policy, "/"+key+"/") {
+					isOutput = true
+					break
+				}
+			}
+
+			// Only warn if the field is not an output field.
+			if !isOutput {
+				slog.Warn("reshapePayloadToSchema: field not found in any source",
+					"key", key,
+					"trigger_available", triggerStr != "",
+					"prior_steps_searched", len(stepVars),
+				)
+			}
 		}
 	}
 

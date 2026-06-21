@@ -247,9 +247,22 @@ func (dn *DAGNode) flush() {
 	if dn.HoldStateSignal != "" {
 		for _, node := range batch {
 			node.mu.Lock()
-			node.HoldReason = dn.HoldReasonString
+			approved := node.HumanApproved
 			node.mu.Unlock()
-			node.transition(NodeState(dn.HoldStateSignal))
+
+			if approved {
+				// Clear the flag so it doesn't automatically bypass future nodes
+				node.mu.Lock()
+				node.HumanApproved = false
+				node.mu.Unlock()
+				node.transition(StateActivating)
+				dn.routeToChild(node, "")
+			} else {
+				node.mu.Lock()
+				node.HoldReason = dn.HoldReasonString
+				node.mu.Unlock()
+				node.transition(NodeState(dn.HoldStateSignal))
+			}
 		}
 		return
 	}

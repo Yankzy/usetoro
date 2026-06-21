@@ -92,7 +92,7 @@ func (w *SlackInteractivityWorker) Handle(ctx context.Context, msg *nats.Msg) er
 	}
 
 	w.logger.Info("slack interactivity: received payload (stub)", "payload", payloadJSON)
-	
+
 	// TODO: Parse the JSON, map the team_id to tenant_id, and process block actions or modal submissions
 
 	msg.Ack()

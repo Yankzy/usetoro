@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/storage"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/google/uuid"
@@ -75,7 +77,7 @@ func init() {
 			deps.Logger.Warn("PostmarkInboundEmailWorker: S3 storage not configured", "error", err)
 			// We can proceed without it, but attachments won't upload to S3
 		}
-		
+
 		return &PostmarkInboundEmailWorker{
 			db:      deps.Store.Queries,
 			logger:  deps.Logger,
@@ -188,24 +190,111 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	}
 
 	// 3. Resolve Entity ID.
-	// Priority 1: sender is a registered user (CPA emailing their agent).
-	// Priority 2: In-Reply-To references an existing conversation.
+	// Priority 1: In-Reply-To references an existing conversation.
+	// Priority 2: Sender's email matches a recent conversation (from_handle or to_handle).
+	// Priority 3: Sender is a registered user (e.g., CPA emailing their agent).
 	var entityID pgtype.UUID
-	if payload.From != "" {
-		id, err := w.db.GetEntityIDByEmail(ctx, payload.From)
-		if err == nil {
-			entityID = id
-		}
-	}
-	if !entityID.Valid && inReplyTo != "" {
+
+	// Priority 1: In-Reply-To
+	if inReplyTo != "" {
 		// Try to find the entity from the referenced conversation's session
 		cleanID := cleanMessageID(inReplyTo)
 		refSessionID, err := w.db.GetConversationByExternalID(ctx, cleanID)
+		
+		if err != nil || !refSessionID.Valid {
+			refSessionID, err = w.db.GetConversationByExternalID(ctx, inReplyTo)
+		}
+		
 		if err == nil && refSessionID.Valid {
 			sess, err := w.db.GetConversationSession(ctx, refSessionID)
 			if err == nil {
 				entityID = sess.EntityID
 			}
+		}
+	}
+
+	// Priority 2: Recent conversations
+	if !entityID.Valid && payload.From != "" {
+		recentConvs, err := w.db.GetRecentConversations(ctx, database.GetRecentConversationsParams{
+			FromHandle: payload.From,
+			Limit:      10, // Fetch up to 10 recent conversations
+		})
+		if err == nil && len(recentConvs) > 0 {
+			// Find unique entity IDs
+			entityMap := make(map[string][]database.ToroCoreConversation)
+			var uniqueEntities []string
+			for _, conv := range recentConvs {
+				if !conv.EntityID.Valid {
+					continue
+				}
+				eID := fmt.Sprintf("%x-%x-%x-%x-%x", conv.EntityID.Bytes[0:4], conv.EntityID.Bytes[4:6], conv.EntityID.Bytes[6:8], conv.EntityID.Bytes[8:10], conv.EntityID.Bytes[10:16])
+
+				if _, exists := entityMap[eID]; !exists {
+					uniqueEntities = append(uniqueEntities, eID)
+				}
+				entityMap[eID] = append(entityMap[eID], conv)
+			}
+
+			if len(uniqueEntities) == 1 {
+				// No ambiguity
+				_ = entityID.Scan(uniqueEntities[0])
+			} else if len(uniqueEntities) > 1 {
+				// Ambiguity! Use LLM to disambiguate.
+				if llmClient, err := ai.NewLLMClient(os.Getenv("OPENAI_API_KEY"), "gpt-4o-mini"); err == nil {
+					// Prepare conversation summaries for prompt
+					var summaries []string
+					for _, eID := range uniqueEntities {
+						summaries = append(summaries, fmt.Sprintf("Entity ID: %s", eID))
+						for i, conv := range entityMap[eID] {
+							if i >= 3 {
+								break
+							} // Only show top 3 per entity to save tokens
+							summaries = append(summaries, fmt.Sprintf("  - Past Subject: %s\n  - Past Body snippet: %.200s...", conv.Subject.String, conv.StrippedText.String))
+						}
+					}
+
+					sysPrompt := `You are an intelligent email router for an accounting AI agent.
+Your task is to identify which Entity (company) the incoming email belongs to, based on the sender's past conversations.
+
+CANDIDATE ENTITIES AND THEIR PAST CONVERSATIONS:
+` + strings.Join(summaries, "\n") + `
+
+You must select the Entity ID that best matches the context of the incoming email. 
+If it is ambiguous, select the one that seems most likely based on the subject and body context.
+Return a JSON object with two fields:
+- "entity_id": the string ID of the selected entity.
+- "reasoning": a brief explanation of why this entity matches.`
+
+					emailBody := payload.StrippedTextReply
+					if emailBody == "" {
+						emailBody = payload.TextBody
+					}
+					userPrompt := fmt.Sprintf("INCOMING EMAIL:\nSubject: %s\nBody: %.1000s...", payload.Subject, emailBody)
+
+					var result struct {
+						EntityID  string `json:"entity_id"`
+						Reasoning string `json:"reasoning"`
+					}
+
+					if err := llmClient.GenerateJSON(ctx, sysPrompt, userPrompt, &result); err == nil && result.EntityID != "" {
+						w.logger.Info("LLM successfully disambiguated email entity", "entity_id", result.EntityID, "reasoning", result.Reasoning)
+						_ = entityID.Scan(result.EntityID)
+					} else {
+						w.logger.Error("LLM failed to disambiguate email", "error", err)
+						// Fall through to Priority 3
+					}
+				} else {
+					w.logger.Error("Failed to initialize LLM client for disambiguation", "error", err)
+				}
+			}
+		}
+	}
+
+	// Priority 3: Registered users
+	if !entityID.Valid && payload.From != "" {
+		id, err := w.db.GetEntityIDByEmail(ctx, payload.From)
+		if err == nil {
+			entityID = id
 		}
 	}
 
@@ -223,7 +312,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	// 3. Prepare metadata and upload attachments to S3
 	metadata := make(map[string]interface{})
 	metadata["headers"] = payload.Headers
-	
+
 	processedAttachments := make([]map[string]interface{}, 0, len(payload.Attachments))
 	for i, att := range payload.Attachments {
 		attMeta := map[string]interface{}{
@@ -231,7 +320,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 			"ContentType":   att.ContentType,
 			"ContentLength": att.ContentLength,
 		}
-		
+
 		if w.storage != nil && att.Content != "" {
 			// Decode base64
 			decodedBytes, err := base64.StdEncoding.DecodeString(att.Content)
@@ -244,7 +333,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 					safeEntityID = uuid.UUID(entityID.Bytes).String()
 				}
 				s3Key := fmt.Sprintf("attachments/%s/%s/%s-%s", safeEntityID, smtpMessageID, uuid.New().String(), att.Name)
-				
+
 				err = w.storage.UploadFile(ctx, s3Key, bytes.NewReader(decodedBytes), att.ContentType)
 				if err != nil {
 					w.logger.Error("failed to upload attachment to S3", "error", err, "name", att.Name)
@@ -256,14 +345,14 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 			// Fallback if S3 is not configured (we keep the raw content just in case, though it's heavy)
 			attMeta["Content"] = att.Content
 		}
-		
+
 		// Ensure we don't save the raw base64 content back into the database if we uploaded it
 		// We already removed it from attMeta if it was uploaded to S3.
-		payload.Attachments[i].Content = "" 
-		
+		payload.Attachments[i].Content = ""
+
 		processedAttachments = append(processedAttachments, attMeta)
 	}
-	
+
 	metadata["attachments"] = processedAttachments
 	metadata["from_name"] = payload.FromName
 	metadata["date"] = payload.Date
@@ -303,7 +392,13 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	// toro_threads_mappings, this is Flow 3: email follow-up → append to
 	// existing Slack thread.
 	if inReplyTo != "" {
-		mapping, mappingErr := w.db.GetThreadMappingByEmailMessageID(ctx, inReplyTo)
+		cleanID := cleanMessageID(inReplyTo)
+		mapping, mappingErr := w.db.GetThreadMappingByEmailMessageID(ctx, cleanID)
+		
+		if mappingErr != nil || mapping.SlackChannelID == "" {
+			mapping, mappingErr = w.db.GetThreadMappingByEmailMessageID(ctx, inReplyTo)
+		}
+		
 		if mappingErr == nil && mapping.SlackChannelID != "" {
 			w.logger.Info("email follow-up to bridged slack thread",
 				"slack_channel", mapping.SlackChannelID,
@@ -321,13 +416,13 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 				Type:      core.ProofAPI,
 				Timestamp: time.Now().Unix(),
 				Data: mustMarshalRaw(map[string]interface{}{
-					"body_text":         promptText,
-					"source":            "slack",
-					"from_handle":       payload.From,
-					"to_handle":         mapping.SlackChannelID,
-					"slack_channel_id":  mapping.SlackChannelID,
-					"slack_thread_ts":   mapping.SlackParentTs,
-					"entity_id":         entityID,
+					"body_text":        promptText,
+					"source":           "slack",
+					"from_handle":      payload.From,
+					"to_handle":        mapping.SlackChannelID,
+					"slack_channel_id": mapping.SlackChannelID,
+					"slack_thread_ts":  mapping.SlackParentTs,
+					"entity_id":        entityID,
 				}),
 			}
 			proofBytes, _ := json.Marshal(outProof)
@@ -370,20 +465,35 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 		return nil
 	}
 
-	eventData := map[string]interface{}{
-		"prompt":         payload.StrippedTextReply,
-		"entity_id":      entityID,
-		"from_handle":    payload.From,
-		"to_handle":      payload.To,
-		"source":         "email",
-		"subject":        payload.Subject,
-		"agent_alias":    agentAlias,
-		"in_reply_to":    inReplyTo,
-		"message_id":     smtpMessageID,
+	promptText := payload.StrippedTextReply
+	if promptText == "" {
+		promptText = payload.TextBody
 	}
-	// Fall back to full text body if stripped reply is empty
-	if payload.StrippedTextReply == "" {
-		eventData["prompt"] = payload.TextBody
+
+	if len(processedAttachments) > 0 {
+		var attNames []string
+		for _, attMeta := range processedAttachments {
+			if name, ok := attMeta["Name"].(string); ok && name != "" {
+				attNames = append(attNames, name)
+			}
+		}
+		if len(attNames) > 0 {
+			promptText += fmt.Sprintf("\n\n[SYSTEM: The user attached %d file(s): %s]", len(attNames), strings.Join(attNames, ", "))
+		} else {
+			promptText += fmt.Sprintf("\n\n[SYSTEM: The user attached %d file(s)]", len(processedAttachments))
+		}
+	}
+
+	eventData := map[string]interface{}{
+		"prompt":      promptText,
+		"entity_id":   entityID,
+		"from_handle": payload.From,
+		"to_handle":   payload.To,
+		"source":      "email",
+		"subject":     payload.Subject,
+		"agent_alias": agentAlias,
+		"in_reply_to": inReplyTo,
+		"message_id":  smtpMessageID,
 	}
 
 	eventBytes, _ := json.Marshal(eventData)

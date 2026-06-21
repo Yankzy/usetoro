@@ -76,15 +76,15 @@ var (
 	redisClient    *redis.Client
 	configCache    *expirable.LRU[string, *ASEConfig]
 	logger         *slog.Logger
-	onConfigLoaded func(key string, cfg *ASEConfig)
-	
+	onConfigLoaded []func(key string, cfg *ASEConfig)
+
 	systemVectorConfigMu sync.RWMutex
 	systemVectorConfig   *VectorMemoryConfig
 )
 
-// SetOnConfigLoaded sets a callback to be invoked when a config is loaded or hot-reloaded.
-func SetOnConfigLoaded(cb func(key string, cfg *ASEConfig)) {
-	onConfigLoaded = cb
+// RegisterOnConfigLoaded adds a callback to be invoked when a config is loaded or hot-reloaded.
+func RegisterOnConfigLoaded(cb func(key string, cfg *ASEConfig)) {
+	onConfigLoaded = append(onConfigLoaded, cb)
 }
 
 // InitConfig initializes the DB and Redis dependencies, and the LRU cache.
@@ -223,8 +223,10 @@ func GetConfig(tenantID, realmID, dagName string) *ASEConfig {
 	}
 
 	if err != nil {
-		if logger != nil {
+		if logger != nil && !isNoRows(err) {
 			logger.Warn("failed to load ASE config from db (including fallback)", "key", key, "error", err)
+		} else if logger != nil {
+			logger.Debug("ASE config not found in db", "key", key)
 		}
 		return nil
 	}
@@ -242,8 +244,8 @@ func GetConfig(tenantID, realmID, dagName string) *ASEConfig {
 		configCache.Add(key, cfg)
 	}
 
-	if onConfigLoaded != nil {
-		onConfigLoaded(key, cfg)
+	for _, cb := range onConfigLoaded {
+		cb(key, cfg)
 	}
 
 	return cfg

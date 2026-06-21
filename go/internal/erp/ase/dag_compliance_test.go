@@ -12,7 +12,7 @@ import (
 )
 
 func loadActualDAGConfig(t *testing.T) DAGConfig {
-	b, err := os.ReadFile("ase.yml")
+	b, err := os.ReadFile("dags/ase.yml")
 	if err != nil {
 		t.Fatalf("failed to read ase.yml: %v", err)
 	}
@@ -72,7 +72,6 @@ func TestDAG_ComplianceRouting_IRS75Receipt(t *testing.T) {
 	defer dag.StopAll()
 
 	node := NewASENode("t1", "", "default", "Office Supplies $85", "OUTFLOW", "-85.00")
-	node.HumanApproved = true
 	routerNode.Accept(node)
 
 	time.Sleep(300 * time.Millisecond)
@@ -109,7 +108,6 @@ func TestDAG_ComplianceRouting_1099W9Rule(t *testing.T) {
 	defer dag.StopAll()
 
 	node := NewASENode("t2", "", "default", "Contractor Payment", "OUTFLOW", "-650.00")
-	node.HumanApproved = true
 	routerNode.Accept(node)
 
 	time.Sleep(300 * time.Millisecond)
@@ -157,7 +155,6 @@ func TestDAG_ComplianceRouting_CompliantOutflow(t *testing.T) {
 	defer dag.StopAll()
 
 	node := NewASENode("t3", "", "default", "Software Subscription", "OUTFLOW", "-15.00")
-	node.HumanApproved = true
 	routerNode.Accept(node)
 
 	time.Sleep(300 * time.Millisecond)

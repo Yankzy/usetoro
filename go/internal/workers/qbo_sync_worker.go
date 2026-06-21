@@ -222,12 +222,12 @@ func (w *QboSyncWorker) extractSessionAndRealm(ctx context.Context, data []byte)
 	if payload.SessionID == "" {
 		return pgtype.UUID{}, database.GetCleanupSessionRow{}, fmt.Errorf("no session_id in payload")
 	}
-	
+
 	var pgSessionID pgtype.UUID
 	if err := pgSessionID.Scan(payload.SessionID); err != nil {
 		return pgtype.UUID{}, database.GetCleanupSessionRow{}, fmt.Errorf("invalid session_id: %w", err)
 	}
-	
+
 	session, err := w.db.GetCleanupSession(ctx, pgSessionID)
 	if err != nil {
 		return pgtype.UUID{}, database.GetCleanupSessionRow{}, fmt.Errorf("session lookup failed: %w", err)
@@ -344,7 +344,7 @@ func (w *QboSyncWorker) hydrateBatchItems(
 			} else {
 				typ := accountObj.AccountType
 				sub := accountObj.AccountSubType.String
-				
+
 				if typ == "Accounts Receivable" {
 					failures[row.ID] = "Direct deposits cannot hit AR. Please map to an Income account."
 					continue
@@ -389,8 +389,6 @@ func (w *QboSyncWorker) hydrateBatchItems(
 
 	return items, itemMap, failures
 }
-
-
 
 // resolveEntityERPID returns the QBO ERP ID for the entity (vendor for outflow, customer for inflow).
 func (w *QboSyncWorker) resolveEntityERPID(
@@ -584,7 +582,7 @@ func constructPurchase(
 	}
 
 	absAmt := math.Abs(amount)
-	
+
 	note := "System Trace: Auto-stratified via elements worker batch session."
 	if macroClass == "Asset" || macroClass == "Liability" || macroClass == "Equity" {
 		note += fmt.Sprintf(" | System Trace: Balance Sheet allocation targeting %s account.", macroClass)
@@ -600,8 +598,8 @@ func constructPurchase(
 		PrivateNote: note,
 		Line: []quickbooks.Line{
 			{
-				DetailType: "AccountBasedExpenseLineDetail",
-				Amount:     json.Number(strconv.FormatFloat(absAmt, 'f', 2, 64)),
+				DetailType:  "AccountBasedExpenseLineDetail",
+				Amount:      json.Number(strconv.FormatFloat(absAmt, 'f', 2, 64)),
 				Description: formatLineDescription(aiReasoning),
 				AccountBasedExpenseLineDetail: quickbooks.AccountBasedExpenseLineDetail{
 					AccountRef: quickbooks.ReferenceType{Value: accountErpID},
@@ -622,7 +620,7 @@ func constructDeposit(
 	macroClass string,
 ) quickbooks.Deposit {
 	absAmt := math.Abs(amount)
-	
+
 	note := "System Trace: Processed via AI Booking Automation Pipeline v1.0."
 	if macroClass == "Asset" || macroClass == "Liability" || macroClass == "Equity" {
 		note += fmt.Sprintf(" | System Trace: Balance Sheet allocation targeting %s account.", macroClass)
@@ -635,9 +633,9 @@ func constructDeposit(
 		PrivateNote:         note,
 		Line: []quickbooks.DepositLine{
 			{
-				Amount:        json.Number(strconv.FormatFloat(absAmt, 'f', 2, 64)),
-				DetailType:    "DepositLineDetail",
-				Description:   formatLineDescription(aiReasoning),
+				Amount:      json.Number(strconv.FormatFloat(absAmt, 'f', 2, 64)),
+				DetailType:  "DepositLineDetail",
+				Description: formatLineDescription(aiReasoning),
 				DepositLineDetail: &quickbooks.DepositLineDetail{
 					Entity:     &quickbooks.ReferenceType{Value: entityErpID},
 					AccountRef: &quickbooks.ReferenceType{Value: accountErpID},
@@ -656,7 +654,7 @@ func constructTransfer(
 	aiReasoning pgtype.Text,
 ) quickbooks.Transfer {
 	absAmt := math.Abs(amount)
-	
+
 	reasoning := formatLineDescription(aiReasoning)
 	var note string
 	if reasoning == "" {

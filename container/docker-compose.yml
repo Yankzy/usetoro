@@ -51,6 +51,10 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+      AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME}
 
     volumes:
       - ../keys:/keys:ro
@@ -104,6 +108,7 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,fignode,public"
+      LOG_LEVEL: "INFO"
       REDIS_URL: redis://redis:6379
       QBO_CLIENT_ID: ${QBO_CLIENT_ID}
       QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
@@ -116,6 +121,10 @@ services:
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
       SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
       SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+      AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME}
     depends_on:
       db:
         condition: service_healthy
@@ -126,7 +135,7 @@ services:
     volumes:
       - ../tap/workflows:/app/tap/workflows
       - ../go/internal/config/defaults.yml:/app/internal/config/defaults.yml
-      - ../go/internal/erp/ase/ase.yml:/app/internal/erp/ase/ase.yml
+      - ../go/internal/erp/ase/dags:/app/internal/erp/ase/dags
 
   sync:
     build:
@@ -348,6 +357,10 @@ services:
       QBO_CLIENT_SECRET: ${QBO_CLIENT_SECRET}
       QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION:-false}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+      AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME}
     volumes:
       - ../keys:/keys # Mount keys directory
     depends_on:

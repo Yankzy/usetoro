@@ -1,4 +1,11 @@
 scalar Time
+scalar Upload
+
+type FileIngestionResponse {
+  uploadId: ID!
+  status: String!
+  topic: String!
+}
 
 type User {
   id: ID!
@@ -100,6 +107,7 @@ type Mutation {
   fignodeCategorize(rowId: ID!, accountId: ID, vendorId: ID, action: String!): FignodeStagingRow!
   approveAllByVendor(sessionId: ID!, vendorId: ID!): Int!
   postFignodeSession(sessionId: ID!): FignodePostResult!
+  ingestFile(domain: String!, taskType: String!, file: Upload!, outflowIs: String, bankAccountName: String): FileIngestionResponse!
 }
 
 # ─── Fignode & Clean-Up Mode Types ───────────────────────────────────────────

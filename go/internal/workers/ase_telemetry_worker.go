@@ -89,7 +89,7 @@ func (w *AseTelemetryWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	// 	"body_text":   alertPrompt,
 	// 	"entity_id":   payload.TenantID,
 	// 	"source":      "system",
-	// 	"from_handle": "ase-engine:" + payload.NodeID,
+	// 	"from_handle": "ase:" + payload.NodeID,
 	// 	"to_handle":   "general-agent",
 	// }
 

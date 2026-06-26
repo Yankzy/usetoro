@@ -75,6 +75,7 @@ func TestSendEmail_FallbackBranch_UsesSarahAddresses(t *testing.T) {
 		"", // no slack channel
 		"", // no slack parent ts
 		"", // entityID
+		"", // customMessageID
 	)
 
 	// Assert
@@ -149,6 +150,7 @@ func TestSendEmail_FallbackBranch_FromWithAtSign(t *testing.T) {
 		"",
 		"",
 		"",
+		"",
 	)
 
 	if err != nil {
@@ -201,6 +203,7 @@ func TestSendEmail_PostmarkTokenNotConfigured(t *testing.T) {
 		"",
 		"",
 		"",
+		"",
 	)
 
 	if err == nil {
@@ -236,6 +239,7 @@ func TestSendEmail_UsesReSubjectWhenInReplyToPresent(t *testing.T) {
 		"Invoice Question",
 		"Body",
 		"<in-reply-to-message-id@example.com>",
+		"",
 		"",
 		"",
 		"",
@@ -292,6 +296,7 @@ func TestSendEmail_EmptySubjectDefaults(t *testing.T) {
 		"",
 		"",
 		"",
+		"",
 	)
 
 	if err != nil {
@@ -342,6 +347,7 @@ func TestSendEmail_PostmarkHTTPError(t *testing.T) {
 		"",
 		"",
 		"",
+		"",
 	)
 
 	if err == nil {
@@ -377,6 +383,7 @@ func TestSendEmail_NoReDuplicate(t *testing.T) {
 		"Re: Already Prefixed",
 		"Body",
 		"<in-reply-to-id@example.com>",
+		"",
 		"",
 		"",
 		"",

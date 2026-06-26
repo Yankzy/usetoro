@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/nats-io/nats.go"
@@ -72,7 +73,7 @@ func (w *ASEResolutionWorker) ToolName() string {
 }
 
 func (w *ASEResolutionWorker) ToolDescription() string {
-	return "Update a transaction that was on hold, marking it as ready to resume in the DAG. CRITICAL: You MUST include the actual answers, context, or details provided by the user in the resolved_reason field (e.g. 'Business purpose was X, attendee was Y'). Do NOT just say 'user replied' or 'receipt received'."
+	return "Update a transaction that was on hold, marking it as ready to resume in the DAG. CRITICAL: You MUST include the actual answers, context, or details provided by the user in the resolved_reason field (e.g. 'Business purpose was X, attendee was Y'). Do NOT just say 'user replied' or 'receipt received'. NEVER use this tool just to report that you have sent an email to the user. ONLY use this tool when the user has ACTUALLY replied with the answer."
 }
 
 func (w *ASEResolutionWorker) PayloadStruct() any {
@@ -111,11 +112,34 @@ func (w *ASEResolutionWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		w.logger.Error("ase_resolution: failed to update staging transaction state", "error", err)
 	}
 
-	type ResumeEvent struct {
-		NodeID      string `json:"node_id"`
-		StartNodeID string `json:"start_node_id"`
+	var handle string
+	sessQuery := `SELECT participant_handle FROM toro_core.conversation_sessions WHERE participant_handle LIKE $1 LIMIT 1`
+	errDb := w.deps.DBPool.QueryRow(ctx, sessQuery, "ase:"+req.NodeID+":%").Scan(&handle)
+
+	dagName := "default"
+	domainTool := ""
+	if errDb == nil && handle != "" {
+		parts := strings.Split(handle, ":")
+		if len(parts) >= 4 {
+			domainTool = parts[2]
+			dagName = parts[3]
+		}
 	}
-	evt, _ := json.Marshal(ResumeEvent{NodeID: req.NodeID, StartNodeID: req.StartNodeID})
+
+	type ResumeEvent struct {
+		NodeID         string `json:"node_id"`
+		StartNodeID    string `json:"start_node_id"`
+		ResolvedReason string `json:"resolved_reason"`
+		DagName        string `json:"dag_name"`
+		DomainTool     string `json:"domain_tool"`
+	}
+	evt, _ := json.Marshal(ResumeEvent{
+		NodeID:         req.NodeID, 
+		StartNodeID:    req.StartNodeID, 
+		ResolvedReason: req.ResolvedReason,
+		DagName:        dagName,
+		DomainTool:     domainTool,
+	})
 
 	_ = w.deps.Queue.Publish("ase.events.resume", evt)
 

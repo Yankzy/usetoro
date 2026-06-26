@@ -17,6 +17,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -97,6 +98,7 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		EntityID       string `json:"entity_id"`
 		SlackChannelID string `json:"slack_channel_id"`
 		SlackThreadTS  string `json:"slack_thread_ts"`
+		CustomMsgID    string `json:"custom_msg_id"`
 	}
 
 	if err := json.Unmarshal(proof.Data, &response); err != nil {
@@ -104,21 +106,38 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	// 1. Persist to the database (Read-only agents policy)
-	tempExternalID := fmt.Sprintf("agent-res-%s-%d", env.ID, time.Now().Unix())
+	tempExternalID := fmt.Sprintf("temp_id-%s-%d", env.ID, time.Now().Unix())
 	var entityUUID pgtype.UUID
 	var sessionUUID pgtype.UUID
 	if response.EntityID != "" {
 		_ = entityUUID.Scan(response.EntityID)
 	}
 	if response.SessionID != "" {
-		_ = sessionUUID.Scan(response.SessionID)
+		if u, err := uuid.Parse(response.SessionID); err == nil {
+			sessionUUID = pgtype.UUID{Bytes: u, Valid: true}
+		}
 	}
+
+	if response.InReplyTo == "" && sessionUUID.Valid {
+		conversations, err := w.db.GetSessionConversations(ctx, sessionUUID)
+		if err == nil {
+			for i := len(conversations) - 1; i >= 0; i-- {
+				msg := conversations[i]
+				if msg.Source == "email" && msg.Role == "user" && msg.ExternalID != "" {
+					response.InReplyTo = msg.ExternalID
+					break
+				}
+			}
+		}
+	}
+
 	err := w.db.SaveConversationSessionMessage(ctx, database.SaveConversationSessionMessageParams{
 		EntityID:     entityUUID,
 		Source:       response.Source,
 		ExternalID:   tempExternalID,
 		FromHandle:   response.FromHandle,
 		ToHandle:     response.ToHandle,
+		InReplyTo:    pgtype.Text{String: response.InReplyTo, Valid: response.InReplyTo != ""},
 		Subject:      pgtype.Text{String: response.Subject, Valid: response.Subject != ""},
 		BodyText:     pgtype.Text{String: response.BodyText, Valid: response.BodyText != ""},
 		StrippedText: pgtype.Text{String: response.BodyText, Valid: response.BodyText != ""},
@@ -135,20 +154,42 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	switch response.Source {
 	case "email":
 		w.logger.Info("omni_chat: dispatching email source", "to", response.ToHandle, "subject", response.Subject)
-		msgID, err := w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText, response.InReplyTo, response.SlackChannelID, response.SlackThreadTS, response.EntityID)
+
+		var customMsgID string
+		participantHandle := ""
+		if sessionUUID.Valid {
+			if sess, err := w.db.GetConversationSession(ctx, sessionUUID); err == nil {
+				participantHandle = sess.ParticipantHandle
+			}
+		}
+
+		if response.CustomMsgID != "" {
+			cleanHandle := strings.ReplaceAll(response.CustomMsgID, ":", "_")
+			customMsgID = fmt.Sprintf("<%s@agents.usetoro.io>", cleanHandle)
+		} else if strings.HasPrefix(participantHandle, "ase:") {
+			cleanHandle := strings.ReplaceAll(participantHandle, ":", "_")
+			customMsgID = fmt.Sprintf("<%s@agents.usetoro.io>", cleanHandle)
+		} else if strings.HasPrefix(response.FromHandle, "ase:") {
+			cleanHandle := strings.ReplaceAll(response.FromHandle, ":", "_")
+			customMsgID = fmt.Sprintf("<%s@agents.usetoro.io>", cleanHandle)
+		} else {
+			customMsgID = fmt.Sprintf("<%s@agents.usetoro.io>", tempExternalID)
+		}
+
+		_, err := w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText, response.InReplyTo, response.SlackChannelID, response.SlackThreadTS, response.EntityID, customMsgID)
 		if err != nil {
 			w.logger.Error("omni_chat: failed to send email", "error", err, "to", response.ToHandle)
 			return err
 		}
-		if msgID != "" {
-			updateErr := w.db.UpdateConversationExternalID(ctx, database.UpdateConversationExternalIDParams{
-				ExternalID:   msgID,
-				ExternalID_2: tempExternalID,
-			})
-			if updateErr != nil {
-				w.logger.Error("failed to update conversation external ID with Postmark MessageID", "error", updateErr, "temp_id", tempExternalID, "real_id", msgID)
-			}
+
+		updateErr := w.db.UpdateConversationExternalID(ctx, database.UpdateConversationExternalIDParams{
+			ExternalID:   customMsgID,
+			ExternalID_2: tempExternalID,
+		})
+		if updateErr != nil {
+			w.logger.Error("failed to update conversation external ID with custom MessageID", "error", updateErr, "temp_id", tempExternalID, "real_id", customMsgID)
 		}
+
 		return nil
 	case "whatsapp":
 		return w.sendWhatsApp(ctx, response.ToHandle, response.BodyText)
@@ -173,7 +214,7 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 // When slackChannelID and slackParentTs are provided, this email is part of
 // a bridged Slack thread — the Postmark MessageID is used to update
 // toro_threads_mappings.email_latest_message_id on success.
-func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body, inReplyTo, slackChannelID, slackParentTs, entityID string) (string, error) {
+func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body, inReplyTo, slackChannelID, slackParentTs, entityID, customMessageID string) (string, error) {
 	w.logger.Info("omni_chat: sendEmail triggered", "to", to, "from", from, "subject", subject)
 	if w.cfg.PostmarkServerToken == "" {
 		w.logger.Warn("omni_chat: postmark server token not configured")
@@ -245,11 +286,17 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 		}
 	}
 
+	headers := []map[string]string{}
 	if inReplyTo != "" {
-		payload["Headers"] = []map[string]string{
-			{"Name": "In-Reply-To", "Value": inReplyTo},
-			{"Name": "References", "Value": inReplyTo},
-		}
+		headers = append(headers, map[string]string{"Name": "In-Reply-To", "Value": inReplyTo})
+		headers = append(headers, map[string]string{"Name": "References", "Value": inReplyTo})
+	}
+	if customMessageID != "" {
+		headers = append(headers, map[string]string{"Name": "Message-ID", "Value": customMessageID})
+		headers = append(headers, map[string]string{"Name": "X-PM-KeepID", "Value": "true"})
+	}
+	if len(headers) > 0 {
+		payload["Headers"] = headers
 	}
 
 	jsonPayload, _ := json.Marshal(payload)
@@ -283,22 +330,27 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 		return "", fmt.Errorf("failed to decode postmark success response: %w", err)
 	}
 
+	actualMessageID := successResp.MessageID
+	if customMessageID != "" {
+		actualMessageID = customMessageID
+	}
+
 	// If this email is part of a bridged Slack thread, advance the
 	// email pointer so the next reply cycle can find the mapping.
 	if slackChannelID != "" && slackParentTs != "" {
 		_ = w.db.UpdateThreadMappingEmailMessageID(ctx, database.UpdateThreadMappingEmailMessageIDParams{
-			EmailLatestMessageID: successResp.MessageID,
+			EmailLatestMessageID: actualMessageID,
 			SlackChannelID:       slackChannelID,
 			SlackParentTs:        slackParentTs,
 		})
 		w.logger.Info("updated toro_threads_mappings email pointer for bridged thread",
 			"slack_channel", slackChannelID,
-			"new_email_message_id", successResp.MessageID,
+			"new_email_message_id", actualMessageID,
 		)
 	}
 
-	w.logger.Info("successfully sent outbound email via Postmark", "to", to, "message_id", successResp.MessageID)
-	return successResp.MessageID, nil
+	w.logger.Info("successfully sent outbound email via Postmark", "to", to, "message_id", actualMessageID)
+	return actualMessageID, nil
 }
 
 // sendSMS sends an outbound SMS via the Twilio Programmable SMS API.

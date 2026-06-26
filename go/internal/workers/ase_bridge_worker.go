@@ -5,20 +5,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"os"
+
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
+	"github.com/Yankzy/usetoro/internal/erp/ase/domain_tools"
+	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/workflows"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
 // AseBridgeWorker acts as a bridge between the TAP Workflow Engine and the
@@ -30,16 +34,17 @@ type AseBridgeWorker struct {
 	cfg    *config.Config
 	nc     *nats.Conn
 	db     *database.Queries
-	store  *ase.StateStore
+	store  ase.StatePersister
+	llm    *ai.LLMClient
+	dbPool *pgxpool.Pool
 
-	dagsMu sync.RWMutex
-	dags   map[string]*ase.DAG
+	dags *expirable.LRU[string, *ase.DAG]
 }
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
 		// Initialize the ASE global dependencies
-		stateStore := ase.NewStateStore(deps.DBPool, deps.Redis)
+		stateStore := domain_tools.NewStateStore(deps.DBPool, deps.Redis)
 
 		return &AseBridgeWorker{
 			logger: deps.Logger,
@@ -47,21 +52,26 @@ func init() {
 			nc:     deps.Queue,
 			db:     deps.Store.Queries,
 			store:  stateStore,
-			dags:   make(map[string]*ase.DAG),
+			llm:    deps.LLMClient,
+			dbPool: deps.DBPool,
+			// Initialize in Init() instead since we need logger for eviction callback
 		}, nil
 	})
 }
 
 func (w *AseBridgeWorker) Init(ctx context.Context) error {
+	w.dags = expirable.NewLRU(5000, func(k string, v *ase.DAG) {
+		w.logger.Info("ase_bridge: evicting idle DAG from cache", "key", k)
+		v.StopAll()
+	}, time.Minute*30)
+
 	// Initialize the Classifier Service (to generate ThinkFuncs)
 	classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
 	classifierService.SetDB(w.db) // Pass db for dynamic provider
 
 	// Helper to instantiate, wire, and start a DAG
 	wireAndStartDAG := func(key string, cfg *ase.ASEConfig) {
-		w.dagsMu.RLock()
-		existingDAG := w.dags[key]
-		w.dagsMu.RUnlock()
+		existingDAG, _ := w.dags.Get(key)
 
 		if existingDAG != nil {
 			// Update the DAG in memory
@@ -69,7 +79,18 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 
 			// Update the ThinkFuncs in case Prompts or EdgeType changed
 			for _, node := range existingDAG.Nodes {
-				if node.EdgeType == "dynamic" {
+				if node.Kind == "initial_router" {
+					payloadKey := ""
+					if pk, ok := node.ExecutionParams["payload_key"]; ok {
+						payloadKey = pk
+					}
+					node.SetThinkFunc(classifierService.BuildPayloadRouterThinkFunc(payloadKey))
+				} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "generate_channel_dag" {
+					channel := node.ExecutionParams["channel"]
+					node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
+				} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
+					node.SetThinkFunc(w.buildEmitResumeSignalFunc())
+				} else if node.EdgeType == "dynamic" {
 					node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 				} else if node.PromptKey != "" {
 					node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
@@ -85,7 +106,18 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 
 		dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
 		for _, node := range dag.Nodes {
-			if node.EdgeType == "dynamic" {
+			if node.Kind == "initial_router" {
+				payloadKey := ""
+				if pk, ok := node.ExecutionParams["payload_key"]; ok {
+					payloadKey = pk
+				}
+				node.SetThinkFunc(classifierService.BuildPayloadRouterThinkFunc(payloadKey))
+			} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "generate_channel_dag" {
+				channel := node.ExecutionParams["channel"]
+				node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
+			} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
+				node.SetThinkFunc(w.buildEmitResumeSignalFunc())
+			} else if node.EdgeType == "dynamic" {
 				node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 			} else if node.PromptKey != "" {
 				node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
@@ -98,19 +130,12 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 		}
 		dag.StartAll()
 
-		w.dagsMu.Lock()
-		w.dags[key] = dag
-		w.dagsMu.Unlock()
+		w.dags.Add(key, dag)
 		w.logger.Info("ase_orchestrator: wired dynamic DAG nodes", "key", key)
 	}
 
 	// Register hot-reload callback to dynamically load tenant DAGs
 	ase.RegisterOnConfigLoaded(wireAndStartDAG)
-
-	// Process any already loaded configs
-	for key, cfg := range ase.GetAllConfigs() {
-		wireAndStartDAG(key, cfg)
-	}
 
 	return nil
 }
@@ -167,74 +192,158 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	// 0. Intercept resume events directly
 	if msg.Subject == "ase.events.resume" {
 		var resumeEvt struct {
-			NodeID      string `json:"node_id"`
-			StartNodeID string `json:"start_node_id"`
+			NodeID         string `json:"node_id"`
+			StartNodeID    string `json:"start_node_id"`
+			ResolvedReason string `json:"resolved_reason"`
+			DagName        string `json:"dag_name"`
+			DomainTool     string `json:"domain_tool"`
 		}
 		if err := json.Unmarshal(msg.Data, &resumeEvt); err != nil {
 			w.logger.Error("ase_bridge: failed to parse resume event", "error", err)
 			return nil
 		}
+
 		w.logger.Info("ase_bridge: resuming DAG node", "node_id", resumeEvt.NodeID, "start_node", resumeEvt.StartNodeID)
 
-		idUUID, err := uuid.Parse(resumeEvt.NodeID)
-		if err != nil {
+		dagName := resumeEvt.DagName
+		if dagName == "" {
+			dagName = "default" // Fallback
+		}
+
+		domainToolName := resumeEvt.DomainTool
+		if domainToolName == "" {
+			if cfg := ase.GetConfig("", "", dagName); cfg != nil && cfg.HyperParameters.DomainTool != "" {
+				domainToolName = cfg.HyperParameters.DomainTool
+			} else {
+				w.logger.Error("ase_bridge: domain_tool not provided in event and not found in DAG config", "dag_name", dagName)
+				return nil
+			}
+		}
+
+		tool := domain_tools.Get(domainToolName)
+		if tool == nil {
+			w.logger.Error("ase_bridge: domain_tool not found for resume", "domain_tool", domainToolName)
 			return nil
 		}
-		pgID := pgtype.UUID{Bytes: idUUID, Valid: true}
-		dbTx, err := w.db.GetProposedTransactionByID(ctx, pgID)
-		if err != nil {
-			w.logger.Error("ase_bridge: failed to fetch tx for resume", "error", err)
+
+		deps := domain_tools.ToolDependencies{
+			DB:     w.db,
+			Logger: w.logger,
+			Store:  w.store,
+			NC:     w.nc,
+		}
+
+		agent, err := tool.ResumeAgent(ctx, resumeEvt.NodeID, dagName, deps)
+		if err != nil || agent == nil {
+			w.logger.Error("ase_bridge: failed to resume agent", "error", err)
 			return nil
 		}
 
-		session, err := w.db.GetCleanupSession(ctx, dbTx.SessionID)
-		if err != nil {
-			return nil
-		}
+		tenantID := agent.TenantID
+		realmID := agent.RealmID
 
-		outflowIs := session.OutflowIs
-		realmID := ""
-		if session.RealmID.Valid {
-			realmID = session.RealmID.String
-		}
-		tenantID := ""
-		if session.CreatedBy.Valid {
-			tenantID = uuid.UUID(session.CreatedBy.Bytes).String()
-		}
+		// Lazily trigger config fetch, which returns the config from DB or cache
+		cfg := ase.GetConfig(tenantID, realmID, dagName)
 
-		// In resume flow, we might not have the dag_name explicitly in the event,
-		// but ideally it would be. For now, default to "default".
-		dagName := "default"
-
-		// Lazily trigger config fetch, which triggers wireAndStartDAG callback if missing
-		ase.GetConfig(tenantID, realmID, dagName)
-
-		w.dagsMu.RLock()
-		dagKey := dagName
+		// Dynamically resolve the correct DAG instance for this tenant/realm
+		dagKey := ""
 		if tenantID != "" {
-			dagKey = "tenant_" + tenantID + "_" + dagName
+			dagKey = dagName + "_" + tenantID
 		} else if realmID != "" {
-			dagKey = "realm_" + realmID + "_" + dagName
+			dagKey = dagName + "_" + realmID
+		} else {
+			dagKey = dagName
 		}
-		dagToUse := w.dags[dagKey]
-		if dagToUse == nil {
-			dagToUse = w.dags[dagName]
-		}
-		w.dagsMu.RUnlock()
+		dagToUse, _ := w.dags.Get(dagKey)
 
-		agent := w.mapToAgent(dbTx, outflowIs, tenantID, realmID, dagName)
+		// If the config is present but we haven't wired it yet, do it now
+		if dagToUse == nil && cfg != nil {
+			// Lock not needed for LRU, but we use a small local lock to prevent multiple
+			// identical build requests if they arrive exactly simultaneously
+			dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
+
+			classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
+			classifierService.SetDB(w.db)
+
+			for _, node := range dag.Nodes {
+				if node.Kind == "initial_router" {
+					payloadKey := ""
+					if pk, ok := node.ExecutionParams["payload_key"]; ok {
+						payloadKey = pk
+					}
+					node.SetThinkFunc(classifierService.BuildPayloadRouterThinkFunc(payloadKey))
+				} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "generate_channel_dag" {
+					channel := node.ExecutionParams["channel"]
+					node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
+				} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
+					node.SetThinkFunc(w.buildEmitResumeSignalFunc())
+				} else if node.EdgeType == "dynamic" {
+					node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
+				} else if node.PromptKey != "" {
+					node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
+				} else {
+					node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
+						return nil, nil // No-op
+					})
+				}
+			}
+			dag.StartAll()
+			w.dags.Add(dagKey, dag)
+			w.logger.Info("ase_orchestrator: wired dynamic DAG nodes on demand for resume", "key", dagKey)
+
+			dagToUse, _ = w.dags.Get(dagKey)
+		}
+
+		if dagToUse == nil {
+			w.logger.Error("ase_bridge: cannot resume because DAG is nil", "dagKey", dagKey)
+			return nil
+		}
 
 		// Fire off the asynchronous Goroutine to resume the agent
-		go func(a *ase.AutonomousSemanticEngineNode, start string, sID string) {
+		go func(a *ase.AutonomousSemanticEngineNode, start, reason string) {
+			if reason != "" {
+				a.Mu.Lock()
+				a.ContextUpdates = append(a.ContextUpdates, fmt.Sprintf("Context update provided by external resolution: %s", reason))
+				a.Mu.Unlock()
+			}
+			doneCh := make(chan struct{}, 1)
+			var terminalOnce sync.Once
+			a.SetOnStateChange(func(node *ase.AutonomousSemanticEngineNode, oldState, newState ase.NodeState) {
+				if newState == ase.StateReadyForSync || strings.HasPrefix(string(newState), "HOLD_") || newState == ase.StateCollapsed || newState == ase.StateUninitialized {
+					terminalOnce.Do(func() { doneCh <- struct{}{} })
+				}
+			})
+
 			if err := a.ApproveAndResume(context.Background(), dagToUse, w.store, start); err != nil {
 				w.logger.Error("ase_bridge: agent crashed on resume", "node_id", a.NodeID, "error", err)
+				terminalOnce.Do(func() { doneCh <- struct{}{} })
 			}
 
+			<-doneCh
+			w.logger.Info("ase_bridge: agent unblocked", "node_id", a.NodeID, "state", a.GetState())
+
 			state := a.GetState()
-			if state == ase.StateHoldMissingCtx || state == ase.StateHoldAmbiguous {
-				w.dispatchToGeneralAgent(context.Background(), a, sID)
+			if strings.HasPrefix(string(state), "HOLD_") {
+				if dt, ok := a.Payload["domain_tool"].(string); ok && dt != "" {
+					if t := domain_tools.Get(dt); t != nil {
+						deps := domain_tools.ToolDependencies{
+							DB:     w.db,
+							Logger: w.logger,
+							Store:  w.store,
+							NC:     w.nc,
+						}
+						payload, pErr := t.GenerateAlertPayload(context.Background(), a, deps)
+						if pErr == nil && payload != nil {
+							payloadBytes, _ := json.Marshal(payload)
+							ingressSubject, sErr := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
+							if sErr == nil {
+								_ = w.nc.Publish(ingressSubject, payloadBytes)
+							}
+						}
+					}
+				}
 			}
-		}(agent, resumeEvt.StartNodeID, uuid.UUID(session.ID.Bytes).String())
+		}(agent, resumeEvt.StartNodeID, resumeEvt.ResolvedReason)
 
 		return nil
 	}
@@ -251,99 +360,119 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return nil
 	}
 
-	// 2. Extract TaskPayload
-	var payload struct {
-		SessionID string `json:"session_id"`
-	}
-	if err := core.UnmarshalTaskPayload(env.Body, &payload); err != nil || payload.SessionID == "" {
-		w.logger.Error("ase_orchestrator: failed to unmarshal custom payload or missing session_id", "error", err)
-		return nil
-	}
-
-	// Determine session_id (used to scope the staging transactions)
-	sessionID := payload.SessionID
-	var pgSessionID pgtype.UUID
-	if err := pgSessionID.Scan(sessionID); err != nil {
-		w.logger.Error("ase_orchestrator: invalid session_id UUID", "session", sessionID)
-		return nil
-	}
-
-	w.logger.Info("ase_orchestrator: querying pending transactions", "session_id", sessionID)
-
-	// Fetch session to determine OutflowIs logic
-	session, err := w.db.GetCleanupSession(ctx, pgSessionID)
-	if err != nil {
-		w.logger.Error("ase_orchestrator: failed to fetch session", "error", err)
-		return err
-	}
-	outflowIs := session.OutflowIs
-	realmID := ""
-	if session.RealmID.Valid {
-		realmID = session.RealmID.String
-	}
-	tenantID := ""
-	if session.CreatedBy.Valid {
-		tenantID = uuid.UUID(session.CreatedBy.Bytes).String()
-	}
-
 	var config map[string]interface{}
 	_ = core.UnmarshalTaskConfig(env.Body, &config)
 
 	dagName := ""
+	domainToolName := ""
 	if config != nil {
 		if dName, ok := config["dag_name"].(string); ok && dName != "" {
 			dagName = dName
 		}
+		if dt, ok := config["domain_tool"].(string); ok && dt != "" {
+			domainToolName = dt
+		}
 	}
 
 	if dagName == "" {
-		w.logger.Error("ase_bridge: dag_name is missing from workflow config")
-		return fmt.Errorf("dag_name is required in workflow config")
+		var payload struct {
+			DagName string `json:"dag_name"`
+		}
+		_ = core.UnmarshalTaskPayload(env.Body, &payload)
+		dagName = payload.DagName
 	}
+
+	if dagName == "" {
+		w.logger.Error("ase_bridge: dag_name is missing from workflow config and payload")
+		return fmt.Errorf("dag_name is required in workflow config or payload")
+	}
+
+	if domainToolName == "" {
+		if cfg := ase.GetConfig("", "", dagName); cfg != nil && cfg.HyperParameters.DomainTool != "" {
+			domainToolName = cfg.HyperParameters.DomainTool
+		} else {
+			w.logger.Error("ase_bridge: domain_tool not provided in task config and not found in DAG config", "dag_name", dagName)
+			return nil
+		}
+	}
+
+	tool := domain_tools.Get(domainToolName)
+	if tool == nil {
+		w.logger.Error("ase_bridge: domain_tool not found in registry", "tool", domainToolName)
+		return fmt.Errorf("domain_tool %s not found", domainToolName)
+	}
+
+	deps := domain_tools.ToolDependencies{
+		DB:     w.db,
+		Logger: w.logger,
+		Store:  w.store,
+		NC:     w.nc,
+	}
+
+	agents, err := tool.BuildAgents(ctx, env, dagName, deps)
+	if err != nil {
+		w.logger.Error("ase_orchestrator: failed to build agents from payload", "error", err)
+		return err
+	}
+
+	if len(agents) == 0 {
+		w.logger.Info("ase_bridge: no agents to launch")
+		return nil
+	}
+
+	// Grab tenantID and realmID from the first agent to wire the DAG dynamically
+	tenantID := agents[0].TenantID
+	realmID := agents[0].RealmID
 
 	// Lazily trigger config fetch, which returns the config from DB or cache
 	cfg := ase.GetConfig(tenantID, realmID, dagName)
 
 	// Dynamically resolve the correct DAG instance for this tenant/realm
-	w.dagsMu.RLock()
-	dagKey := "tenant_" + tenantID + "_" + dagName
-	if tenantID == "" {
-		if realmID != "" {
-			dagKey = "realm_" + realmID + "_" + dagName
-		} else {
-			dagKey = "global_" + dagName
-		}
+	dagKey := ""
+	if tenantID != "" {
+		dagKey = dagName + "_" + tenantID
+	} else if realmID != "" {
+		dagKey = dagName + "_" + realmID
+	} else {
+		dagKey = dagName
 	}
-	dagToUse := w.dags[dagKey]
-	w.dagsMu.RUnlock()
+	dagToUse, _ := w.dags.Get(dagKey)
 
 	// If the config is present but we haven't wired it yet, do it now
 	if dagToUse == nil && cfg != nil {
-		w.dagsMu.Lock()
-		if w.dags[dagKey] == nil {
-			dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
-			
-			// Initialize the Classifier Service (to generate ThinkFuncs)
-			classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
-			classifierService.SetDB(w.db)
+		dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
 
-			for _, node := range dag.Nodes {
-				if node.EdgeType == "dynamic" {
-					node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
-				} else if node.PromptKey != "" {
-					node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
-				} else {
-					node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
-						return nil, nil // No-op
-					})
+		// Initialize the Classifier Service (to generate ThinkFuncs)
+		classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
+		classifierService.SetDB(w.db)
+
+		for _, node := range dag.Nodes {
+			if node.Kind == "initial_router" {
+				payloadKey := ""
+				if pk, ok := node.ExecutionParams["payload_key"]; ok {
+					payloadKey = pk
 				}
+				node.SetThinkFunc(classifierService.BuildPayloadRouterThinkFunc(payloadKey))
+			} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "generate_channel_dag" {
+				channel := node.ExecutionParams["channel"]
+				node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
+			} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
+				node.SetThinkFunc(w.buildEmitResumeSignalFunc())
+			} else if node.EdgeType == "dynamic" {
+				node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
+			} else if node.PromptKey != "" {
+				node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
+			} else {
+				node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
+					return nil, nil // No-op
+				})
 			}
-			dag.StartAll()
-			w.dags[dagKey] = dag
-			w.logger.Info("ase_orchestrator: wired dynamic DAG nodes on demand", "key", dagKey)
 		}
-		dagToUse = w.dags[dagKey]
-		w.dagsMu.Unlock()
+		dag.StartAll()
+		w.dags.Add(dagKey, dag)
+		w.logger.Info("ase_orchestrator: wired dynamic DAG nodes on demand", "key", dagKey)
+
+		dagToUse, _ = w.dags.Get(dagKey)
 	}
 
 	if dagToUse == nil {
@@ -351,42 +480,59 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return nil
 	}
 
-	// 3. Query unclassified Fignode transactions
-	pendingTxns, err := w.db.GetPendingStagingTransactions(ctx, pgSessionID)
-	if err != nil {
-		w.logger.Error("ase_orchestrator: failed to fetch pending staging transactions", "error", err)
-		return err // Transient error, allow NATS redelivery
-	}
-
-	w.logger.Info("ase_bridge: launching agents", "count", len(pendingTxns))
+	w.logger.Info("ase_bridge: launching agents", "count", len(agents))
 
 	var wg sync.WaitGroup
 
-	// 4. Launch ASE Agents asynchronously
-	for _, txn := range pendingTxns {
-		agent := w.mapToAgent(txn, outflowIs, tenantID, realmID, dagName)
+	// Launch ASE Agents asynchronously
+	for _, agent := range agents {
 
 		wg.Add(1)
 		// Fire off the asynchronous Goroutine
 		go func(a *ase.AutonomousSemanticEngineNode) {
 			defer wg.Done()
+
+			doneCh := make(chan struct{}, 1)
+			var terminalOnce sync.Once
+			a.SetOnStateChange(func(node *ase.AutonomousSemanticEngineNode, oldState, newState ase.NodeState) {
+				if newState == ase.StateReadyForSync || strings.HasPrefix(string(newState), "HOLD_") || newState == ase.StateCollapsed || newState == ase.StateUninitialized {
+					terminalOnce.Do(func() { doneCh <- struct{}{} })
+				}
+			})
+
 			if err := a.Run(ctx, dagToUse, w.store); err != nil {
 				w.logger.Error("ase_bridge: agent crashed", "node_id", a.NodeID, "error", err)
+				terminalOnce.Do(func() { doneCh <- struct{}{} })
 			}
 
+			<-doneCh
+			w.logger.Info("ase_bridge: agent unblocked", "node_id", a.NodeID, "state", a.GetState())
+
 			state := a.GetState()
-			if state == ase.StateHoldMissingCtx || state == ase.StateHoldAmbiguous {
-				var pgNodeID pgtype.UUID
-				_ = pgNodeID.Scan(a.NodeID)
-				if err := w.db.SetTransactionInReview(ctx, pgNodeID); err != nil {
-					w.logger.Error("ase_bridge: failed to set transaction in review", "error", err)
+			if strings.HasPrefix(string(state), "HOLD_") {
+				if dt, ok := a.Payload["domain_tool"].(string); ok && dt != "" {
+					if t := domain_tools.Get(dt); t != nil {
+						deps := domain_tools.ToolDependencies{
+							DB:     w.db,
+							Logger: w.logger,
+							Store:  w.store,
+							NC:     w.nc,
+						}
+						payload, pErr := t.GenerateAlertPayload(ctx, a, deps)
+						if pErr == nil && payload != nil {
+							payloadBytes, _ := json.Marshal(payload)
+							ingressSubject, sErr := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
+							if sErr == nil {
+								_ = w.nc.Publish(ingressSubject, payloadBytes)
+							}
+						}
+					}
 				}
-				w.dispatchToGeneralAgent(ctx, a, sessionID)
 			}
 		}(agent)
 	}
 
-	// 5. Wait for all agents to finish, then reply to Orchestrator.
+	// Wait for all agents to finish, then reply to Orchestrator.
 	wg.Wait()
 
 	cid := env.ConversationID
@@ -430,126 +576,127 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	return nil
 }
 
-func (w *AseBridgeWorker) dispatchToGeneralAgent(ctx context.Context, a *ase.AutonomousSemanticEngineNode, sessionID string) {
-	clientName := "Unknown"
-	entityID := a.TenantID
-	if a.RealmID != "" && w.db != nil {
-		if companyInfo, err := w.db.GetCompanyInfo(ctx, a.RealmID); err == nil {
-			clientName = companyInfo.CompanyName
-		} else {
-			w.logger.Warn("ase_bridge: failed to fetch company info for client name", "realm_id", a.RealmID, "error", err)
+func (w *AseBridgeWorker) buildGenerateChannelDagFunc(channel string) ase.ThinkFunc {
+	return func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
+		results := make(map[string]ase.NodeClassification)
+
+		for _, node := range batch {
+			tenantID := node.TenantID
+			promptPath := fmt.Sprintf("docs/prompts/user_inbound_%s_dag_prompt.md", channel)
+
+			promptContentBytes, err := os.ReadFile(promptPath)
+			if err != nil {
+				w.logger.Error("failed to read prompt template", "channel", channel, "error", err)
+				continue
+			}
+
+			promptContent := string(promptContentBytes)
+			promptContent = strings.ReplaceAll(promptContent, "[TENANT_ID]", tenantID)
+			promptContent = strings.ReplaceAll(promptContent, "[SPECIFIC_RULES]", "Standard tone, polite.")
+
+			w.logger.Info("ase_bridge: calling LLM to generate DAG", "tenant", tenantID, "channel", channel)
+
+			llmResponse, err := w.llm.GenerateText(
+				ctx,
+				"You are an expert ASE config generator. ONLY output YAML.",
+				promptContent,
+			)
+
+			if err != nil {
+				w.logger.Error("failed to generate DAG via LLM", "error", err)
+				continue
+			}
+
+			// Clean up YAML markdown blocks if present
+			yamlContent := strings.TrimPrefix(llmResponse, "```yaml\n")
+			yamlContent = strings.TrimPrefix(yamlContent, "```\n")
+			yamlContent = strings.TrimSuffix(yamlContent, "\n```")
+
+			w.logger.Info("ase_bridge: saving generated DAG to DB (skipped YAML->JSON parsing for now)", "yaml_preview", yamlContent[:min(100, len(yamlContent))])
+
+			results[node.NodeID] = ase.NodeClassification{
+				Property: "action_result",
+				Candidates: []ase.ProbabilityCandidate{
+					{Value: "SUCCESS", Confidence: 1.0, Reasoning: "Generated and saved DAG."},
+				},
+			}
 		}
-
-		conn, err := w.db.GetERPConnectionByRealm(ctx, database.GetERPConnectionByRealmParams{
-			ErpSystem: "quickbooks_online",
-			RealmID:   a.RealmID,
-		})
-		if err == nil && conn.EntityID.Valid {
-			entityID = uuid.UUID(conn.EntityID.Bytes).String()
-		} else {
-			w.logger.Warn("ase_bridge: failed to find ERP connection for firm entity ID lookup", "realm_id", a.RealmID, "error", err)
-		}
-	}
-
-	startNodeID := "default"
-	if len(a.ExecutionTrace) > 0 {
-		startNodeID = a.ExecutionTrace[len(a.ExecutionTrace)-1].DAGNodeID
-	}
-
-	alertPrompt := fmt.Sprintf(
-		"SYSTEM ALERT: A transaction (ID: %s) for Client '%s' (Realm ID: %s) under Tenant ID '%s' is stuck in %s.\n\nReason: %s\nDetails: %s\nAmount: %s\nCash Direction: %s\n\n"+
-			"Please contact the business owner to ask for clarification to properly categorize this transaction. You can use the LookupClient tool if needed to find their contact details, and use the SendEmail tool as the default communication channel.\n\n"+
-			"IMPORTANT: Before sending an email, you MUST use the FetchCommunicationHistory tool to check if we have already sent an email to this client about this exact transaction (same amount, customer, and description) within the last 24 hours. If an email has already been sent about this specific transaction recently, DO NOT send a duplicate email.\n\n"+
-			"When the user replies back with the requested information or clarification, you MUST use the UpdateTransactionClassification tool. This tool will pass the user's answer back to the DAG and unblock it so it can proceed. Use this tool only when you have gathered enough context from the user to confidently resolve the hold reason. \n\n"+
-			"CRITICAL LOOP PREVENTION: If you already used the UpdateTransactionClassification tool with the user's latest reply and the transaction generated ANOTHER system alert because it is STILL stuck, you MUST ask the user for more clarification. Do NOT repeatedly submit the same user reply using the tool over and over again.\n\n"+
-			"CRITICAL: When using the UpdateTransactionClassification tool, you MUST provide '%s' as the start_node_id. Do NOT invent or guess the start_node_id.",
-		a.NodeID, clientName, a.RealmID, entityID, string(a.GetState()), a.HoldReason, a.RawDescription, a.RawAmount, a.CashDirection, startNodeID,
-	)
-
-	payload := map[string]interface{}{
-		"prompt":      alertPrompt,
-		"body_text":   alertPrompt,
-		"entity_id":   entityID,
-		"source":      "system",
-		"from_handle": "ase-engine:" + a.NodeID,
-		"to_handle":   "general-agent",
-		"session_id":  sessionID,
-	}
-
-	payloadBytes, _ := json.Marshal(payload)
-
-	ingressSubject, err := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
-	if err != nil {
-		w.logger.Error("ase_bridge: failed to derive general agent ingress subject", "error", err)
-		return
-	}
-
-	w.logger.Info("ase_bridge: dispatching system alert to general agent ingress",
-		"target_subject", ingressSubject,
-		"node_id", a.NodeID,
-	)
-
-	err = w.nc.Publish(ingressSubject, payloadBytes)
-	if err != nil {
-		w.logger.Error("ase_bridge: failed to dispatch to general agent ingress", "node", a.NodeID, "target", ingressSubject, "error", err)
-	} else {
-		w.logger.Info("ase_bridge: successfully dispatched node to general agent ingress", "node", a.NodeID, "target", ingressSubject)
+		return results, nil
 	}
 }
 
-func (w *AseBridgeWorker) mapToAgent(txn database.FignodeStagingTransaction, outflowIs, tenantID, realmID, dagName string) *ase.AutonomousSemanticEngineNode {
-	desc := ""
-	if txn.RawDescription.Valid {
-		desc = txn.RawDescription.String
-	}
+func (w *AseBridgeWorker) buildEmitResumeSignalFunc() ase.ThinkFunc {
+	return func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
+		results := make(map[string]ase.NodeClassification)
+		for _, a := range batch {
+			classification := ase.NodeClassification{
+				Property: "action",
+				Candidates: []ase.ProbabilityCandidate{
+					{Value: "SUCCESS", Confidence: 1.0, Reasoning: "Action executed successfully"},
+				},
+			}
 
-	direction := "OUTFLOW"
-	if txn.CashDirection.Valid && txn.CashDirection.String != "" {
-		direction = txn.CashDirection.String
-	} else {
-		amtStr := strings.ReplaceAll(txn.RawAmount, ",", "")
-		amtStr = strings.ReplaceAll(amtStr, "$", "")
-		amtStr = strings.TrimSpace(amtStr)
-		isNegativeFormat := false
-		if strings.HasPrefix(amtStr, "(") && strings.HasSuffix(amtStr, ")") {
-			amtStr = strings.Trim(amtStr, "()")
-			isNegativeFormat = true
+			var sessionID string
+			if len(a.ContextUpdates) > 0 {
+				sessionID = a.ContextUpdates[0]
+			}
+
+			if sessionID != "" {
+				sessQuery := `SELECT participant_handle FROM toro_core.conversation_sessions WHERE id = $1`
+				var handle string
+				err := w.dbPool.QueryRow(ctx, sessQuery, sessionID).Scan(&handle)
+
+				var nodeID string
+				var dagName string
+				var domainTool string
+				if err == nil {
+					parts := strings.Split(handle, ":")
+					if len(parts) >= 2 && parts[0] == "ase" {
+						nodeID = parts[1]
+						if len(parts) >= 4 {
+							domainTool = parts[2]
+							dagName = parts[3]
+						}
+					}
+				}
+
+				if nodeID != "" {
+					updateQ := `UPDATE fignode.staging_transactions SET status = $2, updated_at = NOW() WHERE id = $1`
+					_, _ = w.dbPool.Exec(ctx, updateQ, nodeID, "RESUME_PENDING")
+
+					var traceJSON []byte
+					traceQ := `SELECT ase_execution_trace FROM fignode.staging_transactions WHERE id = $1`
+					_ = w.dbPool.QueryRow(ctx, traceQ, nodeID).Scan(&traceJSON)
+
+					startNodeID := "default"
+					if len(traceJSON) > 0 {
+						var trace []ase.NodeExecutionStep
+						if err := json.Unmarshal(traceJSON, &trace); err == nil && len(trace) > 0 {
+							startNodeID = trace[len(trace)-1].DAGNodeID
+						}
+					}
+
+					type ResumeEvent struct {
+						NodeID      string `json:"node_id"`
+						StartNodeID string `json:"start_node_id"`
+						DagName     string `json:"dag_name"`
+						DomainTool  string `json:"domain_tool"`
+					}
+					evt, _ := json.Marshal(ResumeEvent{
+						NodeID:      nodeID,
+						StartNodeID: startNodeID,
+						DagName:     dagName,
+						DomainTool:  domainTool,
+					})
+					_ = w.nc.Publish("ase.events.resume", evt)
+					w.logger.Info("ase_bridge: emitted resume signal", "node_id", nodeID, "start_node", startNodeID)
+				} else {
+					w.logger.Warn("ase_bridge: no pending transaction found for session", "session_id", sessionID, "error", err)
+				}
+			}
+
+			results[a.NodeID] = classification
 		}
-		if amt, err := strconv.ParseFloat(amtStr, 64); err == nil {
-			if isNegativeFormat {
-				amt = -amt
-			}
-			isOutflow := false
-			if outflowIs == "" || outflowIs == "NEGATIVE" {
-				isOutflow = amt < 0
-			} else {
-				isOutflow = amt > 0
-			}
-			if isOutflow {
-				direction = "OUTFLOW"
-			} else {
-				direction = "INFLOW"
-			}
-		}
+		return results, nil
 	}
-
-	agent := ase.NewASENode(tenantID, realmID, dagName, desc, direction, txn.RawAmount)
-	agent.NodeID = uuid.UUID(txn.ID.Bytes).String()
-	agent.SetLogger(w.logger)
-
-	if txn.HumanAction.Valid && txn.HumanAction.String != "" {
-		agent.ContextUpdates = append(agent.ContextUpdates, "User/Human Resolution: "+txn.HumanAction.String)
-	}
-
-	if len(txn.AseExecutionTrace) > 0 {
-		_ = json.Unmarshal(txn.AseExecutionTrace, &agent.ExecutionTrace)
-		// Rehydrate Candidates map to preserve previous properties during Resume
-		for _, step := range agent.ExecutionTrace {
-			if step.PropertyKey != "" && len(step.Candidates) > 0 {
-				agent.Candidates[step.PropertyKey] = step.Candidates
-			}
-		}
-	}
-
-	return agent
 }

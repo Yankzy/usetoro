@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 // AlmanacQuery defines the search criteria
@@ -64,7 +65,7 @@ func (c *Client) FindAgents(capability string, timeout time.Duration) ([]Almanac
 	}
 
 	// Send to "almanac.query" and wait for response
-	msg, err := c.nc.Request("almanac.query", reqData, timeout)
+	msg, err := c.requestIgnorePubAck(core.SubjectAlmanacQuery, reqData, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("almanac request failed: %w", err)
 	}
@@ -85,7 +86,7 @@ func (c *Client) Resolve(query AlmanacQuery, timeout time.Duration) (*AlmanacEnt
 		return nil, fmt.Errorf("marshal error: %w", err)
 	}
 
-	msg, err := c.nc.Request("almanac.query", reqData, timeout)
+	msg, err := c.requestIgnorePubAck(core.SubjectAlmanacQuery, reqData, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("almanac request failed: %w", err)
 	}
@@ -113,7 +114,7 @@ func (c *Client) ResolveByDID(did string, timeout time.Duration) (*AlmanacEntry,
 		return nil, fmt.Errorf("marshal error: %w", err)
 	}
 
-	msg, err := c.nc.Request("almanac.query", reqData, timeout)
+	msg, err := c.requestIgnorePubAck(core.SubjectAlmanacQuery, reqData, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("almanac request failed: %w", err)
 	}
@@ -141,7 +142,7 @@ func (c *Client) ResolveByCapabilityType(capability string, timeout time.Duratio
 		return nil, fmt.Errorf("marshal error: %w", err)
 	}
 
-	msg, err := c.nc.Request("almanac.query", reqData, timeout)
+	msg, err := c.requestIgnorePubAck(core.SubjectAlmanacQuery, reqData, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("almanac request failed: %w", err)
 	}
@@ -152,4 +153,42 @@ func (c *Client) ResolveByCapabilityType(capability string, timeout time.Duratio
 	}
 
 	return results, nil
+}
+
+// requestIgnorePubAck performs a synchronous NATS Request but ignores JetStream PubAcks.
+func (c *Client) requestIgnorePubAck(subj string, data []byte, timeout time.Duration) (*nats.Msg, error) {
+	inbox := nats.NewInbox()
+	sub, err := c.nc.SubscribeSync(inbox)
+	if err != nil {
+		return nil, fmt.Errorf("subscribe failed: %w", err)
+	}
+	defer sub.Unsubscribe()
+
+	if err := c.nc.PublishRequest(subj, inbox, data); err != nil {
+		return nil, fmt.Errorf("publish request failed: %w", err)
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		msg, err := sub.NextMsg(time.Until(deadline))
+		if err != nil {
+			break
+		}
+
+		// Try unmarshaling to see if it's a valid JetStream PubAck.
+		var generic map[string]interface{}
+		if err := json.Unmarshal(msg.Data, &generic); err == nil {
+			if _, ok := generic["stream"]; ok {
+				if _, ok := generic["seq"]; ok {
+					// It's a PubAck, skip it
+					continue
+				}
+			}
+		}
+
+		// Not a PubAck, return the message
+		return msg, nil
+	}
+
+	return nil, nats.ErrTimeout
 }

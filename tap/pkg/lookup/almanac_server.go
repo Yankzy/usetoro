@@ -58,7 +58,7 @@ func (r *Registry) Start(ctx context.Context) error {
 	}
 
 	// 2. Listen for discovery queries
-	_, err = r.nc.Subscribe("almanac.query", func(msg *nats.Msg) {
+	_, err = r.nc.Subscribe(core.SubjectAlmanacQuery, func(msg *nats.Msg) {
 		var query AlmanacQuery
 		if err := json.Unmarshal(msg.Data, &query); err != nil {
 			r.logger.Error("Almanac: malformed query", "error", err)

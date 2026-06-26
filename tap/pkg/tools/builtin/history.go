@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/Yankzy/usetoro/internal/database"
 )
 
@@ -66,7 +67,15 @@ func (t *HistoryTool) Call(ctx context.Context, input map[string]any) (string, e
 		agentHandle = "Sarah" // Fallback to Sarah as per user request
 	}
 
+	entityIDStr, _ := ctx.Value(tools.EntityIDKey{}).(string)
+	if entityIDStr == "" {
+		return "", fmt.Errorf("missing entity_id in context, cannot fetch history without knowing firm identity")
+	}
+	var entityUUID pgtype.UUID
+	_ = entityUUID.Scan(entityIDStr)
+
 	conversations, err := t.DB.GetRecentConversations(ctx, database.GetRecentConversationsParams{
+		EntityID:   entityUUID,
 		FromHandle: clientHandle,
 		Limit:      limit,
 	})

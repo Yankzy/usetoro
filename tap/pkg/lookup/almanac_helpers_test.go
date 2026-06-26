@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 func TestAlmanacTools(t *testing.T) {
@@ -21,8 +22,8 @@ func TestAlmanacTools(t *testing.T) {
 	}
 	defer nc.Close()
 
-	// Mock the Almanac service by subscribing to almanac.query
-	sub, err := nc.Subscribe("almanac.query", func(msg *nats.Msg) {
+	// Mock the Almanac service by subscribing to core.SubjectAlmanacQuery
+	sub, err := nc.Subscribe(core.SubjectAlmanacQuery, func(msg *nats.Msg) {
 		var query AlmanacQuery
 		if err := json.Unmarshal(msg.Data, &query); err != nil {
 			return
@@ -50,7 +51,7 @@ func TestAlmanacTools(t *testing.T) {
 		msg.Respond(respData)
 	})
 	if err != nil {
-		t.Fatalf("Failed to subscribe to almanac.query: %v", err)
+		t.Fatalf("Failed to subscribe to %s: %v", core.SubjectAlmanacQuery, err)
 	}
 	defer sub.Unsubscribe()
 

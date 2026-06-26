@@ -749,7 +749,7 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 	var entityID pgtype.UUID
 	var triggerPayload []byte = msg.Data
 	var triggerEnv core.Envelope
-	if err := json.Unmarshal(msg.Data, &triggerEnv); err == nil {
+	if err := json.Unmarshal(msg.Data, &triggerEnv); err == nil && len(triggerEnv.Body) > 0 {
 		var taskDef core.TaskDefinition
 		if err := json.Unmarshal(triggerEnv.Body, &taskDef); err == nil {
 			triggerPayload = taskDef.Payload
@@ -759,6 +759,17 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 					if uuidEID, err := uuid.Parse(eid); err == nil {
 						entityID = pgtype.UUID{Bytes: uuidEID, Valid: true}
 					}
+				}
+			}
+		}
+	}
+
+	if !entityID.Valid {
+		var directPayload map[string]interface{}
+		if err := json.Unmarshal(triggerPayload, &directPayload); err == nil {
+			if eid, ok := directPayload["entity_id"].(string); ok {
+				if uuidEID, err := uuid.Parse(eid); err == nil {
+					entityID = pgtype.UUID{Bytes: uuidEID, Valid: true}
 				}
 			}
 		}

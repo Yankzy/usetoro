@@ -1,0 +1,18 @@
+name: User Onboarding Workflow
+version: "1.0"
+trigger_topic: events.system.1.user_onboarding
+steps:
+  - id: ase_bridge
+    activity_type: workers.ase_bridge
+    timeout: "600s"
+    description: "Orchestrates the Autonomous Semantic Engine to generate custom configurations and channels for new users."
+    config:
+      dag_name: "onboarding"
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" }
+        },
+        "required": ["session_id"]
+      }

@@ -47,7 +47,8 @@ steps:
     timeout: "600s"
     description: "Fans out Autonomous Semantic Engine micro-agents for all pending transactions."
     config:
-      dag_name: "default"
+      dag_name: "ase_gaap_us"
+      domain_tool: "bookkeeping"
     workflow_schema: |
       {
         "type": "object",

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 type AlmanacQuery struct {
@@ -67,7 +68,7 @@ func check(nc *nats.Conn, q AlmanacQuery) {
 	defer sub.Unsubscribe()
 
 	// Publish with our custom reply subject
-	if err := nc.PublishRequest("almanac.query", inbox, data); err != nil {
+	if err := nc.PublishRequest(core.SubjectAlmanacQuery, inbox, data); err != nil {
 		fmt.Printf("   ❌ Publish failed: %v\n", err)
 		return
 	}
@@ -77,7 +78,7 @@ func check(nc *nats.Conn, q AlmanacQuery) {
 	deadline := time.Now().Add(2 * time.Second)
 
 	for time.Now().Before(deadline) {
-		msg, err := sub.NextMsg(deadline.Sub(time.Now()))
+		msg, err := sub.NextMsg(time.Until(deadline))
 		if err != nil {
 			break
 		}

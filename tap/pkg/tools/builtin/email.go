@@ -7,17 +7,17 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/tools"
+	"github.com/google/uuid"
 )
 
 // EmailTool allows an agent to proactively send an email or reply to one.
 // It publishes an INFORM envelope containing a core.Proof to `proof.outgoing.chat`.
 type EmailTool struct {
-	Bus      core.EventBus
-	Logger   *slog.Logger
-	AgentDID string
+	Bus       core.EventBus
+	Logger    *slog.Logger
+	AgentDID  string
 	AgentName string
 }
 
@@ -103,7 +103,7 @@ func (t *EmailTool) Call(ctx context.Context, input map[string]any) (string, err
 	if sessionID, ok := ctx.Value(tools.SessionIDKey{}).(string); ok && sessionID != "" {
 		dataMap["session_id"] = sessionID
 	}
-	
+
 	if messageID, ok := ctx.Value(tools.MessageIDKey{}).(string); ok && messageID != "" {
 		dataMap["in_reply_to"] = messageID
 	}

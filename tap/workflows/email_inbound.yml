@@ -1,0 +1,21 @@
+name: Email Inbound Workflow
+version: "1.0"
+trigger_topic: events.communication.1.inbound_email
+steps:
+  - id: ase_bridge
+    activity_type: workers.ase_bridge
+    timeout: "600s"
+    description: "Orchestrates the Autonomous Semantic Engine to classify, triage, and resolve inbound emails."
+    config:
+      domain_tool: "email"
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "prompt": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "dag_name": { "type": "string" }
+        },
+        "required": ["session_id", "prompt", "entity_id", "dag_name"]
+      }

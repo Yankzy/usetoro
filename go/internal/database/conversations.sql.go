@@ -187,18 +187,19 @@ func (q *Queries) GetEntityIDByEmail(ctx context.Context, email string) (pgtype.
 
 const getRecentConversations = `-- name: GetRecentConversations :many
 SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, role, delivered, bounced, opened, clicked, complained, session_id, created_at, updated_at FROM toro_core.conversations
-WHERE (from_handle = $1 OR to_handle = $1)
+WHERE entity_id = $1 AND (from_handle = $2 OR to_handle = $2)
 ORDER BY created_at DESC
-LIMIT $2
+LIMIT $3
 `
 
 type GetRecentConversationsParams struct {
+	EntityID   pgtype.UUID
 	FromHandle string
 	Limit      int32
 }
 
 func (q *Queries) GetRecentConversations(ctx context.Context, arg GetRecentConversationsParams) ([]ToroCoreConversation, error) {
-	rows, err := q.db.Query(ctx, getRecentConversations, arg.FromHandle, arg.Limit)
+	rows, err := q.db.Query(ctx, getRecentConversations, arg.EntityID, arg.FromHandle, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

@@ -74,7 +74,10 @@ func (b *ContextBuilder) buildStructuredMessages(history []database.ToroCoreConv
 
 	var lastDate string
 	for _, msg := range history[startIdx:] {
-		body := textFromPG(msg.BodyText)
+		body := textFromPG(msg.StrippedText)
+		if body == "" {
+			body = textFromPG(msg.BodyText)
+		}
 		if body == "" {
 			continue
 		}
@@ -126,7 +129,10 @@ func (b *ContextBuilder) buildFlatPrompt(history []database.ToroCoreConversation
 	}
 
 	for _, msg := range history[startIdx:] {
-		body := textFromPG(msg.BodyText)
+		body := textFromPG(msg.StrippedText)
+		if body == "" {
+			body = textFromPG(msg.BodyText)
+		}
 		if body == "" {
 			continue
 		}

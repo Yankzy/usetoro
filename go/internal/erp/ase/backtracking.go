@@ -2,7 +2,6 @@ package ase
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -20,33 +19,28 @@ type AutomatedBacktrackResponse struct {
 // AutomatedBacktrackingPrompt is the system prompt used to instruct the LLM
 // on how to analyze human context and identify erroneous past classification decisions.
 const AutomatedBacktrackingPrompt = `You are an Autonomous Backtracking Agent.
-A transaction micro-agent was placed on HOLD. A human has provided new context correcting a past assumption.
+A micro-agent was placed on HOLD. A human has provided new context correcting a past assumption.
 
 You will be provided with:
-1. Transaction Description: The original raw description of the transaction.
+1. Domain-specific context.
 2. New Human Context: The correction provided by the human.
 3. Execution Trace: A list of the steps and decisions the agent made.
 
 Analyze the new context against the execution trace. 
 Identify the FIRST step in the trace that made a decision directly contradicted by the human context.
-For example, if the human says "This is not an asset, it's a liability", the step with dag_node_id "macro_classifier_outflow" that selected "ASSET" is wrong.
+%s
 You must return a JSON object with exactly one key "target_dag_node_id" containing the ID of the earliest wrong step. 
 If the trace is correct and the context just helps the CURRENT stuck step, return "NONE".
-
-Additionally, formulate a generalized accounting rule for this specific company so this mistake is never repeated. Return it in the "extracted_rule" field. Keep it concise.
-Also provide a "rule_keyword" (e.g., the vendor name or main subject). If it's a general rule, use "GLOBAL".`
+`
 
 // AutomatedBacktrackAndResume injects human context, identifies the mistake, backtracks, and resumes execution.
-func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, node *AutonomousSemanticEngineNode, newContext string, dag *DAG, store *StateStore) error {
-	node.mu.Lock()
+func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, node *AutonomousSemanticEngineNode, newContext string, dag *DAG, store StatePersister, domainSystemPrompt string, userPrompt string) error {
+	node.Mu.Lock()
 	node.ContextUpdates = append(node.ContextUpdates, newContext)
 	
 	traceCopy := make([]NodeExecutionStep, len(node.ExecutionTrace))
 	copy(traceCopy, node.ExecutionTrace)
-	description := node.RawDescription
-	node.mu.Unlock()
-
-	traceBytes, _ := json.Marshal(traceCopy)
+	node.Mu.Unlock()
 
 	if cs.llmClient == nil {
 		// Fallback if no local LLM client is available.
@@ -55,10 +49,10 @@ func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, no
 		return node.Resume(ctx, dag, store, "")
 	}
 
-	userPrompt := fmt.Sprintf("Transaction Description: %s\nNew Human Context: %s\nExecution Trace:\n%s", description, newContext, string(traceBytes))
+	systemPrompt := fmt.Sprintf(AutomatedBacktrackingPrompt, domainSystemPrompt)
 
 	var resp AutomatedBacktrackResponse
-	if err := cs.llmClient.GenerateJSON(ctx, AutomatedBacktrackingPrompt, userPrompt, &resp); err != nil {
+	if err := cs.llmClient.GenerateJSON(ctx, systemPrompt, userPrompt, &resp); err != nil {
 		return fmt.Errorf("automated backtracking llm call failed: %w", err)
 	}
 
@@ -84,12 +78,12 @@ func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, no
 	// If no backtrack is needed (NONE), check whether the current hold gate has a
 	// resume child. If so, resume directly there instead of looping through the gate
 	// that originally trapped the agent.
-	node.mu.RLock()
+	node.Mu.RLock()
 	lastStepDAGNodeID := ""
 	if len(node.ExecutionTrace) > 0 {
 		lastStepDAGNodeID = node.ExecutionTrace[len(node.ExecutionTrace)-1].DAGNodeID
 	}
-	node.mu.RUnlock()
+	node.Mu.RUnlock()
 
 	if lastStepDAGNodeID != "" {
 		lastNode := dag.GetNode(lastStepDAGNodeID)
@@ -108,8 +102,8 @@ func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, no
 // It removes any classification candidates set at or after that step, updates entropy,
 // truncates the trace, and prepares the node to be re-injected.
 func (n *AutonomousSemanticEngineNode) Backtrack(targetDAGNodeID string) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	n.Mu.Lock()
+	defer n.Mu.Unlock()
 
 	targetIndex := -1
 	for i, step := range n.ExecutionTrace {

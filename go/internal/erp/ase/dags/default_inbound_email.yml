@@ -73,7 +73,7 @@ dag:
         "CLARIFICATION": "resolve_context"
         "APPROVAL": "resolve_context"
       default_child: "triage_failed"
-      
+
     resolve_context:
       kind: "classifier"
       name: "resolve_context"
@@ -86,7 +86,7 @@ dag:
       kind: "action"
       name: "route_and_trigger"
       execution_parameters:
-        action_type: "resume_bookkeeping_dag"
+        action_type: "emit_resume_signal"
       default_child: "triage_complete"
 
     triage_failed:

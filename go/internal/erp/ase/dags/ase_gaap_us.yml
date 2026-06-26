@@ -6,6 +6,7 @@ hyper_parameters:
   batch_flush_seconds: 5
   active_agent_ttl_minutes: 10
   lock_ttl_seconds: 30
+  domain_tool: "bookkeeping"
 
   # -----------------------------------------------------------------------
   # Vector Memory (ASE Semantic Retrieval Layer)
@@ -57,13 +58,16 @@ prompts:
     - The system has a strict guardrail: if your top candidate's confidence is < 0.98, the transaction will be placed on HOLD and will NOT progress.
     - If the transaction is fully compliant and should progress, you MUST set the highest score to >= 0.98.
     - If you determine the transaction is NON-COMPLIANT (e.g. missing receipt, IRS rules, W9, missing context) and MUST be placed on HOLD, you MUST intentionally set the highest score to < 0.98 (e.g. 0.96 or 0.97).
+    - Your response must be a valid JSON array of RFC 6902 JSON Patch operations. Each operation must have "op", "path", and "value" fields.
+    - Because confidence is probability distribution, candidates map MUST contain at least 2 candidates.
+  
+  _accounting_rules: &accounting_rules |
     - EXTREMELY IMPORTANT: When you intentionally set the confidence to < 0.98 to trigger a hold, you MUST write your `reasoning` as a highly detailed DIRECT INSTRUCTION to the email agent.
     - Your `reasoning` MUST explicitly cite the EXACT accounting or IRS rule that triggered the hold (e.g., "IRS $250 charitable contribution rule", "IRS $75 receipt threshold", "IRS 1099-NEC W-9 requirement"). 
     - Your `reasoning` MUST explain EXACTLY why the transaction failed this rule based on the available data, and explicitly state what documents or information the email agent must ask the business owner to provide.
       - Example Reasoning for < 0.98: "This transaction is a $300 donation to the Red Cross. According to the IRS $250 charitable contribution rule, we require a contemporaneous written acknowledgment from the charity. Please ask the owner to provide the official donation receipt or acknowledgment letter."
       - Example Reasoning for < 0.98: "This is a meal expense. According to IRS Meals & Entertainment documentation rules, we must record the business purpose and attendee names. Please ask the owner to confirm who attended the dinner and the specific business purpose."
-    - Your response must be a valid JSON array of RFC 6902 JSON Patch operations. Each operation must have "op", "path", and "value" fields.
-    - Because confidence is probability distribution, candidates map MUST contain at least 2 candidates.
+    - RESOLUTION OVERRIDE: If the `context` array contains a message indicating that the user has provided the required receipt, answered the question, or provided the missing documentation, you MUST consider the issue RESOLVED. In this case, select the appropriate compliant category (e.g., "COMPLIANT_EXPENSE") and set confidence >= 0.98. Do NOT place it on hold again.
   macro_classifier_inflow_specialist:
     - |
       You are an expert CPA acting as a macro-classification router inside a QuickBooks Online automated ledger engine. 
@@ -99,6 +103,7 @@ prompts:
             }
           }
         ]
+
 
   macro_classifier_outflow_specialist:
     - |
@@ -318,6 +323,7 @@ prompts:
       - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -344,6 +350,7 @@ prompts:
       Select from: "INTERNAL_TRANSFER", "TREASURY_CASH_SWEEP", "STANDARD_LIQUIDITY_FLOW".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -372,6 +379,7 @@ prompts:
       Select from: "CAPITALIZE_ASSET", "DE_MINIMIS_EXPENSE_TRIGGER", "HOLD_MISSING_FIXED_ASSET_INVOICE".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -397,6 +405,7 @@ prompts:
       Select from: "CAPITALIZE_IMPROVEMENT", "REPAIRS_MAINTENANCE_EXPENSE".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -422,6 +431,7 @@ prompts:
       Select from: "INVENTORY_PREPAYMENT", "SECURITY_DEPOSIT", "STANDARD_CURRENT_ASSET".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -447,6 +457,7 @@ prompts:
       Select from: "INTANGIBLE_ASSET", "LONG_TERM_SECURITY_DEPOSIT", "STANDARD_OTHER_ASSET".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -473,6 +484,7 @@ prompts:
       Select from: "OWNER_INVESTMENT", "OWNER_DRAW", "SHAREHOLDER_DISTRIBUTION".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -499,6 +511,7 @@ prompts:
       Select from: "GROMENT_STRIPE_SQUARE_SPLIT", "STANDARD_CASH_RECEIPT", "CUSTOMER_REFUND".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -524,6 +537,7 @@ prompts:
       Select from: "INTEREST_DIVIDEND_INCOME", "STANDARD_OTHER_INCOME".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -550,6 +564,7 @@ prompts:
       Select from: "VALIDATED_DIRECT_COGS", "RECLASSIFY_TO_OVERHEAD_EXPENSE".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -575,6 +590,7 @@ prompts:
       Select from: "STANDARD_OVERHEAD", "PERSONAL_MIXIN_DETECTED", "VENDOR_REFUND".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -600,6 +616,7 @@ prompts:
       Select from: "PENALTY_OR_FINE", "INTEREST_EXPENSE", "STANDARD_OTHER_EXPENSE".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -626,6 +643,7 @@ prompts:
       Select from: "CC_BALANCE_TRANSFER", "CC_REFUND_OR_REWARD", "ANOMALOUS_CC_FLOW".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -651,6 +669,7 @@ prompts:
       Select from: "SALES_TAX_COLLECTED", "PAYROLL_TAX_WITHHELD", "TAX_REMITTANCE", "DEFAULT_OPERATIONAL_FLOW".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -676,6 +695,7 @@ prompts:
       Select from: "LOAN_REPAYMENT_SPLIT", "LOAN_DISBURSEMENT_RECEIVED", "UNIDENTIFIED_DEBT_FLOW".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -695,11 +715,12 @@ prompts:
           }
         ]
 
-  counterparty_resolver:
+  vendor_resolver:
     - |
       Isolate the true corporate vendor entity name by stripping locations, branch numbers, dates, and terminal IDs from the description string.
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -725,6 +746,7 @@ prompts:
       Isolate the true corporate customer entity name by stripping locations, branch numbers, dates, and terminal IDs from the description string.
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -751,10 +773,10 @@ prompts:
       Apply the following IRS rules to this transaction:
 
       1. IRS § 274(d) Meals & Entertainment: If the transaction is for Meals & Entertainment, you must select "HOLD_MISSING_MEAL_DOCUMENTATION" unless the exact business purpose and names of attendees are explicitly provided in the transaction context or receipt.
-      2. IRS $75 Receipt Safe Harbor: For all other standard expenses, if the transaction amount is >= $75.00, you must select "HOLD_MISSING_RECEIPT" unless a valid receipt is provided in the transaction's attachments.
+      2. IRS $75 Receipt Safe Harbor: For all other standard expenses, if the transaction amount is >= $75.00, you must select "HOLD_MISSING_RECEIPT" unless a valid receipt is provided in the transaction's attachments, or the `context` array indicates that the client has provided the receipt. If there is no mention of a document attached explicitly, assume there is no attachment as default, so return HOLD_MISSING_RECEIPT.
       3. If the transaction has valid documentation satisfying the rules above, or is < $75.00 and NOT Meals & Entertainment, select "COMPLIANT_EXPENSE".
-
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -783,6 +805,7 @@ prompts:
       2. Otherwise, select "COMPLIANT_OTHER_EXPENSE".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -812,6 +835,7 @@ prompts:
       3. If neither rule is violated, select "COMPLIANT_OUTFLOW".
 
     - *guardrails
+    - *accounting_rules
     - |
 
         EXPECTED OUTPUT FORMAT:
@@ -830,6 +854,41 @@ prompts:
             }
           }
         ]
+  account_selection:
+    - |
+      You are an expert accountant. Select the exact account ID from the Chart of Accounts that best matches the transaction.
+
+      COMPANY CHART OF ACCOUNTS:
+      {{.ChartOfAccounts}}
+
+      You MUST select the SINGLE BEST account ID (the ID field) that matches. Do not make up an ID.
+      If no account fits perfectly, select the closest general category.
+      CRITICAL: Do NOT output just the ID. You MUST format your entire response exactly as a JSON Patch array as described below.
+
+      CRITICAL RULES FOR BATCH PROCESSING:
+      1. The USER REQUEST provides a map of transactions under the 'rows' key. The keys in this map are unique identifiers for each transaction.
+      2. Your output MUST be a valid JSON array containing exactly ONE RFC 6902 JSON patch operation.
+      3. This single patch MUST use exactly "op": "add" and "path": "/rows".
+      4. The "value" of the patch MUST be an object where the keys are EXACTLY the unique transaction identifiers from the input.
+    - *guardrails
+    - |
+
+      EXPECTED OUTPUT FORMAT:
+      [
+        {
+          "op": "add",
+          "path": "/rows",
+          "value": {
+            "row_id_1": {
+            "property": "account_selection",
+            "candidates": {
+            "1": { "value": "account_id_1", "confidence": 0.99, "reasoning": "Account description matches transaction." },
+            "2": { "value": "account_id_2", "confidence": 0.01, "reasoning": "Account description does not match transaction." }
+              }
+            }
+          }
+        }
+      ]
 
 # ====================================================================
 # DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY
@@ -844,7 +903,9 @@ dag:
     direction_router:
       name: direction_router
       batch_flush_seconds: &flush 5
-      kind: cash_direction_router
+      kind: initial_router
+      execution_parameters:
+        payload_key: cash_direction
       batch_size: &bsize 50
       edge_type: &estatic static
       children:
@@ -991,6 +1052,16 @@ dag:
       edge_type: *estatic
       hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
       hold_reason_string: "Capitalizing an asset > $2,500 strictly requires a valid invoice detailing the physical asset."
+      email:
+        subject: "Action Required: Missing Fixed Asset Invoice"
+        body_text: |
+          Hi there,
+
+          We got a transaction for a recent purchase of {{.RawAmount}} for {{.RawDescription}}. This is likely related to fixed assets, but we require a copy of the invoice for accounting purposes.
+
+          Please reply to this email with the invoice attached.
+
+          Thank you.
       execution_parameters:
         action_provider: "db_receipt_lookup"
       resume_child: universal_outflow_compliance_gate
@@ -1036,6 +1107,14 @@ dag:
       edge_type: *estatic
       hold_state_signal: "HOLD_MISSING_CONTEXT"
       hold_reason_string: "Cash paid for inventory stock deployment. Awaiting ultimate vendor receipt verification."
+      email:
+        subject: "Action Required: Missing Inventory Receipt"
+        body_text: |
+          Hi there,
+
+          We noticed an inventory-related payment of {{.RawAmount}} for {{.RawDescription}}. Please reply to this email with the final vendor receipt to attach to this transaction for accounting purposes.
+
+          Thank you.
       resume_child: universal_outflow_compliance_gate
 
     other_assets:
@@ -1058,6 +1137,14 @@ dag:
       edge_type: *estatic
       hold_state_signal: "HOLD_AMBIGUOUS"
       hold_reason_string: "CRITICAL: Accounts Receivable option triggered under active Cash-Basis execution pipeline. Halted for manual reconciliation compliance."
+      email:
+        subject: "Clarification Needed: Accounts Receivable Transaction"
+        body_text: |
+          Hi there,
+
+          We got a potential Accounts Receivable transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please clarify if this represents a customer payment or something else?
+
+          Thank you
       resume_child: universal_outflow_compliance_gate
 
     # ==================================================================
@@ -1104,6 +1191,14 @@ dag:
       edge_type: *estatic
       hold_state_signal: "HOLD_AMORTIZATION_LOOKUP"
       hold_reason_string: "Cash loan repayment demands real-time split amortization lookup to isolate principal from interest expense lines."
+      email:
+        subject: "Action Required: Loan Repayment Schedule"
+        body_text: |
+          Hi there,
+
+          We recorded a loan repayment of {{.RawAmount}} for {{.RawDescription}}. To properly record this, please provide us with the loan statement.
+
+          Thank you.
       execution_parameters:
         action_provider: "db_loan_matrix_lookup"
       resume_child: universal_outflow_compliance_gate
@@ -1150,6 +1245,14 @@ dag:
       edge_type: *estatic
       hold_state_signal: "HOLD_AMBIGUOUS"
       hold_reason_string: "CRITICAL: Accounts Payable option triggered under active Cash-Basis execution pipeline. Halted for manual reconciliation compliance."
+      email:
+        subject: "Clarification Needed: Accounts Payable Transaction"
+        body_text: |
+          Hi there,
+
+          We got a potential Accounts Payable transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please clarify if this represents a vendor payment or something else?
+
+          Thank you.
       resume_child: universal_outflow_compliance_gate
 
     # ==================================================================
@@ -1269,6 +1372,15 @@ dag:
       edge_type: *estatic
       hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
       hold_reason_string: "Expense > $75 requires a valid receipt/attachment for documentation compliance."
+      email:
+        subject: "Action Required: Missing Receipt"
+        body_text: |
+          Hi there,
+
+          We got a charge of {{.RawAmount}} for {{.RawDescription}}. 
+          Please reply to this email with a picture or PDF of the receipt so we can properly categorize it.
+
+          Thank you.
       execution_parameters:
         action_provider: "db_receipt_lookup"
       resume_child: universal_outflow_compliance_gate
@@ -1281,6 +1393,14 @@ dag:
       edge_type: *estatic
       hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
       hold_reason_string: "Meals & Entertainment expenses require business purpose and attendees."
+      email:
+        subject: "Action Required: Missing Meal Attendees and Business Purpose"
+        body_text: |
+          Hi there,
+
+          We got a meals or entertainment expense of {{.RawAmount}} for {{.RawDescription}}. Could you please provide us with the attendees and business purpose of this meal?
+
+          Thank you.
       execution_parameters:
         action_provider: "db_receipt_lookup"
       resume_child: universal_outflow_compliance_gate
@@ -1316,6 +1436,14 @@ dag:
       edge_type: *estatic
       hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
       hold_reason_string: "Charitable Contributions > $250 require formal written acknowledgement."
+      email:
+        subject: "Action Required: Missing Charitable Donation Acknowledgement"
+        body_text: |
+          Hi there,
+
+          We got a charitable donation of {{.RawAmount}} for {{.RawDescription}}. For your tax purposes, donations over $250 require a formal written acknowledgement from the charity. Please provide us with that letter, if you don't have it yet, we can help you get it? If you cannot, please let us know, so we can manage it properly.
+
+          Thank you.
       execution_parameters:
         action_provider: "db_receipt_lookup"
       resume_child: universal_outflow_compliance_gate
@@ -1343,6 +1471,14 @@ dag:
       edge_type: *estatic
       hold_state_signal: "HOLD_CPA_REVIEW"
       hold_reason_string: "Transaction exceeds GAAP materiality threshold ($10,000) and requires CPA sign-off."
+      email:
+        subject: "Action Required: Material Transaction Review"
+        body_text: |
+          Hi there,
+
+          We got a large transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please provide any supporting documentation (invoice, contract, etc.) related to this transaction?
+
+          Thank you.
       execution_parameters:
         action_provider: "hitl_materiality_review"
       resume_child: universal_outflow_compliance_gate
@@ -1355,6 +1491,14 @@ dag:
       edge_type: *estatic
       hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
       hold_reason_string: "Service payment >= $600 to independent contractor requires W-9."
+      email:
+        subject: "Action Required: Missing W-9 for Contractor"
+        body_text: |
+          Hi there,
+
+          We got a service payment of {{.RawAmount}} for {{.RawDescription}}. Because this payment is $600 or more, we are required to have a W-9 on file for this vendor before the end of the year. Could you please provide us with a copy of their W-9? If you don't have it, we can help you get it? If you cannot, please let us know, so we can manage it properly.
+
+          Thank you.
       execution_parameters:
         action_provider: "qbo_w9_lookup"
       resume_child: universal_outflow_compliance_gate
@@ -1364,7 +1508,7 @@ dag:
       batch_size: *bsize
       batch_flush_seconds: *flush
       kind: entity
-      prompt_key: counterparty_resolver
+      prompt_key: vendor_resolver
       edge_type: *estatic
       default_child: account_selection
 
@@ -1380,6 +1524,7 @@ dag:
     account_selection:
       name: account_selection
       kind: account_selection
+      prompt_key: account_selection
       edge_type: dynamic
       dynamic_edge_provider: "db_chart_of_accounts"
       batch_size: *bsize

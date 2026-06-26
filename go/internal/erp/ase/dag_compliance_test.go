@@ -12,9 +12,9 @@ import (
 )
 
 func loadActualDAGConfig(t *testing.T) DAGConfig {
-	b, err := os.ReadFile("dags/ase.yml")
+	b, err := os.ReadFile("dags/ase_gaap_us.yml")
 	if err != nil {
-		t.Fatalf("failed to read ase.yml: %v", err)
+		t.Fatalf("failed to read ase_gaap_us.yml: %v", err)
 	}
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(b, &raw); err != nil {
@@ -71,7 +71,7 @@ func TestDAG_ComplianceRouting_IRS75Receipt(t *testing.T) {
 	dag.StartAll()
 	defer dag.StopAll()
 
-	node := NewASENode("t1", "", "default", "Office Supplies $85", "OUTFLOW", "-85.00")
+	node := NewASENode("t1", "", "default", map[string]any{"raw_description": "Office Supplies $85", "cash_direction": "OUTFLOW", "raw_amount": "-85.00"})
 	routerNode.Accept(node)
 
 	time.Sleep(300 * time.Millisecond)
@@ -107,7 +107,7 @@ func TestDAG_ComplianceRouting_1099W9Rule(t *testing.T) {
 	dag.StartAll()
 	defer dag.StopAll()
 
-	node := NewASENode("t2", "", "default", "Contractor Payment", "OUTFLOW", "-650.00")
+	node := NewASENode("t2", "", "default", map[string]any{"raw_description": "Contractor Payment", "cash_direction": "OUTFLOW", "raw_amount": "-650.00"})
 	routerNode.Accept(node)
 
 	time.Sleep(300 * time.Millisecond)
@@ -154,7 +154,7 @@ func TestDAG_ComplianceRouting_CompliantOutflow(t *testing.T) {
 	dag.StartAll()
 	defer dag.StopAll()
 
-	node := NewASENode("t3", "", "default", "Software Subscription", "OUTFLOW", "-15.00")
+	node := NewASENode("t3", "", "default", map[string]any{"raw_description": "Software Subscription", "cash_direction": "OUTFLOW", "raw_amount": "-15.00"})
 	routerNode.Accept(node)
 
 	time.Sleep(300 * time.Millisecond)

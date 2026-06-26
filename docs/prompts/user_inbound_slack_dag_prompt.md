@@ -18,7 +18,7 @@ You are an expert system configurator for the Toro Autonomous Semantic Engine (A
 3. The DAG must include at least these three base nodes:
    - `extract_intent` (kind: `classifier`): Analyzes the incoming **Slack message** to extract the user's intent.
    - `resolve_context` (kind: `classifier`): Resolves the intent against active holding states.
-   - `route_and_trigger` (kind: `action`): Has `execution_parameters.action_type = "resume_bookkeeping_dag"`.
+   - `route_and_trigger` (kind: `action`): Has `execution_parameters.action_type = "emit_resume_signal"`.
 
 4. The `prompts` section must contain the specific instructions for each classifier.
    - For the `intent_specialist` prompt, you MUST explicitly mention that the message is a **Slack message**. Consider Slack-specific contexts like thread replies, @mentions, and inline file uploads.
@@ -94,7 +94,7 @@ dag:
       kind: "action"
       name: "route_and_trigger"
       execution_parameters:
-        action_type: "resume_bookkeeping_dag"
+        action_type: "emit_resume_signal"
       default_child: "triage_complete"
 
     triage_failed:

@@ -20,7 +20,7 @@ func TestLRUCaching(t *testing.T) {
 			ConfidenceThreshold: 0.99,
 		},
 	}
-	configCache.Add("tenant_test-tenant_test-dag", customCfg)
+	configCache.Add("test-dag_test-tenant", customCfg)
 	
 	// Now GetConfig should return from cache
 	cachedCfg := GetConfig("test-tenant", "", "test-dag")

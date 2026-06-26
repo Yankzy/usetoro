@@ -5,10 +5,8 @@ package ase
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"math"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,15 +17,15 @@ import (
 type NodeState string
 
 const (
-	StateUninitialized    NodeState = "UNINITIALIZED"
-	StateTriaging         NodeState = "TRIAGING"
-	StateThinking         NodeState = "THINKING"
-	StateActivating       NodeState = "ACTIVATING"
-	StateClassified       NodeState = "CLASSIFIED"
-	StateHoldAmbiguous    NodeState = "HOLD_AMBIGUOUS"
-	StateHoldMissingCtx   NodeState = "HOLD_MISSING_CONTEXT"
-	StateReadyForSync     NodeState = "READY_FOR_SYNC"
-	StateCollapsed        NodeState = "COLLAPSED"
+	StateUninitialized  NodeState = "UNINITIALIZED"
+	StateTriaging       NodeState = "TRIAGING"
+	StateThinking       NodeState = "THINKING"
+	StateActivating     NodeState = "ACTIVATING"
+	StateClassified     NodeState = "CLASSIFIED"
+	StateHoldAmbiguous  NodeState = "HOLD_AMBIGUOUS"
+	StateHoldMissingCtx NodeState = "HOLD_MISSING_CONTEXT"
+	StateReadyForSync   NodeState = "READY_FOR_SYNC"
+	StateCollapsed      NodeState = "COLLAPSED"
 )
 
 // Property Keys for the multi-dimensional Candidates Map
@@ -48,6 +46,7 @@ type ProbabilityCandidate struct {
 // NodeExecutionStep represents a single decision made by a DAG node.
 type NodeExecutionStep struct {
 	DAGNodeID    string                 `json:"dag_node_id"`
+	ResumeNodeID string                 `json:"resume_node_id,omitempty"`
 	Kind         string                 `json:"kind"`
 	PropertyKey  string                 `json:"property_key,omitempty"`
 	Candidates   []ProbabilityCandidate `json:"candidates,omitempty"`
@@ -60,18 +59,15 @@ type NodeExecutionStep struct {
 // through the DAG topology.
 type AutonomousSemanticEngineNode struct {
 	// Identity
-	NodeID    string `json:"node_id"`
-	TenantID  string `json:"tenant_id"`
-	RealmID   string `json:"realm_id"`
+	NodeID   string `json:"node_id"`
+	TenantID string `json:"tenant_id"`
+	RealmID  string `json:"realm_id"`
 	DagName   string `json:"dag_name"`
-
+	PromptKey string `json:"prompt_key,omitempty"`
 
 	// Source data
-	SourceStatement string  `json:"source_statement"`
-	RawDescription  string   `json:"raw_description"`
-	CashDirection   string   `json:"cash_direction"` // "INFLOW" or "OUTFLOW"
-	RawAmount       string   `json:"raw_amount"`
-	ContextUpdates  []string `json:"context_updates,omitempty"`
+	Payload        map[string]any `json:"payload"`
+	ContextUpdates []string       `json:"context_updates,omitempty"`
 
 	// State management
 	CurrentState      NodeState          `json:"current_state"`
@@ -93,101 +89,127 @@ type AutonomousSemanticEngineNode struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 
 	// Internal
-	mu       sync.RWMutex
-	logger   *slog.Logger
+	Mu            sync.RWMutex
+	logger        *slog.Logger
 	onStateChange func(node *AutonomousSemanticEngineNode, oldState, newState NodeState)
-	stateChan chan struct{}
+	stateChan     chan struct{}
+	Persister     StatePersister
 }
 
 // NewASENode creates a new transaction micro-agent from a staging transaction.
-func NewASENode(tenantID, realmID, dagName, rawDescription, cashDirection, rawAmount string) *AutonomousSemanticEngineNode {
+func NewASENode(tenantID, realmID, dagName string, payload map[string]any) *AutonomousSemanticEngineNode {
 	now := time.Now().UTC()
 	nodeID := uuid.New().String()
-	if dagName == "" {
-		dagName = "default"
-	}
 	return &AutonomousSemanticEngineNode{
-		NodeID:          nodeID,
-		TenantID:        tenantID,
-		RealmID:         realmID,
-		DagName:         dagName,
-		RawDescription:  rawDescription,
-		CashDirection:   cashDirection,
-		RawAmount:       rawAmount,
-		ContextUpdates:  make([]string, 0),
-		CurrentState:    StateUninitialized,
-		CurrentEntropy:  4.0, // Maximum entropy at birth (4 properties * 1.0)
+		NodeID:            nodeID,
+		TenantID:          tenantID,
+		RealmID:           realmID,
+		DagName:           dagName,
+		Payload:           payload,
+		ContextUpdates:    make([]string, 0),
+		CurrentState:      StateUninitialized,
+		CurrentEntropy:    4.0, // Maximum entropy at birth (4 properties * 1.0)
 		UnifiedConfidence: 0.0,
 		PropertyEntropies: make(map[string]float64),
-		Candidates:      make(map[string][]ProbabilityCandidate),
-		ExecutionTrace:  make([]NodeExecutionStep, 0),
-		LifetimeProbes:  0,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-		logger:          slog.Default().With("component", "ase.node", "node_id", nodeID),
-		stateChan:       make(chan struct{}, 1),
+		Candidates:        make(map[string][]ProbabilityCandidate),
+		ExecutionTrace:    make([]NodeExecutionStep, 0),
+		LifetimeProbes:    0,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		logger:            slog.Default().With("component", "ase.node", "node_id", nodeID),
+		stateChan:         make(chan struct{}, 1),
+		Persister:         nil,
 	}
 }
 
 // SetLogger assigns a structured logger to this node.
 func (n *AutonomousSemanticEngineNode) SetLogger(logger *slog.Logger) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	n.Mu.Lock()
+	defer n.Mu.Unlock()
 	n.logger = logger.With("component", "ase.node", "node_id", n.NodeID)
 }
 
 // SetOnStateChange registers a callback invoked on every state transition.
 func (n *AutonomousSemanticEngineNode) SetOnStateChange(fn func(node *AutonomousSemanticEngineNode, oldState, newState NodeState)) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	n.Mu.Lock()
+	defer n.Mu.Unlock()
 	n.onStateChange = fn
 }
 
 func (n *AutonomousSemanticEngineNode) AppendExecutionStep(step NodeExecutionStep) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	n.Mu.Lock()
+	if len(n.ExecutionTrace) > 0 {
+		if n.ExecutionTrace[len(n.ExecutionTrace)-1].DAGNodeID == step.DAGNodeID {
+			n.Mu.Unlock()
+			return
+		}
+	}
 	n.ExecutionTrace = append(n.ExecutionTrace, step)
+	n.Mu.Unlock()
+
+	if n.Persister != nil {
+		n.Persister.PersistNode(context.Background(), n)
+	}
+}
+
+func (n *AutonomousSemanticEngineNode) UpdateLastExecutionStep(propertyKey string, candidates []ProbabilityCandidate, selectedEdge string) {
+	n.Mu.Lock()
+	if len(n.ExecutionTrace) > 0 {
+		idx := len(n.ExecutionTrace) - 1
+		n.ExecutionTrace[idx].PropertyKey = propertyKey
+		n.ExecutionTrace[idx].Candidates = candidates
+		n.ExecutionTrace[idx].SelectedEdge = selectedEdge
+	}
+	n.Mu.Unlock()
+
+	if n.Persister != nil {
+		n.Persister.PersistNode(context.Background(), n)
+	}
 }
 
 // AppendContextUpdate safely appends a string to ContextUpdates.
 func (n *AutonomousSemanticEngineNode) AppendContextUpdate(update string) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	n.Mu.Lock()
+	defer n.Mu.Unlock()
 	n.ContextUpdates = append(n.ContextUpdates, update)
 }
 
-
 // transition updates the node's state and fires the callback.
 func (n *AutonomousSemanticEngineNode) transition(newState NodeState) {
-	n.mu.Lock()
+	n.Mu.Lock()
 	oldState := n.CurrentState
 	n.CurrentState = newState
 	n.UpdatedAt = time.Now().UTC()
 	cb := n.onStateChange
-	n.mu.Unlock()
-
+	n.Mu.Unlock()
 
 	if cb != nil {
 		cb(n, oldState, newState)
 	}
 
-	select {
-	case n.stateChan <- struct{}{}:
-	default:
+	if n.Persister != nil {
+		switch newState {
+		case StateReadyForSync:
+			n.Persister.PersistReadyForSync(context.Background(), n)
+		case StateHoldAmbiguous, StateHoldMissingCtx:
+			n.Persister.PersistHoldReason(context.Background(), n)
+		default:
+			n.Persister.PersistNode(context.Background(), n)
+		}
 	}
 }
 
 // GetState returns the current node state.
 func (n *AutonomousSemanticEngineNode) GetState() NodeState {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
+	n.Mu.RLock()
+	defer n.Mu.RUnlock()
 	return n.CurrentState
 }
 
 // GetEntropy returns the current Shannon entropy.
 func (n *AutonomousSemanticEngineNode) GetEntropy() float64 {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
+	n.Mu.RLock()
+	defer n.Mu.RUnlock()
 	return n.CurrentEntropy
 }
 
@@ -195,7 +217,7 @@ func (n *AutonomousSemanticEngineNode) GetEntropy() float64 {
 // stage and recalculates the unified confidence score using the Shannon entropy formula:
 // C = 1 - (Sum(H(k)) / Total Properties).
 func (n *AutonomousSemanticEngineNode) SetPropertyCandidates(propertyKey string, candidates []ProbabilityCandidate) {
-	n.mu.Lock()
+	n.Mu.Lock()
 	n.Candidates[propertyKey] = candidates
 	n.PropertyEntropies[propertyKey] = CalculateEntropy(candidates)
 
@@ -227,16 +249,16 @@ func (n *AutonomousSemanticEngineNode) SetPropertyCandidates(propertyKey string,
 	n.CurrentEntropy = sumEntropy // keep entropy for logging/debugging
 	n.UnifiedConfidence = sumConfidence / float64(totalProperties)
 	n.LifetimeProbes++
-	n.mu.Unlock()
-	
+	n.Mu.Unlock()
+
 	n.UpdatedAt = time.Now().UTC()
 }
 
 // TopCandidate returns the candidate with the highest confidence score for a specific property.
 // Returns nil if there are no candidates for the property.
 func (n *AutonomousSemanticEngineNode) TopCandidate(propertyKey string) *ProbabilityCandidate {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
+	n.Mu.RLock()
+	defer n.Mu.RUnlock()
 	candidates, ok := n.Candidates[propertyKey]
 	if !ok || len(candidates) == 0 {
 		return nil
@@ -253,57 +275,57 @@ func (n *AutonomousSemanticEngineNode) TopCandidate(propertyKey string) *Probabi
 // IsConfident returns true if the unified confidence score meets or exceeds
 // the State Collapse Guardrail threshold.
 func (n *AutonomousSemanticEngineNode) IsConfident() bool {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	
+	n.Mu.RLock()
+	defer n.Mu.RUnlock()
+
 	cfg := GetConfig(n.TenantID, n.RealmID, n.DagName)
 	threshold := 0.98
 	if cfg != nil {
 		threshold = cfg.HyperParameters.ConfidenceThreshold
 	}
-	
+
 	return n.UnifiedConfidence >= threshold
 }
 
 // GetConfidence returns the unified confidence score in a thread-safe manner.
 func (n *AutonomousSemanticEngineNode) GetConfidence() float64 {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
+	n.Mu.RLock()
+	defer n.Mu.RUnlock()
 	return n.UnifiedConfidence
 }
 
 // GetProbes returns the lifetime probe count in a thread-safe manner.
 func (n *AutonomousSemanticEngineNode) GetProbes() int {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
+	n.Mu.RLock()
+	defer n.Mu.RUnlock()
 	return n.LifetimeProbes
 }
 
 // GetHoldReason returns the current hold reason in a thread-safe manner.
 func (n *AutonomousSemanticEngineNode) GetHoldReason() string {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
+	n.Mu.RLock()
+	defer n.Mu.RUnlock()
 	return n.HoldReason
 }
 
 // Run executes the node's lifecycle loop from the very beginning.
-func (n *AutonomousSemanticEngineNode) Run(ctx context.Context, dag *DAG, store *StateStore) error {
+func (n *AutonomousSemanticEngineNode) Run(ctx context.Context, dag *DAG, store StatePersister) error {
 	return n.Resume(ctx, dag, store, "")
 }
 
 // ApproveAndResume manually overrides the auto_advance halt by marking the node as HumanApproved
 // and resuming its processing inside the DAG at the provided startNodeID.
-func (n *AutonomousSemanticEngineNode) ApproveAndResume(ctx context.Context, dag *DAG, store *StateStore, startNodeID string) error {
-	n.mu.Lock()
+func (n *AutonomousSemanticEngineNode) ApproveAndResume(ctx context.Context, dag *DAG, store StatePersister, startNodeID string) error {
+	n.Mu.Lock()
 	n.HumanApproved = true
 	n.HoldReason = ""
-	n.mu.Unlock()
+	n.Mu.Unlock()
 	return n.Resume(ctx, dag, store, startNodeID)
 }
 
 // Resume executes the node's lifecycle loop starting from the given DAG node ID.
 // If startNodeID is empty, it routes to the DAG's entry node based on its properties.
-func (n *AutonomousSemanticEngineNode) Resume(ctx context.Context, dag *DAG, store *StateStore, startNodeID string) error {
+func (n *AutonomousSemanticEngineNode) Resume(ctx context.Context, dag *DAG, store StatePersister, startNodeID string) error {
 	n.InitInternalState()
 
 	// First save initial state
@@ -316,9 +338,9 @@ func (n *AutonomousSemanticEngineNode) Resume(ctx context.Context, dag *DAG, sto
 	if startNodeID != "" {
 		entryNode = dag.GetNode(startNodeID)
 		if entryNode == nil {
-			n.mu.Lock()
+			n.Mu.Lock()
 			n.HoldReason = "target node " + startNodeID + " not found in DAG during Resume"
-			n.mu.Unlock()
+			n.Mu.Unlock()
 			n.transition(StateHoldMissingCtx)
 			if store != nil {
 				store.PersistHoldReason(ctx, n)
@@ -329,9 +351,9 @@ func (n *AutonomousSemanticEngineNode) Resume(ctx context.Context, dag *DAG, sto
 		// Triage: route to the correct DAG entry node based on cash direction.
 		entryNode = dag.Route(n)
 		if entryNode == nil {
-			n.mu.Lock()
-			n.HoldReason = "no DAG entry node found for cash direction " + n.CashDirection
-			n.mu.Unlock()
+			n.Mu.Lock()
+			n.HoldReason = "no DAG entry node found for cash direction " + n.Payload["cash_direction"].(string)
+			n.Mu.Unlock()
 			n.transition(StateHoldMissingCtx)
 			if store != nil {
 				store.PersistHoldReason(ctx, n)
@@ -343,60 +365,11 @@ func (n *AutonomousSemanticEngineNode) Resume(ctx context.Context, dag *DAG, sto
 	// Register with the DAG entry node for Think batching.
 	entryNode.Accept(n)
 
-	// Wait for the node to reach a terminal state or context cancellation.
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-n.stateChan:
-		}
-
-		state := n.GetState()
-
-		// Persist state changes
-		if store != nil {
-			switch state {
-			case StateReadyForSync:
-				store.PersistReadyForSync(ctx, n)
-			case StateHoldAmbiguous, StateHoldMissingCtx:
-				store.PersistHoldReason(ctx, n)
-			default:
-				store.PersistNode(ctx, n)
-			}
-			
-			switch state {
-			case StateCollapsed, StateReadyForSync, StateHoldAmbiguous, StateHoldMissingCtx:
-				store.RemoveCachedAgent(ctx, n.NodeID)
-			default:
-				store.CacheActiveAgent(ctx, n)
-			}
-		}
-
-		switch state {
-		case StateCollapsed, StateReadyForSync, StateHoldAmbiguous, StateHoldMissingCtx:
-			return nil
-			case StateClassified:
-			// Check guardrail: must have confidence >= threshold to become READY_FOR_SYNC.
-			if n.IsConfident() {
-				n.transition(StateReadyForSync)
-			} else {
-				n.mu.Lock()
-				cfg := GetConfig(n.TenantID, n.RealmID, n.DagName)
-				if cfg != nil {
-					n.HoldReason = fmt.Sprintf("top candidate confidence below %v sync guardrail", cfg.HyperParameters.ConfidenceThreshold)
-				} else {
-					n.HoldReason = "top candidate confidence below 0.98 sync guardrail"
-				}
-				n.mu.Unlock()
-				n.transition(StateHoldAmbiguous)
-			}
-		default:
-			// Any custom HOLD_* state (e.g. HOLD_AMORTIZATION_LOOKUP) is terminal.
-			if strings.HasPrefix(string(state), "HOLD_") {
-				return nil
-			}
-		}
-	}
+	// Since we are moving to a fully non-blocking asynchronous event-driven model,
+	// we do not block here. The agent has been handed off to the DAG's entry node
+	// queue. The DAG node's flush loop will handle processing and state transitions,
+	// saving to the DB sequentially without racing with a blocking goroutine loop.
+	return nil
 }
 
 // CalculateEntropy computes the Shannon entropy of a set of classification
@@ -454,8 +427,8 @@ func CalculateEntropy(candidates []ProbabilityCandidate) float64 {
 // InitInternalState initializes unexported fields (like channels and loggers)
 // that may be nil after the node is deserialized from a datastore.
 func (n *AutonomousSemanticEngineNode) InitInternalState() {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	n.Mu.Lock()
+	defer n.Mu.Unlock()
 	if n.stateChan == nil {
 		n.stateChan = make(chan struct{}, 1)
 	}

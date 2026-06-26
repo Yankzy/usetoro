@@ -18,20 +18,21 @@ import (
 
 // ASEConfig holds the unified configuration for the ASE layer.
 type ASEConfig struct {
-	Prompts         map[string]any    `json:"prompts"`
-	DAG             DAGConfig         `json:"dag"`
-	HyperParameters HyperParameters   `json:"hyper_parameters"`
+	Prompts         map[string]any  `json:"prompts"`
+	DAG             DAGConfig       `json:"dag"`
+	HyperParameters HyperParameters `json:"hyper_parameters"`
 }
 
 // HyperParameters contains dynamically tunable variables that control ASE execution behavior.
 type HyperParameters struct {
-	ConfidenceThreshold   float64            `json:"confidence_threshold"`
-	AutoAdvance           bool               `json:"auto_advance"`
-	MaxLLMRetries         int                `json:"max_llm_retries"`
-	LLMTimeoutSeconds     int                `json:"llm_timeout_seconds"`
-	BatchFlushSeconds     int                `json:"batch_flush_seconds"`
-	ActiveAgentTTLMinutes int                `json:"active_agent_ttl_minutes"`
-	LockTTLSeconds        int                `json:"lock_ttl_seconds"`
+	ConfidenceThreshold   float64 `json:"confidence_threshold"`
+	AutoAdvance           bool    `json:"auto_advance"`
+	MaxLLMRetries         int     `json:"max_llm_retries"`
+	LLMTimeoutSeconds     int     `json:"llm_timeout_seconds"`
+	BatchFlushSeconds     int     `json:"batch_flush_seconds"`
+	ActiveAgentTTLMinutes int     `json:"active_agent_ttl_minutes"`
+	LockTTLSeconds        int     `json:"lock_ttl_seconds"`
+	DomainTool            string  `json:"domain_tool"`
 }
 
 // VectorMemoryConfig controls the ASE semantic retrieval layer.
@@ -53,6 +54,11 @@ type DAGConfig struct {
 	Nodes     map[string]DAGNodeConfig `json:"nodes"`
 }
 
+type EmailTemplate struct {
+	Subject  string `json:"subject"`
+	BodyText string `json:"body_text"`
+}
+
 // DAGNodeConfig defines a single node in the DAG topology.
 type DAGNodeConfig struct {
 	Kind                string            `json:"kind"`
@@ -66,6 +72,7 @@ type DAGNodeConfig struct {
 	HoldStateSignal     string            `json:"hold_state_signal"`
 	HoldReasonString    string            `json:"hold_reason_string"`
 	ResumeChild         string            `json:"resume_child"`
+	Email               *EmailTemplate    `json:"email"`
 	Children            map[string]string `json:"children"`
 	DefaultChild        string            `json:"default_child"`
 	ExecutionParams     map[string]string `json:"execution_parameters"`
@@ -98,11 +105,6 @@ func InitConfig(db *database.Queries, rc *redis.Client, l *slog.Logger) error {
 		go listenForConfigUpdates()
 	}
 
-	return nil
-}
-
-// GetAllConfigs is deprecated for the DB flow but kept to satisfy existing callers if needed.
-func GetAllConfigs() map[string]*ASEConfig {
 	return nil
 }
 
@@ -140,13 +142,13 @@ func GetConfig(tenantID, realmID, dagName string) *ASEConfig {
 		return nil
 	}
 
-	key := "tenant_" + tenantID + "_" + dagName
-	if tenantID == "" {
-		if realmID != "" {
-			key = "realm_" + realmID + "_" + dagName
-		} else {
-			key = "global_" + dagName
-		}
+	key := ""
+	if tenantID != "" {
+		key = dagName + "_" + tenantID
+	} else if realmID != "" {
+		key = dagName + "_" + realmID
+	} else {
+		key = dagName
 	}
 
 	// 1. Check Cache
@@ -326,7 +328,7 @@ func listenForConfigUpdates() {
 		tenantID := ""
 		realmID := ""
 		dagName := ""
-		
+
 		parts := strings.Split(key, "_")
 		if strings.HasPrefix(key, "tenant_") && len(parts) >= 2 {
 			tenantID = parts[1]
@@ -411,4 +413,3 @@ func InvalidateSystemVectorConfigCache() {
 		redisClient.Publish(context.Background(), "ase:vector_config_updates", "invalidate")
 	}
 }
-

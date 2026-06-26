@@ -42,9 +42,9 @@ func TestDAGNode_AcceptAndFlush(t *testing.T) {
 	defer dagNode.Stop()
 
 	// Accept 3 nodes — should trigger immediate flush (batch size reached).
-	node1 := NewASENode("t1", "", "default", "Office supplies", "OUTFLOW", "-100")
-	node2 := NewASENode("t2", "", "default", "Client payment", "INFLOW", "500")
-	node3 := NewASENode("t3", "", "default", "Software subscription", "OUTFLOW", "-29.99")
+	node1 := NewASENode("t1", "", "default", map[string]any{"raw_description": "Office supplies", "cash_direction": "OUTFLOW", "raw_amount": "-100"})
+	node2 := NewASENode("t2", "", "default", map[string]any{"raw_description": "Client payment", "cash_direction": "INFLOW", "raw_amount": "500"})
+	node3 := NewASENode("t3", "", "default", map[string]any{"raw_description": "Software subscription", "cash_direction": "OUTFLOW", "raw_amount": "-29.99"})
 
 	// Pre-fill missing properties so entropy = 0 for them.
 	for _, n := range []*AutonomousSemanticEngineNode{node1, node2, node3} {
@@ -107,7 +107,7 @@ func TestDAGNode_FlushOnTimer(t *testing.T) {
 	defer dagNode.Stop()
 
 	// Accept only 1 node — timer should flush it.
-	node := NewASENode("t1", "", "default", "Test", "OUTFLOW", "-10")
+	node := NewASENode("t1", "", "default", map[string]any{"raw_description": "Test", "cash_direction": "OUTFLOW", "raw_amount": "-10"})
 	node.SetPropertyCandidates("macro_classifier", []ProbabilityCandidate{{Value: "M", Confidence: 1.0}})
 	node.SetPropertyCandidates("account_type", []ProbabilityCandidate{{Value: "A", Confidence: 1.0}})
 	node.SetPropertyCandidates("entity", []ProbabilityCandidate{{Value: "E", Confidence: 1.0}})
@@ -136,7 +136,7 @@ func TestDAGNode_ThinkFailureResultsInHold(t *testing.T) {
 	dagNode.Start()
 	defer dagNode.Stop()
 
-	node := NewASENode("t1", "", "default", "Test", "OUTFLOW", "-10")
+	node := NewASENode("t1", "", "default", map[string]any{"raw_description": "Test", "cash_direction": "OUTFLOW", "raw_amount": "-10"})
 	dagNode.Accept(node)
 
 	time.Sleep(150 * time.Millisecond)
@@ -164,7 +164,7 @@ func TestDAGNode_Routing(t *testing.T) {
 	macroNode.SetThinkFunc(func(ctx context.Context, batch []*AutonomousSemanticEngineNode) (map[string]NodeClassification, error) {
 		results := make(map[string]NodeClassification, len(batch))
 		for _, node := range batch {
-			if node.RawDescription == "expense item" {
+			if node.Payload["raw_description"].(string) == "expense item" {
 				results[node.NodeID] = NodeClassification{
 					Property: "macro_class",
 					Candidates: []ProbabilityCandidate{
@@ -215,8 +215,8 @@ func TestDAGNode_Routing(t *testing.T) {
 	macroNode.StartAll()
 	defer macroNode.StopAll()
 
-	nodeExpense := NewASENode("t1", "", "default", "expense item", "OUTFLOW", "-50")
-	nodeRevenue := NewASENode("t1", "", "default", "revenue item", "INFLOW", "200")
+	nodeExpense := NewASENode("t1", "", "default", map[string]any{"raw_description": "expense item", "cash_direction": "OUTFLOW", "raw_amount": "-50"})
+	nodeRevenue := NewASENode("t1", "", "default", map[string]any{"raw_description": "revenue item", "cash_direction": "INFLOW", "raw_amount": "200"})
 
 	macroNode.Accept(nodeExpense)
 	macroNode.Accept(nodeRevenue)
@@ -245,7 +245,7 @@ func TestDAGNode_NoChildResultsInHold(t *testing.T) {
 	dagNode.Start()
 	defer dagNode.Stop()
 
-	node := NewASENode("t1", "", "default", "Owner draw", "OUTFLOW", "-5000")
+	node := NewASENode("t1", "", "default", map[string]any{"raw_description": "Owner draw", "cash_direction": "OUTFLOW", "raw_amount": "-5000"})
 	dagNode.Accept(node)
 
 	time.Sleep(150 * time.Millisecond)
@@ -276,7 +276,7 @@ func TestDAG_TerminalNodeCollapse(t *testing.T) {
 	terminalNode.Start()
 	defer terminalNode.Stop()
 
-	node := NewASENode("t1", "", "default", "Test", "OUTFLOW", "-10")
+	node := NewASENode("t1", "", "default", map[string]any{"raw_description": "Test", "cash_direction": "OUTFLOW", "raw_amount": "-10"})
 	node.SetPropertyCandidates("macro_classifier", []ProbabilityCandidate{{Value: "M", Confidence: 1.0}})
 	node.SetPropertyCandidates("account_type", []ProbabilityCandidate{{Value: "A", Confidence: 1.0}})
 	node.SetPropertyCandidates("entity", []ProbabilityCandidate{{Value: "E", Confidence: 1.0}})

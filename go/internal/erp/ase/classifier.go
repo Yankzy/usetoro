@@ -78,6 +78,27 @@ func (cs *ClassifierService) BuildDynamicThinkFunc(provider string) ThinkFunc {
 	}
 }
 
+// BuildPayloadRouterThinkFunc creates a Think dispatch function that routes transactions
+// based strictly on the value of a property found in the transaction payload.
+func (cs *ClassifierService) BuildPayloadRouterThinkFunc(payloadKey string) ThinkFunc {
+	return func(ctx context.Context, batch []*AutonomousSemanticEngineNode) (map[string]NodeClassification, error) {
+		res := make(map[string]NodeClassification)
+		for _, node := range batch {
+			valStr := ""
+			if v, ok := node.Payload[payloadKey].(string); ok {
+				valStr = v
+			}
+			
+			res[node.NodeID] = NodeClassification{
+				Candidates: []ProbabilityCandidate{
+					{Value: valStr, Confidence: 1.0, Reasoning: "Deterministic routing based on transaction payload key: " + payloadKey},
+				},
+			}
+		}
+		return res, nil
+	}
+}
+
 // PropertyResponseMap represents the LLM output structure mapped with dictionary candidates.
 type PropertyResponseMap struct {
 	Property      string                          `json:"property"`
@@ -168,9 +189,9 @@ func (cs *ClassifierService) dynamicChartOfAccounts(ctx context.Context, batch [
 	accounts, err := cs.db.GetAccountsByRealm(ctx, realmID)
 	if err != nil {
 		for _, node := range batch {
-			node.mu.Lock()
+			node.Mu.Lock()
 			node.HoldReason = "dynamic COA lookup failed: " + err.Error()
-			node.mu.Unlock()
+			node.Mu.Unlock()
 		}
 		// Return empty map to let caller handle hold state
 		return make(map[string]NodeClassification), nil
@@ -183,25 +204,16 @@ func (cs *ClassifierService) dynamicChartOfAccounts(ctx context.Context, batch [
 			acc.ErpID, acc.Name, acc.Classification.String, acc.AccountSubType.String))
 	}
 
-	systemPrompt := fmt.Sprintf(`You are an expert accountant acting as the dynamic Chart of Accounts selection node.
-Your task is to select the exact account ID from the company's Chart of Accounts that best matches the transaction description and context.
-
-COMPANY CHART OF ACCOUNTS:
-%s
-
-You MUST select the SINGLE BEST account ID (the ID field) that matches. Do not make up an ID.
-If no account fits perfectly, select the closest general category.
-CRITICAL: Do NOT output just the ID. You MUST format your entire response exactly as a JSON Patch array as described below.`, strings.Join(coaLines, "\n"))
-
-
-	systemPrompt += "\n\nCRITICAL RULES FOR BATCH PROCESSING:\n" +
-		"1. The USER REQUEST provides a map of transactions under the 'rows' key. The keys in this map are unique identifiers for each transaction.\n" +
-		"2. Your output MUST be a valid JSON array containing exactly ONE RFC 6902 JSON patch operation.\n" +
-		"3. This single patch MUST use exactly \"op\": \"add\" and \"path\": \"/rows\".\n" +
-		"4. The \"value\" of the patch MUST be an object where the keys are EXACTLY the unique transaction identifiers from the input.\n" +
-		"5. Inside each row's classification object, you MUST return a 'property' string AND a 'candidates' map.\n" +
-		"6. The 'candidates' map MUST contain at least 2 numbered candidate entries (e.g. \"1\": {...}, \"2\": {...}) for that row."
-
+	promptKey := batch[0].PromptKey
+	if promptKey == "" {
+		promptKey = "account_selection"
+	}
+	
+	systemPrompt := GetPrompt(tenantID, realmID, dagName, promptKey)
+	if systemPrompt == "" {
+		return nil, fmt.Errorf("prompt not found in configuration for key: %s (tenant: %s, realm: %s)", promptKey, tenantID, realmID)
+	}
+	systemPrompt = strings.ReplaceAll(systemPrompt, "{{.ChartOfAccounts}}", strings.Join(coaLines, "\n"))
 
 	rows := cs.batchToRows(ctx, batch)
 
@@ -242,13 +254,23 @@ func (cs *ClassifierService) batchToRows(ctx context.Context, batch []*Autonomou
 	tenantRules := make(map[string][]database.GetMemoryRulesRow)
 
 	for _, node := range batch {
-		node.mu.RLock()
+		node.Mu.RLock()
 		tenantID := node.TenantID
 		realmID := node.RealmID
-		desc := node.RawDescription
-		amount := node.RawAmount
+		desc := ""
+		if v, ok := node.Payload["raw_description"].(string); ok {
+			desc = v
+		} else if v, ok := node.Payload["prompt"].(string); ok {
+			desc = v
+		}
+		
+		amount := ""
+		if v, ok := node.Payload["raw_amount"].(string); ok {
+			amount = v
+		}
+		
 		ctxUpdates := node.ContextUpdates
-		node.mu.RUnlock()
+		node.Mu.RUnlock()
 
 		// --- Keyword-matched memory rules (existing mechanism) ---
 		dbRules, ok := tenantRules[tenantID]
@@ -307,9 +329,11 @@ func (cs *ClassifierService) batchToRows(ctx context.Context, batch []*Autonomou
 
 func batchCashDirection(batch []*AutonomousSemanticEngineNode) string {
 	if len(batch) > 0 {
-		batch[0].mu.RLock()
-		defer batch[0].mu.RUnlock()
-		return batch[0].CashDirection
+		batch[0].Mu.RLock()
+		defer batch[0].Mu.RUnlock()
+		if v, ok := batch[0].Payload["cash_direction"].(string); ok {
+			return v
+		}
 	}
 	return "UNKNOWN"
 }

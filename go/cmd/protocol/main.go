@@ -269,6 +269,16 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("failed to init ASE config: %w", err)
 	}
 
+	aseDagDir := "internal/erp/ase/dags"
+	if err := ase.LoadFromDir(ctx, aseDagDir); err != nil {
+		return fmt.Errorf("failed to init ASE DAG configs: %w", err)
+	}
+	go func() {
+		if err := ase.WatchDAGs(ctx, aseDagDir); err != nil {
+			logger.Error("failed to watch ASE DAGs directory", "error", err)
+		}
+	}()
+
 	workerDeps := workers.Dependencies{
 		Logger:          logger,
 		Config:          cfg,

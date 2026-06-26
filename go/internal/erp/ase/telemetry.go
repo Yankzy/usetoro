@@ -108,8 +108,8 @@ func (tp *TelemetryPublisher) PublishHold(node *AutonomousSemanticEngineNode) {
 		Entropy:       node.GetEntropy(),
 		Probes:        node.GetProbes(),
 		Description:   desc,
-		Amount:        node.RawAmount,
-		CashDirection: node.CashDirection,
+		Amount:        node.Payload["raw_amount"].(string),
+		CashDirection: node.Payload["cash_direction"].(string),
 		Timestamp:     time.Now().UTC(),
 	}
 
@@ -257,14 +257,14 @@ func formatContextRequest(node *AutonomousSemanticEngineNode) string {
 			"Transaction '%s' cannot be classified with confidence above %v. "+
 				"Current entropy: %.4f. Top candidate confidence below threshold. "+
 				"Human accountant review required. Raw description: '%s', Amount: '%s', Direction: '%s'.",
-			node.NodeID, threshold, node.GetEntropy(), node.RawDescription, node.RawAmount, node.CashDirection,
+			node.NodeID, threshold, node.GetEntropy(), node.Payload["raw_description"].(string), node.Payload["raw_amount"].(string), node.Payload["cash_direction"].(string),
 		)
 	case StateHoldMissingCtx:
 		return fmt.Sprintf(
 			"Transaction '%s' is missing context for classification. "+
 				"Reason: %s. Raw description: '%s', Amount: '%s', Direction: '%s'. "+
 				"Requesting additional context from the virtual workforce.",
-			node.NodeID, node.GetHoldReason(), node.RawDescription, node.RawAmount, node.CashDirection,
+			node.NodeID, node.GetHoldReason(), node.Payload["raw_description"].(string), node.Payload["raw_amount"].(string), node.Payload["cash_direction"].(string),
 		)
 	default:
 		return fmt.Sprintf(

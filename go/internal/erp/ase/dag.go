@@ -25,6 +25,7 @@ type DAGNode struct {
 	DynamicEdgeProvider string      `json:"dynamic_edge_provider"`
 	HoldStateSignal     string      `json:"hold_state_signal"`
 	HoldReasonString    string      `json:"hold_reason_string"`
+	Email               *EmailTemplate `json:"email"`
 
 	// Batching
 	queue      []*AutonomousSemanticEngineNode
@@ -104,7 +105,7 @@ func NewDAGNode(id string, kind DAGNodeKind, name string, batchSize int, batchFl
 	if name == "" {
 		name = id
 	}
-	return &DAGNode{
+	dn := &DAGNode{
 		ID:                  id,
 		Kind:                kind,
 		Name:                name,
@@ -114,6 +115,7 @@ func NewDAGNode(id string, kind DAGNodeKind, name string, batchSize int, batchFl
 		DynamicEdgeProvider: cfg.DynamicEdgeProvider,
 		HoldStateSignal:     cfg.HoldStateSignal,
 		HoldReasonString:    cfg.HoldReasonString,
+		Email:               cfg.Email,
 		ExecutionParams:     cfg.ExecutionParams,
 		queue:               make([]*AutonomousSemanticEngineNode, 0),
 		batchSize:           batchSize,
@@ -124,6 +126,10 @@ func NewDAGNode(id string, kind DAGNodeKind, name string, batchSize int, batchFl
 		cancel:              cancel,
 		stopped:             make(chan struct{}),
 	}
+	if dn.Kind == "holding_gate" && dn.HoldStateSignal == "" && dn.PromptKey == "" {
+		dn.HoldStateSignal = "HOLD_AMBIGUOUS"
+	}
+	return dn
 }
 
 // SetThinkFunc assigns the LLM dispatch function for this DAG node's Think phase.
@@ -219,10 +225,9 @@ func (dn *DAGNode) Stop() {
 	<-dn.stopped
 }
 
-// flush drains the queue and executes the Think phase for all waiting agents.
 func (dn *DAGNode) flush() {
 	dn.mu.Lock()
-	if len(dn.queue) == 0 || (dn.thinkFn == nil && dn.HoldStateSignal == "" && dn.Kind != "cash_direction_router" && dn.Kind != "terminal") {
+	if len(dn.queue) == 0 || (dn.thinkFn == nil && dn.HoldStateSignal == "" && dn.Kind != "initial_router" && dn.Kind != "terminal") {
 		dn.mu.Unlock()
 		return
 	}
@@ -242,25 +247,39 @@ func (dn *DAGNode) flush() {
 		go dn.flush()
 	}
 
+	// 0.5) Append entry into trace
+	var resumeNodeID string
+	if dn.ResumeChild() != nil {
+		resumeNodeID = dn.ResumeChild().ID
+	}
+	for _, node := range batch {
+		node.AppendExecutionStep(NodeExecutionStep{
+			DAGNodeID:    dn.ID,
+			ResumeNodeID: resumeNodeID,
+			Kind:         string(dn.Kind),
+			Timestamp:    time.Now().UTC(),
+		})
+	}
+
 	// 1) Fast-Path Dead-End Interceptor
 	// If this node defines a static hold signal, instantly transition and halt.
 	if dn.HoldStateSignal != "" {
 		for _, node := range batch {
-			node.mu.Lock()
+			node.Mu.Lock()
 			approved := node.HumanApproved
-			node.mu.Unlock()
+			node.Mu.Unlock()
 
 			if approved {
 				// Clear the flag so it doesn't automatically bypass future nodes
-				node.mu.Lock()
+				node.Mu.Lock()
 				node.HumanApproved = false
-				node.mu.Unlock()
+				node.Mu.Unlock()
 				node.transition(StateActivating)
 				dn.routeToChild(node, "")
 			} else {
-				node.mu.Lock()
+				node.Mu.Lock()
 				node.HoldReason = dn.HoldReasonString
-				node.mu.Unlock()
+				node.Mu.Unlock()
 				node.transition(NodeState(dn.HoldStateSignal))
 			}
 		}
@@ -287,31 +306,6 @@ func (dn *DAGNode) flush() {
 		return
 	}
 
-	// 2) Fast-Path Cash Direction Router
-	// Hardware-level bypass of LLM to segregate batches by cash flow direction.
-	if dn.Kind == "cash_direction_router" {
-		var wg sync.WaitGroup
-		for _, node := range batch {
-			wg.Add(1)
-			go func(n *AutonomousSemanticEngineNode) {
-				defer wg.Done()
-				n.mu.RLock()
-				dir := n.CashDirection
-				n.mu.RUnlock()
-
-				// Inject hardware state directly into the classification slot.
-				n.SetPropertyCandidates(string(dn.Kind), []ProbabilityCandidate{{
-					Value:      dir,
-					Confidence: 1.0,
-					Reasoning:  "Hardware property routing via cash_direction_router.",
-				}})
-				n.transition(StateActivating)
-				dn.routeToChild(n, string(dn.Kind))
-			}(node)
-		}
-		wg.Wait()
-		return
-	}
 
 	// 3) AutoAdvance Halt
 	// If auto_advance is false, halt the node BEFORE thinking, unless it was human approved.
@@ -333,21 +327,21 @@ func (dn *DAGNode) flush() {
 	if !autoAdv {
 		var thinkingBatch []*AutonomousSemanticEngineNode
 		for _, node := range batch {
-			node.mu.Lock()
+			node.Mu.Lock()
 			approved := node.HumanApproved
-			node.mu.Unlock()
+			node.Mu.Unlock()
 
 			if !approved {
-				node.mu.Lock()
+				node.Mu.Lock()
 				node.HoldReason = fmt.Sprintf("auto_advance disabled at DAG node %s", dn.Name)
-				node.mu.Unlock()
+				node.Mu.Unlock()
 				node.transition(StateHoldMissingCtx)
 				dn.holding = append(dn.holding, node)
 			} else {
 				// Clear the flag so it doesn't automatically bypass future nodes
-				node.mu.Lock()
+				node.Mu.Lock()
 				node.HumanApproved = false
-				node.mu.Unlock()
+				node.Mu.Unlock()
 				// Remove from holding if it was there
 				for i, h := range dn.holding {
 					if h.NodeID == node.NodeID {
@@ -381,9 +375,9 @@ func (dn *DAGNode) flush() {
 		}
 		// On failure, transition nodes to HOLD state with error context.
 		for _, node := range batch {
-			node.mu.Lock()
+			node.Mu.Lock()
 			node.HoldReason = "think phase failed: " + err.Error()
-			node.mu.Unlock()
+			node.Mu.Unlock()
 			node.transition(StateHoldMissingCtx)
 		}
 		return
@@ -393,9 +387,9 @@ func (dn *DAGNode) flush() {
 	for _, node := range batch {
 		classification, ok := results[node.NodeID]
 		if !ok || len(classification.Candidates) == 0 {
-			node.mu.Lock()
+			node.Mu.Lock()
 			node.HoldReason = "no classification candidates returned from think phase"
-			node.mu.Unlock()
+			node.Mu.Unlock()
 			node.transition(StateHoldMissingCtx)
 			continue
 		}
@@ -425,23 +419,16 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 	}
 
 	// Take a snapshot of the candidates for the property to store in the trace.
-	node.mu.RLock()
+	node.Mu.RLock()
 	candidatesCopy := make([]ProbabilityCandidate, len(node.Candidates[propertyKey]))
 	copy(candidatesCopy, node.Candidates[propertyKey])
-	node.mu.RUnlock()
+	node.Mu.RUnlock()
 
 	// Determine routing key based on this DAG node's kind (even if we hold, we can record what it *would* have been or just use top.Value).
 	routeKey := dn.routingKey(top)
 
-	// Append the execution step to the node's trace regardless of whether we hold or not.
-	node.AppendExecutionStep(NodeExecutionStep{
-		DAGNodeID:    dn.ID,
-		Kind:         string(dn.Kind),
-		PropertyKey:  propertyKey,
-		Candidates:   candidatesCopy,
-		SelectedEdge: routeKey,
-		Timestamp:    time.Now().UTC(),
-	})
+	// Update the execution step with the results of the routing decision.
+	node.UpdateLastExecutionStep(propertyKey, candidatesCopy, routeKey)
 
 	// Enforce strict top candidate confidence guardrail at each routing step.
 	threshold := 0.98
@@ -450,20 +437,18 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 		threshold = cfg.HyperParameters.ConfidenceThreshold
 	}
 
-	if top.Confidence < threshold {
-		node.mu.Lock()
+	if top.Confidence < threshold && !strings.HasPrefix(strings.ToUpper(routeKey), "HOLD_") {
+		node.Mu.Lock()
 		node.HoldReason = fmt.Sprintf("top candidate '%s' confidence (%v) below %v guardrail during routing at %s. AI Reasoning: %s", top.Value, top.Confidence, threshold, dn.Name, top.Reasoning)
 		// We can explicitly update UnifiedConfidence to match the failing node's confidence
 		// so the UI clearly shows the drop in confidence.
 		node.UnifiedConfidence = top.Confidence
-		node.mu.Unlock()
+		node.Mu.Unlock()
 		node.transition(StateHoldAmbiguous)
 		return
 	}
 
 	searchKey := strings.ToLower(routeKey)
-
-
 
 	dn.mu.Lock()
 	child, exists := dn.children[searchKey]
@@ -479,20 +464,20 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 			if node.IsConfident() {
 				node.transition(StateClassified)
 			} else {
-				node.mu.Lock()
+				node.Mu.Lock()
 				cfg := GetConfig(node.TenantID, node.RealmID, node.DagName)
 				if cfg != nil {
 					node.HoldReason = fmt.Sprintf("Unified Confidence Score below %v structural threshold.", cfg.HyperParameters.ConfidenceThreshold)
 				} else {
 					node.HoldReason = "Unified Confidence Score below 0.98 structural threshold."
 				}
-				node.mu.Unlock()
+				node.Mu.Unlock()
 				node.transition(StateHoldMissingCtx)
 			}
 		} else {
-			node.mu.Lock()
+			node.Mu.Lock()
 			node.HoldReason = "no downstream DAG node for routing key: " + routeKey
-			node.mu.Unlock()
+			node.Mu.Unlock()
 			node.transition(StateHoldMissingCtx)
 		}
 		return
@@ -601,6 +586,22 @@ func BuildDAGFromConfig(cfg DAGConfig, logger *slog.Logger) *DAG {
 				logger.Warn("DAG default routing child not found", "parent", id, "missing_child", nCfg.DefaultChild)
 			} else {
 				node.SetDefaultChild(defaultNode)
+			}
+		}
+	}
+
+	if cfg.EntryNode == "" {
+		if _, ok := nodesMap["bank"]; ok {
+			cfg.EntryNode = "bank"
+		} else if _, ok := nodesMap["root"]; ok {
+			cfg.EntryNode = "root"
+		} else if _, ok := nodesMap["generate_email_dag"]; ok {
+			cfg.EntryNode = "generate_email_dag"
+		} else if _, ok := nodesMap["triage_failed"]; ok {
+			cfg.EntryNode = "triage_failed"
+		} else if len(nodesMap) == 1 {
+			for k := range nodesMap {
+				cfg.EntryNode = k
 			}
 		}
 	}

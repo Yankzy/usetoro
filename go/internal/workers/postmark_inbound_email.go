@@ -8,17 +8,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/services/ai"
-	"github.com/Yankzy/usetoro/internal/storage"
+	"github.com/Yankzy/usetoro/internal/infra"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 )
 
@@ -63,16 +62,17 @@ type PostmarkInboundEmail struct {
 
 type PostmarkInboundEmailWorker struct {
 	db      *database.Queries
+	pool    *pgxpool.Pool
 	logger  *slog.Logger
 	cfg     *config.Config
 	nc      *nats.Conn
 	client  *http.Client
-	storage storage.Service
+	storage infra.S3Service
 }
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		storageSvc, err := storage.NewS3Service(deps.Config)
+		storageSvc, err := infra.NewS3Service(deps.Config)
 		if err != nil {
 			deps.Logger.Warn("PostmarkInboundEmailWorker: S3 storage not configured", "error", err)
 			// We can proceed without it, but attachments won't upload to S3
@@ -80,6 +80,7 @@ func init() {
 
 		return &PostmarkInboundEmailWorker{
 			db:      deps.Store.Queries,
+			pool:    deps.Store.Pool,
 			logger:  deps.Logger,
 			cfg:     deps.Config,
 			nc:      deps.Queue,
@@ -175,11 +176,17 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	for _, header := range payload.Headers {
 		if strings.EqualFold(header.Name, "In-Reply-To") {
 			inReplyTo = header.Value
+			break
 		}
 		if strings.EqualFold(header.Name, "Message-ID") {
 			smtpMessageID = header.Value
+			break
 		}
 	}
+
+	// log the session ID
+	w.logger.Info("inbound email session", "postmark_message_id", payload.MessageID, "from", payload.From, "to", recipient, "agent_alias", agentAlias, "in_reply_to", inReplyTo, "smtp_message_id", smtpMessageID)
+
 	if smtpMessageID == "" {
 		w.logger.Warn("Message-ID header not found in inbound API payload, falling back to Postmark internal MessageID which will not support email threading",
 			"postmark_message_id", payload.MessageID,
@@ -200,18 +207,55 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 		// Try to find the entity from the referenced conversation's session
 		cleanID := cleanMessageID(inReplyTo)
 		refSessionID, err := w.db.GetConversationByExternalID(ctx, cleanID)
-		
+
 		if err != nil || !refSessionID.Valid {
 			refSessionID, err = w.db.GetConversationByExternalID(ctx, inReplyTo)
 		}
-		
+
 		if err == nil && refSessionID.Valid {
 			sess, err := w.db.GetConversationSession(ctx, refSessionID)
 			if err == nil {
 				entityID = sess.EntityID
 			}
 		}
+
+		// ASE DAG Lookup
+		if !entityID.Valid && strings.Contains(inReplyTo, "<ase_") {
+			var aseNodeID string
+			for _, idStr := range strings.Split(inReplyTo, " ") {
+				if strings.HasPrefix(idStr, "<ase_") {
+					clean := strings.Trim(idStr, "<>")
+					if idx := strings.Index(clean, "@"); idx != -1 {
+						clean = clean[:idx]
+					}
+					parts := strings.Split(clean, "_")
+					if len(parts) >= 4 && parts[0] == "ase" {
+						aseNodeID = parts[1]
+						break
+					}
+				}
+			}
+			
+			if aseNodeID != "" && w.pool != nil {
+				var createdBy pgtype.UUID
+				err := w.pool.QueryRow(ctx, `
+					SELECT s.created_by 
+					FROM fignode.staging_transactions t 
+					JOIN fignode.staging_sessions s ON t.session_id = s.id 
+					WHERE t.id = $1
+				`, aseNodeID).Scan(&createdBy)
+				if err == nil {
+					entityID = createdBy
+					w.logger.Info("resolved entity_id from ASE transaction", "entity_id", entityID, "ase_node_id", aseNodeID)
+				} else {
+					w.logger.Warn("failed to resolve entity_id from ASE transaction", "error", err, "ase_node_id", aseNodeID)
+				}
+			}
+		}
 	}
+
+	// log the session
+	w.logger.Info("inbound email session", "postmark_message_id", payload.MessageID, "from", payload.From, "to", recipient, "agent_alias", agentAlias, "in_reply_to", inReplyTo, "smtp_message_id", smtpMessageID, "entity_id", entityID.String())
 
 	// Priority 2: Recent conversations
 	if !entityID.Valid && payload.From != "" {
@@ -238,54 +282,6 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 			if len(uniqueEntities) == 1 {
 				// No ambiguity
 				_ = entityID.Scan(uniqueEntities[0])
-			} else if len(uniqueEntities) > 1 {
-				// Ambiguity! Use LLM to disambiguate.
-				if llmClient, err := ai.NewLLMClient(os.Getenv("OPENAI_API_KEY"), "gpt-4o-mini"); err == nil {
-					// Prepare conversation summaries for prompt
-					var summaries []string
-					for _, eID := range uniqueEntities {
-						summaries = append(summaries, fmt.Sprintf("Entity ID: %s", eID))
-						for i, conv := range entityMap[eID] {
-							if i >= 3 {
-								break
-							} // Only show top 3 per entity to save tokens
-							summaries = append(summaries, fmt.Sprintf("  - Past Subject: %s\n  - Past Body snippet: %.200s...", conv.Subject.String, conv.StrippedText.String))
-						}
-					}
-
-					sysPrompt := `You are an intelligent email router for an accounting AI agent.
-Your task is to identify which Entity (company) the incoming email belongs to, based on the sender's past conversations.
-
-CANDIDATE ENTITIES AND THEIR PAST CONVERSATIONS:
-` + strings.Join(summaries, "\n") + `
-
-You must select the Entity ID that best matches the context of the incoming email. 
-If it is ambiguous, select the one that seems most likely based on the subject and body context.
-Return a JSON object with two fields:
-- "entity_id": the string ID of the selected entity.
-- "reasoning": a brief explanation of why this entity matches.`
-
-					emailBody := payload.StrippedTextReply
-					if emailBody == "" {
-						emailBody = payload.TextBody
-					}
-					userPrompt := fmt.Sprintf("INCOMING EMAIL:\nSubject: %s\nBody: %.1000s...", payload.Subject, emailBody)
-
-					var result struct {
-						EntityID  string `json:"entity_id"`
-						Reasoning string `json:"reasoning"`
-					}
-
-					if err := llmClient.GenerateJSON(ctx, sysPrompt, userPrompt, &result); err == nil && result.EntityID != "" {
-						w.logger.Info("LLM successfully disambiguated email entity", "entity_id", result.EntityID, "reasoning", result.Reasoning)
-						_ = entityID.Scan(result.EntityID)
-					} else {
-						w.logger.Error("LLM failed to disambiguate email", "error", err)
-						// Fall through to Priority 3
-					}
-				} else {
-					w.logger.Error("Failed to initialize LLM client for disambiguation", "error", err)
-				}
 			}
 		}
 	}
@@ -326,28 +322,25 @@ Return a JSON object with two fields:
 			decodedBytes, err := base64.StdEncoding.DecodeString(att.Content)
 			if err != nil {
 				w.logger.Error("failed to decode attachment base64", "error", err, "name", att.Name)
+				attMeta["Content"] = att.Content
 			} else {
-				// Upload to S3
-				safeEntityID := "unknown_entity"
-				if entityID.Valid {
-					safeEntityID = uuid.UUID(entityID.Bytes).String()
-				}
-				s3Key := fmt.Sprintf("attachments/%s/%s/%s-%s", safeEntityID, smtpMessageID, uuid.New().String(), att.Name)
+				// Upload to S3 directly, no folders
+				s3Key := fmt.Sprintf("%s-%s", uuid.New().String(), att.Name)
 
-				err = w.storage.UploadFile(ctx, s3Key, bytes.NewReader(decodedBytes), att.ContentType)
+				err = w.storage.UploadFileToS3(ctx, s3Key, bytes.NewReader(decodedBytes), att.ContentType)
 				if err != nil {
 					w.logger.Error("failed to upload attachment to S3", "error", err, "name", att.Name)
+					attMeta["Content"] = att.Content
 				} else {
 					attMeta["S3Key"] = s3Key
 				}
 			}
 		} else {
-			// Fallback if S3 is not configured (we keep the raw content just in case, though it's heavy)
+			// Fallback if S3 is not configured
 			attMeta["Content"] = att.Content
 		}
 
 		// Ensure we don't save the raw base64 content back into the database if we uploaded it
-		// We already removed it from attMeta if it was uploaded to S3.
 		payload.Attachments[i].Content = ""
 
 		processedAttachments = append(processedAttachments, attMeta)
@@ -363,19 +356,42 @@ Return a JSON object with two fields:
 		metadataJSON = []byte("{}")
 	}
 
-	// 4. Save to Conversations table
+	promptText := payload.StrippedTextReply
+	if promptText == "" {
+		promptText = payload.TextBody
+	}
+
+	if len(processedAttachments) > 0 {
+		var attNames []string
+		for _, attMeta := range processedAttachments {
+			if name, ok := attMeta["Name"].(string); ok && name != "" {
+				attNames = append(attNames, name)
+			}
+		}
+		if len(attNames) > 0 {
+			promptText += fmt.Sprintf("\n\n[SYSTEM: The user attached %d file(s): %s]", len(attNames), strings.Join(attNames, ", "))
+		} else {
+			promptText += fmt.Sprintf("\n\n[SYSTEM: The user attached %d file(s)]", len(processedAttachments))
+		}
+	}
+
+	externalID := smtpMessageID
+	if inReplyTo != "" {
+		externalID = inReplyTo
+	}
+
 	err = w.db.SaveInboundConversation(ctx, database.SaveInboundConversationParams{
 		EntityID:     entityID,
 		Source:       "email",
-		ExternalID:   smtpMessageID,
+		ExternalID:   externalID,
 		FromHandle:   payload.From,
 		ToHandle:     payload.To,
 		ReplyTo:      pgtype.Text{String: payload.ReplyTo, Valid: payload.ReplyTo != ""},
 		InReplyTo:    pgtype.Text{String: inReplyTo, Valid: inReplyTo != ""},
 		Subject:      pgtype.Text{String: payload.Subject, Valid: true},
-		BodyText:     pgtype.Text{String: payload.TextBody, Valid: true},
+		BodyText:     pgtype.Text{String: promptText, Valid: true},
 		BodyHtml:     pgtype.Text{String: payload.HtmlBody, Valid: true},
-		StrippedText: pgtype.Text{String: payload.StrippedTextReply, Valid: payload.StrippedTextReply != ""},
+		StrippedText: pgtype.Text{String: promptText, Valid: promptText != ""},
 		Metadata:     metadataJSON,
 	})
 
@@ -394,22 +410,17 @@ Return a JSON object with two fields:
 	if inReplyTo != "" {
 		cleanID := cleanMessageID(inReplyTo)
 		mapping, mappingErr := w.db.GetThreadMappingByEmailMessageID(ctx, cleanID)
-		
+
 		if mappingErr != nil || mapping.SlackChannelID == "" {
 			mapping, mappingErr = w.db.GetThreadMappingByEmailMessageID(ctx, inReplyTo)
 		}
-		
+
 		if mappingErr == nil && mapping.SlackChannelID != "" {
 			w.logger.Info("email follow-up to bridged slack thread",
 				"slack_channel", mapping.SlackChannelID,
 				"slack_thread_ts", mapping.SlackParentTs,
 				"in_reply_to", inReplyTo,
 			)
-
-			promptText := payload.StrippedTextReply
-			if promptText == "" {
-				promptText = payload.TextBody
-			}
 
 			// Route to OmniChatWorker to post as a threaded Slack reply.
 			outProof := core.Proof{
@@ -465,35 +476,17 @@ Return a JSON object with two fields:
 		return nil
 	}
 
-	promptText := payload.StrippedTextReply
-	if promptText == "" {
-		promptText = payload.TextBody
-	}
-
-	if len(processedAttachments) > 0 {
-		var attNames []string
-		for _, attMeta := range processedAttachments {
-			if name, ok := attMeta["Name"].(string); ok && name != "" {
-				attNames = append(attNames, name)
-			}
-		}
-		if len(attNames) > 0 {
-			promptText += fmt.Sprintf("\n\n[SYSTEM: The user attached %d file(s): %s]", len(attNames), strings.Join(attNames, ", "))
-		} else {
-			promptText += fmt.Sprintf("\n\n[SYSTEM: The user attached %d file(s)]", len(processedAttachments))
-		}
-	}
-
 	eventData := map[string]interface{}{
-		"prompt":      promptText,
-		"entity_id":   entityID,
-		"from_handle": payload.From,
-		"to_handle":   payload.To,
-		"source":      "email",
-		"subject":     payload.Subject,
-		"agent_alias": agentAlias,
-		"in_reply_to": inReplyTo,
-		"message_id":  smtpMessageID,
+		"prompt":          promptText,
+		"entity_id":       entityID,
+		"from_handle":     payload.From,
+		"to_handle":       payload.To,
+		"source":          "email",
+		"subject":         payload.Subject,
+		"agent_alias":     agentAlias,
+		"in_reply_to":     inReplyTo,
+		"message_id":      smtpMessageID,
+		"has_attachments": len(processedAttachments) > 0,
 	}
 
 	eventBytes, _ := json.Marshal(eventData)
@@ -512,60 +505,63 @@ Return a JSON object with two fields:
 // cannot be matched to a known entity. This avoids wasting LLM tokens on
 // unresolvable messages.
 func (w *PostmarkInboundEmailWorker) sendBounceReply(ctx context.Context, to, originalBody, originalSubject string) {
-	if w.cfg.PostmarkServerToken == "" {
-		w.logger.Warn("cannot send bounce reply: postmark token not configured")
-		return
-	}
+	// We wont reply to spam emails
+	w.logger.Warn("Unknown user emailed us, No replies will be sent")
 
-	subject := "Unable to process your message"
-	if originalSubject != "" {
-		subject = fmt.Sprintf("Re: %s", originalSubject)
-	}
+	// 	if w.cfg.PostmarkServerToken == "" {
+	// 		w.logger.Warn("cannot send bounce reply: postmark token not configured")
+	// 		return
+	// 	}
 
-	body := fmt.Sprintf(`The recipient to your message below could not be resolved. Please double check.
+	// 	subject := "Unable to process your message"
+	// 	if originalSubject != "" {
+	// 		subject = fmt.Sprintf("Re: %s", originalSubject)
+	// 	}
 
----
-%s
----
+	// 	body := fmt.Sprintf(`The recipient to your message below could not be resolved. Please double check.
 
-Do not reply to this email.`, originalBody)
+	// ---
+	// %s
+	// ---
 
-	payload := map[string]interface{}{
-		"From":          "do-not-reply@usetoro.io",
-		"To":            to,
-		"Subject":       subject,
-		"TextBody":      body,
-		"MessageStream": "outbound",
-	}
+	// Do not reply to this email.`, originalBody)
 
-	jsonPayload, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.postmarkapp.com/email", bytes.NewBuffer(jsonPayload))
-	if err != nil {
-		w.logger.Error("bounce reply: failed to create request", "error", err)
-		return
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Postmark-Server-Token", w.cfg.PostmarkServerToken)
+	// 	payload := map[string]interface{}{
+	// 		"From":          "do-not-reply@usetoro.io",
+	// 		"To":            to,
+	// 		"Subject":       subject,
+	// 		"TextBody":      body,
+	// 		"MessageStream": "outbound",
+	// 	}
 
-	resp, err := w.client.Do(req)
-	if err != nil {
-		w.logger.Error("bounce reply: failed to send", "error", err)
-		return
-	}
-	defer resp.Body.Close()
+	// 	jsonPayload, _ := json.Marshal(payload)
+	// 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.postmarkapp.com/email", bytes.NewBuffer(jsonPayload))
+	// 	if err != nil {
+	// 		w.logger.Error("bounce reply: failed to create request", "error", err)
+	// 		return
+	// 	}
+	// 	req.Header.Set("Accept", "application/json")
+	// 	req.Header.Set("Content-Type", "application/json")
+	// 	req.Header.Set("X-Postmark-Server-Token", w.cfg.PostmarkServerToken)
 
-	if resp.StatusCode != http.StatusOK {
-		var errResp map[string]interface{}
-		_ = json.NewDecoder(resp.Body).Decode(&errResp)
-		w.logger.Error("bounce reply: postmark API error",
-			"status", resp.StatusCode,
-			"error", errResp,
-		)
-		return
-	}
+	// 	resp, err := w.client.Do(req)
+	// 	if err != nil {
+	// 		w.logger.Error("bounce reply: failed to send", "error", err)
+	// 		return
+	// 	}
+	// 	defer resp.Body.Close()
 
-	w.logger.Info("bounce reply sent", "to", to)
+	// 	if resp.StatusCode != http.StatusOK {
+	// 		var errResp map[string]interface{}
+	// 		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+	// 		w.logger.Error("bounce reply: postmark API error",
+	// 			"status", resp.StatusCode,
+	// 			"error", errResp,
+	// 		)
+	// 		return
+	// 	}
+
+	// w.logger.Info("bounce reply sent", "to", to)
 }
 
 // parseAgentEmail splits an agent email address into its routing components.
@@ -578,17 +574,24 @@ func parseAgentEmail(email string) (alias, subdomain string) {
 	}
 
 	parts := strings.SplitN(email, "@", 2)
+	// Fallback: If the string isn't a fully qualified email address (no '@' symbol),
+	// check if it's just the raw name of a configured virtual employee.
+	// This acts as a lenient parser for edge cases (e.g. legacy payloads or test data).
 	if len(parts) != 2 {
 		cleaned := strings.ToLower(strings.TrimSpace(email))
-		switch cleaned {
-		case "sarah", "mark", "alex", "quba", "michael", "robert", "jessica", "andrew", "rachel", "kevin", "laura", "thomas", "amanda":
-			return cleaned, ""
+		cfg := config.GetGlobal()
+		if cfg != nil {
+			if _, ok := cfg.VirtualEmployees[cleaned]; ok {
+				return cleaned, ""
+			}
 		}
+
 		if idx := strings.Index(cleaned, " "); idx >= 0 {
 			firstWord := cleaned[:idx]
-			switch firstWord {
-			case "sarah", "mark", "alex", "quba", "michael", "robert", "jessica", "andrew", "rachel", "kevin", "laura", "thomas", "amanda":
-				return firstWord, ""
+			if cfg != nil {
+				if _, ok := cfg.VirtualEmployees[firstWord]; ok {
+					return firstWord, ""
+				}
 			}
 		}
 		return "", ""

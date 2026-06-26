@@ -1,4 +1,4 @@
-package storage
+package infra
 
 import (
 	"context"
@@ -6,16 +6,17 @@ import (
 	"io"
 	"time"
 
+	appconfig "github.com/Yankzy/usetoro/internal/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	appconfig "github.com/Yankzy/usetoro/internal/config"
 )
 
-// Service defines the interface for our storage operations
-type Service interface {
-	UploadFile(ctx context.Context, key string, body io.Reader, contentType string) error
+// S3Service defines the interface for our S3 operations
+type S3Service interface {
+	UploadFileToS3(ctx context.Context, key string, body io.Reader, contentType string) error
+	DownloadS3File(ctx context.Context, key string) (io.ReadCloser, error)
 	GeneratePresignedURL(ctx context.Context, key string, expiresIn time.Duration) (string, error)
 }
 
@@ -25,8 +26,8 @@ type s3Service struct {
 	bucketName string
 }
 
-// NewS3Service creates a new AWS S3 storage service using credentials from the app config
-func NewS3Service(cfg *appconfig.Config) (Service, error) {
+// NewS3Service creates a new AWS S3 service using credentials from the app config
+func NewS3Service(cfg *appconfig.Config) (S3Service, error) {
 	if cfg.AWSAccessKeyID == "" || cfg.AWSSecretAccessKey == "" || cfg.AWSS3BucketName == "" || cfg.AWSS3RegionName == "" {
 		return nil, fmt.Errorf("AWS S3 credentials and bucket configuration are required")
 	}
@@ -54,7 +55,7 @@ func NewS3Service(cfg *appconfig.Config) (Service, error) {
 }
 
 // UploadFile uploads a stream of data to an S3 bucket
-func (s *s3Service) UploadFile(ctx context.Context, key string, body io.Reader, contentType string) error {
+func (s *s3Service) UploadFileToS3(ctx context.Context, key string, body io.Reader, contentType string) error {
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucketName),
 		Key:         aws.String(key),
@@ -68,6 +69,21 @@ func (s *s3Service) UploadFile(ctx context.Context, key string, body io.Reader, 
 	}
 
 	return nil
+}
+
+// DownloadFile downloads a file from an S3 bucket
+func (s *s3Service) DownloadS3File(ctx context.Context, key string) (io.ReadCloser, error) {
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(s.bucketName),
+		Key:    aws.String(key),
+	}
+
+	result, err := s.client.GetObject(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download file from S3: %w", err)
+	}
+
+	return result.Body, nil
 }
 
 // GeneratePresignedURL generates a temporary, cryptographically secure public URL for an S3 object

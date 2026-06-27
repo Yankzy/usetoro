@@ -163,15 +163,19 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			}
 		}
 
+		var cleanHandle string
 		if response.CustomMsgID != "" {
-			cleanHandle := strings.ReplaceAll(response.CustomMsgID, ":", "_")
-			customMsgID = fmt.Sprintf("<%s@agents.usetoro.io>", cleanHandle)
+			cleanHandle = strings.ReplaceAll(response.CustomMsgID, ":", "_")
 		} else if strings.HasPrefix(participantHandle, "ase:") {
-			cleanHandle := strings.ReplaceAll(participantHandle, ":", "_")
-			customMsgID = fmt.Sprintf("<%s@agents.usetoro.io>", cleanHandle)
+			cleanHandle = strings.ReplaceAll(participantHandle, ":", "_")
 		} else if strings.HasPrefix(response.FromHandle, "ase:") {
-			cleanHandle := strings.ReplaceAll(response.FromHandle, ":", "_")
-			customMsgID = fmt.Sprintf("<%s@agents.usetoro.io>", cleanHandle)
+			cleanHandle = strings.ReplaceAll(response.FromHandle, ":", "_")
+		}
+
+		if cleanHandle != "" {
+			// Append a short random suffix with __ delimiter to make the message ID globally unique 
+			// without breaking downstream parsing that splits by single _
+			customMsgID = fmt.Sprintf("<%s__%s@agents.usetoro.io>", cleanHandle, uuid.New().String()[:8])
 		} else {
 			customMsgID = fmt.Sprintf("<%s@agents.usetoro.io>", tempExternalID)
 		}

@@ -228,6 +228,9 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 					if idx := strings.Index(clean, "@"); idx != -1 {
 						clean = clean[:idx]
 					}
+					if idx := strings.Index(clean, "__"); idx != -1 {
+						clean = clean[:idx]
+					}
 					parts := strings.Split(clean, "_")
 					if len(parts) >= 4 && parts[0] == "ase" {
 						aseNodeID = parts[1]
@@ -259,7 +262,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 
 	// Priority 2: Recent conversations
 	if !entityID.Valid && payload.From != "" {
-		recentConvs, err := w.db.GetRecentConversations(ctx, database.GetRecentConversationsParams{
+		recentConvs, err := w.db.GetRecentConversationsByHandle(ctx, database.GetRecentConversationsByHandleParams{
 			FromHandle: payload.From,
 			Limit:      10, // Fetch up to 10 recent conversations
 		})
@@ -376,9 +379,6 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	}
 
 	externalID := smtpMessageID
-	if inReplyTo != "" {
-		externalID = inReplyTo
-	}
 
 	err = w.db.SaveInboundConversation(ctx, database.SaveInboundConversationParams{
 		EntityID:     entityID,

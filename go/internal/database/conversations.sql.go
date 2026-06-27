@@ -241,6 +241,61 @@ func (q *Queries) GetRecentConversations(ctx context.Context, arg GetRecentConve
 	return items, nil
 }
 
+const getRecentConversationsByHandle = `-- name: GetRecentConversationsByHandle :many
+SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, role, delivered, bounced, opened, clicked, complained, session_id, created_at, updated_at FROM toro_core.conversations
+WHERE from_handle = $1 OR to_handle = $1
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type GetRecentConversationsByHandleParams struct {
+	FromHandle string
+	Limit      int32
+}
+
+func (q *Queries) GetRecentConversationsByHandle(ctx context.Context, arg GetRecentConversationsByHandleParams) ([]ToroCoreConversation, error) {
+	rows, err := q.db.Query(ctx, getRecentConversationsByHandle, arg.FromHandle, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreConversation
+	for rows.Next() {
+		var i ToroCoreConversation
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.Source,
+			&i.ExternalID,
+			&i.FromHandle,
+			&i.ToHandle,
+			&i.ReplyTo,
+			&i.InReplyTo,
+			&i.Subject,
+			&i.BodyText,
+			&i.BodyHtml,
+			&i.StrippedText,
+			&i.Metadata,
+			&i.Role,
+			&i.Delivered,
+			&i.Bounced,
+			&i.Opened,
+			&i.Clicked,
+			&i.Complained,
+			&i.SessionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSessionConversations = `-- name: GetSessionConversations :many
 SELECT id, entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, role, delivered, bounced, opened, clicked, complained, session_id, created_at, updated_at FROM toro_core.conversations
 WHERE session_id = $1

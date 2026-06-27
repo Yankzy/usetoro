@@ -29,6 +29,12 @@ WHERE entity_id = $1 AND (from_handle = $2 OR to_handle = $2)
 ORDER BY created_at DESC
 LIMIT $3;
 
+-- name: GetRecentConversationsByHandle :many
+SELECT * FROM toro_core.conversations
+WHERE from_handle = $1 OR to_handle = $1
+ORDER BY created_at DESC
+LIMIT $2;
+
 -- name: InsertConversationSession :one
 INSERT INTO toro_core.conversation_sessions (
     entity_id, source, participant_handle, toro_handle, subject, system_prompt, context_json, status

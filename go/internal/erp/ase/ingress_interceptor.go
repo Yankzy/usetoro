@@ -39,6 +39,9 @@ func (i *AseIngressInterceptor) Intercept(ctx context.Context, req *conversation
 				if idx := strings.Index(clean, "@"); idx != -1 {
 					clean = clean[:idx]
 				}
+				if idx := strings.Index(clean, "__"); idx != -1 {
+					clean = clean[:idx]
+				}
 				parts := strings.Split(clean, "_")
 				if len(parts) >= 4 && parts[0] == "ase" {
 					isAseTransaction = true

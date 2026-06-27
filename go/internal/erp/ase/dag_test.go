@@ -17,7 +17,7 @@ func testLogger() *slog.Logger {
 
 func TestDAGNode_AcceptAndFlush(t *testing.T) {
 	logger := testLogger()
-	dagNode := NewDAGNode("test_macro", "account_selection", "Test Terminal", 3, 50*time.Millisecond, logger, DAGNodeConfig{})
+	dagNode := NewDAGNode("test_macro", "terminal", "Test Terminal", 3, 50*time.Millisecond, logger, DAGNodeConfig{})
 
 	var mu sync.Mutex
 	var processedBatches [][]*AutonomousSemanticEngineNode
@@ -82,7 +82,7 @@ func TestDAGNode_AcceptAndFlush(t *testing.T) {
 
 func TestDAGNode_FlushOnTimer(t *testing.T) {
 	logger := testLogger()
-	dagNode := NewDAGNode("test", "account_selection", "Test Terminal", 10, 50*time.Millisecond, logger, DAGNodeConfig{})
+	dagNode := NewDAGNode("test", "terminal", "Test Terminal", 10, 50*time.Millisecond, logger, DAGNodeConfig{})
 
 	var mu sync.Mutex
 	var processedCount int
@@ -259,7 +259,7 @@ func TestDAGNode_NoChildResultsInHold(t *testing.T) {
 func TestDAG_TerminalNodeCollapse(t *testing.T) {
 	logger := testLogger()
 
-	terminalNode := NewDAGNode("terminal", "account_selection", "AccountSelection", 1, 50*time.Millisecond, logger, DAGNodeConfig{})
+	terminalNode := NewDAGNode("terminal", "terminal", "AccountSelection", 1, 50*time.Millisecond, logger, DAGNodeConfig{})
 	terminalNode.SetThinkFunc(func(ctx context.Context, batch []*AutonomousSemanticEngineNode) (map[string]NodeClassification, error) {
 		results := make(map[string]NodeClassification, len(batch))
 		for _, node := range batch {

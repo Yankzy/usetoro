@@ -142,11 +142,11 @@ func TestDAG_ComplianceRouting_CompliantOutflow(t *testing.T) {
 		return results, nil
 	})
 
-	entityNode := dag.GetNode("entity_outflow")
-	if entityNode == nil {
-		t.Fatal("node entity_outflow not found in DAG")
+	accountSelectionNode := dag.GetNode("account_selection")
+	if accountSelectionNode == nil {
+		t.Fatal("node account_selection not found in DAG")
 	}
-	entityNode.SetThinkFunc(func(ctx context.Context, batch []*AutonomousSemanticEngineNode) (map[string]NodeClassification, error) {
+	accountSelectionNode.SetThinkFunc(func(ctx context.Context, batch []*AutonomousSemanticEngineNode) (map[string]NodeClassification, error) {
 		entityOutflowProcessed.Store(true)
 		return map[string]NodeClassification{}, nil
 	})

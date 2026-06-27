@@ -145,7 +145,7 @@ func (h *VectorHydrator) registerMemoryRules(ctx context.Context) error {
 }
 
 // registerResolvedTx inserts pending rows for high-confidence staging_transactions
-// that have been resolved (READY_FOR_SYNC or COLLAPSED) but not yet embedded.
+// that have been resolved (CLASSIFIED or COLLAPSED) but not yet embedded.
 func (h *VectorHydrator) registerResolvedTx(ctx context.Context, minConfidence float64) error {
 	rows, err := h.pool.Query(ctx, `
 		SELECT
@@ -157,7 +157,7 @@ func (h *VectorHydrator) registerResolvedTx(ctx context.Context, minConfidence f
 			st.account_type
 		FROM fignode.staging_transactions st
 		JOIN fignode.staging_sessions ss ON ss.id = st.session_id
-		WHERE st.status IN ('READY_FOR_SYNC', 'COLLAPSED')
+		WHERE st.status IN ('CLASSIFIED', 'COLLAPSED')
 		  AND st.confidence_score >= $1
 		  AND st.raw_description IS NOT NULL
 		  AND ss.realm_id IS NOT NULL

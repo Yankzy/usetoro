@@ -54,15 +54,15 @@ hyper_parameters:
 prompts:
   _shared_guardrails: &guardrails |
     ### CONFIDENCE GUARDRAILS
-    - CRITICAL: "Confidence" does NOT mean "how sure are you of your answer". It means "should this transaction automatically progress to the next node?". 
+    - CRITICAL: "Confidence" does NOT mean "how sure are you of your answer". It means "should this transaction automatically progress to the next node of the DAG?". 
     - The system has a strict guardrail: if your top candidate's confidence is < 0.98, the transaction will be placed on HOLD and will NOT progress.
     - If the transaction is fully compliant and should progress, you MUST set the highest score to >= 0.98.
     - If you determine the transaction is NON-COMPLIANT (e.g. missing receipt, IRS rules, W9, missing context) and MUST be placed on HOLD, you MUST intentionally set the highest score to < 0.98 (e.g. 0.96 or 0.97).
     - Your response must be a valid JSON array of RFC 6902 JSON Patch operations. Each operation must have "op", "path", and "value" fields.
     - Because confidence is probability distribution, candidates map MUST contain at least 2 candidates.
+    - EXTREMELY IMPORTANT: When you intentionally set the confidence to < 0.98 to trigger a hold, you MUST write your `reasoning` as a highly detailed DIRECT INSTRUCTION to the email agent.
   
   _accounting_rules: &accounting_rules |
-    - EXTREMELY IMPORTANT: When you intentionally set the confidence to < 0.98 to trigger a hold, you MUST write your `reasoning` as a highly detailed DIRECT INSTRUCTION to the email agent.
     - Your `reasoning` MUST explicitly cite the EXACT accounting or IRS rule that triggered the hold (e.g., "IRS $250 charitable contribution rule", "IRS $75 receipt threshold", "IRS 1099-NEC W-9 requirement"). 
     - Your `reasoning` MUST explain EXACTLY why the transaction failed this rule based on the available data, and explicitly state what documents or information the email agent must ask the business owner to provide.
       - Example Reasoning for < 0.98: "This transaction is a $300 donation to the Red Cross. According to the IRS $250 charitable contribution rule, we require a contemporaneous written acknowledgment from the charity. Please ask the owner to provide the official donation receipt or acknowledgment letter."
@@ -715,58 +715,6 @@ prompts:
           }
         ]
 
-  vendor_resolver:
-    - |
-      Isolate the true corporate vendor entity name by stripping locations, branch numbers, dates, and terminal IDs from the description string.
-
-    - *guardrails
-    - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "counterparty",
-              "candidates": {
-              "1": { "value": "Google", "confidence": 0.99, "reasoning": "Merchant identifier (GOOGLE *123456789) is unambiguous." },
-              "2": { "value": "AWS", "confidence": 0.01, "reasoning": "Description: 'GOOGLE *123456789' matches GOOGLE, not AWS." }
-                }
-              }
-            }
-          }
-        ]
-
-
-  customer_resolver:
-    - |
-      Isolate the true corporate customer entity name by stripping locations, branch numbers, dates, and terminal IDs from the description string.
-
-    - *guardrails
-    - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "counterparty",
-              "candidates": {
-              "1": { "value": "Acme Corp", "confidence": 0.99, "reasoning": "Customer identifier is unambiguous." },
-              "2": { "value": "Unknown", "confidence": 0.01, "reasoning": "Fallback." }
-                }
-              }
-            }
-          }
-        ]
-
-
   expense_compliance_specialist:
     - |
       You are a rigorous CPA auditor evaluating standard operational expenses.
@@ -854,9 +802,15 @@ prompts:
             }
           }
         ]
-  account_selection:
+        
+  account_selection_prompt:
     - |
-      You are an expert accountant. Select the exact account ID from the Chart of Accounts that best matches the transaction.
+      You are an expert accountant. Select the exact account ID from the Chart of Accounts that best matches the transaction. Do it in these steps:
+      1. Isolate the true corporate vendor or customer entity name by stripping locations, branch numbers, dates, and terminal IDs from the description string.
+      2. Review the 'trace' array provided in the transaction row. This trace contains classifications from prior steps, telling you whether this is an INFLOW/OUTFLOW, EXPENSE/REVENUE, etc.
+      3. Use the 'trace' history combined with the isolated entity name to select the most accurate account from the appropriately categorized Chart of Accounts below.
+      4. If the customer/vendor did not match any account in the Chart of Accounts, look for accounts like 'Uncategorized Income', 'Uncategorized Expense', 'Uncategorized Assets', 'Uncategorized Liabilities' etc and use that. 
+
 
       COMPANY CHART OF ACCOUNTS:
       {{.ChartOfAccounts}}
@@ -1030,7 +984,7 @@ dag:
       kind: terminal
       execution_parameters:
         action_provider: "qbo_inter_bank_transfer_collapse"
-        close_status: "COLLAPSED"
+        close_status: "CLASSIFIED"
 
     fixed_assets:
       name: fixed_assets
@@ -1084,7 +1038,7 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       children:
-        CAPITALIZE_IMPROVEMENT: entity_outflow
+        CAPITALIZE_IMPROVEMENT: account_selection
         REPAIRS_MAINTENANCE_EXPENSE: forced_expense_reclassification
 
     other_current_assets:
@@ -1159,7 +1113,7 @@ dag:
       edge_type: *estatic
       children:
         CC_BALANCE_TRANSFER: terminal_credit_card_transfer
-        CC_REFUND_OR_REWARD: entity_inflow
+        CC_REFUND_OR_REWARD: account_selection
         ANOMALOUS_CC_FLOW: universal_outflow_compliance_gate
 
     terminal_credit_card_transfer:
@@ -1169,7 +1123,7 @@ dag:
       kind: terminal
       execution_parameters:
         action_provider: "qbo_credit_card_payment_transfer_collapse"
-        close_status: "COLLAPSED"
+        close_status: "CLASSIFIED"
 
     long_term_liability:
       name: long_term_liability
@@ -1180,7 +1134,7 @@ dag:
       edge_type: *estatic
       children:
         LOAN_REPAYMENT_SPLIT: loan_amortization
-        LOAN_DISBURSEMENT_RECEIVED: entity_inflow
+        LOAN_DISBURSEMENT_RECEIVED: account_selection
         UNIDENTIFIED_DEBT_FLOW: universal_outflow_compliance_gate
 
     loan_amortization:
@@ -1266,7 +1220,7 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       children:
-        OWNER_INVESTMENT: entity_inflow
+        OWNER_INVESTMENT: account_selection
         OWNER_DRAW: terminal_shareholder_draw_mitigation
         SHAREHOLDER_DISTRIBUTION: terminal_shareholder_draw_mitigation
 
@@ -1277,7 +1231,7 @@ dag:
       kind: terminal
       execution_parameters:
         action_provider: "equity_draw_balance_sheet_collapse"
-        close_status: "COLLAPSED"
+        close_status: "CLASSIFIED"
 
     # ==================================================================
     # STEP 6: SPECIFIC REVENUE SUB-GRAPH GATES (CASH BASIS)
@@ -1292,7 +1246,7 @@ dag:
       children:
         GROMENT_STRIPE_SQUARE_SPLIT: merchant_payout_splitter
         CUSTOMER_REFUND: universal_outflow_compliance_gate
-        STANDARD_CASH_RECEIPT: entity_inflow
+        STANDARD_CASH_RECEIPT: account_selection
 
     merchant_payout_splitter:
       name: merchant_payout_splitter
@@ -1303,7 +1257,7 @@ dag:
       execution_parameters:
         action_provider: "gross_up_merchant_processing_fees_split"
       children:
-        MERCHANT_FEES_ISOLATED: entity_inflow
+        MERCHANT_FEES_ISOLATED: account_selection
 
     other_income:
       name: other_income
@@ -1313,8 +1267,8 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       children:
-        INTEREST_DIVIDEND_INCOME: entity_inflow
-        STANDARD_OTHER_INCOME: entity_inflow
+        INTEREST_DIVIDEND_INCOME: account_selection
+        STANDARD_OTHER_INCOME: account_selection
 
     # ==================================================================
     # STEP 7: SPECIFIC EXPENSE SUB-GRAPH GATES (CASH BASIS)
@@ -1349,7 +1303,7 @@ dag:
       edge_type: *estatic
       children:
         STANDARD_OVERHEAD: expense_compliance_router
-        VENDOR_REFUND: entity_inflow
+        VENDOR_REFUND: account_selection
         PERSONAL_MIXIN_DETECTED: terminal_shareholder_draw_mitigation
 
     expense_compliance_router:
@@ -1459,7 +1413,7 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       children:
-        COMPLIANT_OUTFLOW: entity_outflow
+        COMPLIANT_OUTFLOW: account_selection
         HOLD_MATERIALITY_REVIEW: hold_materiality_review
         HOLD_W9_REQUIRED: hold_w9_required
 
@@ -1503,29 +1457,13 @@ dag:
         action_provider: "qbo_w9_lookup"
       resume_child: universal_outflow_compliance_gate
 
-    entity_outflow:
-      name: entity_outflow
-      batch_size: *bsize
-      batch_flush_seconds: *flush
-      kind: entity
-      prompt_key: vendor_resolver
-      edge_type: *estatic
-      default_child: account_selection
-
-    entity_inflow:
-      name: entity_inflow
-      batch_size: *bsize
-      batch_flush_seconds: *flush
-      kind: entity
-      prompt_key: customer_resolver
-      edge_type: *estatic
-      default_child: account_selection
-
     account_selection:
       name: account_selection
-      kind: account_selection
-      prompt_key: account_selection
+      kind: terminal
+      prompt_key: account_selection_prompt
       edge_type: dynamic
       dynamic_edge_provider: "db_chart_of_accounts"
       batch_size: *bsize
       batch_flush_seconds: *flush
+      execution_parameters:
+        close_status: "CLASSIFIED"

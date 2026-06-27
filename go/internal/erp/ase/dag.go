@@ -287,9 +287,9 @@ func (dn *DAGNode) flush() {
 	}
 
 	// 1b) Fast-Path Terminal Nodes
-	// Terminal nodes have no thinkFn but carry a close_status execution parameter
+	// Terminal nodes with no thinkFn carry a close_status execution parameter
 	// (e.g. COLLAPSED) to properly finalize the agent.
-	if dn.Kind == "terminal" {
+	if dn.Kind == "terminal" && dn.thinkFn == nil {
 		closeStatus := dn.ExecutionParams["close_status"]
 		if closeStatus == "" {
 			closeStatus = string(StateCollapsed)
@@ -361,6 +361,9 @@ func (dn *DAGNode) flush() {
 
 	// Transition all nodes to Thinking.
 	for _, node := range batch {
+		node.Mu.Lock()
+		node.PromptKey = dn.PromptKey
+		node.Mu.Unlock()
 		node.transition(StateThinking)
 	}
 
@@ -459,10 +462,15 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 
 	if child == nil {
 		// No downstream DAG node — check if we can collapse.
-		if dn.Kind == "account_selection" {
+		if dn.Kind == "terminal" {
 			// Terminal classification stage: ready for final check.
 			if node.IsConfident() {
-				node.transition(StateClassified)
+				closeStatus := dn.ExecutionParams["close_status"]
+				if closeStatus != "" {
+					node.transition(NodeState(closeStatus))
+				} else {
+					node.transition(StateClassified)
+				}
 			} else {
 				node.Mu.Lock()
 				cfg := GetConfig(node.TenantID, node.RealmID, node.DagName)

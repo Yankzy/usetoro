@@ -35,6 +35,7 @@
         const CodeIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>;
         const ShareIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>;
         const HistoryIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>;
+        const PlayIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>;
 
         const NODE_WIDTH = 290;
         const NODE_HEIGHT = 160;
@@ -198,6 +199,10 @@
             const [yamlInput, setYamlInput] = useState('');
             const [yamlError, setYamlError] = useState(null);
             const [hidePassthrough, setHidePassthrough] = useState(false);
+            
+            // Simulation state
+            const [simCurrentNode, setSimCurrentNode] = useState(null);
+            const [simTrace, setSimTrace] = useState([]);
             
             // Canvas state
             const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
@@ -482,6 +487,30 @@
                             traverse(childId, level + 1);
                         });
                     }
+                    if (node.resume_child) {
+                        const edgeId = `edge_${nodeId}_${node.resume_child}_resume`;
+                        if (!newEdgesMap.has(edgeId)) {
+                            newEdgesMap.set(edgeId, {
+                                id: edgeId,
+                                source: nodeId,
+                                target: node.resume_child,
+                                label: 'TRUE (Resume)'
+                            });
+                        }
+                        traverse(node.resume_child, level + 1);
+                    }
+                    if (node.default_child) {
+                        const edgeId = `edge_${nodeId}_${node.default_child}_default`;
+                        if (!newEdgesMap.has(edgeId)) {
+                            newEdgesMap.set(edgeId, {
+                                id: edgeId,
+                                source: nodeId,
+                                target: node.default_child,
+                                label: 'DEFAULT'
+                            });
+                        }
+                        traverse(node.default_child, level + 1);
+                    }
                 };
 
                 if (entryNodeId) traverse(entryNodeId);
@@ -634,12 +663,34 @@
                         setYamlError(null);
                     }
                     setViewMode('code');
-                } else {
+                } else if (viewMode === 'code') {
                     setViewMode('visual');
                     if (configData) {
                         const filtered = getFilteredConfig(configData, hidePassthrough);
                         rebuildDAGRender(filtered?.dag?.nodes || {}, filtered?.dag?.entry_node);
                     }
+                } else if (viewMode === 'simulation') {
+                    setViewMode('visual');
+                }
+            };
+            
+            const startSimulation = () => {
+                if (configData && configData.dag && configData.dag.entry_node) {
+                    setSimCurrentNode(configData.dag.entry_node);
+                    setSimTrace([configData.dag.entry_node]);
+                    setViewMode('simulation');
+                    setShowVersionsPanel(false);
+                    setSelectedNodeId(null);
+                } else {
+                    setToast("No entry node defined in DAG.");
+                    setTimeout(() => setToast(null), 3000);
+                }
+            };
+
+            const advanceSimulation = (targetId) => {
+                if (configData && configData.dag && configData.dag.nodes[targetId]) {
+                    setSimCurrentNode(targetId);
+                    setSimTrace(prev => [...prev, targetId]);
                 }
             };
 
@@ -947,13 +998,18 @@
                                     const endY = targetNode.position.y + (NODE_HEIGHT / 2);
                                     const textX = (startX + endX) / 2;
                                     const textY = (startY + endY) / 2;
+                                    const inSimTrace = viewMode === 'simulation' && simTrace.includes(edge.source) && simTrace.includes(edge.target);
+                                    const edgeColor = inSimTrace ? "#3b82f6" : "#525252";
+                                    const strokeW = inSimTrace ? "3" : "2";
+                                    const markerUrl = inSimTrace ? "url(#blue-arrowhead)" : "url(#arrowhead)";
+
                                     return (
                                         <g key={edge.id}>
-                                            <path d={createBezierPath(startX, startY, endX, endY)} stroke="#525252" strokeWidth="2" fill="none" markerEnd="url(#arrowhead)" />
+                                            <path d={createBezierPath(startX, startY, endX, endY)} stroke={edgeColor} strokeWidth={strokeW} fill="none" markerEnd={markerUrl} />
                                             {edge.label && (
                                                 <g transform={`translate(${textX}, ${textY})`}>
-                                                    <rect x={-((edge.label.length * 6.5) + 16) / 2} y={-9} width={(edge.label.length * 6.5) + 16} height={18} rx={4} fill="#1e1e1e" stroke="#444444" strokeWidth="1"/>
-                                                    <text x={0} y={4} fill="#9ca3af" fontSize="10" textAnchor="middle" className="font-mono">{edge.label}</text>
+                                                    <rect x={-((edge.label.length * 6.5) + 16) / 2} y={-9} width={(edge.label.length * 6.5) + 16} height={18} rx={4} fill="#1e1e1e" stroke={edgeColor} strokeWidth="1"/>
+                                                    <text x={0} y={4} fill={inSimTrace ? "#fff" : "#9ca3af"} fontSize="10" textAnchor="middle" className="font-mono">{edge.label}</text>
                                                 </g>
                                             )}
                                         </g>
@@ -981,6 +1037,9 @@
 
                             {nodes.map(node => {
                                 const isSelected = selectedNodeId === node.id;
+                                const isSimCurrent = viewMode === 'simulation' && simCurrentNode === node.id;
+                                const inSimTrace = viewMode === 'simulation' && simTrace.includes(node.id);
+                                const isSimFaded = viewMode === 'simulation' && !inSimTrace;
                                 const colorClass = KIND_COLORS[node.data.kind] || KIND_COLORS.default;
                                 const isDropTarget = connectingSourceId && connectingSourceId !== node.id;
                                 return (
@@ -989,9 +1048,15 @@
                                         onMouseDown={(e) => handleNodeMouseDown(e, node)}
                                         onMouseEnter={() => { connectDropTargetRef.current = node.id; }}
                                         onMouseLeave={() => { if (connectDropTargetRef.current === node.id) connectDropTargetRef.current = null; }}
-                                        onClick={(e) => { e.stopPropagation(); setSelectedNodeId(node.id); setShowVersionsPanel(false); }}
-                                        className={`absolute transition-all duration-200 z-10 cursor-pointer rounded-xl ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_25px_rgba(59,130,246,0.5)] scale-[1.02]' : 'shadow-xl'} ${isDropTarget ? 'ring-2 ring-blue-400/60 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : ''}`}
-                                        style={{ left: node.position.x, top: node.position.y, width: NODE_WIDTH, height: NODE_HEIGHT, pointerEvents: 'auto' }}
+                                        onClick={(e) => { 
+                                            e.stopPropagation(); 
+                                            if (viewMode !== 'simulation') {
+                                                setSelectedNodeId(node.id); 
+                                                setShowVersionsPanel(false); 
+                                            }
+                                        }}
+                                        className={`absolute transition-all duration-200 z-10 ${viewMode !== 'simulation' ? 'cursor-pointer' : ''} rounded-xl ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_25px_rgba(59,130,246,0.5)] scale-[1.02]' : isSimCurrent ? 'ring-4 ring-green-500 shadow-[0_0_30px_rgba(34,197,94,0.6)] scale-[1.05] z-50' : inSimTrace ? 'ring-2 ring-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.4)]' : 'shadow-xl'} ${isDropTarget ? 'ring-2 ring-blue-400/60 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : ''} ${isSimFaded ? 'opacity-40 grayscale-[50%]' : ''}`}
+                                        style={{ left: node.position.x, top: node.position.y, width: NODE_WIDTH, height: NODE_HEIGHT, pointerEvents: viewMode === 'simulation' ? 'none' : 'auto' }}
                                     >
                                         <div className="w-full h-full bg-[#252526] rounded-xl border border-[#3c3c3c] flex flex-col overflow-hidden">
                                             <div className={`h-1.5 w-full ${colorClass}`} />
@@ -1066,9 +1131,14 @@
                                      {hidePassthrough ? 'Show Passthrough' : 'Hide Passthrough'}
                                  </button>
                              )}
+                             {viewMode === 'visual' && configData && (
+                                 <button onClick={startSimulation} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded shadow-xl text-sm font-semibold flex items-center gap-2 transition-all">
+                                     <PlayIcon /> Simulation Mode
+                                 </button>
+                             )}
                              <button onClick={toggleViewMode} className="bg-[#2d2d2d] hover:bg-[#3d3d3d] border border-[#444] text-white px-4 py-2 rounded shadow-xl text-sm font-semibold flex items-center gap-2">
                                  {viewMode === 'visual' ? <CodeIcon /> : <ShareIcon />}
-                                 {viewMode === 'visual' ? 'Code Mode' : 'Visual Mode'}
+                                 {viewMode === 'visual' ? 'Code Mode' : viewMode === 'code' ? 'Visual Mode' : 'Exit Simulation'}
                              </button>
                              {viewMode === 'visual' && configData && !hidePassthrough && (
                                  <button onClick={() => { setShowVersionsPanel(!showVersionsPanel); setSelectedNodeId(null); }} className={`border text-white px-4 py-2 rounded shadow-xl text-sm font-semibold flex items-center gap-2 transition-all ${showVersionsPanel ? 'bg-blue-600 hover:bg-blue-500 border-blue-500' : 'bg-[#2d2d2d] hover:bg-[#3d3d3d] border-[#444]'}`}>
@@ -1173,6 +1243,139 @@
                                         </button>
                                     </>
                                 )}
+                            </div>
+                        </div>
+                    )}
+                    {viewMode === 'simulation' && simCurrentNode && (
+                        <div className="w-80 bg-[#252526] border-l border-[#3c3c3c] flex flex-col z-30 shadow-2xl overflow-y-auto">
+                            <div className="p-4 border-b border-[#3c3c3c] flex justify-between items-center bg-[#2d2d2d]">
+                                <div>
+                                    <h2 className="text-white font-bold text-sm">Interactive Simulation</h2>
+                                </div>
+                                <button onClick={() => setViewMode('visual')} className="text-gray-400 hover:text-white">✕</button>
+                            </div>
+                            <div className="p-4 flex flex-col flex-1 overflow-y-auto gap-4">
+                                {(() => {
+                                    const node = configData?.dag?.nodes[simCurrentNode];
+                                    if (!node) return <div className="text-gray-400 text-xs">Node not found.</div>;
+                                    
+                                    const isTerminal = node.kind === 'terminal' || (!node.children && !node.resume_child && !node.default_child && node.kind !== 'holding_gate');
+                                    const kindColorsArray = Object.entries(KIND_COLORS);
+                                    
+                                    return (
+                                        <>
+                                            <div className="bg-[#1e1e1e] border border-[#3c3c3c] rounded-lg p-3 space-y-2 shadow-sm">
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`w-2 h-2 rounded-full ${KIND_COLORS[node.kind] ? KIND_COLORS[node.kind].replace('bg-', 'bg-') : 'bg-gray-500'}`}></div>
+                                                    <div className="text-xs text-gray-400 uppercase font-bold tracking-wider">{node.kind}</div>
+                                                </div>
+                                                <div className="text-white font-semibold text-lg">{node.name || simCurrentNode}</div>
+                                                {node.prompt_key && (
+                                                    <div className="text-xs text-[#818cf8] font-mono bg-indigo-500/10 p-1.5 rounded border border-indigo-500/20 break-words">Prompt: {node.prompt_key}</div>
+                                                )}
+                                                {node.action_provider && (
+                                                    <div className="text-xs text-[#fb923c] font-mono bg-orange-500/10 p-1.5 rounded border border-orange-500/20 break-words">Action: {node.action_provider}</div>
+                                                )}
+                                                {node.kind === 'holding_gate' && (
+                                                    <div className="text-xs text-amber-400 font-mono bg-amber-500/10 p-1.5 rounded border border-amber-500/20 mt-1">⏸ Wait for guardrail/human</div>
+                                                )}
+                                            </div>
+                                            
+                                            {node.kind === 'holding_gate' && (!node.children || Object.keys(node.children).length === 0) ? (
+                                                <div className="flex-1 flex flex-col gap-2 mt-2">
+                                                    <div className="text-xs text-amber-400 font-semibold mb-1 uppercase tracking-wider">Simulate Human Action</div>
+                                                    <button 
+                                                        onClick={() => {
+                                                            if (node.resume_child) {
+                                                                advanceSimulation(node.resume_child);
+                                                            } else {
+                                                                setToast("Resolved! (No resume_child, simulation ends here)");
+                                                            }
+                                                        }}
+                                                        className="w-full text-left p-3 bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 hover:border-green-400/50 rounded-lg text-sm text-gray-200 transition-colors shadow-md group flex flex-col gap-1"
+                                                    >
+                                                        <div className="font-mono text-green-400 group-hover:text-green-300 font-semibold">TRUE (Resolve Hold)</div>
+                                                        <div className="text-[10px] text-green-500/60 truncate flex items-center gap-1">
+                                                            ✅ {node.resume_child ? `Resumes to: ${node.resume_child}` : "Ends simulation"}
+                                                        </div>
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => setToast('Simulation halted by FALSE human action.')}
+                                                        className="w-full text-left p-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 hover:border-red-400/50 rounded-lg text-sm text-gray-200 transition-colors shadow-md mt-2 group flex flex-col gap-1"
+                                                    >
+                                                        <div className="font-mono text-red-400 group-hover:text-red-300 font-semibold">FALSE (Reject / Cancel)</div>
+                                                        <div className="text-[10px] text-red-500/60 truncate flex items-center gap-1">
+                                                            ❌ Halts simulation
+                                                        </div>
+                                                    </button>
+                                                </div>
+                                            ) : !isTerminal ? (
+                                                <div className="flex-1 flex flex-col gap-2">
+                                                    <div className="text-xs text-gray-400 font-semibold mb-1 uppercase tracking-wider">Simulated Routing Choices</div>
+                                                    {node.children && Object.entries(node.children).map(([key, targetId]) => (
+                                                        <button 
+                                                            key={key} 
+                                                            onClick={() => advanceSimulation(targetId)}
+                                                            className="w-full text-left p-3 bg-[#2d2d2d] hover:bg-[#3d3d3d] border border-[#444] hover:border-blue-500 rounded-lg text-sm text-gray-200 transition-colors shadow-md group flex flex-col gap-1"
+                                                        >
+                                                            <div className="font-mono text-blue-400 group-hover:text-blue-300 font-semibold">{key}</div>
+                                                            <div className="text-[10px] text-gray-500 truncate flex items-center gap-1">
+                                                                <ShareIcon /> {configData.dag.nodes[targetId]?.name || targetId}
+                                                            </div>
+                                                        </button>
+                                                    ))}
+                                                    {node.resume_child && (
+                                                        <button 
+                                                            onClick={() => advanceSimulation(node.resume_child)}
+                                                            className="w-full text-left p-3 bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 hover:border-green-400/50 rounded-lg text-sm text-gray-200 transition-colors shadow-md group flex flex-col gap-1 mt-2"
+                                                        >
+                                                            <div className="font-mono text-green-400 group-hover:text-green-300 font-semibold">TRUE (Resume)</div>
+                                                            <div className="text-[10px] text-green-500/60 truncate flex items-center gap-1">
+                                                                ✅ {configData.dag.nodes[node.resume_child]?.name || node.resume_child}
+                                                            </div>
+                                                        </button>
+                                                    )}
+                                                    {node.default_child && (
+                                                        <button 
+                                                            onClick={() => advanceSimulation(node.default_child)}
+                                                            className="w-full text-left p-3 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 hover:border-blue-400/50 rounded-lg text-sm text-gray-200 transition-colors shadow-md group flex flex-col gap-1 mt-2"
+                                                        >
+                                                            <div className="font-mono text-blue-400 group-hover:text-blue-300 font-semibold">DEFAULT</div>
+                                                            <div className="text-[10px] text-blue-500/60 truncate flex items-center gap-1">
+                                                                ➡️ {configData.dag.nodes[node.default_child]?.name || node.default_child}
+                                                            </div>
+                                                        </button>
+                                                    )}
+                                                    {node.prompt_key && (
+                                                        <button 
+                                                            onClick={() => setToast('Guardrail triggered! Routing to LOW_CONFIDENCE hold.')}
+                                                            className="w-full text-left p-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-sm text-gray-200 transition-colors shadow-md mt-4 group flex flex-col gap-1"
+                                                        >
+                                                            <div className="font-mono text-red-400 group-hover:text-red-300 font-semibold">LOW_CONFIDENCE</div>
+                                                            <div className="text-[10px] text-red-500/60 truncate flex items-center gap-1">
+                                                                ⚠️ Triggers confidence guardrail hold
+                                                            </div>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <div className="flex-1 flex flex-col items-center justify-center py-8 opacity-90">
+                                                    <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mb-4 border border-green-500/30 shadow-[0_0_15px_rgba(34,197,94,0.3)]">
+                                                        <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                                                    </div>
+                                                    <div className="text-white font-bold text-lg mb-1">Simulation Complete</div>
+                                                    <div className="text-xs text-gray-400 text-center">Reached terminal node or end of configured path.</div>
+                                                </div>
+                                            )}
+                                            
+                                            <div className="mt-4 pt-4 border-t border-[#3c3c3c]">
+                                                <button onClick={startSimulation} className="w-full py-2 bg-[#1e1e1e] hover:bg-[#2d2d2d] border border-[#444] rounded text-xs text-gray-300 font-semibold flex items-center justify-center gap-2 transition-colors">
+                                                    <HistoryIcon /> Restart Simulation
+                                                </button>
+                                            </div>
+                                        </>
+                                    );
+                                })()}
                             </div>
                         </div>
                     )}

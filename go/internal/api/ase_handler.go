@@ -193,6 +193,9 @@ func (h *Handler) HandleUpsertASEConfig(rw http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) HandleASEDebugUI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(debug.IndexHTML)
 }

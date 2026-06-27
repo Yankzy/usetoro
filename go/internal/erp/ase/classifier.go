@@ -198,15 +198,46 @@ func (cs *ClassifierService) dynamicChartOfAccounts(ctx context.Context, batch [
 	}
 
 	// Format the Chart of Accounts for the LLM
-	var coaLines []string
+	var deposits []string
+	var purchases []string
+	var others []string
+
 	for _, acc := range accounts {
-		coaLines = append(coaLines, fmt.Sprintf("- ID: %s | Name: %s | Type: %s | SubType: %s", 
-			acc.ErpID, acc.Name, acc.Classification.String, acc.AccountSubType.String))
+		line := fmt.Sprintf("  - ID: %s | Name: %s | Type: %s | SubType: %s", 
+			acc.ErpID, acc.Name, acc.Classification.String, acc.AccountSubType.String)
+		
+		cls := strings.ToLower(acc.Classification.String)
+		if cls == "revenue" || cls == "income" {
+			deposits = append(deposits, line)
+		} else if cls == "expense" || cls == "cost of goods sold" || cls == "asset" {
+			purchases = append(purchases, line)
+		} else {
+			others = append(others, line)
+		}
+	}
+
+	var coaLines []string
+	if len(deposits) > 0 {
+		coaLines = append(coaLines, "### DEPOSIT ACCOUNTS (INFLOWS)")
+		coaLines = append(coaLines, "Use these primarily for incoming funds like Revenue, Income, or Refunds.")
+		coaLines = append(coaLines, deposits...)
+		coaLines = append(coaLines, "")
+	}
+	if len(purchases) > 0 {
+		coaLines = append(coaLines, "### PURCHASE ACCOUNTS (OUTFLOWS)")
+		coaLines = append(coaLines, "Use these primarily for outgoing funds like Expenses, Cost of Goods Sold, or Asset Purchases.")
+		coaLines = append(coaLines, purchases...)
+		coaLines = append(coaLines, "")
+	}
+	if len(others) > 0 {
+		coaLines = append(coaLines, "### OTHER ACCOUNTS (LIABILITIES, EQUITY, ETC)")
+		coaLines = append(coaLines, others...)
+		coaLines = append(coaLines, "")
 	}
 
 	promptKey := batch[0].PromptKey
 	if promptKey == "" {
-		promptKey = "account_selection"
+		promptKey = "terminal"
 	}
 	
 	systemPrompt := GetPrompt(tenantID, realmID, dagName, promptKey)
@@ -247,6 +278,7 @@ type RowPayload struct {
 	Amount       string   `json:"amount"`
 	Context      []string `json:"context,omitempty"`
 	CompanyRules []string `json:"company_rules,omitempty"`
+	Trace        []string `json:"trace,omitempty"`
 }
 
 func (cs *ClassifierService) batchToRows(ctx context.Context, batch []*AutonomousSemanticEngineNode) map[string]RowPayload {
@@ -270,6 +302,14 @@ func (cs *ClassifierService) batchToRows(ctx context.Context, batch []*Autonomou
 		}
 		
 		ctxUpdates := node.ContextUpdates
+		
+		var traceStrs []string
+		for _, step := range node.ExecutionTrace {
+			if step.SelectedEdge != "" {
+				traceStrs = append(traceStrs, fmt.Sprintf("At node '%s', classified as '%s'", step.DAGNodeID, step.SelectedEdge))
+			}
+		}
+		
 		node.Mu.RUnlock()
 
 		// --- Keyword-matched memory rules (existing mechanism) ---
@@ -322,6 +362,7 @@ func (cs *ClassifierService) batchToRows(ctx context.Context, batch []*Autonomou
 			Amount:       amount,
 			Context:      ctxUpdates,
 			CompanyRules: activeRules,
+			Trace:        traceStrs,
 		}
 	}
 	return rows

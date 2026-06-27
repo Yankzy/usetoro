@@ -186,7 +186,7 @@ func (w *RuleEvaluationWorker) Handle(ctx context.Context, msg *nats.Msg) error 
 
 			newStatus := "READY_FOR_REVIEW"
 			if !result.RequiresReview {
-				newStatus = "SWIPED_APPROVED"
+				newStatus = "CLASSIFIED"
 			}
 
 			ruleID := pgtype.Int4{Int32: *result.MatchedRuleGroupID, Valid: true}

@@ -175,6 +175,12 @@ func (w *QboSyncWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	responses, err := w.connector.BatchCreateStagingTransactions(ctx, realmID, batchItems)
+	
+	// Process whatever responses we got back, even if there was a chunking error later on
+	if len(responses) > 0 {
+		w.processBatchResponses(ctx, responses, itemMap, realmID)
+	}
+
 	if err != nil {
 		w.logger.Error("qbo_sync worker: batch push fatal", "realm_id", realmID, "error", err)
 		if isOAuthRevoked(err) {
@@ -184,7 +190,6 @@ func (w *QboSyncWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return fmt.Errorf("batch push fatal: %w", err)
 	}
 
-	w.processBatchResponses(ctx, responses, itemMap, realmID)
 	return nil
 }
 
@@ -426,7 +431,7 @@ func (w *QboSyncWorker) resolveEntityERPID(
 		return customer.ErpID, nil
 	}
 
-	return "", fmt.Errorf("no entity assigned")
+	return "", nil
 }
 
 // resolveAccountERPID returns the QBO ERP ID for the expense/revenue account.

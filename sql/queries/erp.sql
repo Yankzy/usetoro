@@ -1493,7 +1493,7 @@ WHERE st.session_id = $1
   AND st.predicted_account_id IS NOT NULL
   AND st.split_suggestion IS NULL
   AND st.cash_direction IS NOT NULL
-  AND (st.status = 'SWIPED_APPROVED' OR st.rule_group_id IS NOT NULL)
+  AND (st.status = 'CLASSIFIED' OR st.rule_group_id IS NOT NULL)
 ORDER BY st.created_at ASC;
 
 -- name: MarkStagingTransactionSynced :exec

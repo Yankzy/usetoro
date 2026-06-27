@@ -316,12 +316,15 @@ func TestResolveEntityERPID(t *testing.T) {
 		}
 	})
 
-	t.Run("outflow no vendor returns error", func(t *testing.T) {
+	t.Run("outflow no vendor returns empty string", func(t *testing.T) {
 		w := newQboTestWorker(nil, nil)
 		row := database.FignodeStagingTransaction{CashDirection: makeText("OUTFLOW")}
-		_, err := w.resolveEntityERPID(context.Background(), "r", row)
-		if err == nil {
-			t.Fatal("expected error")
+		got, err := w.resolveEntityERPID(context.Background(), "r", row)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "" {
+			t.Errorf("got %q, want empty string", got)
 		}
 	})
 
@@ -345,12 +348,15 @@ func TestResolveEntityERPID(t *testing.T) {
 		}
 	})
 
-	t.Run("inflow no customer returns error", func(t *testing.T) {
+	t.Run("inflow no customer returns empty string", func(t *testing.T) {
 		w := newQboTestWorker(nil, nil)
 		row := database.FignodeStagingTransaction{CashDirection: makeText("INFLOW")}
-		_, err := w.resolveEntityERPID(context.Background(), "r", row)
-		if err == nil {
-			t.Fatal("expected error")
+		got, err := w.resolveEntityERPID(context.Background(), "r", row)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "" {
+			t.Errorf("got %q, want empty string", got)
 		}
 	})
 

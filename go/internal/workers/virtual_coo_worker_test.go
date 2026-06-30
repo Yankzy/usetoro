@@ -102,25 +102,14 @@ type mockLLM struct {
 	err  error
 }
 
-func (m *mockLLM) GenerateText(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
-	return m.text, m.err
-}
-
-func (m *mockLLM) GenerateJSON(ctx context.Context, systemPrompt, userPrompt string, output interface{}) error {
+func (m *mockLLM) Exec(ctx context.Context, prompt, systemPrompt string) (string, error) {
 	if m.err != nil {
-		return m.err
+		return "", m.err
 	}
-	extracted, ok := output.(*vcoo.ExtractedReport)
-	if !ok {
-		return errors.New("invalid output type")
+	if strings.Contains(systemPrompt, "semantic parser") {
+		return `{"active_blockers": ["WASM memory page bounds"], "outbound_voip_dials": 60, "partners_signed": 1, "scheduled_onboardings": 2, "x_posts_executed": 4, "video_proofs_dropped": 3}`, nil
 	}
-	extracted.ActiveBlockers = []string{"WASM memory page bounds"}
-	extracted.OutboundVoipDials = 60
-	extracted.PartnersSigned = 1
-	extracted.ScheduledOnboardings = 2
-	extracted.XPostsExecuted = 4
-	extracted.VideoProofsDropped = 3
-	return nil
+	return m.text, nil
 }
 
 func TestVirtualCOOWorker_Handle_Malformed(t *testing.T) {

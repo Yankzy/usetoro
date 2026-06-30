@@ -8,28 +8,28 @@ import (
 func TestFloatsToVectorLiteral(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    []float64
+		input    []float32
 		expected string
 	}{
 		{
 			name:     "empty slice",
-			input:    []float64{},
+			input:    []float32{},
 			expected: "[]",
 		},
 		{
 			name:     "single value",
-			input:    []float64{0.5},
-			expected: "[0.5]",
+			input:    []float32{0.5},
+			expected: "[0.500000]",
 		},
 		{
 			name:     "multiple values",
-			input:    []float64{0.1, 0.2, 0.3},
-			expected: "[0.1,0.2,0.3]",
+			input:    []float32{0.1, 0.2, 0.3},
+			expected: "[0.100000,0.200000,0.300000]",
 		},
 		{
 			name:     "negative values",
-			input:    []float64{-0.1, 0.0, 1.0},
-			expected: "[-0.1,0,1]",
+			input:    []float32{-0.1, 0.0, 1.0},
+			expected: "[-0.100000,0.000000,1.000000]",
 		},
 	}
 

@@ -18,11 +18,11 @@ import (
 	"github.com/Yankzy/usetoro/internal/erp"
 	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
-	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
@@ -229,7 +229,6 @@ type Dependencies struct {
 	ProviderFactory erp.ProviderFactory
 	RuleEngine      *accounting.RuleEngineService
 	Runtime         *agent.Runtime
-	LLMClient       *ai.LLMClient
 	FetchEntityFn   func(ctx context.Context, tenantID, realmID, entityType, entityID, op string) error
 	QBOConnector    *connectors.QBOConnector
 	Redis           *redis.Client

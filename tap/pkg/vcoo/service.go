@@ -58,18 +58,23 @@ Schema:
 
 	// Generate JSON using the LLM. If LLM is missing, do raw default fallback
 	if s.LLM != nil {
-		// Leverage GenerateJSON wrapper if the LLM client supports it
-		type jsonGenerator interface {
-			GenerateJSON(ctx context.Context, systemPrompt, userPrompt string, output interface{}) error
+		respStr, err := s.LLM.Exec(ctx, textBody, systemPrompt)
+		if err != nil {
+			return fmt.Errorf("failed to extract metrics via LLM: %w", err)
 		}
-		if gen, ok := s.LLM.(jsonGenerator); ok {
-			err = gen.GenerateJSON(ctx, systemPrompt, textBody, &extracted)
-			if err != nil {
-				return fmt.Errorf("failed to extract metrics via LLM: %w", err)
-			}
-		} else {
-			// Fallback placeholder parser
-			extracted = parseDummyFallback(textBody)
+		
+		cleanResp := strings.TrimSpace(respStr)
+		if strings.HasPrefix(cleanResp, "```json") {
+			cleanResp = strings.TrimPrefix(cleanResp, "```json")
+			cleanResp = strings.TrimSuffix(cleanResp, "```")
+		} else if strings.HasPrefix(cleanResp, "```") {
+			cleanResp = strings.TrimPrefix(cleanResp, "```")
+			cleanResp = strings.TrimSuffix(cleanResp, "```")
+		}
+		cleanResp = strings.TrimSpace(cleanResp)
+
+		if err := json.Unmarshal([]byte(cleanResp), &extracted); err != nil {
+			return fmt.Errorf("failed to parse extracted metrics json: %w", err)
 		}
 	} else {
 		extracted = parseDummyFallback(textBody)

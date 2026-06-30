@@ -9,7 +9,7 @@ import (
 
 // LLMTextGenerator represents the interface to generate text using an LLM.
 type LLMTextGenerator interface {
-	GenerateText(ctx context.Context, systemPrompt, userPrompt string) (string, error)
+	Exec(ctx context.Context, prompt, systemPrompt string) (string, error)
 }
 
 // GenerateDailyBrief generates the plain-text Daily Command Brief using LLM or template fallback.
@@ -92,7 +92,7 @@ Please render the final plain text command brief.`,
 			xPosts,
 		)
 
-		brief, err := llm.GenerateText(ctx, systemPrompt, userPrompt)
+		brief, err := llm.Exec(ctx, userPrompt, systemPrompt)
 		if err == nil && len(strings.TrimSpace(brief)) > 0 {
 			return brief, nil
 		}

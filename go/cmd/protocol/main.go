@@ -247,7 +247,6 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 
 	workerManager := workers.NewManager(logger, q.Conn())
 
-	fignodeLLM, _ := ai.NewLLMClient(os.Getenv("OPENAI_API_KEY"), "")
 	adapter := agent.NewNatsAdapter(q.Conn(), q.JetStream())
 	rt := agent.NewRuntime(logger, adapter, core.AgentConfig{
 		Model: "gpt-4o",
@@ -299,7 +298,6 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		AttachService:   attachService,
 		ProviderFactory: providerFactory,
 		RuleEngine:      ruleEngineService,
-		LLMClient:       fignodeLLM,
 		Runtime:         rt,
 		FetchEntityFn: func(ctx context.Context, tenantID, realmID, entityType, entityID, op string) error {
 			return qboConn.FetchEntity(ctx, realmID, entityType, entityID, op)

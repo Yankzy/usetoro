@@ -33,7 +33,7 @@ func init() {
 			logger:  deps.Logger,
 			cfg:     deps.Config,
 			nc:      deps.Queue,
-			vcooSvc: vcoo.NewService(deps.Store.Queries, deps.LLMClient),
+			vcooSvc: vcoo.NewService(deps.Store.Queries, deps.Runtime),
 			client:  &http.Client{},
 			stopCh:  make(chan struct{}),
 		}, nil

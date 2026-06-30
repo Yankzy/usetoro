@@ -18,7 +18,6 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/queue"
-	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/wshandler"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
@@ -281,9 +280,7 @@ func main() {
 	defer queueClient.Close()
 
 	// Create WebSocket hub & LLM Context Wrapper
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	llmClient, _ := ai.NewLLMClient(apiKey, "")
-	hub := wshandler.NewHub(logger, queueClient, queries, llmClient)
+	hub := wshandler.NewHub(logger, queueClient, queries)
 	go hub.Run()
 
 	// Create and start QBO event consumer

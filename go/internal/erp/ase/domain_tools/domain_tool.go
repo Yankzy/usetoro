@@ -6,15 +6,17 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
+	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/nats-io/nats.go"
 )
 
 type ToolDependencies struct {
-	DB     *database.Queries
-	Logger *slog.Logger
-	Store  ase.StatePersister
-	NC     *nats.Conn
+	DB        *database.Queries
+	Logger    *slog.Logger
+	Store   ase.StatePersister
+	NC      *nats.Conn
+	Runtime *agent.Runtime
 }
 
 type DomainTool interface {

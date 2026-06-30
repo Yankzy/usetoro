@@ -14,8 +14,8 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/services/fignode"
+	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
@@ -26,7 +26,7 @@ type FignodePublisherWorker struct {
 	db     *database.Queries
 	nc     *nats.Conn
 	logger *slog.Logger
-	llm    *ai.LLMClient
+	rt     *agent.Runtime
 	cfg    *config.Config
 }
 
@@ -34,16 +34,25 @@ func NewFignodePublisherWorker(
 	db *database.Queries,
 	nc *nats.Conn,
 	logger *slog.Logger,
-	llm *ai.LLMClient,
 	cfg *config.Config,
 ) (*FignodePublisherWorker, error) {
-	return &FignodePublisherWorker{
+	w := &FignodePublisherWorker{
 		db:     db,
 		nc:     nc,
 		logger: logger,
-		llm:    llm,
 		cfg:    cfg,
-	}, nil
+	}
+
+	js, err := nc.JetStream()
+	if err == nil {
+		adapter := agent.NewNatsAdapter(nc, js)
+		w.rt = agent.NewRuntime(logger, adapter, core.AgentConfig{
+			Model: "gpt-4o",
+			DID:   "did:toro:worker:fignode-publisher",
+		})
+	}
+
+	return w, nil
 }
 
 func (w *FignodePublisherWorker) numericToFloat64Precise(n pgtype.Numeric) float64 {
@@ -165,7 +174,7 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 			if compInfo.CompanyName != "" {
 				compName = compInfo.CompanyName
 			}
-			compTax, _ = fignode.EnsureCompanyContext(ctx, w.db, w.llm, compInfo)
+			compTax, _ = fignode.EnsureCompanyContext(ctx, w.db, w.rt, compInfo)
 		}
 
 		amtVal := 0.0
@@ -211,7 +220,7 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 			entityName = r.PredictedVendorName
 			if r.PredictedVendorID.Valid {
 				if vendorRec, vErr := w.db.GetVendorByID(ctx, r.PredictedVendorID); vErr == nil {
-					vTax, _ := fignode.EnsureVendorContext(ctx, w.db, w.llm, vendorRec)
+					vTax, _ := fignode.EnsureVendorContext(ctx, w.db, w.rt, vendorRec)
 					if vTax.Industry != "" {
 						industry = vTax.Industry
 					}
@@ -227,7 +236,7 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 			entityName = r.PredictedCustomerName
 			if r.PredictedCustomerID.Valid {
 				if customerRec, cErr := w.db.GetCustomerByID(ctx, r.PredictedCustomerID); cErr == nil {
-					cTax, _ := fignode.EnsureCustomerContext(ctx, w.db, w.llm, customerRec)
+					cTax, _ := fignode.EnsureCustomerContext(ctx, w.db, w.rt, customerRec)
 					if cTax.Industry != "" {
 						industry = cTax.Industry
 					}
@@ -292,6 +301,6 @@ func (w *FignodePublisherWorker) handleProof(ctx context.Context, msg *nats.Msg)
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		return NewFignodePublisherWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.LLMClient, deps.Config)
+		return NewFignodePublisherWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.Config)
 	})
 }

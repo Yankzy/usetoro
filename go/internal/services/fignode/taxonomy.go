@@ -5,7 +5,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/tap/pkg/agent"
+	"encoding/json"
+	"strings"
 )
 
 type VendorTaxonomy struct {
@@ -22,7 +24,7 @@ type CompanyTaxonomy struct {
 	MindsetHint   string `json:"mindset_hint"`
 }
 
-func EnsureVendorContext(ctx context.Context, db *database.Queries, llm *ai.LLMClient, vendor database.ShadowErpVendor) (VendorTaxonomy, error) {
+func EnsureVendorContext(ctx context.Context, db *database.Queries, rt *agent.Runtime, vendor database.ShadowErpVendor) (VendorTaxonomy, error) {
 	var result VendorTaxonomy
 	if vendor.Industry.Valid && vendor.Industry.String != "" {
 		result.Industry = vendor.Industry.String
@@ -32,14 +34,24 @@ func EnsureVendorContext(ctx context.Context, db *database.Queries, llm *ai.LLMC
 		return result, nil
 	}
 
-	if llm == nil {
+	if rt == nil {
 		return result, nil
 	}
 
-	sysPrompt := "You are a categorical metadata generator. Generate a precise JSON taxonomy for the following vendor. Include a 1 character emoji for industry_icon, a short vendor_description, and their likely vendor_url."
+	sysPrompt := "You are a categorical metadata generator. Generate a precise JSON taxonomy for the following vendor. Include a 1 character emoji for industry_icon, a short vendor_description, and their likely vendor_url. Output ONLY valid JSON."
 	usrPrompt := "Vendor Name: " + vendor.DisplayName
 
-	if err := llm.GenerateJSON(ctx, sysPrompt, usrPrompt, &result); err != nil {
+	resp, err := rt.Exec(ctx, usrPrompt, sysPrompt)
+	if err != nil {
+		return result, err
+	}
+
+	cleanStr := strings.TrimSpace(resp)
+	cleanStr = strings.TrimPrefix(cleanStr, "```json")
+	cleanStr = strings.TrimPrefix(cleanStr, "```")
+	cleanStr = strings.TrimSuffix(cleanStr, "```")
+
+	if err := json.Unmarshal([]byte(cleanStr), &result); err != nil {
 		return result, err
 	}
 
@@ -54,7 +66,7 @@ func EnsureVendorContext(ctx context.Context, db *database.Queries, llm *ai.LLMC
 	return result, nil
 }
 
-func EnsureCompanyContext(ctx context.Context, db *database.Queries, llm *ai.LLMClient, comp database.ShadowErpCompanyInfo) (CompanyTaxonomy, error) {
+func EnsureCompanyContext(ctx context.Context, db *database.Queries, rt *agent.Runtime, comp database.ShadowErpCompanyInfo) (CompanyTaxonomy, error) {
 	var result CompanyTaxonomy
 	if comp.Industry.Valid && comp.Industry.String != "" {
 		result.Industry = comp.Industry.String
@@ -64,14 +76,24 @@ func EnsureCompanyContext(ctx context.Context, db *database.Queries, llm *ai.LLM
 		return result, nil
 	}
 
-	if llm == nil {
+	if rt == nil {
 		return result, nil
 	}
 
-	sysPrompt := "You are a professional accountant generating gamification metadata. Provide a descriptive taxonomy matching this accounting entity's business profile. industry_icon is a 1 character emoji. mindset_hint is a short 8-word sentence on what strict CPA compliance rules this type of firm requires."
+	sysPrompt := "You are a professional accountant generating gamification metadata. Provide a descriptive taxonomy matching this accounting entity's business profile. industry_icon is a 1 character emoji. mindset_hint is a short 8-word sentence on what strict CPA compliance rules this type of firm requires. Output ONLY valid JSON."
 	usrPrompt := "Firm Name: " + comp.CompanyName
 
-	if err := llm.GenerateJSON(ctx, sysPrompt, usrPrompt, &result); err != nil {
+	resp, err := rt.Exec(ctx, usrPrompt, sysPrompt)
+	if err != nil {
+		return result, err
+	}
+
+	cleanStr := strings.TrimSpace(resp)
+	cleanStr = strings.TrimPrefix(cleanStr, "```json")
+	cleanStr = strings.TrimPrefix(cleanStr, "```")
+	cleanStr = strings.TrimSuffix(cleanStr, "```")
+
+	if err := json.Unmarshal([]byte(cleanStr), &result); err != nil {
 		return result, err
 	}
 
@@ -92,7 +114,7 @@ type CustomerTaxonomy struct {
 	CustomerUrl         string `json:"customer_url"`
 }
 
-func EnsureCustomerContext(ctx context.Context, db *database.Queries, llm *ai.LLMClient, customer database.ShadowErpCustomer) (CustomerTaxonomy, error) {
+func EnsureCustomerContext(ctx context.Context, db *database.Queries, rt *agent.Runtime, customer database.ShadowErpCustomer) (CustomerTaxonomy, error) {
 	var result CustomerTaxonomy
 	if customer.Industry.Valid && customer.Industry.String != "" {
 		result.Industry = customer.Industry.String
@@ -102,14 +124,24 @@ func EnsureCustomerContext(ctx context.Context, db *database.Queries, llm *ai.LL
 		return result, nil
 	}
 
-	if llm == nil {
+	if rt == nil {
 		return result, nil
 	}
 
-	sysPrompt := "You are a categorical metadata generator. Generate a precise JSON taxonomy for the following customer. Include a 1 character emoji for industry_icon, a short customer_description, and their likely customer_url."
+	sysPrompt := "You are a categorical metadata generator. Generate a precise JSON taxonomy for the following customer. Include a 1 character emoji for industry_icon, a short customer_description, and their likely customer_url. Output ONLY valid JSON."
 	usrPrompt := "Customer Name: " + customer.DisplayName
 
-	if err := llm.GenerateJSON(ctx, sysPrompt, usrPrompt, &result); err != nil {
+	resp, err := rt.Exec(ctx, usrPrompt, sysPrompt)
+	if err != nil {
+		return result, err
+	}
+
+	cleanStr := strings.TrimSpace(resp)
+	cleanStr = strings.TrimPrefix(cleanStr, "```json")
+	cleanStr = strings.TrimPrefix(cleanStr, "```")
+	cleanStr = strings.TrimSuffix(cleanStr, "```")
+
+	if err := json.Unmarshal([]byte(cleanStr), &result); err != nil {
 		return result, err
 	}
 

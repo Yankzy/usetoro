@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/internal/infra/vector"
 )
 
 // VectorSourceType identifies where a vector memory row was sourced from.
@@ -33,16 +33,16 @@ type VectorMemoryRow struct {
 // It is safe for concurrent use.
 type VectorStore struct {
 	pool      *pgxpool.Pool
-	llmClient *ai.LLMClient
+	embedder  *vector.Embedder
 	logger    *slog.Logger
 }
 
 // NewVectorStore creates a new VectorStore.
-// llmClient may be nil; in that case, embedding generation will return an error.
-func NewVectorStore(pool *pgxpool.Pool, llmClient *ai.LLMClient, logger *slog.Logger) *VectorStore {
+// embedder may be nil; in that case, embedding generation will return an error.
+func NewVectorStore(pool *pgxpool.Pool, embedder *vector.Embedder, logger *slog.Logger) *VectorStore {
 	return &VectorStore{
 		pool:      pool,
-		llmClient: llmClient,
+		embedder:  embedder,
 		logger:    logger,
 	}
 }
@@ -50,19 +50,15 @@ func NewVectorStore(pool *pgxpool.Pool, llmClient *ai.LLMClient, logger *slog.Lo
 // GenerateEmbedding calls the OpenAI Embeddings API using the model specified
 // in the hyper_parameters.vector_memory configuration.
 // The tenantID / realmID pair is used to look up the active config.
-func (vs *VectorStore) GenerateEmbedding(ctx context.Context, tenantID, realmID, text string) ([]float64, error) {
-	if vs.llmClient == nil {
-		return nil, fmt.Errorf("vector store: llmClient not configured")
+func (vs *VectorStore) GenerateEmbedding(ctx context.Context, tenantID, realmID, text string) ([]float32, error) {
+	if vs.embedder == nil {
+		return nil, fmt.Errorf("vector store: embedder not configured")
 	}
 	cfg := vs.vectorCfg()
 	if cfg.EmbeddingProvider != "openai" {
 		return nil, fmt.Errorf("vector store: unsupported embedding provider %q (only 'openai' is supported)", cfg.EmbeddingProvider)
 	}
-	model := cfg.OpenAIEmbeddingModel
-	if model == "" {
-		model = "text-embedding-3-small"
-	}
-	return vs.llmClient.GenerateEmbedding(ctx, model, text)
+	return vs.embedder.Embed(ctx, text)
 }
 
 // Upsert inserts or updates a vector memory row.
@@ -73,7 +69,7 @@ func (vs *VectorStore) Upsert(
 	sourceType VectorSourceType,
 	rawText string,
 	sourceRowID uuid.UUID,
-	embedding []float64,
+	embedding []float32,
 	metadata map[string]any,
 ) error {
 	metaBytes, err := json.Marshal(metadata)
@@ -115,7 +111,7 @@ func (vs *VectorStore) Upsert(
 
 // UpdateEmbedding fills in the embedding for an already-registered row.
 // Called by the VectorHydrator after generating the embedding.
-func (vs *VectorStore) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float64) error {
+func (vs *VectorStore) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error {
 	_, err := vs.pool.Exec(ctx, `
 		UPDATE toro_core.ase_vector_memory
 		SET embedding = $2, embedded_at = NOW(), updated_at = NOW()
@@ -138,7 +134,7 @@ func (vs *VectorStore) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedd
 func (vs *VectorStore) Search(
 	ctx context.Context,
 	tenantID, realmID string,
-	queryEmbedding []float64,
+	queryEmbedding []float32,
 ) ([]VectorMemoryRow, error) {
 	cfg := vs.vectorCfg()
 	topK := cfg.RetrievalTopK
@@ -269,10 +265,9 @@ func (vs *VectorStore) EnsureScaNNIndex(ctx context.Context, tenantID, realmID s
 }
 
 // floatsToVectorLiteral converts a []float64 into the pgvector wire format string
-
 // that pgx can send as a text parameter to the vector column.
 // Format: "[0.1,0.2,...,0.n]"
-func floatsToVectorLiteral(v []float64) string {
+func floatsToVectorLiteral(v []float32) string {
 	if len(v) == 0 {
 		return "[]"
 	}
@@ -282,7 +277,7 @@ func floatsToVectorLiteral(v []float64) string {
 		if i > 0 {
 			b = append(b, ',')
 		}
-		b = fmt.Appendf(b, "%g", f)
+		b = append(b, fmt.Sprintf("%f", f)...)
 	}
 	b = append(b, ']')
 	return string(b)

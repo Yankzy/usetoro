@@ -19,7 +19,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/internal/erp/ase/domain_tools"
-	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/workflows"
 	"github.com/hashicorp/golang-lru/v2/expirable"
@@ -35,7 +35,7 @@ type AseBridgeWorker struct {
 	nc     *nats.Conn
 	db     *database.Queries
 	store  ase.StatePersister
-	llm    *ai.LLMClient
+	rt     *agent.Runtime
 	dbPool *pgxpool.Pool
 
 	dags *expirable.LRU[string, *ase.DAG]
@@ -52,7 +52,7 @@ func init() {
 			nc:     deps.Queue,
 			db:     deps.Store.Queries,
 			store:  stateStore,
-			llm:    deps.LLMClient,
+			rt:     deps.Runtime,
 			dbPool: deps.DBPool,
 			// Initialize in Init() instead since we need logger for eviction callback
 		}, nil
@@ -66,7 +66,7 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 	}, time.Minute*30)
 
 	// Initialize the Classifier Service (to generate ThinkFuncs)
-	classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
+	classifierService := ase.NewClassifierService(w.rt, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
 	classifierService.SetDB(w.db) // Pass db for dynamic provider
 
 	// Helper to instantiate, wire, and start a DAG
@@ -227,10 +227,11 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 
 		deps := domain_tools.ToolDependencies{
-			DB:     w.db,
-			Logger: w.logger,
-			Store:  w.store,
-			NC:     w.nc,
+			DB:        w.db,
+			Logger:    w.logger,
+			Store:     w.store,
+			NC:        w.nc,
+			Runtime:   w.rt,
 		}
 
 		agent, err := tool.ResumeAgent(ctx, resumeEvt.NodeID, dagName, deps)
@@ -327,10 +328,11 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 				if dt, ok := a.Payload["domain_tool"].(string); ok && dt != "" {
 					if t := domain_tools.Get(dt); t != nil {
 						deps := domain_tools.ToolDependencies{
-							DB:     w.db,
-							Logger: w.logger,
-							Store:  w.store,
-							NC:     w.nc,
+							DB:        w.db,
+							Logger:    w.logger,
+							Store:   w.store,
+							NC:      w.nc,
+							Runtime: w.rt,
 						}
 						payload, pErr := t.GenerateAlertPayload(context.Background(), a, deps)
 						if pErr == nil && payload != nil {
@@ -403,10 +405,11 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	deps := domain_tools.ToolDependencies{
-		DB:     w.db,
-		Logger: w.logger,
-		Store:  w.store,
-		NC:     w.nc,
+		DB:        w.db,
+		Logger:    w.logger,
+		Store:   w.store,
+		NC:      w.nc,
+		Runtime: w.rt,
 	}
 
 	agents, err := tool.BuildAgents(ctx, env, dagName, deps)
@@ -513,10 +516,11 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 				if dt, ok := a.Payload["domain_tool"].(string); ok && dt != "" {
 					if t := domain_tools.Get(dt); t != nil {
 						deps := domain_tools.ToolDependencies{
-							DB:     w.db,
-							Logger: w.logger,
-							Store:  w.store,
-							NC:     w.nc,
+							DB:        w.db,
+							Logger:    w.logger,
+							Store:   w.store,
+							NC:      w.nc,
+							Runtime: w.rt,
 						}
 						payload, pErr := t.GenerateAlertPayload(ctx, a, deps)
 						if pErr == nil && payload != nil {
@@ -534,6 +538,34 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 	// Wait for all agents to finish, then reply to Orchestrator.
 	wg.Wait()
+	w.logger.Info("ase_bridge: all agents completed")
+
+	sessionID := ""
+	if len(agents) > 0 {
+		if sid, ok := agents[0].Payload["session_id"].(string); ok {
+			sessionID = sid
+		}
+	}
+	if sessionID != "" {
+		emailPayload := map[string]interface{}{
+			"session_id": sessionID,
+		}
+		emailPayloadBytes, _ := json.Marshal(emailPayload)
+
+		emailSubject, sErr := core.BuildWorkerInboxFromActivity("workers.batch_email_generation")
+		if sErr == nil {
+			envEmail := core.Envelope{
+				ID:           uuid.New().String(),
+				Performative: core.REQUEST,
+				Body:         emailPayloadBytes,
+			}
+			envEmailBytes, _ := json.Marshal(envEmail)
+			if w.nc != nil {
+				_ = w.nc.Publish(emailSubject, envEmailBytes)
+				w.logger.Info("ase_bridge: triggered batch_email_generation directly", "session_id", sessionID)
+			}
+		}
+	}
 
 	cid := env.ConversationID
 	if cid != "" {
@@ -596,10 +628,10 @@ func (w *AseBridgeWorker) buildGenerateChannelDagFunc(channel string) ase.ThinkF
 
 			w.logger.Info("ase_bridge: calling LLM to generate DAG", "tenant", tenantID, "channel", channel)
 
-			llmResponse, err := w.llm.GenerateText(
+			llmResponse, err := w.rt.Exec(
 				ctx,
-				"You are an expert ASE config generator. ONLY output YAML.",
 				promptContent,
+				"You are an expert ASE config generator. ONLY output YAML.",
 			)
 
 			if err != nil {

@@ -8,6 +8,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type FignodeAseSessionEmailHold struct {
+	SessionID     pgtype.UUID
+	TransactionID pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
 type FignodeEmployeeProfile struct {
 	UserID           pgtype.UUID
 	FirstName        pgtype.Text

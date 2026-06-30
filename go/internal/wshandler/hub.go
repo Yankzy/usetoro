@@ -6,7 +6,8 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/queue"
-	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/tap/pkg/agent"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 // Hub maintains the set of active clients and broadcasts messages to the clients.
@@ -38,8 +39,7 @@ type Hub struct {
 	// Database access
 	db *database.Queries
 
-	// OpenAI Client
-	llm *ai.LLMClient
+	rt *agent.Runtime
 
 	// Mutex for thread-safe operations
 	mu sync.RWMutex
@@ -56,7 +56,12 @@ type joinRoomRequest struct {
 }
 
 // NewHub creates a new Hub instance
-func NewHub(logger *slog.Logger, queueClient *queue.Client, db *database.Queries, llm *ai.LLMClient) *Hub {
+func NewHub(logger *slog.Logger, queueClient *queue.Client, db *database.Queries) *Hub {
+	adapter := agent.NewNatsAdapter(queueClient.Conn(), queueClient.JetStream())
+	rt := agent.NewRuntime(logger, adapter, core.AgentConfig{
+		Model: "gpt-4o",
+		DID:   "did:toro:wshandler:hub",
+	})
 	return &Hub{
 		broadcast:   make(chan broadcastMessage, 256),
 		register:    make(chan *Client, 256),
@@ -67,7 +72,7 @@ func NewHub(logger *slog.Logger, queueClient *queue.Client, db *database.Queries
 		logger:      logger,
 		queueClient: queueClient,
 		db:          db,
-		llm:         llm,
+		rt:          rt,
 	}
 }
 

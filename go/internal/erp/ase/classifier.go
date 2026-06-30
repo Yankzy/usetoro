@@ -13,19 +13,14 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
-
-// llmGenerator defines the interface for making structured JSON calls to the LLM.
-type llmGenerator interface {
-	GenerateJSON(ctx context.Context, systemPrompt, userPrompt string, output interface{}) error
-}
 
 // ClassifierService handles interactions with LLMs and external classification services.
 // It dispatches batches of transactions to specialized micro-agents for classification.
 type ClassifierService struct {
-	llmClient      llmGenerator
+	rt             *agent.Runtime
 	nc             *nats.Conn
 	logger         *slog.Logger
 	agentTaskQueue string
@@ -47,14 +42,14 @@ func (cs *ClassifierService) SetVectorStore(vs *VectorStore) {
 
 // NewClassifierService creates a new classification service configured with LLM
 // and NATS capabilities.
-func NewClassifierService(llmClient *ai.LLMClient, nc *nats.Conn, agentTaskQueue string, logger *slog.Logger) *ClassifierService {
+func NewClassifierService(rt *agent.Runtime, nc *nats.Conn, agentTaskQueue string, logger *slog.Logger) *ClassifierService {
 	cs := &ClassifierService{
 		nc:             nc,
 		agentTaskQueue: agentTaskQueue,
 		logger:         logger,
 	}
-	if llmClient != nil {
-		cs.llmClient = llmClient
+	if rt != nil {
+		cs.rt = rt
 	}
 	return cs
 }

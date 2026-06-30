@@ -389,7 +389,7 @@ func (c *Client) blastDatabaseCards(realmID string) {
 	info, infoErr := c.hub.db.GetCompanyInfo(c.ctx, realmID)
 	if infoErr == nil && info.CompanyName != "" {
 		compName = info.CompanyName
-		compTax, _ = fignode.EnsureCompanyContext(c.ctx, c.hub.db, c.hub.llm, info)
+		compTax, _ = fignode.EnsureCompanyContext(c.ctx, c.hub.db, c.hub.rt, info)
 	}
 
 	c.logger.Info("⚡️ Fast Hydrating Fignode Cards Iteratively", "count", len(rows), "realm_id", realmID)
@@ -441,7 +441,7 @@ func (c *Client) blastDatabaseCards(realmID string) {
 			entityName = r.PredictedVendorName.String
 			if r.PredictedVendorID.Valid {
 				if vendorRec, vErr := c.hub.db.GetVendorByID(c.ctx, r.PredictedVendorID); vErr == nil {
-					vTax, _ := fignode.EnsureVendorContext(c.ctx, c.hub.db, c.hub.llm, vendorRec)
+					vTax, _ := fignode.EnsureVendorContext(c.ctx, c.hub.db, c.hub.rt, vendorRec)
 					if vTax.Industry != "" {
 						industry = vTax.Industry
 					}
@@ -457,7 +457,7 @@ func (c *Client) blastDatabaseCards(realmID string) {
 			entityName = r.PredictedCustomerName.String
 			if r.PredictedCustomerID.Valid {
 				if customerRec, cErr := c.hub.db.GetCustomerByID(c.ctx, r.PredictedCustomerID); cErr == nil {
-					cTax, _ := fignode.EnsureCustomerContext(c.ctx, c.hub.db, c.hub.llm, customerRec)
+					cTax, _ := fignode.EnsureCustomerContext(c.ctx, c.hub.db, c.hub.rt, customerRec)
 					if cTax.Industry != "" {
 						industry = cTax.Industry
 					}

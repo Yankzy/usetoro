@@ -19,7 +19,6 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/services/cleanup"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/redux"
@@ -52,7 +51,6 @@ type EnrichmentWorker struct {
 	dedup  *cleanup.Deduplicator
 	nc     *nats.Conn
 	logger *slog.Logger
-	llm    *ai.LLMClient
 	cfg    *config.Config
 }
 
@@ -80,7 +78,6 @@ func NewEnrichmentWorker(
 	db *database.Queries,
 	nc *nats.Conn,
 	logger *slog.Logger,
-	llm *ai.LLMClient,
 	cfg *config.Config,
 ) (*EnrichmentWorker, error) {
 	return &EnrichmentWorker{
@@ -88,7 +85,6 @@ func NewEnrichmentWorker(
 		nc:     nc,
 		dedup:  cleanup.NewDeduplicator(),
 		logger: logger,
-		llm:    llm,
 		cfg:    cfg,
 	}, nil
 }
@@ -638,11 +634,6 @@ func splitSuggestionTraceMap(suggestions []cleanup.SplitLine) map[string]cleanup
 	return out
 }
 
-type EnrichmentExtract struct {
-	MerchantName string `json:"merchant_name"`
-	Category     string `json:"category"`
-}
-
 func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row database.GetPendingSessionRowsRow) (cleanup.EnrichedRow, error) {
 	rowRealm := realmID
 	if rowRealm == "" && row.RealmID.Valid {
@@ -661,20 +652,6 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 	if row.ParsedDate.Valid {
 		er.RawDate = row.ParsedDate.Time
 	}
-
-	// NATIVE LLM EXTRACTION
-	// if e.llm != nil {
-	// 	systemPrompt := "You are a financial data categorization engine. Given a raw bank transaction description, extract the pure merchant/customer name and a generalized physical industry category (e.g. 'Software', 'Food and Drink'). Return exactly the JSON format requested."
-	// 	userPrompt := fmt.Sprintf("Analyze this raw bank transaction: \"%s\"", er.RawDescription)
-
-	// 	var extract EnrichmentExtract
-	// 	if err := e.llm.GenerateJSON(ctx, systemPrompt, userPrompt, &extract); err == nil {
-	// 		er.MerchantName = extract.MerchantName
-	// 		er.Category = extract.Category
-	// 	} else {
-	// 		e.logger.Warn("Failed LLM extraction", "err", err)
-	// 	}
-	// }
 
 	er.ConfidenceScore = 1.0
 	return er, nil
@@ -719,6 +696,6 @@ func RunEnrichmentRedux(ctx context.Context, baseState []byte, currentSeq uint64
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		return NewEnrichmentWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.LLMClient, deps.Config)
+		return NewEnrichmentWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.Config)
 	})
 }

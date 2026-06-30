@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	AddSessionEmailHold(ctx context.Context, arg AddSessionEmailHoldParams) error
 	AdjustAccuracyScore(ctx context.Context, arg AdjustAccuracyScoreParams) error
 	ApproveCleanupRow(ctx context.Context, id pgtype.UUID) (ApproveCleanupRowRow, error)
 	ApproveProposedTransaction(ctx context.Context, arg ApproveProposedTransactionParams) (FignodeStagingTransaction, error)
@@ -138,6 +139,7 @@ type Querier interface {
 	GetEntityIDByEmail(ctx context.Context, email string) (pgtype.UUID, error)
 	GetExpenseAccountsFromPurchases(ctx context.Context, realmID string) ([]GetExpenseAccountsFromPurchasesRow, error)
 	GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredAccountsForAIParams) ([]GetFilteredAccountsForAIRow, error)
+	GetHeldTransactionsBySession(ctx context.Context, sessionID pgtype.UUID) ([]GetHeldTransactionsBySessionRow, error)
 	// Finds customers with extreme variance across amounts and income accounts.
 	// Used by bootstrap_review_flags.go.
 	GetHighEntropyCustomers(ctx context.Context, realmID string) ([]GetHighEntropyCustomersRow, error)
@@ -353,6 +355,7 @@ type Querier interface {
 	UpdatePurchaseRuleID(ctx context.Context, arg UpdatePurchaseRuleIDParams) error
 	UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichmentParams) error
 	UpdateRuleGroupKeywords(ctx context.Context, arg UpdateRuleGroupKeywordsParams) error
+	UpdateSessionContextJSON(ctx context.Context, arg UpdateSessionContextJSONParams) error
 	UpdateSessionTransactionsToReadyForReview(ctx context.Context, sessionID pgtype.UUID) error
 	UpdateStagingTransactionAccountType(ctx context.Context, arg UpdateStagingTransactionAccountTypeParams) error
 	UpdateStagingTransactionCashDirection(ctx context.Context, arg UpdateStagingTransactionCashDirectionParams) error

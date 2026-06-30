@@ -1,18 +1,15 @@
 package domain_tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
-	"text/template"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Yankzy/usetoro/internal/conversation"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
@@ -163,95 +160,28 @@ func (t *BookkeepingTool) GenerateAlertPayload(ctx context.Context, a *ase.Auton
 		startNodeID = a.ExecutionTrace[len(a.ExecutionTrace)-1].DAGNodeID
 	}
 
-	cfg := ase.GetConfig(a.TenantID, a.RealmID, a.DagName)
-	if cfg != nil {
-		if nodeConfig, ok := cfg.DAG.Nodes[startNodeID]; ok && nodeConfig.Email != nil {
-			tmpl, err := template.New("email").Parse(nodeConfig.Email.BodyText)
-			if err == nil {
-				var bodyBuf bytes.Buffer
+	sessionID := ""
+	if sid, ok := a.Payload["session_id"].(string); ok {
+		sessionID = sid
+	}
 
-				templateData := make(map[string]interface{})
-				for k, v := range a.Payload {
-					parts := strings.Split(k, "_")
-					for i, p := range parts {
-						if len(p) > 0 {
-							parts[i] = strings.ToUpper(p[:1]) + p[1:]
-						}
-					}
-					capitalizedKey := strings.Join(parts, "")
-					templateData[capitalizedKey] = v
-				}
-
-				_ = tmpl.Execute(&bodyBuf, templateData)
-				bodyText := bodyBuf.String()
-
-				toEmail := ""
-				if companyInfo, err := deps.DB.GetCompanyInfo(ctx, a.RealmID); err == nil && companyInfo.Email.Valid {
-					toEmail = companyInfo.Email.String
-				}
-
-				sessionID := ""
-				if sid, ok := a.Payload["session_id"].(string); ok {
-					sessionID = sid
-				}
-
-				if toEmail != "" {
-					var entityUUID pgtype.UUID
-					_ = entityUUID.Scan(entityID)
-
-					sessionManager := conversation.NewSessionManager(deps.DB, deps.Logger)
-					sess, err := sessionManager.CreateSession(ctx, conversation.FindOrCreateParams{
-						EntityID:          entityUUID,
-						Source:            "email",
-						ParticipantHandle: toEmail,
-						ToroHandle:        "sarah@usetoro.io", // Or whatever the from_handle is
-						Subject:           nodeConfig.Email.Subject,
-						SystemPrompt:      "",
-					})
-
-					convoSessionID := sessionID // fallback
-					if err == nil && sess.ID.Valid {
-						convoSessionID = uuid.UUID(sess.ID.Bytes).String()
-						deps.Logger.Info("created new conversation session for deterministic email", "session_id", convoSessionID, "ase_node_id", a.NodeID)
-					} else {
-						deps.Logger.Error("failed to create conversation session for deterministic email", "error", err, "ase_node_id", a.NodeID)
-					}
-
-					response := map[string]string{
-						"body_text":     bodyText,
-						"from_handle":   "sarah@usetoro.io",
-						"to_handle":     toEmail,
-						"source":        "email",
-						"subject":       nodeConfig.Email.Subject,
-						"session_id":    convoSessionID,
-						"entity_id":     entityID,
-						"custom_msg_id": fmt.Sprintf("ase:%s:bookkeeping:%s", a.NodeID, a.DagName),
-					}
-					proofData, _ := json.Marshal(response)
-
-					proof := core.Proof{
-						Type: "outgoing_chat",
-						Data: proofData,
-					}
-					proofBytes, _ := json.Marshal(proof)
-
-					envelope := core.Envelope{
-						ID:           uuid.New().String(),
-						Performative: core.INFORM,
-						Body:         proofBytes,
-					}
-					envelopeBytes, _ := json.Marshal(envelope)
-
-					if deps.NC != nil {
-						_ = deps.NC.Publish("proof.outgoing.chat", envelopeBytes)
-					}
-				}
-
-				return nil, nil
-			} else {
-				deps.Logger.Error("bookkeeping_tool: failed to parse deterministic email template", "error", err)
-			}
+	if sessionID != "" {
+		var sUUID, tUUID pgtype.UUID
+		_ = sUUID.Scan(sessionID)
+		_ = tUUID.Scan(a.NodeID)
+		err := deps.DB.AddSessionEmailHold(ctx, database.AddSessionEmailHoldParams{
+			SessionID:     sUUID,
+			TransactionID: tUUID,
+		})
+		if err != nil {
+			deps.Logger.Error("bookkeeping_tool: failed to add session email hold", "error", err)
+		} else {
+			deps.Logger.Info("bookkeeping_tool: intercepted email and added to batch hold", "session_id", sessionID, "transaction_id", a.NodeID)
 		}
+
+		return nil, nil
+	} else {
+		deps.Logger.Warn("bookkeeping_tool: missing session_id for email hold interception", "transaction_id", a.NodeID)
 	}
 
 	alertPrompt := fmt.Sprintf(

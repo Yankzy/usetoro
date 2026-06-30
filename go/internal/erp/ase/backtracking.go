@@ -2,7 +2,9 @@ package ase
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/database"
@@ -42,7 +44,7 @@ func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, no
 	copy(traceCopy, node.ExecutionTrace)
 	node.Mu.Unlock()
 
-	if cs.llmClient == nil {
+	if cs.rt == nil {
 		// Fallback if no local LLM client is available.
 		// For simplicity, we just resume without backtracking, or we could dispatch via NATS.
 		cs.logger.Warn("llm client required for automated backtracking, skipping backtrack phase")
@@ -52,8 +54,23 @@ func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, no
 	systemPrompt := fmt.Sprintf(AutomatedBacktrackingPrompt, domainSystemPrompt)
 
 	var resp AutomatedBacktrackResponse
-	if err := cs.llmClient.GenerateJSON(ctx, systemPrompt, userPrompt, &resp); err != nil {
+	respStr, err := cs.rt.Exec(ctx, userPrompt, systemPrompt)
+	if err != nil {
 		return fmt.Errorf("automated backtracking llm call failed: %w", err)
+	}
+
+	cleanResp := strings.TrimSpace(respStr)
+	if strings.HasPrefix(cleanResp, "```json") {
+		cleanResp = strings.TrimPrefix(cleanResp, "```json")
+		cleanResp = strings.TrimSuffix(cleanResp, "```")
+	} else if strings.HasPrefix(cleanResp, "```") {
+		cleanResp = strings.TrimPrefix(cleanResp, "```")
+		cleanResp = strings.TrimSuffix(cleanResp, "```")
+	}
+	cleanResp = strings.TrimSpace(cleanResp)
+
+	if err := json.Unmarshal([]byte(cleanResp), &resp); err != nil {
+		return fmt.Errorf("automated backtracking json parse failed: %w", err)
 	}
 
 	if resp.ExtractedRule != "" && cs.db != nil {

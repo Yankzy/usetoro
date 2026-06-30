@@ -21,6 +21,8 @@ import (
 	"github.com/Yankzy/usetoro/internal/services/ai"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/Yankzy/usetoro/internal/workers"
+	"github.com/Yankzy/usetoro/tap/pkg/agent"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 	_ "github.com/Yankzy/usetoro/tap/agents/approval"
 	_ "github.com/Yankzy/usetoro/tap/agents/csv_mapping"
 	_ "github.com/Yankzy/usetoro/tap/agents/general_agent"
@@ -246,6 +248,11 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	workerManager := workers.NewManager(logger, q.Conn())
 
 	fignodeLLM, _ := ai.NewLLMClient(os.Getenv("OPENAI_API_KEY"), "")
+	adapter := agent.NewNatsAdapter(q.Conn(), q.JetStream())
+	rt := agent.NewRuntime(logger, adapter, core.AgentConfig{
+		Model: "gpt-4o",
+		DID:   "did:toro:protocol:main",
+	})
 
 	// 5.5 Initialize Redis Client
 	redisURL := os.Getenv("REDIS_URL")
@@ -293,6 +300,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		ProviderFactory: providerFactory,
 		RuleEngine:      ruleEngineService,
 		LLMClient:       fignodeLLM,
+		Runtime:         rt,
 		FetchEntityFn: func(ctx context.Context, tenantID, realmID, entityType, entityID, op string) error {
 			return qboConn.FetchEntity(ctx, realmID, entityType, entityID, op)
 		},

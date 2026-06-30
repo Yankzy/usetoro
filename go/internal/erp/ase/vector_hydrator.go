@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/internal/infra/vector"
 )
 
 // VectorHydrator is a background worker that:
@@ -24,7 +24,7 @@ import (
 type VectorHydrator struct {
 	store     *VectorStore
 	pool      *pgxpool.Pool
-	llmClient *ai.LLMClient
+	embedder  *vector.Embedder
 	logger    *slog.Logger
 }
 
@@ -32,13 +32,13 @@ type VectorHydrator struct {
 func NewVectorHydrator(
 	store *VectorStore,
 	pool *pgxpool.Pool,
-	llmClient *ai.LLMClient,
+	embedder *vector.Embedder,
 	logger *slog.Logger,
 ) *VectorHydrator {
 	return &VectorHydrator{
 		store:     store,
 		pool:      pool,
-		llmClient: llmClient,
+		embedder:  embedder,
 		logger:    logger,
 	}
 }
@@ -211,7 +211,7 @@ func (h *VectorHydrator) embedPending(ctx context.Context, cfg VectorMemoryConfi
 			skipped++
 			continue
 		}
-		vec, err := h.llmClient.GenerateEmbedding(ctx, model, row.RawText)
+		vec, err := h.embedder.Embed(ctx, row.RawText)
 		if err != nil {
 			h.logger.Warn("hydrator: embedding generation failed",
 				"id", row.ID,

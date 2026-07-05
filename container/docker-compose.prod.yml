@@ -58,20 +58,31 @@ services:
     networks:
       - toro-net
 
-  # python-worker:
-  #   image: yankz/usetoro-python-worker:latest
-  #   build:
-  #     context: ../
-  #     dockerfile: python-worker/Dockerfile
-  #   restart: always
-  #   environment:
-  #     # Use the cluster URL list so it knows all nodes
-  #     NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
-  #   depends_on:
-  #     nats-1:
-  #       condition: service_healthy
-  #   networks:
-  #     - toro-net
+  python-worker:
+    image: yankz/usetoro-python-worker:latest
+    build:
+      context: ../
+      dockerfile: python-worker/Dockerfile
+    restart: always
+    command: [ "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" ]
+    ports:
+      - "8005:8000"
+    volumes:
+      - ../python-worker:/app
+    environment:
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      PGOPTIONS: "-c search_path=toro_core,shadow_erp,fignode,public"
+    depends_on:
+      db:
+        condition: service_healthy
+      nats-1:
+        condition: service_healthy
+    networks:
+      - toro-net
 
   protocol:
     image: yankz/usetoro-protocol:latest

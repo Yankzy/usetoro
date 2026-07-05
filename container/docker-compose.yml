@@ -71,8 +71,11 @@ services:
       context: ../
       dockerfile: python-worker/Dockerfile
     restart: always
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     ports:
       - "8005:8000"
+    volumes:
+      - ../python-worker:/app
     environment:
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}

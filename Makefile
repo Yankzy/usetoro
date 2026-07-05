@@ -14,7 +14,8 @@ else
 	DOCKER_COMPOSE := docker-compose -f container/docker-compose.yml
 endif
 
-DOCKER_CONTEXT := docker --context droplet compose -f container/docker-compose.prod.yml
+DEPLOY_CONTEXT ?= droplet
+DOCKER_CONTEXT := docker --context $(DEPLOY_CONTEXT) compose -f container/docker-compose.prod.yml
 
 # App Services
 SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker fignode protocol python-worker
@@ -221,6 +222,7 @@ build_prod:
 	docker compose -f container/docker-compose.prod.yml build
 
 docker_context_prod_push:
+	$(MAKE) build_prod
 	docker compose -f container/docker-compose.prod.yml push
 
 docker_context_prod_up:
@@ -235,5 +237,14 @@ docker_context_prod_delete_db:
 	$(MAKE) docker_context_prod_prune
 
 docker_context_prod_prune:
-	docker --context droplet builder prune -f
-	docker --context droplet system prune --volumes -f
+	docker --context $(DEPLOY_CONTEXT) builder prune -f
+	docker --context $(DEPLOY_CONTEXT) system prune --volumes -f
+
+
+deploy_second_mac: 
+	@echo "Copying compose and env files to second Mac..."
+	scp container/docker-compose.prod.yml .env mac@macs-MacBook-Pro.local:~/
+	@echo "Triggering pull and run on second Mac..."
+	ssh mac@macs-MacBook-Pro.local 'export PATH="/opt/homebrew/bin:/usr/local/bin:$$PATH" && \
+		docker compose -f ~/docker-compose.prod.yml --env-file ~/.env pull && \
+		docker compose -f ~/docker-compose.prod.yml --env-file ~/.env up -d'

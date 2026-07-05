@@ -18,7 +18,8 @@ from fastapi.responses import JSONResponse
 from app.config import DATABASE_URL, NATS_URL
 from app.database import init_pool, close_pool
 from app.errors import StripeAPIError, NATSPublishError
-from app.nats_client import connect as nats_connect, close as nats_close
+from app.nats_client import connect as nats_connect, close as nats_close, subscribe_jetstream
+from app.marketing import handlers
 from app.routes import router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -30,6 +31,13 @@ async def lifespan(app: FastAPI):
     await init_pool(DATABASE_URL)
     logging.info("Connecting to NATS...")
     await nats_connect(NATS_URL)
+    
+    # Register Marketing DAG NATS subscribers
+    await subscribe_jetstream("worker.inbox.marketing.ingest", "marketing_ingest_group", handlers.handle_ingest_request)
+    await subscribe_jetstream("worker.inbox.marketing.analyze", "marketing_analyze_group", handlers.handle_analyze_request)
+    await subscribe_jetstream("worker.inbox.marketing.discover", "marketing_discover_group", handlers.handle_discover_request)
+    await subscribe_jetstream("worker.inbox.marketing.verify", "marketing_verify_group", handlers.handle_verify_request)
+    
     logging.info("Stripe Integration Microservice started")
     yield
     logging.info("Shutting down...")

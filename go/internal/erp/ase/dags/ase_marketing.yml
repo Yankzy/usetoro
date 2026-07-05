@@ -1,0 +1,95 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  max_llm_retries: 3
+  llm_timeout_seconds: 120
+  batch_flush_seconds: 5
+  active_agent_ttl_minutes: 10
+  lock_ttl_seconds: 30
+  domain_tool: "marketing"
+
+dag:
+  entry_node: target_ingestion
+  nodes:
+
+    # ------------------------------------------------------------------
+    # STEP 1: INGESTION NODE
+    # ------------------------------------------------------------------
+    target_ingestion:
+      name: target_ingestion
+      batch_flush_seconds: 5
+      kind: holding_gate
+      batch_size: 50
+      edge_type: static
+      execution_parameters:
+        action_provider: "marketing_csv_ingestion"
+      children:
+        INGEST_SUCCESS: domain_analysis
+        INGEST_FAILED: terminal_error
+
+    # ------------------------------------------------------------------
+    # STEP 2: PRE-PROCESSING (NORMALIZE & CATCHALL CHECK)
+    # ------------------------------------------------------------------
+    domain_analysis:
+      name: domain_analysis
+      batch_flush_seconds: 5
+      kind: holding_gate
+      batch_size: 50
+      edge_type: static
+      execution_parameters:
+        action_provider: "marketing_domain_analysis"
+      children:
+        ANALYSIS_SUCCESS: email_discovery
+        IS_CATCHALL: terminal_catchall_review
+        ANALYSIS_FAILED: terminal_error
+
+    # ------------------------------------------------------------------
+    # STEP 3: DISCOVERY (SMTP VALIDATION)
+    # ------------------------------------------------------------------
+    email_discovery:
+      name: email_discovery
+      batch_flush_seconds: 5
+      kind: holding_gate
+      batch_size: 50
+      edge_type: static
+      execution_parameters:
+        action_provider: "marketing_email_discovery"
+      children:
+        DISCOVERY_SUCCESS: ongoing_monitoring
+        DISCOVERY_FAILED: terminal_error
+
+    # ------------------------------------------------------------------
+    # STEP 4: ONGOING MONITORING
+    # ------------------------------------------------------------------
+    ongoing_monitoring:
+      name: ongoing_monitoring
+      batch_flush_seconds: 86400 # Run daily
+      kind: holding_gate
+      batch_size: 50
+      edge_type: static
+      execution_parameters:
+        action_provider: "marketing_deliverability_check"
+      children:
+        STILL_VALID: terminal_smtp_handoff
+        BOUNCED: terminal_error
+
+    # ------------------------------------------------------------------
+    # TERMINAL NODES
+    # ------------------------------------------------------------------
+    terminal_smtp_handoff:
+      name: terminal_smtp_handoff
+      kind: terminal
+      execution_parameters:
+        close_status: "READY_FOR_OUTREACH"
+        
+    terminal_catchall_review:
+      name: terminal_catchall_review
+      kind: terminal
+      execution_parameters:
+        close_status: "MANUAL_REVIEW_REQUIRED"
+
+    terminal_error:
+      name: terminal_error
+      kind: terminal
+      execution_parameters:
+        close_status: "ERROR"

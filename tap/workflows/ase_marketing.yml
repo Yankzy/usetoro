@@ -1,0 +1,21 @@
+name: ASE Marketing Workflow
+version: "1.0"
+trigger_topic: events.marketing.1.trigger
+steps:
+  - id: ase_bridge
+    activity_type: workers.ase_bridge
+    negotiate: false
+    timeout: "600s"
+    description: "Fans out Autonomous Semantic Engine micro-agents for marketing prospects."
+    config:
+      dag_name: "ase_marketing"
+      domain_tool: "marketing"
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "entity_id": { "type": "string" }
+        },
+        "required": ["session_id", "entity_id"]
+      }

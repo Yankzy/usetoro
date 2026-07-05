@@ -6,7 +6,6 @@ package ase
 import (
 	"context"
 	"log/slog"
-	"math"
 	"sync"
 	"time"
 
@@ -100,6 +99,14 @@ type AutonomousSemanticEngineNode struct {
 func NewASENode(tenantID, realmID, dagName string, payload map[string]any) *AutonomousSemanticEngineNode {
 	now := time.Now().UTC()
 	nodeID := uuid.New().String()
+
+	cfg := GetConfig(tenantID, realmID, dagName)
+	expectedProperties := 4 // Fallback
+	if cfg != nil && cfg.HyperParameters.ExpectedProperties > 0 {
+		expectedProperties = cfg.HyperParameters.ExpectedProperties
+	}
+	initialEntropy := float64(expectedProperties) * 1.0
+
 	return &AutonomousSemanticEngineNode{
 		NodeID:            nodeID,
 		TenantID:          tenantID,
@@ -108,7 +115,7 @@ func NewASENode(tenantID, realmID, dagName string, payload map[string]any) *Auto
 		Payload:           payload,
 		ContextUpdates:    make([]string, 0),
 		CurrentState:      StateUninitialized,
-		CurrentEntropy:    4.0, // Maximum entropy at birth (4 properties * 1.0)
+		CurrentEntropy:    initialEntropy, // Maximum entropy at birth
 		UnifiedConfidence: 0.0,
 		PropertyEntropies: make(map[string]float64),
 		Candidates:        make(map[string][]ProbabilityCandidate),
@@ -221,33 +228,16 @@ func (n *AutonomousSemanticEngineNode) SetPropertyCandidates(propertyKey string,
 	n.Candidates[propertyKey] = candidates
 	n.PropertyEntropies[propertyKey] = CalculateEntropy(candidates)
 
-	var sumEntropy float64
-	for _, h := range n.PropertyEntropies {
-		sumEntropy += h
+	expectedProperties := 4
+	cfg := GetConfig(n.TenantID, n.RealmID, n.DagName)
+	if cfg != nil && cfg.HyperParameters.ExpectedProperties > 0 {
+		expectedProperties = cfg.HyperParameters.ExpectedProperties
 	}
 
-	var sumConfidence float64
-	for _, candidates := range n.Candidates {
-		if len(candidates) > 0 {
-			best := candidates[0]
-			for i := 1; i < len(candidates); i++ {
-				if candidates[i].Confidence > best.Confidence {
-					best = candidates[i]
-				}
-			}
-			sumConfidence += best.Confidence
-		}
-	}
-
-	// Adapt the denominator to the actual number of properties evaluated.
-	totalProperties := len(n.Candidates)
-	if totalProperties < 4 {
-		totalProperties = 4
-		// Assume 0.0 confidence for any unseen canonical properties to penalize incomplete dags.
-	}
+	sumEntropy, unifiedConfidence := CalculateUnifiedConfidence(n.PropertyEntropies, n.Candidates, expectedProperties)
 
 	n.CurrentEntropy = sumEntropy // keep entropy for logging/debugging
-	n.UnifiedConfidence = sumConfidence / float64(totalProperties)
+	n.UnifiedConfidence = unifiedConfidence
 	n.LifetimeProbes++
 	n.Mu.Unlock()
 
@@ -348,11 +338,11 @@ func (n *AutonomousSemanticEngineNode) Resume(ctx context.Context, dag *DAG, sto
 			return nil
 		}
 	} else {
-		// Triage: route to the correct DAG entry node based on cash direction.
+		// Triage: route to the correct DAG entry node.
 		entryNode = dag.Route(n)
 		if entryNode == nil {
 			n.Mu.Lock()
-			n.HoldReason = "no DAG entry node found for cash direction " + n.Payload["cash_direction"].(string)
+			n.HoldReason = "no DAG entry node found for initial routing state"
 			n.Mu.Unlock()
 			n.transition(StateHoldMissingCtx)
 			if store != nil {
@@ -372,57 +362,7 @@ func (n *AutonomousSemanticEngineNode) Resume(ctx context.Context, dag *DAG, sto
 	return nil
 }
 
-// CalculateEntropy computes the Shannon entropy of a set of classification
-// candidates based on their confidence scores.
-//
-// H = -Σ(p_i * log₂(p_i))
-//
-// Confidence scores are normalized to sum to 1.0. If no candidates are provided,
-// returns 1.0 (maximum entropy / complete uncertainty).
-// If only one candidate exists, returns 0.0 (perfect certainty).
-func CalculateEntropy(candidates []ProbabilityCandidate) float64 {
-	if len(candidates) == 0 {
-		return 1.0
-	}
-	if len(candidates) == 1 {
-		return 0.0
-	}
 
-	// Sum all confidence scores.
-	var total float64
-	for _, c := range candidates {
-		total += c.Confidence
-	}
-	if total == 0 {
-		return 1.0
-	}
-
-	// Normalize and compute Shannon entropy.
-	var entropy float64
-	for _, c := range candidates {
-		p := c.Confidence / total
-		if p > 0 {
-			entropy -= p * math.Log2(p)
-		}
-	}
-
-	// Scale entropy based on the number of options (max entropy is log2(N))
-	// This ensures that 5 options properly scales between 0 and 1 instead of overflowing.
-	maxEntropy := math.Log2(float64(len(candidates)))
-	if maxEntropy > 0 {
-		entropy = entropy / maxEntropy
-	}
-
-	// Clamp to [0, 1] as a final safety measure.
-	if entropy > 1.0 {
-		entropy = 1.0
-	}
-	if entropy < 0.0 {
-		entropy = 0.0
-	}
-
-	return entropy
-}
 
 // InitInternalState initializes unexported fields (like channels and loggers)
 // that may be nil after the node is deserialized from a datastore.

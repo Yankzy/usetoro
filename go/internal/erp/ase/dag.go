@@ -599,15 +599,7 @@ func BuildDAGFromConfig(cfg DAGConfig, logger *slog.Logger) *DAG {
 	}
 
 	if cfg.EntryNode == "" {
-		if _, ok := nodesMap["bank"]; ok {
-			cfg.EntryNode = "bank"
-		} else if _, ok := nodesMap["root"]; ok {
-			cfg.EntryNode = "root"
-		} else if _, ok := nodesMap["generate_email_dag"]; ok {
-			cfg.EntryNode = "generate_email_dag"
-		} else if _, ok := nodesMap["triage_failed"]; ok {
-			cfg.EntryNode = "triage_failed"
-		} else if len(nodesMap) == 1 {
+		if len(nodesMap) == 1 {
 			for k := range nodesMap {
 				cfg.EntryNode = k
 			}

@@ -252,3 +252,10 @@ Also provide a "rule_keyword" (e.g., the vendor name or main subject). If it's a
 	userPrompt := fmt.Sprintf("Transaction Description: %s\nNew Human Context: %s\nExecution Trace:\n%s", description, newContext, string(traceBytes))
 	return domainSystemPrompt, userPrompt
 }
+
+func (t *BookkeepingTool) GetClassifier(deps ToolDependencies) ase.Classifier {
+	c := NewBookkeepingClassifier(deps.Runtime, deps.NC, "agent.tasks", deps.Logger)
+	c.SetDB(deps.DB)
+	c.SetVectorStore(deps.VectorStore)
+	return c
+}

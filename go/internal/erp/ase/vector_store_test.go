@@ -82,7 +82,7 @@ func TestVectorMemoryConfigDefaults(t *testing.T) {
 func TestVectorStoreVectorCfgFallback(t *testing.T) {
 	vs := &VectorStore{}
 
-	cfg := vs.vectorCfg()
+	cfg := vs.VectorCfg()
 	if cfg.OpenAIEmbeddingModel == "" {
 		t.Error("vectorCfg fallback should return a non-empty OpenAIEmbeddingModel")
 	}

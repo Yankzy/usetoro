@@ -145,3 +145,7 @@ Also provide a "rule_keyword" (e.g., the sender's domain or topic). If it's a ge
 	userPrompt := fmt.Sprintf("Email Content: %s\nNew Human Context: %s\nExecution Trace:\n%s", description, newContext, string(traceBytes))
 	return domainSystemPrompt, userPrompt
 }
+
+func (t *EmailTool) GetClassifier(deps ToolDependencies) ase.Classifier {
+	return nil // Not implemented yet
+}

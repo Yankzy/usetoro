@@ -32,18 +32,18 @@ type VectorMemoryRow struct {
 // VectorStore handles semantic retrieval against the toro_core.ase_vector_memory table.
 // It is safe for concurrent use.
 type VectorStore struct {
-	pool      *pgxpool.Pool
-	embedder  *vector.Embedder
-	logger    *slog.Logger
+	pool     *pgxpool.Pool
+	embedder *vector.Embedder
+	logger   *slog.Logger
 }
 
 // NewVectorStore creates a new VectorStore.
 // embedder may be nil; in that case, embedding generation will return an error.
 func NewVectorStore(pool *pgxpool.Pool, embedder *vector.Embedder, logger *slog.Logger) *VectorStore {
 	return &VectorStore{
-		pool:      pool,
-		embedder:  embedder,
-		logger:    logger,
+		pool:     pool,
+		embedder: embedder,
+		logger:   logger,
 	}
 }
 
@@ -54,7 +54,7 @@ func (vs *VectorStore) GenerateEmbedding(ctx context.Context, tenantID, realmID,
 	if vs.embedder == nil {
 		return nil, fmt.Errorf("vector store: embedder not configured")
 	}
-	cfg := vs.vectorCfg()
+	cfg := vs.VectorCfg()
 	if cfg.EmbeddingProvider != "openai" {
 		return nil, fmt.Errorf("vector store: unsupported embedding provider %q (only 'openai' is supported)", cfg.EmbeddingProvider)
 	}
@@ -136,7 +136,7 @@ func (vs *VectorStore) Search(
 	tenantID, realmID string,
 	queryEmbedding []float32,
 ) ([]VectorMemoryRow, error) {
-	cfg := vs.vectorCfg()
+	cfg := vs.VectorCfg()
 	topK := cfg.RetrievalTopK
 	if topK <= 0 {
 		topK = 5
@@ -203,7 +203,7 @@ func (vs *VectorStore) PendingRows(ctx context.Context, limit int) ([]PendingVec
 }
 
 // vectorCfg returns the VectorMemoryConfig from the global system config.
-func (vs *VectorStore) vectorCfg() VectorMemoryConfig {
+func (vs *VectorStore) VectorCfg() VectorMemoryConfig {
 	return GetSystemVectorConfig()
 }
 
@@ -245,7 +245,7 @@ func (vs *VectorStore) EnsureScaNNIndex(ctx context.Context, tenantID, realmID s
 	}
 
 	// 3. Read num_leaves from the hot-reloadable config.
-	cfg := vs.vectorCfg()
+	cfg := vs.VectorCfg()
 	numLeaves := cfg.ScaNNNumLeaves
 	if numLeaves <= 0 {
 		numLeaves = 10

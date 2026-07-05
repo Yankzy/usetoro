@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/tap/pkg/agent"
 )
 
 // AutomatedBacktrackResponse represents the structural JSON response from the LLM
@@ -36,25 +38,25 @@ If the trace is correct and the context just helps the CURRENT stuck step, retur
 `
 
 // AutomatedBacktrackAndResume injects human context, identifies the mistake, backtracks, and resumes execution.
-func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, node *AutonomousSemanticEngineNode, newContext string, dag *DAG, store StatePersister, domainSystemPrompt string, userPrompt string) error {
+func AutomatedBacktrackAndResume(rt *agent.Runtime, db *database.Queries, logger *slog.Logger, ctx context.Context, node *AutonomousSemanticEngineNode, newContext string, dag *DAG, store StatePersister, domainSystemPrompt string, userPrompt string) error {
 	node.Mu.Lock()
 	node.ContextUpdates = append(node.ContextUpdates, newContext)
-	
+
 	traceCopy := make([]NodeExecutionStep, len(node.ExecutionTrace))
 	copy(traceCopy, node.ExecutionTrace)
 	node.Mu.Unlock()
 
-	if cs.rt == nil {
+	if rt == nil {
 		// Fallback if no local LLM client is available.
 		// For simplicity, we just resume without backtracking, or we could dispatch via NATS.
-		cs.logger.Warn("llm client required for automated backtracking, skipping backtrack phase")
+		logger.Warn("llm client required for automated backtracking, skipping backtrack phase")
 		return node.Resume(ctx, dag, store, "")
 	}
 
 	systemPrompt := fmt.Sprintf(AutomatedBacktrackingPrompt, domainSystemPrompt)
 
 	var resp AutomatedBacktrackResponse
-	respStr, err := cs.rt.Exec(ctx, userPrompt, systemPrompt)
+	respStr, err := rt.Exec(ctx, userPrompt, systemPrompt)
 	if err != nil {
 		return fmt.Errorf("automated backtracking llm call failed: %w", err)
 	}
@@ -73,14 +75,14 @@ func (cs *ClassifierService) AutomatedBacktrackAndResume(ctx context.Context, no
 		return fmt.Errorf("automated backtracking json parse failed: %w", err)
 	}
 
-	if resp.ExtractedRule != "" && cs.db != nil {
-		err := cs.db.CreateMemoryRule(ctx, database.CreateMemoryRuleParams{
+	if resp.ExtractedRule != "" && db != nil {
+		err := db.CreateMemoryRule(ctx, database.CreateMemoryRuleParams{
 			RealmID:     node.TenantID,
 			EntityValue: resp.RuleKeyword,
 			Instruction: resp.ExtractedRule,
 		})
 		if err != nil {
-			cs.logger.Error("failed to save extracted memory rule", "node_id", node.NodeID, "error", err)
+			logger.Error("failed to save extracted memory rule", "node_id", node.NodeID, "error", err)
 		} else {
 		}
 	}

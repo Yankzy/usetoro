@@ -33,6 +33,7 @@ type HyperParameters struct {
 	ActiveAgentTTLMinutes int     `json:"active_agent_ttl_minutes"`
 	LockTTLSeconds        int     `json:"lock_ttl_seconds"`
 	DomainTool            string  `json:"domain_tool"`
+	ExpectedProperties    int     `json:"expected_properties"`
 }
 
 // VectorMemoryConfig controls the ASE semantic retrieval layer.

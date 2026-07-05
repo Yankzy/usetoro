@@ -12,11 +12,12 @@ import (
 )
 
 type ToolDependencies struct {
-	DB        *database.Queries
-	Logger    *slog.Logger
-	Store   ase.StatePersister
-	NC      *nats.Conn
-	Runtime *agent.Runtime
+	DB          *database.Queries
+	Logger      *slog.Logger
+	Store       ase.StatePersister
+	NC          *nats.Conn
+	Runtime     *agent.Runtime
+	VectorStore *ase.VectorStore
 }
 
 type DomainTool interface {
@@ -33,6 +34,9 @@ type DomainTool interface {
 
 	// GetBacktrackingInstructions returns domain-specific instructions and context for the LLM during automated backtracking.
 	GetBacktrackingInstructions(a *ase.AutonomousSemanticEngineNode, newContext string, traceBytes []byte) (domainSystemPrompt string, userPrompt string)
+
+	// GetClassifier returns the domain-specific classifier for mapping LLM responses to NodeClassifications.
+	GetClassifier(deps ToolDependencies) ase.Classifier
 }
 
 var registry = make(map[string]DomainTool)

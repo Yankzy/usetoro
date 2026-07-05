@@ -47,3 +47,7 @@ Also provide a "rule_keyword" (e.g., the onboarding step or entity type). If it'
 	userPrompt := fmt.Sprintf("New Human Context: %s\nExecution Trace:\n%s", newContext, string(traceBytes))
 	return domainSystemPrompt, userPrompt
 }
+
+func (t *OnboardingTool) GetClassifier(deps ToolDependencies) ase.Classifier {
+	return nil // Not implemented yet
+}

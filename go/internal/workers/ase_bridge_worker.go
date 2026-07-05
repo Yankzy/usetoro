@@ -65,12 +65,25 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 		v.StopAll()
 	}, time.Minute*30)
 
-	// Initialize the Classifier Service (to generate ThinkFuncs)
-	classifierService := ase.NewClassifierService(w.rt, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
-	classifierService.SetDB(w.db) // Pass db for dynamic provider
-
 	// Helper to instantiate, wire, and start a DAG
 	wireAndStartDAG := func(key string, cfg *ase.ASEConfig) {
+		domain := cfg.HyperParameters.DomainTool
+		if domain == "" {
+			domain = "bookkeeping"
+		}
+
+		dt := domain_tools.Get(domain)
+		var classifier ase.Classifier
+		if dt != nil {
+			classifier = dt.GetClassifier(domain_tools.ToolDependencies{
+				DB:          w.db,
+				Logger:      w.logger,
+				Store:       w.store,
+				NC:          w.nc,
+				Runtime:     w.rt,
+				VectorStore: nil,
+			})
+		}
 		existingDAG, _ := w.dags.Get(key)
 
 		if existingDAG != nil {
@@ -84,16 +97,16 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 					if pk, ok := node.ExecutionParams["payload_key"]; ok {
 						payloadKey = pk
 					}
-					node.SetThinkFunc(classifierService.BuildPayloadRouterThinkFunc(payloadKey))
+					node.SetThinkFunc(classifier.BuildPayloadRouterThinkFunc(payloadKey))
 				} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "generate_channel_dag" {
 					channel := node.ExecutionParams["channel"]
 					node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
 				} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
 					node.SetThinkFunc(w.buildEmitResumeSignalFunc())
 				} else if node.EdgeType == "dynamic" {
-					node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
+					node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 				} else if node.PromptKey != "" {
-					node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
+					node.SetThinkFunc(classifier.BuildGenericThinkFunc(node.PromptKey))
 				} else {
 					node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
 						return nil, nil // No-op
@@ -111,16 +124,16 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 				if pk, ok := node.ExecutionParams["payload_key"]; ok {
 					payloadKey = pk
 				}
-				node.SetThinkFunc(classifierService.BuildPayloadRouterThinkFunc(payloadKey))
+				node.SetThinkFunc(classifier.BuildPayloadRouterThinkFunc(payloadKey))
 			} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "generate_channel_dag" {
 				channel := node.ExecutionParams["channel"]
 				node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
 			} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
 				node.SetThinkFunc(w.buildEmitResumeSignalFunc())
 			} else if node.EdgeType == "dynamic" {
-				node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
+				node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 			} else if node.PromptKey != "" {
-				node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
+				node.SetThinkFunc(classifier.BuildGenericThinkFunc(node.PromptKey))
 			} else {
 				// e.g. terminal nodes or holding nodes with no dynamic logic
 				node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
@@ -227,11 +240,11 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 
 		deps := domain_tools.ToolDependencies{
-			DB:        w.db,
-			Logger:    w.logger,
-			Store:     w.store,
-			NC:        w.nc,
-			Runtime:   w.rt,
+			DB:      w.db,
+			Logger:  w.logger,
+			Store:   w.store,
+			NC:      w.nc,
+			Runtime: w.rt,
 		}
 
 		agent, err := tool.ResumeAgent(ctx, resumeEvt.NodeID, dagName, deps)
@@ -263,8 +276,18 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			// identical build requests if they arrive exactly simultaneously
 			dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
 
-			classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
-			classifierService.SetDB(w.db)
+			dt := domain_tools.Get("bookkeeping")
+			var classifier ase.Classifier
+			if dt != nil {
+				classifier = dt.GetClassifier(domain_tools.ToolDependencies{
+					DB:          w.db,
+					Logger:      w.logger,
+					Store:       w.store,
+					NC:          w.nc,
+					Runtime:     nil,
+					VectorStore: nil,
+				})
+			}
 
 			for _, node := range dag.Nodes {
 				if node.Kind == "initial_router" {
@@ -272,16 +295,16 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 					if pk, ok := node.ExecutionParams["payload_key"]; ok {
 						payloadKey = pk
 					}
-					node.SetThinkFunc(classifierService.BuildPayloadRouterThinkFunc(payloadKey))
+					node.SetThinkFunc(classifier.BuildPayloadRouterThinkFunc(payloadKey))
 				} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "generate_channel_dag" {
 					channel := node.ExecutionParams["channel"]
 					node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
 				} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
 					node.SetThinkFunc(w.buildEmitResumeSignalFunc())
 				} else if node.EdgeType == "dynamic" {
-					node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
+					node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 				} else if node.PromptKey != "" {
-					node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
+					node.SetThinkFunc(classifier.BuildGenericThinkFunc(node.PromptKey))
 				} else {
 					node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
 						return nil, nil // No-op
@@ -328,8 +351,8 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 				if dt, ok := a.Payload["domain_tool"].(string); ok && dt != "" {
 					if t := domain_tools.Get(dt); t != nil {
 						deps := domain_tools.ToolDependencies{
-							DB:        w.db,
-							Logger:    w.logger,
+							DB:      w.db,
+							Logger:  w.logger,
 							Store:   w.store,
 							NC:      w.nc,
 							Runtime: w.rt,
@@ -405,8 +428,8 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	deps := domain_tools.ToolDependencies{
-		DB:        w.db,
-		Logger:    w.logger,
+		DB:      w.db,
+		Logger:  w.logger,
 		Store:   w.store,
 		NC:      w.nc,
 		Runtime: w.rt,
@@ -446,8 +469,18 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
 
 		// Initialize the Classifier Service (to generate ThinkFuncs)
-		classifierService := ase.NewClassifierService(nil, w.nc, "tasks.accounting.1.batch_categorization", w.logger)
-		classifierService.SetDB(w.db)
+		dt := domain_tools.Get("bookkeeping")
+		var classifier ase.Classifier
+		if dt != nil {
+			classifier = dt.GetClassifier(domain_tools.ToolDependencies{
+				DB:          w.db,
+				Logger:      w.logger,
+				Store:       w.store,
+				NC:          w.nc,
+				Runtime:     nil,
+				VectorStore: nil,
+			})
+		}
 
 		for _, node := range dag.Nodes {
 			if node.Kind == "initial_router" {
@@ -455,16 +488,16 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 				if pk, ok := node.ExecutionParams["payload_key"]; ok {
 					payloadKey = pk
 				}
-				node.SetThinkFunc(classifierService.BuildPayloadRouterThinkFunc(payloadKey))
+				node.SetThinkFunc(classifier.BuildPayloadRouterThinkFunc(payloadKey))
 			} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "generate_channel_dag" {
 				channel := node.ExecutionParams["channel"]
 				node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
 			} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
 				node.SetThinkFunc(w.buildEmitResumeSignalFunc())
 			} else if node.EdgeType == "dynamic" {
-				node.SetThinkFunc(classifierService.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
+				node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 			} else if node.PromptKey != "" {
-				node.SetThinkFunc(classifierService.BuildGenericThinkFunc(node.PromptKey))
+				node.SetThinkFunc(classifier.BuildGenericThinkFunc(node.PromptKey))
 			} else {
 				node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
 					return nil, nil // No-op
@@ -516,8 +549,8 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 				if dt, ok := a.Payload["domain_tool"].(string); ok && dt != "" {
 					if t := domain_tools.Get(dt); t != nil {
 						deps := domain_tools.ToolDependencies{
-							DB:        w.db,
-							Logger:    w.logger,
+							DB:      w.db,
+							Logger:  w.logger,
 							Store:   w.store,
 							NC:      w.nc,
 							Runtime: w.rt,

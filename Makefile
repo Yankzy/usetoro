@@ -4,7 +4,7 @@ PY := $(ENV) && python manage.py
 PACKAGE ?= $(shell bash -c 'read -p "Package name: " package; echo $$package')
 BRANCH ?= $(shell bash -c 'read -p "Branch name: " branch; echo $$package')
 MSG ?= $(shell bash -c 'read -p "What is the commit message?: " commit message; echo $$commit message')
-# PRODUCTION_SERVER := 0
+PRODUCTION_SERVER := 1
 ENVIRONMENT := $(if $(PRODUCTION_SERVER),prod,dev)
 PROJECT_NAME := usetoro
 
@@ -19,9 +19,10 @@ DOCKER_CONTEXT := docker --context $(DEPLOY_CONTEXT) compose -f container/docker
 
 # App Services
 SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker fignode protocol python-worker
+OUR_SERVICES := gate migrator nginx ws graphql sync cdc-worker fignode protocol python-worker
 
 # Allow passing service names as arguments, e.g., "make rebuild nginx" or "make restart nginx"
-ifneq ($(filter rebuild restart,$(firstword $(MAKECMDGOALS))),)
+ifneq ($(filter rebuild restart build_prod docker_context_prod_push deploy_second_mac,$(firstword $(MAKECMDGOALS))),)
   RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
   $(eval $(RUN_ARGS):;@:)
 endif
@@ -219,11 +220,11 @@ nats_consumers:
 
 
 build_prod:
-	docker compose -f container/docker-compose.prod.yml build
+	docker compose -f container/docker-compose.prod.yml build $(if $(RUN_ARGS),$(RUN_ARGS),$(OUR_SERVICES))
 
 docker_context_prod_push:
-	$(MAKE) build_prod
-	docker compose -f container/docker-compose.prod.yml push
+	$(MAKE) build_prod RUN_ARGS="$(RUN_ARGS)"
+	docker compose -f container/docker-compose.prod.yml push $(if $(RUN_ARGS),$(RUN_ARGS),$(OUR_SERVICES))
 
 docker_context_prod_up:
 	$(DOCKER_CONTEXT) pull
@@ -243,8 +244,14 @@ docker_context_prod_prune:
 
 deploy_second_mac: 
 	@echo "Copying compose and env files to second Mac..."
-	scp container/docker-compose.prod.yml .env mac@macs-MacBook-Pro.local:~/
+	scp container/docker-compose.prod.yml .env Makefile clipboard.txt yankz@yankz.local:~/
 	@echo "Triggering pull and run on second Mac..."
-	ssh mac@macs-MacBook-Pro.local 'export PATH="/opt/homebrew/bin:/usr/local/bin:$$PATH" && \
-		docker compose -f ~/docker-compose.prod.yml --env-file ~/.env pull && \
-		docker compose -f ~/docker-compose.prod.yml --env-file ~/.env up -d'
+	ssh yankz@yankz.local 'export PATH="/opt/homebrew/bin:/usr/local/bin:$$PATH" && \
+		docker compose -f ~/docker-compose.prod.yml --env-file ~/.env pull $(if $(RUN_ARGS),$(RUN_ARGS),$(OUR_SERVICES)) && \
+		docker compose -f ~/docker-compose.prod.yml --env-file ~/.env up -d $(RUN_ARGS)'
+
+ssh_mac:
+	ssh yankz@yankz.local
+
+copy_clipboard_to_mac:
+	scp clipboard.txt yankz@yankz.local:~/

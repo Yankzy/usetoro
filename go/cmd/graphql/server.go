@@ -235,7 +235,7 @@ func run(logger *slog.Logger) error {
 	// mux.Handle("/api", authenticator.Middleware(loaderMiddleware(srv)))
 
 	mux := http.NewServeMux()
-	mux.Handle("/playground", playground.Handler("GraphQL playground", "/api"))
+	mux.Handle("/playground", playground.Handler("GraphQL playground", "/api", playground.WithGraphiqlEnablePluginExplorer(true)))
 	mux.Handle("/api", authenticator.Middleware(loaderMiddleware(srv)))
 
 	server := &http.Server{

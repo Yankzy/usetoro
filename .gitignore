@@ -41,6 +41,7 @@ streams.json
 
 # env file
 .env
+.venv/
 .claude
 **/env
 .logs

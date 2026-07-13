@@ -8,7 +8,7 @@ import (
 
 type MockLLM struct{}
 
-func (m *MockLLM) GenerateText(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+func (m *MockLLM) Exec(ctx context.Context, prompt, systemPrompt string) (string, error) {
 	return "MOCK COMMAND BRIEF TEXT", nil
 }
 

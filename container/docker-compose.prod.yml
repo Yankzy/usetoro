@@ -10,7 +10,7 @@ services:
       context: ../
       dockerfile: container/postgres/postgres.prod.Dockerfile
     restart: always
-    command: [ "postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=5", "-c", "max_wal_senders=5" ]
+    command: [ "postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=5", "-c", "max_wal_senders=5", "-c", "max_connections=200" ]
     environment:
       POSTGRES_DB: toro
       POSTGRES_USER: toro
@@ -239,48 +239,6 @@ services:
     volumes:
       - nats_3_data:/data
 
-  # svix-redis:
-  #   image: redis:alpine
-  #   restart: always
-  #   command: [ "redis-server", "--appendonly", "yes" ]
-  #   volumes:
-  #     - svix_redis_data:/data
-  #   networks:
-  #     - toro-net
-
-  # svix-server:
-  #   image: svix/svix-server:v1.84.1
-  #   restart: always
-  #   environment:
-  #     SVIX_QUEUE_TYPE: redis
-  #     SVIX_DB_DSN: postgresql://toro:toro_password@db:5432/svix
-  #     SVIX_REDIS_DSN: redis://svix-redis:6379
-  #     SVIX_JWT_SECRET: ${SVIX_JWT_SECRET}
-  #   ports:
-  #     - "8071:8071"
-  #   depends_on:
-  #     - svix-redis
-  #     - db
-  #   networks:
-  #     - toro-net
-
-  # svix-ui:
-  #   build:
-  #     context: ../svixUI
-  #     dockerfile: Dockerfile
-  #   restart: always
-  #   environment:
-  #     SVIX_TOKEN: ${SVIX_EXAMPLE_TOKEN}
-  #     SVIX_WEBHOOK_SECRET: ${SVIX_EXAMPLE_WEBHOOK_SECRET}
-  #     SVIX_SERVER_URL: http://svix-server:8071
-  #     NEXT_PUBLIC_SVIX_API_URL: http://localhost:8071/api/v1
-  #   ports:
-  #     - "3000:3000"
-  #   depends_on:
-  #     - svix-server
-  #   networks:
-  #     - toro-net
-
   fignode:
     image: yankz/usetoro-fignode:latest
     build:
@@ -351,26 +309,28 @@ services:
     build:
       context: ../
       dockerfile: container/nginx/nginx.prod.Dockerfile
+    ports:
+      - "80:80"
     depends_on:
       - gate
       - graphql
     networks:
       - toro-net
 
-  caddy:
-    image: caddy:alpine
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    command: caddy reverse-proxy --from api.usetoro.io --to nginx:80
-    volumes:
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - nginx
-    networks:
-      - toro-net
+  # caddy:
+  #   image: caddy:alpine
+  #   restart: always
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   command: caddy reverse-proxy --from api.usetoro.io --to nginx:80
+  #   volumes:
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - nginx
+  #   networks:
+  #     - toro-net
 
   migrator:
     image: yankz/usetoro-migrator:latest
@@ -385,23 +345,6 @@ services:
         condition: service_healthy
     networks:
       - toro-net
-  # neo4j:
-  #   image: neo4j:5
-  #   restart: always
-  #   environment:
-  #     NEO4J_AUTH: neo4j/toro_password
-  #     NEO4J_apoc_export_file_enabled: "true"
-  #     NEO4J_apoc_import_file_enabled: "true"
-  #     NEO4J_apoc_import_file_use__neo4j__config: "true"
-  #     NEO4J_PLUGINS: '["apoc"]'
-  #     NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
-  #   ports:
-  #     - "7474:7474"
-  #     - "7687:7687"
-  #   volumes:
-  #     - neo4j_data:/data
-  #   networks:
-  #     - toro-net
 
 volumes:
   db_data:
@@ -409,10 +352,8 @@ volumes:
   nats_1_data:
   nats_2_data:
   nats_3_data:
-  svix_redis_data:
-  neo4j_data:
-  caddy_data:
-  caddy_config:
+    # caddy_data:
+    # caddy_config:
 
 networks:
   toro-net:

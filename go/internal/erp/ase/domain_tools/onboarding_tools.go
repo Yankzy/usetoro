@@ -51,3 +51,7 @@ Also provide a "rule_keyword" (e.g., the onboarding step or entity type). If it'
 func (t *OnboardingTool) GetClassifier(deps ToolDependencies) ase.Classifier {
 	return nil // Not implemented yet
 }
+
+func (t *OnboardingTool) GetStatePersister(deps ToolDependencies) ase.StatePersister {
+	return nil
+}

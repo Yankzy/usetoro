@@ -149,3 +149,7 @@ Also provide a "rule_keyword" (e.g., the sender's domain or topic). If it's a ge
 func (t *EmailTool) GetClassifier(deps ToolDependencies) ase.Classifier {
 	return nil // Not implemented yet
 }
+
+func (t *EmailTool) GetStatePersister(deps ToolDependencies) ase.StatePersister {
+	return nil
+}

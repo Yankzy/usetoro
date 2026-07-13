@@ -304,3 +304,18 @@ func cashDirection(node *ase.AutonomousSemanticEngineNode) string {
 	}
 	return ""
 }
+
+// GetExecutionTrace returns the execution trace from fignode.staging_transactions
+func (s *StateStore) GetExecutionTrace(ctx context.Context, nodeID string) ([]byte, error) {
+	var traceJSON []byte
+	traceQ := `SELECT ase_execution_trace FROM fignode.staging_transactions WHERE id = $1`
+	err := s.pool.QueryRow(ctx, traceQ, nodeID).Scan(&traceJSON)
+	return traceJSON, err
+}
+
+// UpdateNodeState updates the status of the node in fignode.staging_transactions
+func (s *StateStore) UpdateNodeState(ctx context.Context, nodeID string, state ase.NodeState) error {
+	updateQ := `UPDATE fignode.staging_transactions SET status = $2, updated_at = NOW() WHERE id = $1`
+	_, err := s.pool.Exec(ctx, updateQ, nodeID, string(state))
+	return err
+}

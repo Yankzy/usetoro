@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
@@ -34,7 +35,7 @@ type AseBridgeWorker struct {
 	cfg    *config.Config
 	nc     *nats.Conn
 	db     *database.Queries
-	store  ase.StatePersister
+	redis  *redis.Client
 	rt     *agent.Runtime
 	dbPool *pgxpool.Pool
 
@@ -43,20 +44,32 @@ type AseBridgeWorker struct {
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		// Initialize the ASE global dependencies
-		stateStore := domain_tools.NewStateStore(deps.DBPool, deps.Redis)
-
 		return &AseBridgeWorker{
 			logger: deps.Logger,
 			cfg:    deps.Config,
 			nc:     deps.Queue,
 			db:     deps.Store.Queries,
-			store:  stateStore,
+			redis:  deps.Redis,
 			rt:     deps.Runtime,
 			dbPool: deps.DBPool,
 			// Initialize in Init() instead since we need logger for eviction callback
 		}, nil
 	})
+}
+
+func (w *AseBridgeWorker) buildDeps(tool domain_tools.DomainTool) domain_tools.ToolDependencies {
+	deps := domain_tools.ToolDependencies{
+		DB:      w.db,
+		DBPool:  w.dbPool,
+		Redis:   w.redis,
+		Logger:  w.logger,
+		NC:      w.nc,
+		Runtime: w.rt,
+	}
+	if tool != nil {
+		deps.Store = tool.GetStatePersister(deps)
+	}
+	return deps
 }
 
 func (w *AseBridgeWorker) Init(ctx context.Context) error {
@@ -69,20 +82,17 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 	wireAndStartDAG := func(key string, cfg *ase.ASEConfig) {
 		domain := cfg.HyperParameters.DomainTool
 		if domain == "" {
-			domain = "bookkeeping"
+			w.logger.Error("ase_orchestrator: domain_tool missing in config", "key", key)
+			return
 		}
 
 		dt := domain_tools.Get(domain)
 		var classifier ase.Classifier
 		if dt != nil {
-			classifier = dt.GetClassifier(domain_tools.ToolDependencies{
-				DB:          w.db,
-				Logger:      w.logger,
-				Store:       w.store,
-				NC:          w.nc,
-				Runtime:     w.rt,
-				VectorStore: nil,
-			})
+			deps := w.buildDeps(dt)
+			deps.Runtime = w.rt
+			deps.VectorStore = nil
+			classifier = dt.GetClassifier(deps)
 		}
 		existingDAG, _ := w.dags.Get(key)
 
@@ -239,13 +249,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			return nil
 		}
 
-		deps := domain_tools.ToolDependencies{
-			DB:      w.db,
-			Logger:  w.logger,
-			Store:   w.store,
-			NC:      w.nc,
-			Runtime: w.rt,
-		}
+		deps := w.buildDeps(tool)
 
 		agent, err := tool.ResumeAgent(ctx, resumeEvt.NodeID, dagName, deps)
 		if err != nil || agent == nil {
@@ -276,17 +280,13 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			// identical build requests if they arrive exactly simultaneously
 			dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
 
-			dt := domain_tools.Get("bookkeeping")
+			dt := domain_tools.Get(domainToolName)
 			var classifier ase.Classifier
 			if dt != nil {
-				classifier = dt.GetClassifier(domain_tools.ToolDependencies{
-					DB:          w.db,
-					Logger:      w.logger,
-					Store:       w.store,
-					NC:          w.nc,
-					Runtime:     nil,
-					VectorStore: nil,
-				})
+				deps := w.buildDeps(dt)
+				deps.Runtime = nil
+				deps.VectorStore = nil
+				classifier = dt.GetClassifier(deps)
 			}
 
 			for _, node := range dag.Nodes {
@@ -324,7 +324,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 
 		// Fire off the asynchronous Goroutine to resume the agent
-		go func(a *ase.AutonomousSemanticEngineNode, start, reason string) {
+		go func(a *ase.AutonomousSemanticEngineNode, start, reason string, s ase.StatePersister) {
 			if reason != "" {
 				a.Mu.Lock()
 				a.ContextUpdates = append(a.ContextUpdates, fmt.Sprintf("Context update provided by external resolution: %s", reason))
@@ -338,7 +338,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 				}
 			})
 
-			if err := a.ApproveAndResume(context.Background(), dagToUse, w.store, start); err != nil {
+			if err := a.ApproveAndResume(context.Background(), dagToUse, s, start); err != nil {
 				w.logger.Error("ase_bridge: agent crashed on resume", "node_id", a.NodeID, "error", err)
 				terminalOnce.Do(func() { doneCh <- struct{}{} })
 			}
@@ -350,13 +350,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			if strings.HasPrefix(string(state), "HOLD_") {
 				if dt, ok := a.Payload["domain_tool"].(string); ok && dt != "" {
 					if t := domain_tools.Get(dt); t != nil {
-						deps := domain_tools.ToolDependencies{
-							DB:      w.db,
-							Logger:  w.logger,
-							Store:   w.store,
-							NC:      w.nc,
-							Runtime: w.rt,
-						}
+						deps := w.buildDeps(t)
 						payload, pErr := t.GenerateAlertPayload(context.Background(), a, deps)
 						if pErr == nil && payload != nil {
 							payloadBytes, _ := json.Marshal(payload)
@@ -368,7 +362,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 					}
 				}
 			}
-		}(agent, resumeEvt.StartNodeID, resumeEvt.ResolvedReason)
+		}(agent, resumeEvt.StartNodeID, resumeEvt.ResolvedReason, deps.Store)
 
 		return nil
 	}
@@ -427,13 +421,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return fmt.Errorf("domain_tool %s not found", domainToolName)
 	}
 
-	deps := domain_tools.ToolDependencies{
-		DB:      w.db,
-		Logger:  w.logger,
-		Store:   w.store,
-		NC:      w.nc,
-		Runtime: w.rt,
-	}
+	deps := w.buildDeps(tool)
 
 	agents, err := tool.BuildAgents(ctx, env, dagName, deps)
 	if err != nil {
@@ -469,17 +457,13 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		dag := ase.BuildDAGFromConfig(cfg.DAG, w.logger)
 
 		// Initialize the Classifier Service (to generate ThinkFuncs)
-		dt := domain_tools.Get("bookkeeping")
+		dt := domain_tools.Get(domainToolName)
 		var classifier ase.Classifier
 		if dt != nil {
-			classifier = dt.GetClassifier(domain_tools.ToolDependencies{
-				DB:          w.db,
-				Logger:      w.logger,
-				Store:       w.store,
-				NC:          w.nc,
-				Runtime:     nil,
-				VectorStore: nil,
-			})
+			deps := w.buildDeps(dt)
+			deps.Runtime = nil
+			deps.VectorStore = nil
+			classifier = dt.GetClassifier(deps)
 		}
 
 		for _, node := range dag.Nodes {
@@ -536,7 +520,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 				}
 			})
 
-			if err := a.Run(ctx, dagToUse, w.store); err != nil {
+			if err := a.Run(ctx, dagToUse, deps.Store); err != nil {
 				w.logger.Error("ase_bridge: agent crashed", "node_id", a.NodeID, "error", err)
 				terminalOnce.Do(func() { doneCh <- struct{}{} })
 			}
@@ -548,13 +532,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			if strings.HasPrefix(string(state), "HOLD_") {
 				if dt, ok := a.Payload["domain_tool"].(string); ok && dt != "" {
 					if t := domain_tools.Get(dt); t != nil {
-						deps := domain_tools.ToolDependencies{
-							DB:      w.db,
-							Logger:  w.logger,
-							Store:   w.store,
-							NC:      w.nc,
-							Runtime: w.rt,
-						}
+						deps := w.buildDeps(t)
 						payload, pErr := t.GenerateAlertPayload(ctx, a, deps)
 						if pErr == nil && payload != nil {
 							payloadBytes, _ := json.Marshal(payload)
@@ -726,12 +704,18 @@ func (w *AseBridgeWorker) buildEmitResumeSignalFunc() ase.ThinkFunc {
 				}
 
 				if nodeID != "" {
-					updateQ := `UPDATE fignode.staging_transactions SET status = $2, updated_at = NOW() WHERE id = $1`
-					_, _ = w.dbPool.Exec(ctx, updateQ, nodeID, "RESUME_PENDING")
-
+					var store ase.StatePersister
+					if dt := domain_tools.Get(domainTool); dt != nil {
+						store = dt.GetStatePersister(w.buildDeps(dt))
+					}
+					
 					var traceJSON []byte
-					traceQ := `SELECT ase_execution_trace FROM fignode.staging_transactions WHERE id = $1`
-					_ = w.dbPool.QueryRow(ctx, traceQ, nodeID).Scan(&traceJSON)
+					if store != nil {
+						_ = store.UpdateNodeState(ctx, nodeID, ase.NodeState("RESUME_PENDING"))
+						traceJSON, _ = store.GetExecutionTrace(ctx, nodeID)
+					} else {
+						w.logger.Error("ase_bridge: no state persister found for domain tool", "tool", domainTool)
+					}
 
 					startNodeID := "default"
 					if len(traceJSON) > 0 {

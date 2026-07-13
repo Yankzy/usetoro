@@ -1,126 +1,183 @@
 # Autonomous Semantic Engine (ASE)
 
 ## What is the Autonomous Semantic Engine (ASE)?
-The Autonomous Semantic Engine (ASE) is a proprietary, highly scalable artificial intelligence framework designed to automate complex financial and accounting workflows. At its core, it acts as an intelligent, automated ledger engine that categorizes raw, unstructured bank transactions into precise accounting classifications (such as mapping a purchase to a specific QuickBooks Online account).
+The Autonomous Semantic Engine (ASE) is a proprietary, highly scalable artificial intelligence framework designed to automate complex, multi-step workflows. Originally designed as an intelligent ledger engine for accounting, it has been refactored into a generic orchestrator capable of powering specialized workflows across any domain (e.g., Bookkeeping, Email processing, Onboarding).
 
 ## What Does it Do?
-When a business connects its bank accounts, the raw transaction data is often messy and lacks accounting context. The ASE's job is to take thousands of these unclassified transactions and accurately determine:
-1. **The Cash Direction:** Is money coming in or going out?
-2. **The Macro Class:** Is this an Asset, Liability, Equity, Revenue, or Expense?
-3. **The Account Type:** Which specific section of the Chart of Accounts does this belong to?
-4. **The Entity:** Who is the exact Vendor or Customer?
+The ASE processes unstructured or loosely structured data by running it through a sequence of autonomous micro-agents. For example:
+- **Bookkeeping:** It takes raw, messy bank transactions and accurately determines the Cash Direction, Macro Class, Account Type, and Entity.
+- **Email:** It takes unstructured inbound emails and determines intent, extracts action items, and correlates them with ongoing sessions.
 
-It processes these transactions in bulk, matching or exceeding the accuracy of a human Certified Public Accountant (CPA), but at a fraction of the time and cost.
+It processes these tasks in bulk, matching or exceeding the accuracy of human operators, but at a fraction of the time and cost.
 
 ## Core Architecture
-The ASE is built on a **Directed Acyclic Graph (DAG)** architecture. Instead of asking an AI to make one massive, complicated guess about a transaction, the ASE breaks the accounting process down into a series of small, specialized "nodes." 
+The ASE is built on a **Directed Acyclic Graph (DAG)** architecture. Instead of asking an AI to make one massive, complicated guess, the ASE breaks the reasoning process down into a series of small, specialized "nodes."
 
-* **Dynamic Routing:** Transactions flow through these nodes step-by-step. For example, a transaction is first routed by cash direction, then sent to a specialized node just for classifying "Outflow Expenses."
-* **Batch Processing:** The engine groups similar transactions together and processes them in parallel batches, drastically reducing API costs and increasing throughput.
-* **Human-in-the-Loop (HITL):** If the engine is ever unsure about a transaction, it places it in a "Holding Gate." It seamlessly hands the transaction over to a human accountant for review, learns from their decision, and resumes the automated flow.
+* **Dynamic Routing:** Payloads flow through nodes step-by-step.
+* **Batch Processing:** The engine groups similar tasks together and processes them in parallel batches, drastically reducing API costs and increasing throughput.
+* **Human-in-the-Loop (HITL):** If the engine is unsure, it places the payload in a "Holding Gate" (e.g., `HOLD_AMBIGUOUS`). It seamlessly hands it over to a human for review, learns from their decision, and resumes the automated flow.
 
 ## How it Uses LLMs for Reasoning
-The ASE uses a highly efficient, hybrid approach to Large Language Models (LLMs):
-1. **Specialized Brains:** The ASE engine stores highly specialized instructions (prompts) for different accounting scenarios. It acts as the "brain," dynamically pulling relevant historical context, company rules, and vendor hints.
-2. **Generic Execution:** It bundles this context and sends it over a high-speed messaging queue (NATS) to a fleet of "dumb" generic agents. These agents simply execute the LLM call (e.g., to GPT-4o or GPT-5.4) and return the results.
-3. **Mathematical Guardrails:** LLMs are known to hallucinate. The ASE protects against this by forcing the LLM to return a "probability distribution" (e.g., 98% confident it's an Expense, 2% confident it's a Liability). The ASE runs strict mathematical validation on the response to ensure the confidence scores equal exactly 100% (1.0). If the math is wrong, the ASE automatically rejects the answer and forces the LLM to try again.
+1. **Specialized Brains:** The engine stores highly specialized instructions (prompts) for different nodes. It acts as the "brain," dynamically pulling relevant historical context, company rules, and hints.
+2. **Generic Execution:** It bundles this context and sends it over a messaging queue to a fleet of generic agents that execute the LLM call (e.g., GPT-4o) and return the results.
+3. **Mathematical Guardrails:** The ASE protects against hallucinations by forcing the LLM to return a "probability distribution" (e.g., 98% confident it's X, 2% confident it's Y). The ASE runs strict mathematical validation to ensure confidence scores equal exactly 100%.
 
-## How it Uses the Database
-The ASE is deeply integrated with a PostgreSQL database, making it fully stateful and auditable:
-* **Memory & Context:** Before making a decision, the ASE queries the database to "remember" past human decisions, known vendors, and the specific company's Chart of Accounts.
-* **Checkpointing:** As a transaction moves through the DAG, its state is continuously saved to the database. If a server crashes or a human needs to intervene, the transaction's exact location and reasoning are perfectly preserved.
-* **Backtracking:** Because every decision is logged in the database, the ASE has the unique ability to "time travel." If the engine realizes it made a mistake down the line, it can seamlessly rewind its state in the database, undo the incorrect classifications, and take a different path.
+## Decoupled Domain Logic & Persistence
+The ASE is completely decoupled from any specific database schema or business logic. It achieves this genericity through two primary interfaces:
 
-## Why This Matters
-The ASE architecture separates the "intelligence" (the engine and prompts) from the "compute" (the LLM calls). This makes the system incredibly resilient, mathematically predictable, and easily upgradable to newer AI models in the future, providing a massive competitive moat in the automated bookkeeping space.
+1. **`DomainTool`**: Responsible for domain-specific business logic such as extracting payloads, building initial agents, constructing LLM alerts, and generating classifiers.
+2. **`StatePersister`**: Responsible for persisting the agent's state, execution trace, and lock management to a domain-specific database schema (e.g., `fignode.staging_transactions`).
 
+The generic orchestrator (`ase_bridge_worker.go`) dynamically looks up these implementations based on the `domain_tool` key provided in the payload or the DAG config.
 
-The `ase` package implements Toro's **Autonomous Semantic Engine**, replacing linear batch processing pipelines with a concurrent, event-driven agentic architecture for financial classification.
+---
 
-## Architecture
+## Developer Guide: How to Add a New Domain
 
-Instead of treating transactions as static rows in a database that wait for a daily batch job, the ASE treats every unclassified transaction as a living **Transaction Micro-Agent** (`AutonomousSemanticEngineNode`). 
+Adding a new domain to ASE requires creating a custom `DomainTool` and a custom `StatePersister`. Follow these step-by-step instructions.
 
-These micro-agents are born with maximum mathematical entropy (100% uncertainty) and traverse a Directed Acyclic Graph (DAG) of specialized accounting nodes (e.g., Macro Classification, Account Type Selection, Entity Extraction).
+### Step 1: Create a New Domain Tool File
 
-### 1. The Lifecycle (`node.go`)
+Create a new file in `go/internal/erp/ase/domain_tools/`, e.g., `my_domain_tools.go`.
+
+Define your tool struct and register it in the `init()` function:
+
+```go
+package domain_tools
+
+import (
+	"context"
+	"github.com/Yankzy/usetoro/internal/erp/ase"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+)
+
+func init() {
+	Register("my_domain", &MyDomainTool{})
+}
+
+type MyDomainTool struct{}
+```
+
+### Step 2: Implement the `DomainTool` Interface
+
+Your struct must implement all methods of the `DomainTool` interface. 
+
+#### 1. `BuildAgents`
+Extracts domain-specific data from the payload (or queries the database) and converts them into `AutonomousSemanticEngineNode` agents.
+
+```go
+func (t *MyDomainTool) BuildAgents(ctx context.Context, env core.Envelope, dagName string, deps ToolDependencies) ([]*ase.AutonomousSemanticEngineNode, error) {
+    // 1. Unmarshal env.Body
+    // 2. Fetch relevant database records using deps.DBPool or deps.DB
+    // 3. Create agents using ase.NewASENode(...)
+    // 4. Return slice of agents
+}
+```
+
+#### 2. `GetStatePersister`
+Returns a state store for your domain. This controls how the agent's execution is saved to the database.
+
+```go
+func (t *MyDomainTool) GetStatePersister(deps ToolDependencies) ase.StatePersister {
+    return NewMyDomainStateStore(deps.DBPool, deps.Redis)
+}
+```
+
+#### 3. `GetClassifier`
+Returns the domain-specific classifier. The Classifier is responsible for evaluating LLM responses and navigating the DAG edges.
+
+```go
+func (t *MyDomainTool) GetClassifier(deps ToolDependencies) ase.Classifier {
+    return NewMyDomainClassifier() // Implements ase.Classifier
+}
+```
+
+#### 4. `GenerateAlertPayload`
+Generates the prompt sent to the General Agent when an ASE agent gets stuck on a `HOLD_` state.
+
+```go
+func (t *MyDomainTool) GenerateAlertPayload(ctx context.Context, a *ase.AutonomousSemanticEngineNode, deps ToolDependencies) (map[string]interface{}, error) {
+    // Return a map containing "prompt", "entity_id", "from_handle", "to_handle"
+}
+```
+
+#### 5. `ResumeAgent`
+Reconstructs an agent from the database/cache for resuming execution. Usually simply retrieves from Redis:
+
+```go
+func (t *MyDomainTool) ResumeAgent(ctx context.Context, nodeID string, dagName string, deps ToolDependencies) (*ase.AutonomousSemanticEngineNode, error) {
+    return deps.Store.GetCachedAgent(ctx, nodeID, nil)
+}
+```
+
+#### 6. `GetBacktrackingInstructions`
+Provides domain-specific instructions for automated backtracking (e.g., rules extraction).
+
+```go
+func (t *MyDomainTool) GetBacktrackingInstructions(a *ase.AutonomousSemanticEngineNode, newContext string, traceBytes []byte) (string, string) {
+    // return domainSystemPrompt, userPrompt
+}
+```
+
+### Step 3: Implement the `StatePersister` Interface
+
+Create a file for your state store, e.g., `my_domain_store.go`, and implement the `ase.StatePersister` interface.
+
+```go
+type MyDomainStateStore struct {
+    pool  *pgxpool.Pool
+    redis *redis.Client
+}
+
+func NewMyDomainStateStore(pool *pgxpool.Pool, r *redis.Client) *MyDomainStateStore {
+    return &MyDomainStateStore{pool: pool, redis: r}
+}
+```
+
+You must implement the following methods to persist state to your specific database tables:
+- `PersistNode(ctx context.Context, node *ase.AutonomousSemanticEngineNode) error`
+- `PersistHoldReason(ctx context.Context, node *ase.AutonomousSemanticEngineNode) error`
+- `PersistReadyForSync(ctx context.Context, node *ase.AutonomousSemanticEngineNode) error`
+- `GetExecutionTrace(ctx context.Context, nodeID string) ([]byte, error)`
+- `UpdateNodeState(ctx context.Context, nodeID string, state ase.NodeState) error`
+- Cache/Locking methods: `CacheActiveAgent`, `GetCachedAgent`, `RemoveCachedAgent`, `AcquireLock`, `ReleaseLock` (These can generally be copy-pasted from existing implementations as they rely exclusively on Redis).
+
+### Step 4: Create DAG Configurations
+
+With your tools built, define your DAG configurations in YAML files under `.toro/ase_config/<domain_name>_<dag_name>.yaml`. 
+
+Ensure your `hyper_parameters.domain_tool` points to your newly registered tool:
+
+```yaml
+hyper_parameters:
+  confidence_threshold: 0.95
+  max_iterations: 15
+  domain_tool: "my_domain"  # <--- CRITICAL
+```
+
+### Step 5: Trigger the Workflow
+
+Trigger your workflow by sending a TAP Envelope to `workers.ase_bridge` with a task config containing `domain_tool: "my_domain"` and `dag_name: "your_dag_name"`, or by letting the ASE resolve it from the YAML configuration if `dag_name` is passed.
+
+---
+
+## Architectural Deep Dive
+
+### The Lifecycle (`node.go`)
 Each agent manages its own state lifecycle running on an independent Goroutine loop:
 `Triage → Think → Activate → Collapse`
 
 Agents use a non-blocking `select` loop with a state channel, allowing them to wait efficiently (even for 48+ hours) if human intervention is required, without consuming CPU cycles.
 
-### 2. DAG Batching (`dag.go`)
-While agents are treated individually, querying the LLM for every single transaction is expensive and slow. To solve this, the `DAGNode` acts as a bus stop. 
+### DAG Batching (`dag.go`)
+Categorized Batching: There isn't just one global queue. Instead, there is a graph of distinct DAG Nodes representing specific logical boundaries. Arriving agents register with the exact DAG node corresponding to their category and entropy level.
+Once a specific DAG queue hits its `BatchSize` or the `FlushTimer` elapses, that DAG Node groups its waiting agents and dispatches them to the AI worker concurrently (the `Think` phase). 
 
-**Categorized Batching:** There isn't just one global queue. Instead, there is a graph of distinct DAG Nodes representing specific logical boundaries (e.g., one DAG node for "INFLOW Macro Classification", another specifically for "REVENUE Account Type Selection"). Arriving agents register with the exact DAG node corresponding to their category and entropy level.
-
-Once a specific DAG queue hits its `BatchSize` or the `FlushTimer` elapses, that DAG Node groups its waiting agents and dispatches them to the AI worker concurrently (the `Think` phase). Because they are waiting at the same node, the batch is guaranteed to be contextually identical. Agents waiting for an external reply (humans/webhooks) are isolated in `HOLD` states and are excluded from these batches.
-
-### 3. Shannon Entropy & The State Collapse Guardrail (`node.go` & `store.go`)
+### Shannon Entropy & The State Collapse Guardrail
 The engine mathematically models its confidence using **Shannon Entropy**.
-As the agent traverses the DAG, it accumulates candidate probabilities for different properties (Macro Class, Account, Entity). The unified confidence score $C$ is calculated as:
+As the agent traverses the DAG, it accumulates candidate probabilities. An agent is structurally barred at the database layer from transitioning to `READY_FOR_SYNC` unless its unified confidence $C \ge 0.98$. If confidence is too low, it transitions to a `HOLD` state.
 
-$$C = 1 - \frac{\sum_{k \in \text{properties}} H(k)}{\text{Total System Properties Required}}$$
-
-**The Guardrail:** An agent is structurally barred at the database layer from transitioning to `READY_FOR_SYNC` (syncing to QuickBooks) unless $C \ge 0.98$. If confidence is too low, it transitions to a `HOLD` state.
-
-### 4. Persistence & Caching (`store.go`)
-- **Postgres:** Agents continuously persist their `CurrentState`, `UnifiedConfidence`, and classification properties to the `fignode.staging_transactions` table.
-- **Redis:** Active agents are cached in Redis to survive server restarts, preventing in-flight transactions from being lost in memory.
-
-### 5. Telemetry & The Virtual Workforce (`telemetry.go`)
-The engine is deeply observable. Every state transition emits a NATS event (`ase.telemetry.*`). 
-When an agent hits a `HOLD_AMBIGUOUS` or `HOLD_MISSING_CONTEXT` state, the telemetry module automatically routes a request for help to the "Virtual Workforce". The Conversational Agent directly messages the business owner via their preferred communication channel (with **Email** as the primary default, falling back to other channels) to ask for the required context. Once the human replies, the Conversational Agent parses the response, updates the database, and the transaction agent resumes its journey toward State Collapse.
-
-### 6. Automated Backtracking & Feedback Compounding (`backtracking.go`)
-When a human provides context that contradicts a decision made earlier in the DAG (e.g. "This is not an asset, it's a liability"), the ASE uses an autonomous backtracking agent. 
-
-**State Rewinding:** The system injects the human's response and the agent's historical `ExecutionTrace` into the LLM. The LLM identifies the exact `DAGNodeID` where the erroneous decision was made. The agent then automatically deletes all classifications from that point onward, rewinds its state, and resumes processing from the corrected node.
-
-**The Compounding Layer:** Simultaneously, the LLM extracts a generalized accounting rule and a specific `rule_keyword` from the human's feedback. This rule is permanently saved to the company's ledger memory (`toro_core.agent_memory_rules`).
-On all future transactions, the DAG node batches perform a fast, case-insensitive keyword match. If a saved rule's keyword matches the transaction description, that instruction is dynamically injected into the LLM's prompt, overriding default assumptions and ensuring the system learns from past mistakes.
-
-## How to Use ASE (Entry Points)
-
-The engine is designed to be easily embedded in background workers (like a CDC pipeline that reads from QBO) or invoked directly via an API webhook. 
-
-### 1. Initialize the Engine Infrastructure
-You must create the `StateStore` (managing Redis and Postgres) and the `DAG` (the graph of specialized classification stops).
-
-```go
-// 1. Initialize the unified state store
-store := ase.NewStateStore(redisClient, pgPool, logger)
-
-// 2. Initialize the DAG and register processing nodes
-dag := ase.NewDAG(logger)
-// e.g. dag.RegisterNode(inflowMacroNode)
-// e.g. dag.RegisterNode(outflowMacroNode)
-```
-
-### 2. Spawning a New Transaction Agent
-For every net-new unclassified transaction that needs processing, you construct a micro-agent and launch it on its own Goroutine. 
-
-```go
-// 3. Create the micro-agent from a raw transaction
-agent := ase.NewASENode(
-    tenantID, 
-    "ACH ELECTRONIC DEBIT STRIPE", 
-    "OUTFLOW", 
-    "1500.00",
-)
-
-// 4. Launch the agent's lifecycle (runs asynchronously)
-go func() {
-    if err := agent.Run(context.Background(), dag, store); err != nil {
-        logger.Error("agent crashed", "node_id", agent.NodeID, "error", err)
-    }
-}()
-```
-
-### 3. Handling Resumptions (Webhooks & Wait States)
-If an agent hits a `HOLD_MISSING_CONTEXT` state, the Goroutine safely exits and clears its memory footprint. When an external system (like a webhook from Slack or the Conversational Agent) receives the missing context, the agent must be resurrected.
-
-To resume an agent:
-1. Update its properties in the `fignode.staging_transactions` database and append the new context.
-2. Reconstruct the `AutonomousSemanticEngineNode` struct from the database row.
-3. Call the `AutomatedBacktrackAndResume` orchestrator function. The system will autonomously determine if it needs to rewind its state or simply resume forward, and re-enter the DAG routing loop automatically.
+### Automated Backtracking & Feedback Compounding (`backtracking.go`)
+When a human provides context that contradicts a decision made earlier in the DAG:
+1. **State Rewinding:** The LLM identifies the exact `DAGNodeID` where the erroneous decision was made. The agent then automatically deletes all classifications from that point onward, rewinds its state, and resumes processing from the corrected node.
+2. **The Compounding Layer:** Simultaneously, the LLM extracts a generalized rule and a specific `rule_keyword` from the human's feedback. On all future transactions, the DAG node batches perform a fast keyword match. If matched, that instruction is dynamically injected into the LLM's prompt.

@@ -8,11 +8,15 @@ import (
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
 )
 
 type ToolDependencies struct {
 	DB          *database.Queries
+	DBPool      *pgxpool.Pool
+	Redis       *redis.Client
 	Logger      *slog.Logger
 	Store       ase.StatePersister
 	NC          *nats.Conn
@@ -37,6 +41,9 @@ type DomainTool interface {
 
 	// GetClassifier returns the domain-specific classifier for mapping LLM responses to NodeClassifications.
 	GetClassifier(deps ToolDependencies) ase.Classifier
+
+	// GetStatePersister returns the domain-specific state store.
+	GetStatePersister(deps ToolDependencies) ase.StatePersister
 }
 
 var registry = make(map[string]DomainTool)

@@ -259,3 +259,7 @@ func (t *BookkeepingTool) GetClassifier(deps ToolDependencies) ase.Classifier {
 	c.SetVectorStore(deps.VectorStore)
 	return c
 }
+
+func (t *BookkeepingTool) GetStatePersister(deps ToolDependencies) ase.StatePersister {
+	return NewStateStore(deps.DBPool, deps.Redis)
+}

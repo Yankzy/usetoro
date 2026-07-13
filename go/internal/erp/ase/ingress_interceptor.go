@@ -14,16 +14,18 @@ import (
 
 // AseIngressInterceptor handles interception logic for ASE-related webhook replies.
 type AseIngressInterceptor struct {
-	pool   *pgxpool.Pool
-	nc     *nats.Conn
-	logger *slog.Logger
+	pool        *pgxpool.Pool
+	nc          *nats.Conn
+	logger      *slog.Logger
+	storeGetter func(domainTool string) StatePersister
 }
 
-func NewAseIngressInterceptor(pool *pgxpool.Pool, nc *nats.Conn, logger *slog.Logger) *AseIngressInterceptor {
+func NewAseIngressInterceptor(pool *pgxpool.Pool, nc *nats.Conn, logger *slog.Logger, storeGetter func(string) StatePersister) *AseIngressInterceptor {
 	return &AseIngressInterceptor{
-		pool:   pool,
-		nc:     nc,
-		logger: logger,
+		pool:        pool,
+		nc:          nc,
+		logger:      logger,
+		storeGetter: storeGetter,
 	}
 }
 
@@ -59,36 +61,45 @@ func (i *AseIngressInterceptor) Intercept(ctx context.Context, req *conversation
 		domainTool := aseDomainTool
 		dagName := aseDagName
 		startNodeID := "default"
-		var rawPayload []byte
-		queryErr := i.pool.QueryRow(ctx, `SELECT ase_execution_trace FROM fignode.staging_transactions WHERE id = $1`, nodeID).Scan(&rawPayload)
-		if queryErr == nil {
-			var trace []struct {
-				DAGNodeID    string `json:"dag_node_id"`
-				ResumeNodeID string `json:"resume_node_id"`
-			}
-			if json.Unmarshal(rawPayload, &trace) == nil {
-				startNodeID = ""
-				if len(trace) > 0 {
-					lastStep := trace[len(trace)-1]
-					if lastStep.ResumeNodeID != "" {
-						startNodeID = lastStep.ResumeNodeID
-					} else {
-						startNodeID = lastStep.DAGNodeID
-					}
+		
+		var store StatePersister
+		if i.storeGetter != nil {
+			store = i.storeGetter(domainTool)
+		}
+
+		if store != nil {
+			rawPayload, err := store.GetExecutionTrace(ctx, nodeID)
+			if err == nil {
+				var trace []struct {
+					DAGNodeID    string `json:"dag_node_id"`
+					ResumeNodeID string `json:"resume_node_id"`
 				}
-				if startNodeID == "" {
-					startNodeID = "direction_router"
+				if json.Unmarshal(rawPayload, &trace) == nil {
+					startNodeID = ""
+					if len(trace) > 0 {
+						lastStep := trace[len(trace)-1]
+						if lastStep.ResumeNodeID != "" {
+							startNodeID = lastStep.ResumeNodeID
+						} else {
+							startNodeID = lastStep.DAGNodeID
+						}
+					}
+					if startNodeID == "" {
+						startNodeID = "direction_router"
+					}
 				}
 			}
 		}
+
 		if req.HasAttachments {
 			i.logger.Info("ingress(general): deterministic intercept - inbound email has attachments", "node_id", nodeID, "dag_name", dagName, "domain_tool", domainTool, "start_node_id", startNodeID)
 
-			// 1. Update DB to RESUME_PENDING
-			updateQ := `UPDATE fignode.staging_transactions SET status = $2, updated_at = NOW() WHERE id = $1`
-			_, execErr := i.pool.Exec(ctx, updateQ, nodeID, "RESUME_PENDING")
-			if execErr != nil {
-				i.logger.Error("ingress(general): failed to update staging transaction for deterministic intercept", "error", execErr)
+			if store != nil {
+				if execErr := store.UpdateNodeState(ctx, nodeID, NodeState("RESUME_PENDING")); execErr != nil {
+					i.logger.Error("ingress(general): failed to update transaction for deterministic intercept", "error", execErr)
+				}
+			} else {
+				i.logger.Error("ingress(general): no state persister found for deterministic intercept", "domain_tool", domainTool)
 			}
 
 			// 2. Publish ase.events.resume

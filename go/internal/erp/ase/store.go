@@ -14,4 +14,6 @@ type StatePersister interface {
 	RemoveCachedAgent(ctx context.Context, nodeID string) error
 	AcquireLock(ctx context.Context, nodeID string) (bool, error)
 	ReleaseLock(ctx context.Context, nodeID string) error
+	GetExecutionTrace(ctx context.Context, nodeID string) ([]byte, error)
+	UpdateNodeState(ctx context.Context, nodeID string, state NodeState) error
 }

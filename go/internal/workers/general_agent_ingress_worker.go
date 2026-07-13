@@ -11,6 +11,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/conversation"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
+	"github.com/Yankzy/usetoro/internal/erp/ase/domain_tools"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -41,7 +42,20 @@ type GeneralAgentIngressWorker struct {
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
 		interceptors := []conversation.IngressInterceptor{
-			ase.NewAseIngressInterceptor(deps.DBPool, deps.Queue, deps.Logger),
+			ase.NewAseIngressInterceptor(deps.DBPool, deps.Queue, deps.Logger, func(domain string) ase.StatePersister {
+				dt := domain_tools.Get(domain)
+				if dt == nil {
+					return nil
+				}
+				td := domain_tools.ToolDependencies{
+					DBPool:  deps.DBPool,
+					Redis:   deps.Redis,
+					Logger:  deps.Logger,
+					NC:      deps.Queue,
+					Runtime: deps.Runtime,
+				}
+				return dt.GetStatePersister(td)
+			}),
 		}
 
 		return &GeneralAgentIngressWorker{

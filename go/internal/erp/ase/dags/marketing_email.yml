@@ -1,0 +1,502 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  max_llm_retries: 3
+  llm_timeout_seconds: 90
+  batch_flush_seconds: 5
+  active_agent_ttl_minutes: 15
+  lock_ttl_seconds: 30
+  domain_tool: "email_marketing"
+
+  # -----------------------------------------------------------------------
+  # Vector Memory (ASE Semantic Retrieval Layer for Brand/Copy Context)
+  # -----------------------------------------------------------------------
+  vector_memory:
+    enabled: true
+    embedding_provider: "openai"
+    openai_embedding_model: "text-embedding-3-small"
+    embedding_dimensions: 1536
+    scann_num_leaves: 15
+    retrieval_top_k: 3  # Injects the top 3 highest-converting historic emails as semantic context
+    hydrator_interval_seconds: 60
+    hydrator_min_confidence: 0.98
+    hydrator_batch_size: 25
+
+prompts:
+  _shared_guardrails: &guardrails |
+    ### CONFIDENCE GUARDRAILS
+    - CRITICAL: "Confidence" does NOT mean "how sure are you of your answer". It means "should this marketing email automatically dispatch or advance to the next delivery node?".
+    - The system has a strict guardrail: if your top candidate's confidence score is < 0.98, the lead workflow will be placed on HOLD, triggering autonomous data enrichment or human intervention.
+    - If the context payload is complete, brand-compliant, and optimized for delivery, you MUST set the highest score to >= 0.98.
+    - If you detect a compliance violation, high risk of spam, missing token data (e.g., missing first name, dead company domain), or extreme context ambiguity, you MUST intentionally drop the highest score to < 0.98 (e.g., 0.95).
+    - Your response must be a valid JSON array of RFC 6902 JSON Patch operations. Each operation must have "op", "path", and "value" fields.
+    - Because confidence is a probability distribution, the candidates map MUST contain at least 2 candidates.
+    - EXTREMELY IMPORTANT: When you intentionally trigger a hold (< 0.98), your `reasoning` field will serve as a DIRECT INSTRUCTION payload passed down to enrichment scraping agents or notification channels.
+  
+  _copy_compliance_rules: &copy_compliance_rules |
+    - Your `reasoning` MUST explicitly cite the exact brand guideline, technical token requirement, or compliance law broken (e.g., "CAN-SPAM Opt-Out Missing", "Missing Personalization Tokens", "Spam-Trigger Density Alert", "Invalid Offer/Discount Alignment").
+    - RESOLUTION OVERRIDE: If the `context` array contains an updated message payload showing that an enrichment tool successfully pulled missing data points or a user manually edited the copy, you MUST consider the issue RESOLVED. Select the appropriate compliant state and set confidence >= 0.98.
+
+  macro_intent_inbound_specialist:
+    - |
+      You are an expert growth marketer acting as a Macro-Intent Inbound Router inside an autonomous agency engine.
+      Your job is to classify inbound lead event objects into one of the following strategic marketing macros: DEMO_REQUEST, CONTENT_DOWNLOAD, WEBINAR_REGISTRATION, or CHATBOT_ENGAGEMENT.
+
+      ### CONTEXT
+      * Traffic Direction: INFLOW (User initiated contact)
+      * Apply these conversion structural heuristics:
+        - Free email providers (Gmail/Yahoo) downloading content are NOT high-priority enterprise routes — classify as CONTENT_DOWNLOAD but force a confidence score below 0.90 to trigger a background clear-bit/enrichment loop.
+        - Direct company domains booking meetings are immediate high-priority DEMO_REQUEST lines.
+
+      ### COMPANY VOICE / RULES
+      - If a "company_rules" array is provided, strictly adhere to these criteria over default heuristics (e.g., specific lead-scoring overrides).
+    - *guardrails
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "lead_id_123": {
+                "property": "macro_intent",
+                "candidates": {
+                  "1": { "value": "DEMO_REQUEST", "confidence": 0.99, "reasoning": "Corporate domain booking directly via landing page calendar widget." },
+                  "2": { "value": "CONTENT_DOWNLOAD", "confidence": 0.01, "reasoning": "Fallback match probability." }
+                }
+              }
+            }
+          }
+        ]
+
+  macro_intent_outbound_specialist:
+    - |
+      You are an expert outbound copywriter and list-building strategist.
+      Classify outbound data profiles into target campaign frameworks: COLD_OUTREACH, ACCOUNT_BASED_MARKETING (ABM), or WIN_BACK_CAMPAIGN.
+    - *guardrails
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "lead_id_123": {
+                "property": "macro_intent",
+                "candidates": {
+                  "1": { "value": "ACCOUNT_BASED_MARKETING", "confidence": 0.98, "reasoning": "Matches ICP profile constraints exactly based on ARR and headcount parameters." },
+                  "2": { "value": "COLD_OUTREACH", "confidence": 0.02, "reasoning": "Standard outbound fallback sequence." }
+                }
+              }
+            }
+          }
+        ]
+
+  campaign_strategy_demo_specialist:
+    - |
+      You are the Master Campaign Strategy Node for High-Intent Demo Leads. 
+      Map this lead metadata payload to the exact technical email sequence type.
+      Selection Rules:
+      1. HIGH_TOUCH_EXEC: If lead title is C-Suite or VP at a company > $10M ARR.
+      2. STANDARD_FAST_TRACK: If lead is an operational manager or individual contributor with buying intent.
+      3. NURTURE_HOLD: If calendar slot is booked but no LinkedIn profile data is parsed.
+    - *guardrails
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "lead_id_123": {
+                "property": "campaign_type",
+                "candidates": {
+                  "1": { "value": "HIGH_TOUCH_EXEC", "confidence": 0.98, "reasoning": "Lead is CTO of a mid-market enterprise entity." },
+                  "2": { "value": "STANDARD_FAST_TRACK", "confidence": 0.02, "reasoning": "Alternative baseline path assignment." }
+                }
+              }
+            }
+          }
+        ]
+
+  campaign_strategy_outbound_specialist:
+    - |
+      You are the Master Campaign Strategy Node for Outbound Leads.
+      Evaluate demographic/firmographic fields and select the correct programmatic copy container.
+      Selection Rules:
+      1. COLD_OUTREACH: General target market alignment.
+      2. ACCOUNT_BASED_MARKETING: High-value tier-1 account lists requiring hyper-customization vectors.
+    - *guardrails
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "lead_id_123": {
+                "property": "campaign_type",
+                "candidates": {
+                  "1": { "value": "ACCOUNT_BASED_MARKETING", "confidence": 0.99, "reasoning": "Matches high-value target list parameters." },
+                  "2": { "value": "COLD_OUTREACH", "confidence": 0.01, "reasoning": "Standard sequence alternative." }
+                }
+              }
+            }
+          }
+        ]
+
+  enrichment_gate_specialist:
+    - |
+      Evaluate the structural metadata completeness of this lead record. 
+      Rule: Personalized text generation requires a minimum of: First Name, Verified Company Name, and Core Operational Pain Point.
+      If First Name or Company Name is missing, or formatting is corrupted (e.g. "hi", "test"), select "HOLD_MISSING_PROFILE_DATA".
+      Select from: "COMPLETE_DATA_PASS", "DYNAMIC_ENRICHMENT_REQUIRED", "HOLD_MISSING_PROFILE_DATA".
+    - *guardrails
+    - *copy_compliance_rules
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "lead_id_123": {
+                "property": "enrichment_gate_decision",
+                "candidates": {
+                  "1": { "value": "HOLD_MISSING_PROFILE_DATA", "confidence": 0.95, "reasoning": "First name parameter parsed as a raw null value. Halting generation sequence to preserve domain health." },
+                  "2": { "value": "COMPLETE_DATA_PASS", "confidence": 0.05, "reasoning": "Forced bypass failure route." }
+                }
+              }
+            }
+          }
+        ]
+
+  copy_generation_agent_specialist:
+    - |
+      You are an elite, high-converting growth copywriter. Your job is to compile a highly personalized message payload.
+      Inject fields: {{.LeadFirstName}}, {{.LeadCompany}}, and use the contextual historical winners stored in the vector database wrapper.
+      Ensure strict adherence to brand guidelines. Avoid aggressive, scammy pitch patterns.
+    - *guardrails
+    - *copy_compliance_rules
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "lead_id_123": {
+                "property": "copy_generation_output",
+                "candidates": {
+                  "1": { "value": "GENERATION_SUCCESSFUL", "confidence": 0.99, "reasoning": "Personalization arrays fully merged. Pitch vectors align perfectly with target pain point context." },
+                  "2": { "value": "HOLD_GENERATION_FAILED", "confidence": 0.01, "reasoning": "Context window saturation anomaly." }
+                }
+              }
+            }
+          }
+        ]
+
+  brand_tone_compliance_specialist:
+    - |
+      You are a rigorous Brand Compliance Auditor and Legal Advisor. Review the generated copy payload against regulations:
+      1. CAN-SPAM Act Check: The email footer must implicitly include placeholder logic for a physical company address and a functioning unsubscription mechanic. If absent, output "HOLD_SPAM_RISK".
+      2. Spam-Trigger Word Density: Scan for high concentrations of blacklisted sequences ("FREE CASH NOW", "GUARANTEED ROI!!!"). If found, select "HOLD_SPAM_RISK".
+      3. If compliant, select "COMPLIANT_COPY_PASS".
+    - *guardrails
+    - *copy_compliance_rules
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "lead_id_123": {
+                "property": "compliance_gate_decision",
+                "candidates": {
+                  "1": { "value": "COMPLIANT_COPY_PASS", "confidence": 0.99, "reasoning": "Opt-out patterns intact. Tone check confirms healthy readability indices and zero spam-risk signatures." },
+                  "2": { "value": "HOLD_SPAM_RISK", "confidence": 0.01, "reasoning": "Flagged potential optimization anomalies." }
+                }
+              }
+            }
+          }
+        ]
+
+  universal_outflow_deal_gatekeeper:
+    - |
+      You are a high-stakes Account Director protecting executive relationships. This is the pipeline's ultimate "Materiality Review".
+      1. Account Value Protection: If the target enterprise organization has an ARR >= $50M, select "HOLD_VIP_EXECUTIVE_SIGN_OFF" to enforce human-in-the-loop (HITL) approval before dispatching an automated outbound message.
+      2. Run Rate Constraint: If the lead context indicates an active enterprise partner or legacy account, select "HOLD_CUSTOMER_SUCCESS_CROSSOVER".
+      3. If neither baseline is tripped, select "COMPLIANT_DISPATCH".
+    - *guardrails
+    - *copy_compliance_rules
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "lead_id_123": {
+                "property": "deal_gatekeeper_decision",
+                "candidates": {
+                  "1": { "value": "COMPLIANT_DISPATCH", "confidence": 0.99, "reasoning": "Account metrics match standard autonomous routing protocols safely." },
+                  "2": { "value": "HOLD_VIP_EXECUTIVE_SIGN_OFF", "confidence": 0.01, "reasoning": "Tripped high-value enterprise asset safeguard limits." }
+                }
+              }
+            }
+          }
+        ]
+
+  delivery_payload_prompt:
+    - |
+      You are an expert technical infrastructure system. Your job is to select the exact programmatic Outbox Provider Configuration Profile ID from the agency delivery grid.
+      1. Isolate the target domain classification profile (e.g., Cold domain vs Warm relationship domain).
+      2. Match the historical reputation vectors passed in the row history.
+      3. Select the best server pipeline footprint ID to prevent deliverability dilution.
+      
+      AGENCY DISPATCH CHANNELS:
+      {{.OutboxDeliveryGrid}}
+    - *guardrails
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "lead_id_123": {
+                "property": "outbox_selection",
+                "candidates": {
+                  "1": { "value": "provider_profile_smtp_09", "confidence": 0.99, "reasoning": "Optimized tracking records trace smoothly to this delivery pool node." },
+                  "2": { "value": "provider_profile_smtp_01", "confidence": 0.01, "reasoning": "Unoptimized fallback target option." }
+                }
+              }
+            }
+          }
+        ]
+
+# ====================================================================
+# DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY
+# ====================================================================
+# 
+dag:
+  entry_node: lead_source_router
+  nodes:
+
+    # ------------------------------------------------------------------
+    # STEP 0: ROUTING LEAD EVENTS
+    # ------------------------------------------------------------------
+    lead_source_router:
+      name: lead_source_router
+      batch_flush_seconds: &flush 5
+      kind: initial_router
+      execution_parameters:
+        payload_key: lead_traffic_direction
+      batch_size: &bsize 50
+      edge_type: &estatic static
+      children:
+        INBOUND: macro_intent_inbound
+        OUTBOUND: macro_intent_outbound
+
+    # ------------------------------------------------------------------
+    # STEP 1: MACRO STRATEGIC INTENT ROUTING
+    # ------------------------------------------------------------------
+    macro_intent_inbound:
+      name: macro_intent_inbound
+      kind: macro_classifier
+      prompt_key: macro_intent_inbound_specialist
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      edge_type: *estatic
+      children:
+        DEMO_REQUEST: campaign_strategy_demo
+        CONTENT_DOWNLOAD: campaign_strategy_nurture
+        WEBINAR_REGISTRATION: campaign_strategy_nurture
+        CHATBOT_ENGAGEMENT: campaign_strategy_nurture
+
+    macro_intent_outbound:
+      name: macro_intent_outbound
+      kind: macro_classifier
+      prompt_key: macro_intent_outbound_specialist
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      edge_type: *estatic
+      children:
+        COLD_OUTREACH: campaign_strategy_outbound
+        ACCOUNT_BASED_MARKETING: campaign_strategy_outbound
+        WIN_BACK_CAMPAIGN: campaign_strategy_outbound
+
+    # ------------------------------------------------------------------
+    # STEP 2: CAMPAIGN STRATEGY CONFIGURATION BUCKETS
+    # ------------------------------------------------------------------
+    campaign_strategy_demo:
+      name: campaign_strategy_demo
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: campaign_strategy_demo_specialist
+      edge_type: *estatic
+      children:
+        "HIGH_TOUCH_EXEC": data_enrichment_gate
+        "STANDARD_FAST_TRACK": data_enrichment_gate
+        "NURTURE_HOLD": hold_missing_lead_profile
+
+    campaign_strategy_outbound:
+      name: campaign_strategy_outbound
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: campaign_strategy_outbound_specialist
+      edge_type: *estatic
+      children:
+        "ACCOUNT_BASED_MARKETING": data_enrichment_gate
+        "COLD_OUTREACH": data_enrichment_gate
+
+    campaign_strategy_nurture:
+      name: campaign_strategy_nurture
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: campaign_strategy_demo_specialist # Reusing high-intent logic heuristics
+      edge_type: *estatic
+      children:
+        "STANDARD_FAST_TRACK": data_enrichment_gate
+
+    # ------------------------------------------------------------------
+    # STEP 3: ENRICHMENT AND PROFILE SANITIZATION GATES
+    # ------------------------------------------------------------------
+    data_enrichment_gate:
+      name: data_enrichment_gate
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: enrichment_gate_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        COMPLETE_DATA_PASS: copy_generation_node
+        DYNAMIC_ENRICHMENT_REQUIRED: autonomous_enrichment_runner
+        HOLD_MISSING_PROFILE_DATA: hold_missing_lead_profile
+
+    autonomous_enrichment_runner:
+      name: autonomous_enrichment_runner
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: "api_clearbit_linkedin_scraping_worker"
+      resume_child: data_enrichment_gate
+
+    hold_missing_lead_profile:
+      name: hold_missing_lead_profile
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_INSUFFICIENT_METADATA"
+      hold_reason_string: "Lead validation dropped below strict data integrity threshold targets. Awaiting profile parameters."
+      email:
+        subject: "[Internal Agency Notice] Missing Persona Tokens for Lead {{.LeadEmail}}"
+        body_text: |
+          Hi Team,
+
+          An automated campaign workflow for lead record {{.LeadEmail}} was put on hold. 
+          The target record contains missing profile context tokens or unparseable form parameters.
+
+          Please upload an enriched CSV update or resolve this block manually within your tracking panel.
+      execution_parameters:
+        action_provider: "db_workspace_queue_lookup"
+      resume_child: data_enrichment_gate
+
+    # ------------------------------------------------------------------
+    # STEP 4: GENERATION AND COPY EDITING AUDITS
+    # ------------------------------------------------------------------
+    copy_generation_node:
+      name: copy_generation_node
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: copy_generation_agent_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        GENERATION_SUCCESSFUL: compliance_guard_gate
+        HOLD_GENERATION_FAILED: hold_missing_lead_profile
+
+    compliance_guard_gate:
+      name: compliance_guard_gate
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: brand_tone_compliance_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        COMPLIANT_COPY_PASS: high_value_deal_gate
+        HOLD_SPAM_RISK: hold_spam_quarantine
+
+    hold_spam_quarantine:
+      name: hold_spam_quarantine
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_COMPLIANCE_ALERT"
+      hold_reason_string: "Copy generation patterns triggered high brand-dilution markers or potential spam filters."
+      email:
+        subject: "[Compliance Block] Action Required: Review Copy Draft for {{.LeadEmail}}"
+        body_text: |
+          Hi Campaign Manager,
+
+          The autonomous copywriter generated a script for {{.LeadEmail}} that has been quarantined by our compliance node due to potential spam triggers or missing structural footprints.
+
+          Please adjust the prompt parameters or override the patch file manually to proceed.
+      execution_parameters:
+        action_provider: "hitl_copy_approval_dashboard"
+      resume_child: high_value_deal_gate
+
+    # ------------------------------------------------------------------
+    # STEP 5: DEALS SAFEGUARD & DISPATCH ENGINE TERMINAL
+    # ------------------------------------------------------------------
+    high_value_deal_gate:
+      name: high_value_deal_gate
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: universal_outflow_deal_gatekeeper
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        COMPLIANT_DISPATCH: dispatch_routing_terminal
+        HOLD_VIP_EXECUTIVE_SIGN_OFF: hold_vip_account_review
+        HOLD_CUSTOMER_SUCCESS_CROSSOVER: hold_vip_account_review
+
+    hold_vip_account_review:
+      name: hold_vip_account_review
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_HUMAN_SIGN_OFF"
+      hold_reason_string: "Account ARR or Deal parameters flag this entity as a top-tier target asset requiring manual validation."
+      email:
+        subject: "⚠️ VIP Deal Sign-off Required: Outbound Sequence for {{.LeadCompany}}"
+        body_text: |
+          Hello Director,
+
+          Our autonomous agent has generated a highly targeted hyper-personalized ABM approach for {{.LeadFirstName}} at {{.LeadCompany}}. 
+          Because this account value satisfies our highest enterprise metric, automatic dispatching has been gated.
+
+          Review the draft and give the go when satisfied.
+      execution_parameters:
+        action_provider: "hitl_vip_slack_approval_hook"
+      resume_child: dispatch_routing_terminal
+
+    dispatch_routing_terminal:
+      name: dispatch_routing_terminal
+      kind: terminal
+      prompt_key: delivery_payload_prompt
+      edge_type: dynamic
+      dynamic_edge_provider: "db_outbox_delivery_grid"
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      execution_parameters:
+        close_status: "DISPATCHED"

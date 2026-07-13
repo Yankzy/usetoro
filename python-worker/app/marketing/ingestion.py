@@ -53,3 +53,7 @@ def parse_targets(file_path: str = "targets.csv") -> List[Dict[str, Any]]:
             })
             
     return results
+
+if __name__ == "__main__":
+    print(parse_targets())
+    

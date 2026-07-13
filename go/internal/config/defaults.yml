@@ -271,6 +271,10 @@ agents:
 
 
 workers:
+  marketing_email_ingress:
+    activity_type: workers.marketing.email.ingress
+    subject: ""
+    group: ""
   csv_mapping:
     activity_type: workers.database.insert_rows
     # Leave subject empty to derive from activity type; override here if needed.

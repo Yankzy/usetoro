@@ -6,11 +6,12 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Yankzy/usetoro/internal/services/mailpool"
 	"github.com/Yankzy/usetoro/tap/pkg/micrion"
 )
 
 // NewRouter sets up the HTTP routes for the application.
-func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
+func NewRouter(h *Handler, wm *micrion.WalletManager, mailpoolHandler *mailpool.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", h.Check) // Legacy
 	mux.HandleFunc("GET /health/live", h.Liveness)
@@ -18,6 +19,18 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 
 	// Generic webhook endpoint (supports all providers)
 	mux.HandleFunc("POST /webhooks/{provider}/{conn_id}", h.HandleWebhook)
+
+	// Email Tracking Proxy (Revenue Attribution)
+	mux.HandleFunc("GET /api/track/click", h.HandleTrackClick)
+	mux.HandleFunc("GET /api/track/open", h.HandleTrackOpen)
+	mux.HandleFunc("POST /api/webhooks/conversion", h.HandleConversionWebhook)
+
+	// Unsubscribe Endpoint (One-Click & Web)
+	mux.HandleFunc("GET /api/v1/marketing/unsubscribe", h.HandleUnsubscribe)
+	mux.HandleFunc("POST /api/v1/marketing/unsubscribe", h.HandleUnsubscribe)
+
+	// Mailpool Deliverability Webhook
+	mux.HandleFunc("POST /webhooks/mailpool", h.HandleMailpoolWebhook)
 
 	// Channel webhooks for multi-channel conversational ingress
 	mux.HandleFunc("POST /webhooks/twilio/sms", h.HandleTwilioSMSWebhook)
@@ -55,7 +68,7 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	mux.Handle("GET /wallet/balance", h.Authenticator.Middleware(http.HandlerFunc(h.HandleGetWalletBalance)))
 	mux.Handle("POST /wallet/topup", h.Authenticator.Middleware(http.HandlerFunc(h.HandleCreateWalletTopUp)))
 	mux.Handle("POST /wallet/payment-sheet", h.Authenticator.Middleware(http.HandlerFunc(h.HandleCreatePaymentSheet)))
-	
+
 	// Agent Tollbooth Endpoints (Strictly Metered)
 	agentToll := micrion.TollboothMiddleware(wm, 1616)
 	mux.Handle("GET /agent/realms/{realmId}/transactions", agentToll(http.HandlerFunc(h.HandleGetUnifiedTransactions)))
@@ -102,10 +115,13 @@ func NewRouter(h *Handler, wm *micrion.WalletManager) *http.ServeMux {
 	mux.HandleFunc("GET /ase/config/version", h.HandleGetASEDagVersion)
 	mux.HandleFunc("POST /ase/config/restore", h.HandleRestoreASEDagVersion)
 
-
 	// Marketing Lead Forms
 	// eg: https://prime-legible-turkey.ngrok-free.app/api/forms/susanaai.com
 	mux.HandleFunc("POST /forms/{website}", h.HandleCaptureForm)
+
+	if mailpoolHandler != nil {
+		mailpoolHandler.Mount(mux, h.Authenticator.Middleware)
+	}
 
 	return mux
 }

@@ -1,0 +1,5559 @@
+openapi: 3.0.0
+info:
+  version: '1.0'
+  title: Mailpool API
+  summary: ''
+servers:
+- url: https://app.mailpool.io/v1/api
+  description: ''
+paths:
+  /domains/suggestions:
+    get:
+      tags:
+      - Domains
+      summary: Get Domains Suggestions
+      description: List of suggested domains
+      operationId: get-domains-suggestions
+      parameters:
+      - name: domain
+        in: query
+        description: Base domain for generating suggestions
+        required: true
+        schema:
+          type: string
+      - name: limit
+        in: query
+        description: Up to 10 suggestions per each request allowed
+        required: true
+        schema:
+          type: number
+      - name: offset
+        in: query
+        description: Offset for paginated response
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: Suggested domains
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    domain:
+                      type: string
+                    price:
+                      type: number
+                    available:
+                      type: boolean
+                  required:
+                  - domain
+                  - available
+                x-examples:
+                  Example 1:
+                  - domain:
+                    - test1.com
+                    - test2.com
+                    price: 3.24
+                    status: available
+      security:
+      - {}
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/info:
+    get:
+      tags:
+      - Domains
+      summary: Get domain info
+      description: Is the domain available for purchase and its price
+      operationId: get-domain-info
+      parameters:
+      - name: domain
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available:
+                    type: boolean
+                  price:
+                    type: number
+                required:
+                - available
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/{domainId}/dns:
+    get:
+      tags:
+      - Domains
+      summary: Get domain DNS Records
+      description: Get domain DNS Records
+      operationId: get-domains-dns
+      parameters:
+      - name: domainId
+        in: path
+        description: Domain ID
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DnsRecord'
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    put:
+      tags:
+      - Domains
+      summary: Update domain DNS records
+      description: Update domain DNS records
+      operationId: put-domains-dns
+      parameters:
+      - name: domainId
+        in: path
+        description: Domain ID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/DnsRecord'
+            examples:
+              Example 1:
+                value:
+                - type: A
+                  key: string
+                  value: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DnsRecord'
+                x-examples:
+                  Example 1:
+                  - type: A
+                    key: string
+                    value: string
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/:
+    get:
+      tags:
+      - Domains
+      summary: Get domains list
+      description: Get domains list
+      operationId: get-domains
+      parameters:
+      - name: limit
+        in: query
+        required: true
+        schema:
+          type: number
+      - name: offset
+        in: query
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Domain'
+                  total:
+                    type: number
+                required:
+                - data
+                - total
+              examples:
+                Example 1:
+                  value:
+                    data:
+                    - id: '123456'
+                      createdAt: '2024-11-25T10:00:00Z'
+                      domain: example.com
+                      domainOwner:
+                        id: '123'
+                        company: Tech Innovators Inc.
+                        firstName: John
+                        lastName: Doe
+                        email: john.doe@example.com
+                        streetAddress1: 123 Innovation Lane
+                        streetAddress2: Suite 200
+                        city: San Francisco
+                        state: CA
+                        postalCode: '94107'
+                        country: USA
+                        phone: +1 555 000 0000
+                      redirectUrl: https://example.com/home
+                      status: active
+                      type: google
+                      expireAt: '2025-11-25T10:00:00Z'
+                    total: 0
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    post:
+      tags:
+      - Domains
+      summary: Register domains
+      description: Create domain
+      operationId: post-domains
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domains:
+                  type: array
+                  items:
+                    type: string
+                domainOwnerId:
+                  type: number
+                  description: ID of the existing domain owner. Either `domainOwnerId`
+                    or `newDomainOwner` must be provided.
+                newDomainOwner:
+                  $ref: '#/components/schemas/DomainOwner_2'
+                  description: Object containing information about a new domain owner.
+                    Either `domainOwnerId` or `newDomainOwner` must be provided.
+                redirect:
+                  type: string
+                dmarcEmail:
+                  type: string
+                dmarcPolicy:
+                  $ref: '#/components/schemas/DmarcPolicy'
+                  description: Optional DMARC policy to apply when registering the
+                    domains. One of `none`, `quarantine`, or `reject`.
+              required:
+              - domains
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Domain_2'
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/{domainId}:
+    delete:
+      tags:
+      - Domains
+      summary: Delete domain
+      description: Delete domain
+      operationId: delete-domains-:domainId
+      parameters:
+      - name: domainId
+        in: path
+        description: Domain ID
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Domain'
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    get:
+      tags:
+      - Domains
+      summary: Get domain
+      operationId: get-domains-domainId
+      parameters:
+      - name: domainId
+        in: path
+        description: Domain ID
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Domain'
+              examples:
+                Example 1:
+                  value:
+                    id: '123456'
+                    createdAt: '2024-11-25T10:00:00Z'
+                    domain: example.com
+                    expireAt: '2025-11-25T10:00:00Z'
+                    domainOwner:
+                      id: '123'
+                      company: Tech Innovators Inc.
+                      firstName: John
+                      lastName: Doe
+                      email: john.doe@example.com
+                      streetAddress1: 123 Innovation Lane
+                      streetAddress2: Suite 200
+                      city: San Francisco
+                      state: CA
+                      postalCode: '94107'
+                      country: USA
+                      phone: +1 555 000 0000
+                    redirectUrl: https://example.com/home
+                    status: active
+                    type: google
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/owners:
+    get:
+      tags:
+      - Domain Owners
+      summary: Get saved domains owners
+      description: Get domains owners
+      operationId: get-domains-owners
+      parameters:
+      - name: limit
+        in: query
+        required: true
+        schema:
+          type: number
+      - name: offset
+        in: query
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DomainOwner'
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    post:
+      tags:
+      - Domain Owners
+      summary: Add saved domain owner
+      description: Add domain owner
+      operationId: post-domains-owners
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DomainOwner_2'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainOwner'
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/owners/{ownerId}:
+    put:
+      tags:
+      - Domain Owners
+      summary: Update saved domain owner
+      operationId: put-domains-owners-ownerId
+      parameters:
+      - name: ownerId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DomainOwner_2'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainOwner'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    delete:
+      tags:
+      - Domain Owners
+      summary: Delete saved domain owner
+      operationId: delete-domains-owners-ownerId
+      parameters:
+      - name: ownerId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainOwner'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/{domainId}/owner:
+    put:
+      tags:
+      - Domain Owners
+      summary: Update domain owner for the domain
+      operationId: put-domains-domainId-owner
+      parameters:
+      - name: domainId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DomainOwner_2'
+      responses:
+        '200':
+          description: OK
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/{domainId}/redirect-url:
+    post:
+      tags:
+      - Domains
+      summary: Set redirect URL
+      description: Set redirect URL
+      operationId: post-domains-redirectUrl
+      parameters:
+      - name: domainId
+        in: path
+        description: Domain ID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+              required:
+              - url
+            examples:
+              Example 1:
+                value:
+                  url: https://example.com/home
+              Example 2:
+                value:
+                  url: https://mywebsite.org/dashboard
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Domain'
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/{domainId}/dmarc-email:
+    post:
+      tags:
+      - Domains
+      summary: Set DMARC email
+      operationId: post-domains-domainId-dmarc-email
+      parameters:
+      - name: domainId
+        in: path
+        description: Domain ID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+              required:
+              - email
+            examples:
+              Example 1:
+                value:
+                  email: john.doe@example.com
+              Example 2:
+                value:
+                  email: emma.smith@globalsolutions.com
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Domain'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/{domainId}/dmarc-policy:
+    post:
+      tags:
+      - Domains
+      summary: Set DMARC policy
+      operationId: post-domains-domainId-dmarc-policy
+      parameters:
+      - name: domainId
+        in: path
+        description: Domain ID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                policy:
+                  $ref: '#/components/schemas/DmarcPolicy'
+              required:
+              - policy
+            examples:
+              Example 1:
+                value:
+                  policy: quarantine
+              Example 2:
+                value:
+                  policy: reject
+              Example 3:
+                value:
+                  policy: none
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Domain'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/transfer:
+    post:
+      tags:
+      - Domains
+      summary: Domains transfer
+      operationId: post-domains-transfer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domains:
+                  type: array
+                  items:
+                    type: string
+              required:
+              - domains
+            examples:
+              Example 1:
+                value:
+                  domains:
+                  - example.com
+                  - acme.io
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TransferDomainResponse'
+              examples:
+                Example 1:
+                  value:
+                  - domain: example.com
+                    nameservers:
+                    - a.nameserver.com
+                    - b.nameservre.com
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/{domainId}/transfer-out/auth-code:
+    post:
+      tags:
+      - Domains
+      summary: Get domain transfer-out auth code
+      description: 'Request a transfer auth code (EPP code) for a domain so the workspace
+
+        owner can transfer it away from Mailpool to another registrar. The
+
+        domain is also unlocked for transfer as part of this request.
+
+
+        The domain must:
+
+        * be older than 60 days, and
+
+        * have at least two weeks left before expiration.
+
+
+        After receiving the auth code you typically call
+
+        `POST /domains/{domainId}/transfer-out/authorize` once the gaining
+
+        registrar initiates the transfer at the registry.
+
+        '
+      operationId: post-domains-domainId-transfer-out-auth-code
+      parameters:
+      - name: domainId
+        in: path
+        description: Domain ID.
+        required: true
+        schema:
+          type: number
+      responses:
+        '201':
+          description: Auth code generated by the registrar.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authCode:
+                    type: string
+                    description: 'Transfer auth code (EPP code) to provide to the
+                      gaining
+
+                      registrar when initiating a transfer of the domain away
+
+                      from Mailpool.
+
+                      '
+                required:
+                - authCode
+              examples:
+                Example 1:
+                  value:
+                    authCode: aB3$kP9!mZ2x
+        '400':
+          description: "Transfer-out is not available for this domain. Possible reasons:\n\
+            * the domain provider does not support transfers\n  (`Domain provider\
+            \ does not support transfer`),\n* the domain is younger than 60 days\n\
+            \  (`Domain must be older than 60 days`),\n* the domain is within two\
+            \ weeks of expiration\n  (`Domain is too close to expiration`),\n* or\
+            \ the registrar refused to issue the auth code.\n"
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/{domainId}/transfer-out/authorize:
+    post:
+      tags:
+      - Domains
+      summary: Authorize or deny domain transfer-out
+      description: 'Approve or deny a pending transfer-out request initiated by the
+
+        gaining registrar.
+
+
+        On `approve` + a successful registrar response, the domain is marked
+
+        as `inactive` in Mailpool and tagged as transferred out.
+
+        On `deny` the domain stays in the workspace and the registrar locks
+
+        it again for transfers.
+
+        '
+      operationId: post-domains-domainId-transfer-out-authorize
+      parameters:
+      - name: domainId
+        in: path
+        description: Domain ID.
+        required: true
+        schema:
+          type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                authorize:
+                  type: string
+                  enum:
+                  - approve
+                  - deny
+                  description: 'Whether to `approve` (release the domain to the gaining
+
+                    registrar) or `deny` (refuse the transfer and re-lock the
+
+                    domain) the pending transfer-out request.
+
+                    '
+              required:
+              - authorize
+            examples:
+              Approve:
+                value:
+                  authorize: approve
+              Deny:
+                value:
+                  authorize: deny
+      responses:
+        '201':
+          description: Decision was forwarded to the registrar.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    description: '`true` when the registrar accepted the decision.
+                      When
+
+                      `authorize` is `approve` and `success` is `true`, the
+
+                      domain is marked as inactive in Mailpool and flagged as
+
+                      transferred out.
+
+                      '
+                required:
+                - success
+              examples:
+                Approved:
+                  value:
+                    success: true
+                Denied:
+                  value:
+                    success: true
+        '400':
+          description: "The decision could not be forwarded. Possible reasons:\n*\
+            \ the domain provider does not support transfers\n  (`Domain provider\
+            \ does not support transfer`),\n* there is no pending transfer-out request\
+            \ to act on, or\n* the registrar rejected the request.\n"
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/google-workspace-availability:
+    post:
+      tags:
+      - Domains
+      summary: Check Google Workspace domain availability
+      description: 'Check whether a domain is already in use in Google Workspace.
+
+
+        Mailpool queries Google''s domain-in-use service to determine if the
+
+        domain can still be signed up for Google Workspace. Use this before
+
+        provisioning to detect domains that already belong to an existing
+
+        Google Workspace account.
+
+
+        This endpoint must be enabled for the workspace; otherwise a `403` is
+
+        returned.
+
+        '
+      operationId: post-domains-google-workspace-availability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domain:
+                  type: string
+                  description: Fully qualified domain name to check.
+                  format: hostname
+              required:
+              - domain
+            examples:
+              Example 1:
+                value:
+                  domain: example.com
+      responses:
+        '201':
+          description: Availability result for the domain.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isAvailable:
+                    type: boolean
+                    description: '`true` when the domain is available to sign up for
+                      Google
+
+                      Workspace (i.e. it is not already in use by an existing
+
+                      Google Workspace account). `false` when the domain is
+
+                      already in use in Google Workspace.
+
+                      '
+                required:
+                - isAvailable
+              examples:
+                Available:
+                  value:
+                    isAvailable: true
+                Already in use:
+                  value:
+                    isAvailable: false
+        '403':
+          description: 'The Google Workspace domain-in-use check is not enabled for
+            this
+
+            workspace (`Google Workspace domain-in-use check is not enabled for
+
+            this workspace`).
+
+            '
+        '503':
+          description: 'The availability check could not be completed (`Failed to
+            check
+
+            Google Workspace availability`).
+
+            '
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/renew/domains:
+    get:
+      tags:
+      - Domains
+      summary: Get renewable domains list
+      description: 'Return a paginated list of domains in the current workspace that
+        are
+
+        eligible to appear in the renewal flow. Use the `id` of any returned
+
+        item as a `domainIds` value for `GET /domains/renew/prices` or
+
+        `POST /domains/renew`.
+
+        '
+      operationId: get-domains-renew-domains
+      parameters:
+      - name: limit
+        in: query
+        description: Maximum number of items to return.
+        required: true
+        schema:
+          type: number
+      - name: offset
+        in: query
+        description: Offset for paginated response.
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: Paginated list of domains that can be renewed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RenewDomainListItem'
+                  total:
+                    type: number
+                    description: Total number of renewable domains in the workspace.
+                required:
+                - data
+                - total
+              examples:
+                Example 1:
+                  value:
+                    data:
+                    - id: 123456
+                      createdAt: '2024-11-25T10:00:00Z'
+                      domain: example.com
+                      status: active
+                      registeredAt: '2024-11-25T10:00:00Z'
+                      renewedAt: null
+                      expireAt: '2025-11-25T10:00:00Z'
+                      renewInProgress: false
+                    - id: 789101
+                      createdAt: '2024-08-10T09:00:00Z'
+                      domain: mywebsite.org
+                      status: active
+                      registeredAt: '2024-08-10T09:00:00Z'
+                      renewedAt: '2025-08-10T09:00:00Z'
+                      expireAt: '2026-08-10T09:00:00Z'
+                      renewInProgress: true
+                      requiresManualRenewal: true
+                    total: 2
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/renew/prices:
+    get:
+      tags:
+      - Domains
+      summary: Get renewal prices for domains
+      description: 'Return renewal prices for a list of domains by ID. `domainIds`
+        is a
+
+        comma-separated list of positive integers (e.g. `?domainIds=1,2,3`)
+
+        and is automatically de-duplicated on the server.
+
+
+        The endpoint never fails the whole batch because of a single bad
+
+        item: domains the workspace does not own or that the provider could
+
+        not price are returned with `price: null` and either an `error`
+
+        message or `requiresManualRenewal: true`.
+
+        '
+      operationId: get-domains-renew-prices
+      parameters:
+      - name: domainIds
+        in: query
+        description: 'Comma-separated list of domain IDs to price (e.g. `1,2,3`).
+
+          Must contain at least one positive integer.
+
+          '
+        required: true
+        schema:
+          type: string
+          examples:
+          - 123456,789101
+        examples:
+          default:
+            value: 123456,789101
+      responses:
+        '200':
+          description: 'Per-domain renewal price entries. The array always contains
+            one
+
+            item per unique requested `domainId`, including unknown or
+
+            non-auto-renewable domains (see `error` / `requiresManualRenewal`).
+
+            '
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RenewDomainPriceItem'
+              examples:
+                Example 1:
+                  value:
+                  - domainId: 123456
+                    domain: example.com
+                    price: 14.99
+                  - domainId: 789101
+                    domain: mywebsite.org
+                    price: null
+                    requiresManualRenewal: true
+                  - domainId: 999999
+                    domain: null
+                    price: null
+                    error: Domain not found
+        '400':
+          description: "Invalid query parameters \u2014 e.g. `domainIds` is missing,\
+            \ empty,\nor contains values that are not positive integers.\n"
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/renew:
+    post:
+      tags:
+      - Domains
+      summary: Submit domains for renewal
+      description: "Submit a batch of domains for renewal. Auto-renewable domains\n\
+        are grouped into a new renewal\norder whose ID is returned in `renewOrderId`.\
+        \ Manual-provider\ndomains in the same batch are forwarded to the Mailpool\
+        \ team for\nout-of-band processing \u2014 no order is created for them.\n\n\
+        The request is atomic at the validation step: if any provided\n`domainId`\
+        \ is invalid, no order is created and the response is a\n`400` with the per-item\
+        \ `errors` array.\n"
+      operationId: post-domains-renew
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domainIds:
+                  type: array
+                  description: 'IDs of the domains to renew. Must contain at least
+
+                    one positive integer; duplicates are removed
+
+                    server-side.
+
+                    '
+                  minItems: 1
+                  items:
+                    type: number
+              required:
+              - domainIds
+            examples:
+              Example 1:
+                value:
+                  domainIds:
+                  - 123456
+                  - 789101
+      responses:
+        '201':
+          description: "Renewal request was accepted. When the batch contains at least\n\
+            one domain registered with an auto-renew provider, the\nresponse includes\
+            \ `renewOrderId` \u2014 use it with\n`GET /domains/renew/orders/{orderId}`\
+            \ to poll the order status.\nWhen the batch contains only manual-provider\
+            \ domains, the\nresponse is an empty object (`{}`); the Mailpool team\
+            \ will\nprocess those renewals out of band.\n"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  renewOrderId:
+                    type: number
+                    description: 'ID of the renewal order created for the
+
+                      auto-renewable domains in the batch. Omitted when no
+
+                      auto-renewable domains were included.
+
+                      '
+              examples:
+                Auto-renewable batch:
+                  value:
+                    renewOrderId: 42
+                Manual-only batch:
+                  value: {}
+        '400':
+          description: "Renewal is atomic \u2014 no order is created when any provided\n\
+            `domainId` fails validation. The response body contains an\n`errors` array\
+            \ describing each invalid item (`domainId`,\nresolved `domain` name or\
+            \ `null`, and a human-readable\n`error`).\n"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        domainId:
+                          type: number
+                          description: ID of the invalid domain.
+                        domain:
+                          type: string
+                          description: 'Domain name when the ID was resolved in the
+
+                            workspace, otherwise `null`.
+
+                            '
+                          nullable: true
+                        error:
+                          type: string
+                          description: Human-readable reason for the rejection.
+                      required:
+                      - domainId
+                      - error
+                required:
+                - errors
+              examples:
+                Example 1:
+                  value:
+                    errors:
+                    - domainId: 999999
+                      domain: null
+                      error: Domain not found
+                    - domainId: 123456
+                      domain: example.com
+                      error: Domain already has a renewal in progress
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /domains/renew/orders/{orderId}:
+    get:
+      tags:
+      - Domains
+      summary: Get renewal order
+      description: 'Get a single renewal order, including the renewal status of every
+
+        domain inside it. Use this to poll the progress of an order created
+
+        via `POST /domains/renew`.
+
+        '
+      operationId: get-domains-renew-orders-orderId
+      parameters:
+      - name: orderId
+        in: path
+        description: Renewal order ID returned by `POST /domains/renew`.
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: Renewal order snapshot, including per-domain status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RenewOrder'
+              examples:
+                Example 1:
+                  value:
+                    orderId: 42
+                    status: InProgress
+                    totalPrice: 29.98
+                    domains:
+                    - domainId: 123456
+                      domain: example.com
+                      status: Completed
+                    - domainId: 789101
+                      domain: mywebsite.org
+                      status: InProgress
+        '404':
+          description: 'Order not found in the current workspace
+
+            (`Domain(s) renew order not found`).
+
+            '
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /mailboxes:
+    post:
+      tags:
+      - Mailboxes
+      summary: Create mailboxes
+      description: Create mailboxes
+      operationId: post-mailboxes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/CreateMailbox'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  emails:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Mailbox'
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    get:
+      tags:
+      - Mailboxes
+      summary: Get mailboxes list
+      operationId: get-mailboxes
+      parameters:
+      - name: domainId
+        in: query
+        schema:
+          type: number
+      - name: limit
+        in: query
+        schema:
+          type: number
+      - name: offset
+        in: query
+        schema:
+          type: number
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Mailbox'
+                  total:
+                    type: number
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /mailboxes/{mailboxId}:
+    put:
+      tags:
+      - Mailboxes
+      summary: Update mailbox
+      description: Update mailbox
+      operationId: put-mailboxes-id
+      parameters:
+      - name: mailboxId
+        in: path
+        description: Mailbox ID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMailbox'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Mailbox'
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    delete:
+      tags:
+      - Mailboxes
+      summary: Delete mailbox
+      description: Delete mailbox
+      operationId: delete-mailboxes-id
+      parameters:
+      - name: mailboxId
+        in: path
+        description: Mailbox ID
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Mailbox'
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    get:
+      tags:
+      - Mailboxes
+      summary: Get mailbox
+      operationId: get-mailboxes-id
+      parameters:
+      - name: mailboxId
+        in: path
+        description: Mailbox ID
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Mailbox_2'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /mailboxes/bulk-delete-immediately:
+    post:
+      tags:
+      - Mailboxes
+      summary: Bulk delete mailboxes immediately
+      description: 'Delete up to 10 mailboxes immediately, bypassing the standard
+
+        scheduled-deletion grace period used by `DELETE /mailboxes/{mailboxId}`.
+
+
+        Each mailbox is validated before any deletion happens: it must
+
+        belong to the current workspace and be either `active`, or
+
+        `inactive`. If any mailbox fails validation
+
+        the request is rejected and no deletions are performed.
+
+        '
+      operationId: post-mailboxes-bulk-delete-immediately
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mailboxIds:
+                  type: array
+                  description: 'IDs of the mailboxes to delete immediately. Must
+
+                    contain between 1 and 10 unique positive integers;
+
+                    duplicates are removed server-side.
+
+                    '
+                  minItems: 1
+                  maxItems: 10
+                  items:
+                    type: integer
+                    minimum: 1
+              required:
+              - mailboxIds
+            examples:
+              Example 1:
+                value:
+                  mailboxIds:
+                  - 789
+                  - 790
+                  - 791
+      responses:
+        '201':
+          description: 'Mailboxes were deleted immediately. The response contains
+            the
+
+            final state of each requested mailbox after deletion, in the
+
+            same order as the `mailboxIds` request body (with duplicates
+
+            removed).
+
+            '
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Mailbox'
+        '400':
+          description: 'Invalid request body or at least one mailbox cannot be deleted
+
+            in its current status (`Mailbox with id {id} cannot be deleted
+
+            in its current status`). `mailboxIds` must contain between
+
+            1 and 10 unique positive integers.
+
+            '
+        '403':
+          description: 'Immediate mailbox deletion is not enabled for this workspace
+
+            (`Immediately mailbox deletion is not enabled for this
+
+            workspace`).
+
+            '
+        '404':
+          description: 'At least one of the provided mailboxes was not found in the
+
+            current workspace (`Mailbox with id {id} not found`).
+
+            '
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /mailboxes/{mailboxId}/cancel-deletion:
+    post:
+      tags:
+      - Mailboxes
+      summary: Cancel Scheduled Mailbox Deletion
+      operationId: post-mailboxes-mailboxId-cancel-deletion
+      parameters:
+      - name: mailboxId
+        in: path
+        description: Mailbox ID
+        required: true
+        schema:
+          type: string
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Mailbox'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /spam-checks/:
+    get:
+      tags:
+      - Spam Checks
+      summary: Get spam checks list
+      operationId: get-spam-checks
+      parameters:
+      - name: limit
+        in: query
+        required: true
+        schema:
+          type: number
+      - name: offset
+        in: query
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SpamCheck'
+                  total:
+                    type: number
+              examples:
+                Example 1:
+                  value:
+                    data:
+                    - id: 0
+                      createdAt: '2024-12-09 13:39:19.613'
+                      email: email-28d8fb8d-ea83-48f2-8bb2-64da9dead625@test.mailpool.io
+                      result:
+                        subject: Deliverability check email - please disregard
+                        fromEmail: john@trynew-test-account.com
+                        score: 92
+                        domainBlackList:
+                          status: passed
+                          domains:
+                          - status: passed
+                            listingName: rbl.blockedservers.com
+                        ipBlackList:
+                          status: passed
+                          domains:
+                          - status: passed
+                            listingName: rbl.blockedservers.com
+                        spamAssassin:
+                          status: passed
+                          score: 0
+                        SPF:
+                          status: passed
+                          spfRecordExist:
+                            status: passed
+                          duplicateSpfRecords:
+                            status: passed
+                          spfAuthorization:
+                            status: passed
+                          allMechanism:
+                            status: passed
+                          ptrMechanism:
+                            status: passed
+                        DKIM:
+                          status: passed
+                          exists:
+                            status: passed
+                          verified:
+                            status: passed
+                        DMARK:
+                          status: passed
+                          published:
+                            status: passed
+                          duplicate:
+                            status: passed
+                          validPolicyTag:
+                            status: passed
+                          validVersion:
+                            status: passed
+                          authenticated:
+                            status: passed
+                          spfAuthenticated:
+                            status: passed
+                        reverseDNS:
+                          status: passed
+                          existingReverseDNSLookup:
+                            status: passed
+                          mailServerIPMatching:
+                            status: passed
+                        domainAge:
+                          status: passed
+                          domainValidity:
+                            status: passed
+                          domainAge:
+                            status: passed
+                        brokenLinks:
+                          status: passed
+                          links:
+                          - status: passed
+                            url: test.example.com
+                        shortUrls:
+                          status: passed
+                          urls:
+                          - status: passed
+                            url: tinyurl.com/example
+                      mailbox:
+                        id: '789'
+                        type: google
+                        email: jane.doe@gmail.com
+                        domain:
+                          id: 123456
+                          createdAt: '2024-11-25T10:00:00Z'
+                          domain: example.com
+                          domainOwner:
+                            id: '123'
+                            company: Tech Innovators Inc.
+                            firstName: John
+                            lastName: Doe
+                            email: john.doe@example.com
+                            streetAddress1: 123 Innovation Lane
+                            streetAddress2: Suite 200
+                            city: San Francisco
+                            state: CA
+                            postalCode: '94107'
+                            country: USA
+                            phone: +1 555 000 0000
+                          redirectUrl: https://example.com/home
+                          status: active
+                          type: google
+                        firstName: Jane
+                        lastName: Doe
+                        signature: 'Kind regards,
+
+                          Jane Doe'
+                        forwardTo: support@example.com
+                        password: securepassword123
+                        status: active
+                        avatar: https://example.com/avatar/jane_doe.png
+                      state: pending
+                      fromEmail: john@trynew-test-account.com
+                    total: 1
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    post:
+      tags:
+      - Spam Checks
+      summary: Create spam check
+      operationId: post-spam-checks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mailboxId:
+                  type: number
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpamCheck'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /spam-checks/{spamCheckId}:
+    get:
+      tags:
+      - Spam Checks
+      summary: Get spam check
+      operationId: get-spam-checks-spamCheckId
+      parameters:
+      - name: spamCheckId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpamCheck'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    delete:
+      tags:
+      - Spam Checks
+      summary: Delete spam check
+      operationId: delete-spam-checks-spamCheckId
+      parameters:
+      - name: spamCheckId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpamCheck'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /ip-blacklist-checks:
+    get:
+      tags:
+      - IP Blacklist Checks
+      summary: Get IP blacklist checks list
+      description: 'Return a paginated list of IP blacklist checks for the current
+
+        workspace, sorted by ID in descending order (most recent first).
+
+        '
+      operationId: get-ip-blacklist-checks
+      parameters:
+      - name: limit
+        in: query
+        description: Maximum number of items to return.
+        required: true
+        schema:
+          type: number
+      - name: offset
+        in: query
+        description: Offset for paginated response.
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: Paginated list of IP blacklist checks in the workspace.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IpBlacklistCheck'
+                  total:
+                    type: number
+                    description: Total number of IP blacklist checks in the workspace.
+                required:
+                - data
+                - total
+              examples:
+                Example 1:
+                  value:
+                    data:
+                    - id: 42
+                      createdAt: '2026-05-26T10:00:00Z'
+                      ip: 203.0.113.10
+                      state: completed
+                      result:
+                        status: passed
+                        domains:
+                        - status: passed
+                          listingName: zen.spamhaus.org
+                        - status: passed
+                          listingName: bl.spamcop.net
+                    - id: 43
+                      createdAt: '2026-05-26T10:05:00Z'
+                      ip: 198.51.100.7
+                      state: pending
+                      result: null
+                    total: 2
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    post:
+      tags:
+      - IP Blacklist Checks
+      summary: Create IP blacklist check
+      description: 'Submit an IPv4 or IPv6 address for blacklist verification. The
+
+        check is created immediately in the `pending` state and processed
+
+        asynchronously against the configured blacklist providers; the
+
+        final `result` is set when the check transitions to `completed`.
+
+        '
+      operationId: post-ip-blacklist-checks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateIpBlacklistCheck'
+            examples:
+              IPv4:
+                value:
+                  ip: 203.0.113.10
+              IPv6:
+                value:
+                  ip: 2001:db8::1
+      responses:
+        '201':
+          description: 'IP blacklist check was created with `state: pending` and
+
+            queued for processing. The result is populated asynchronously;
+
+            poll `GET /ip-blacklist-checks/{id}` or subscribe to the
+
+            `ip-blacklist-checks.updated` webhook to receive it.
+
+            '
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IpBlacklistCheck'
+              examples:
+                Example 1:
+                  value:
+                    id: 44
+                    createdAt: '2026-05-26T10:10:00Z'
+                    ip: 203.0.113.10
+                    state: pending
+                    result: null
+        '400':
+          description: Invalid request body (e.g. `ip` missing or not a valid IP address).
+        '403':
+          description: 'IP blacklist check is not enabled for this workspace
+
+            (`IP blacklist check is not enabled for this workspace`).
+
+            '
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /ip-blacklist-checks/{id}:
+    get:
+      tags:
+      - IP Blacklist Checks
+      summary: Get IP blacklist check
+      description: 'Get a single IP blacklist check by ID, including the latest
+
+        `state` and `result`. Use this to poll the progress of a check
+
+        created via `POST /ip-blacklist-checks`.
+
+        '
+      operationId: get-ip-blacklist-checks-id
+      parameters:
+      - name: id
+        in: path
+        description: IP blacklist check ID.
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: The requested IP blacklist check.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IpBlacklistCheck'
+              examples:
+                Example 1:
+                  value:
+                    id: 42
+                    createdAt: '2026-05-26T10:00:00Z'
+                    ip: 203.0.113.10
+                    state: completed
+                    result:
+                      status: passed
+                      domains:
+                      - status: passed
+                        listingName: zen.spamhaus.org
+                      - status: passed
+                        listingName: bl.spamcop.net
+        '404':
+          description: 'Check not found in the current workspace
+
+            (`IP blacklist check with id {id} not found`).
+
+            '
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+    delete:
+      tags:
+      - IP Blacklist Checks
+      summary: Delete IP blacklist check
+      description: 'Soft-delete an IP blacklist check. Deleted checks are hidden from
+
+        list and detail endpoints; a webhook event
+
+        `ip-blacklist-checks.deleted` is emitted.
+
+        '
+      operationId: delete-ip-blacklist-checks-id
+      parameters:
+      - name: id
+        in: path
+        description: IP blacklist check ID.
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: IP blacklist check was deleted.
+        '404':
+          description: 'Check not found in the current workspace
+
+            (`IP blacklist check with id {id} not found`).
+
+            '
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /inbox-placements/:
+    get:
+      tags:
+      - Inbox Placements
+      summary: Get inbox placements list
+      operationId: get-inbox-placements
+      parameters:
+      - name: limit
+        in: query
+        schema:
+          type: number
+      - name: offset
+        in: query
+        schema:
+          type: number
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InboxPlacement'
+                  total:
+                    type: number
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+      x-internal: false
+    post:
+      tags:
+      - Inbox Placements
+      summary: Create inbox placement
+      operationId: post-inbox-placements
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mailboxId:
+                  type: number
+                providers:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/InboxPlacementProvider'
+      responses:
+        2XX:
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxPlacement'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+      x-internal: false
+  /inbox-placements/{inboxPlacementId}:
+    get:
+      tags:
+      - Inbox Placements
+      summary: Get inbox placement
+      operationId: get-inbox-placements-inboxPlacementId
+      parameters:
+      - name: inboxPlacementId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxPlacement'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+      x-internal: false
+    delete:
+      tags:
+      - Inbox Placements
+      summary: Delete inbox placement
+      operationId: delete-inbox-placements-inboxPlacementId
+      parameters:
+      - name: inboxPlacementId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxPlacement'
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+      x-internal: false
+  /inbox-placements/{inboxPlacementId}/run:
+    post:
+      tags:
+      - Inbox Placements
+      summary: Run inbox placement
+      operationId: post-inbox-placements-inboxPlacementId-run
+      parameters:
+      - name: inboxPlacementId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /exports/credentials:
+    post:
+      tags:
+      - Exports
+      summary: Save platform credentials
+      description: 'Save (or overwrite) third-party platform credentials for the current
+
+        workspace. Credentials are validated against the platform before being
+
+        stored. Only platforms from `AutomationExportPlatform` are supported;
+
+        use `csv` with the CSV export endpoint instead when you only need a
+
+        downloadable file.
+
+
+        Secret fields (`apiKey`, `password`) are stored encrypted and are
+
+        returned masked in all `GET` responses.
+
+        '
+      operationId: post-exports-credentials
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavePlatformCredentials'
+            examples:
+              Instantly (API key):
+                value:
+                  platform: instantly
+                  credentials:
+                    apiKey: sk_live_1234567890abcd
+              Warmbox (email + password):
+                value:
+                  platform: warmbox
+                  credentials:
+                    email: user@example.com
+                    password: super-secret-password
+      responses:
+        '200':
+          description: Credentials were validated and saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformCredentials'
+        '400':
+          description: Invalid credentials or unsupported platform.
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /exports/credentials/{platform}:
+    get:
+      tags:
+      - Exports
+      summary: Get platform credentials
+      description: "Return the credentials stored for the given platform in the current\n\
+        workspace. Secret fields are masked \u2014 only the last 4 characters of\n\
+        `apiKey` / `password` are returned (e.g. `****abcd`). The email field\nis\
+        \ returned unmasked.\n"
+      operationId: get-exports-credentials-platform
+      parameters:
+      - name: platform
+        in: path
+        description: Platform identifier (e.g. `instantly`, `smartlead`).
+        required: true
+        schema:
+          $ref: '#/components/schemas/ExportPlatform'
+      responses:
+        '200':
+          description: Stored credentials with secret values masked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformCredentials'
+        '400':
+          description: Unknown or unsupported platform.
+        '404':
+          description: No credentials are stored for the given platform.
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /exports/mailboxes:
+    post:
+      tags:
+      - Exports
+      summary: Export mailboxes to a platform
+      description: "Schedule a batch export of the given mailboxes to a third-party\
+        \ platform\nusing the credentials previously saved via `POST /exports/credentials`.\n\
+        \nThe call returns immediately with the newly created batch; use\n`GET /exports/batches/{batchId}`\
+        \ to poll its progress. Mailboxes whose\ninbox type is not supported by the\
+        \ target platform are skipped and\nreported back in the `errors` array of\
+        \ the response \u2014 the batch is\nstill created for the remaining supported\
+        \ mailboxes.\n"
+      operationId: post-exports-mailboxes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportMailboxesRequest'
+            examples:
+              Example 1:
+                value:
+                  platform: instantly
+                  mailboxIds:
+                  - 789
+                  - 790
+                  - 791
+      responses:
+        '200':
+          description: 'Export batch was scheduled. The response has the same shape
+            as
+
+            `GET /exports/batches/{batchId}` and additionally lists any
+
+            requested mailboxes that were skipped because their inbox type
+
+            is not supported by the target platform (see `errors`).
+
+            '
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportBatchCreatedResponse'
+        '400':
+          description: "Export failed to start \u2014 e.g. missing credentials for\
+            \ the target\nplatform, an invalid platform, an empty `mailboxIds` list,\n\
+            mailbox IDs that do not belong to the workspace, or none of the\nprovided\
+            \ mailboxes having an inbox type that can be exported to\nthe target platform\
+            \ (`Export these inboxes to this platform is\nnot supported.`).\n"
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /exports/mailboxes/csv:
+    post:
+      tags:
+      - Exports
+      summary: Export mailboxes as CSV
+      description: 'Download a CSV file containing the given mailboxes formatted for
+        the
+
+        target platform. Unlike the automated export endpoint, this endpoint
+
+        does not require stored credentials and accepts every value of
+
+        `ExportPlatform` (including the generic `csv` format).
+
+        '
+      operationId: post-exports-mailboxes-csv
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportMailboxesCsvRequest'
+            examples:
+              Example 1:
+                value:
+                  platform: smartlead
+                  mailboxIds:
+                  - 789
+                  - 790
+      responses:
+        '200':
+          description: CSV file with mailbox data formatted for the target platform.
+          content:
+            text/csv:
+              schema:
+                type: string
+                contentMediaType: application/octet-stream
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: attachment; filename="mailboxes-export.csv"
+              description: Attachment header suggesting the file name.
+        '400':
+          description: 'Invalid platform, an empty `mailboxIds` list, or none of the
+
+            provided mailbox IDs belonging to the workspace
+
+            (`Mailboxes not found`).
+
+            '
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /exports/batches:
+    get:
+      tags:
+      - Exports
+      summary: Get export batches list
+      description: 'Return a paginated list of export batches for the current workspace.
+
+        Supports filtering by free-text search (e.g. mailbox email), by batch
+
+        `status`, and by target `platform`.
+
+        '
+      operationId: get-exports-batches
+      parameters:
+      - name: limit
+        in: query
+        description: Maximum number of batches to return.
+        required: true
+        schema:
+          type: number
+      - name: offset
+        in: query
+        description: Offset for paginated response.
+        required: true
+        schema:
+          type: number
+      - name: search
+        in: query
+        description: Optional free-text search (e.g. mailbox email).
+        required: false
+        schema:
+          type: string
+      - name: status
+        in: query
+        description: Filter batches by their aggregated status.
+        required: false
+        schema:
+          $ref: '#/components/schemas/ExportStatus'
+      - name: platform
+        in: query
+        description: Filter batches by target platform.
+        required: false
+        schema:
+          $ref: '#/components/schemas/ExportPlatform'
+      responses:
+        '200':
+          description: Paginated list of export batches.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExportBatch'
+                  total:
+                    type: number
+                required:
+                - data
+                - total
+              examples:
+                Example 1:
+                  value:
+                    data:
+                    - id: 42
+                      createdAt: '2026-04-21T10:00:00Z'
+                      status: in_progress
+                      platform: instantly
+                      exports:
+                      - id: 101
+                        mailboxId: 789
+                        mailboxEmail: jane.doe@example.com
+                        status: in_progress
+                        domainType: google
+                      - id: 102
+                        mailboxId: 790
+                        mailboxEmail: john.doe@example.com
+                        status: completed
+                        domainType: google
+                    total: 1
+        '400':
+          description: Invalid `status` or `platform` filter value.
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /exports/batches/{batchId}:
+    get:
+      tags:
+      - Exports
+      summary: Get export batch
+      description: 'Get a single export batch, including the status of each individual
+
+        mailbox export inside it. Use this to poll the progress of a batch
+
+        created via `POST /exports/mailboxes`.
+
+        '
+      operationId: get-exports-batches-batchId
+      parameters:
+      - name: batchId
+        in: path
+        description: Export batch ID.
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: The export batch, including per-mailbox status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportBatch'
+        '404':
+          description: Batch not found in the current workspace.
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /subscriptions/slots:
+    get:
+      tags:
+      - Subscriptions
+      summary: Get subscriptions slots
+      operationId: get-subscriptions-slots
+      requestBody:
+        content: {}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionSlots'
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /subscriptions/update-slots:
+    post:
+      tags:
+      - Subscriptions
+      summary: Update subscription slots
+      operationId: post-subscriptions-update-slots
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSubscriptionSlots'
+      responses:
+        '200':
+          description: OK
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /subscriptions/increase:
+    post:
+      tags:
+      - Subscriptions
+      summary: Increase subscription slots
+      operationId: post-subscriptions-increase-slots
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncreaseSubscriptionSlots'
+      responses:
+        '200':
+          description: OK
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /subscriptions/decrease:
+    post:
+      tags:
+      - Subscriptions
+      summary: Decrease subscription slots
+      operationId: post-subscriptions-decrease-slots
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecreaseSubscriptionSlots'
+      responses:
+        '200':
+          description: OK
+      security:
+      - X-Api-Authorization: []
+      servers:
+      - url: https://app.mailpool.io/v1/api
+        description: ''
+  /dummy-webhooks:
+    post:
+      summary: Dummy endpoint to prevent pruning of webhook schemas
+      operationId: ReceiveWebhook
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - $ref: '#/components/schemas/DomainsRegistered'
+              - $ref: '#/components/schemas/DomainsUpdated'
+              - $ref: '#/components/schemas/MailboxesCreated'
+              - $ref: '#/components/schemas/MailboxesUpdated'
+              - $ref: '#/components/schemas/MailboxesDeleted'
+              - $ref: '#/components/schemas/SpamChecksCreated'
+              - $ref: '#/components/schemas/SpamChecksUpdated'
+              - $ref: '#/components/schemas/SpamChecksDeleted'
+              - $ref: '#/components/schemas/IpBlacklistChecksCreated'
+              - $ref: '#/components/schemas/IpBlacklistChecksUpdated'
+              - $ref: '#/components/schemas/IpBlacklistChecksDeleted'
+              - $ref: '#/components/schemas/InboxPlacementsCreated'
+              - $ref: '#/components/schemas/InboxPlacementsUpdated'
+              - $ref: '#/components/schemas/InboxPlacementsDeleted'
+      responses:
+        '200':
+          description: OK
+tags:
+- name: Domains
+  description: Domain registration, DNS, DMARC, and transfers.
+- name: Domain Owners
+  description: Saved domain owners (registrant/contact records).
+- name: Mailboxes
+  description: Mailbox provisioning and lifecycle.
+- name: Spam Checks
+  description: Spam score and deliverability checks.
+- name: IP Blacklist Checks
+  description: Standalone IP address blacklist verifications.
+- name: Inbox Placements
+  description: Inbox placement tests against external providers.
+- name: Exports
+  description: "Export mailboxes to third-party platforms (Instantly, Smartlead, CSV,\
+    \ \u2026)."
+- name: Subscriptions
+  description: Subscription slot management.
+components:
+  securitySchemes:
+    X-Api-Authorization:
+      type: apiKey
+      name: X-Api-Authorization
+      in: header
+  schemas:
+    DnsRecord:
+      type: object
+      title: DnsRecord
+      examples:
+      - type: A
+        key: '@'
+        value: 192.0.2.1
+      - type: CNAME
+        key: app
+        value: app.example.com
+      anyOf:
+      - $ref: '#/components/schemas/ARecord'
+      - $ref: '#/components/schemas/AAAARecord'
+      - $ref: '#/components/schemas/CNAMERecord'
+      - $ref: '#/components/schemas/TXTRecord'
+      - $ref: '#/components/schemas/MXRecord'
+      - $ref: '#/components/schemas/SRVRecord'
+    ARecord:
+      type: object
+      title: ARecord
+      properties:
+        type:
+          const: A
+        key:
+          type: string
+        value:
+          type: string
+      required:
+      - type
+      - value
+      examples:
+      - type: A
+        key: '@'
+        value: 192.0.2.1
+      - type: A
+        key: app
+        value: 192.65.1.5
+    AAAARecord:
+      type: object
+      title: AAAARecord
+      properties:
+        type:
+          const: AAAA
+        key:
+          type: string
+        value:
+          type: string
+      required:
+      - type
+      - value
+      examples:
+      - type: AAAA
+        key: '@'
+        value: 2001:0db8:85a3:0000:0000:8a2e:0370:7334
+      - type: AAAA
+        key: app
+        value: 2001:0db8:85a3:0000:0000:8234:0370:73df
+    CNAMERecord:
+      type: object
+      title: CNAMERecord
+      properties:
+        type:
+          const: CNAME
+        key:
+          type: string
+        value:
+          type: string
+      required:
+      - type
+      - value
+      examples:
+      - type: CNAME
+        key: '@'
+        value: app.example.com
+      - type: CNAME
+        key: app
+        value: app.example.com
+    TXTRecord:
+      type: object
+      title: TXTRecord
+      properties:
+        type:
+          const: TXT
+        key:
+          type: string
+        value:
+          type: string
+      required:
+      - type
+      - value
+      examples:
+      - type: TXT
+        key: example.com
+        value: v=spf1 include:_spf.google.com ~all
+      - type: TXT
+        key: _dmarc.example.org
+        value: v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.org
+    MXRecord:
+      type: object
+      title: MXRecord
+      properties:
+        type:
+          const: MX
+        key:
+          type: string
+        priority:
+          type: number
+        value:
+          type: string
+      required:
+      - type
+      - priority
+      - value
+      examples:
+      - type: MX
+        key: mail.example.com
+        priority: 10
+        value: mailserver1.example.com
+      - type: MX
+        key: email.mywebsite.org
+        priority: 5
+        value: mail.mywebsite.org
+    SRVRecord:
+      type: object
+      title: SRVRecord
+      properties:
+        type:
+          const: SRV
+        key:
+          type: string
+        priority:
+          type: number
+        weight:
+          type: number
+        port:
+          type: number
+        value:
+          type: string
+      required:
+      - type
+      - priority
+      - weight
+      - port
+      - value
+      examples:
+      - type: SRV
+        key: _sip._tcp.example.com
+        priority: 10
+        weight: 5
+        port: 5060
+        value: sipserver.example.com
+      - type: SRV
+        key: _xmpp._tcp.chat.example.org
+        priority: 20
+        weight: 10
+        port: 5222
+        value: xmppserver.chat.example.org
+    Domain:
+      type: object
+      title: Domain
+      properties:
+        id:
+          type: number
+        createdAt:
+          type: string
+        domain:
+          type: string
+        domainOwner:
+          $ref: '#/components/schemas/DomainOwner'
+        redirectUrl:
+          type: string
+        status:
+          $ref: '#/components/schemas/DomainStatus'
+        type:
+          $ref: '#/components/schemas/DomainType'
+        expireAt:
+          type: string
+        nameservers:
+          type: array
+          items:
+            type: string
+        error:
+          $ref: '#/components/schemas/DomainError'
+      required:
+      - id
+      - createdAt
+      - domain
+      - domainOwner
+      - status
+      examples:
+      - id: '123456'
+        createdAt: '2024-11-25T10:00:00Z'
+        domain: example.com
+        domainOwner:
+          id: '123'
+          company: Tech Innovators Inc.
+          firstName: John
+          lastName: Doe
+          email: john.doe@example.com
+          streetAddress1: 123 Innovation Lane
+          streetAddress2: Suite 200
+          city: San Francisco
+          state: CA
+          postalCode: '94107'
+          country: USA
+          phone: +1 555 000 0000
+        redirectUrl: https://example.com/home
+        status: active
+        type: google
+      - id: '789101'
+        createdAt: '2024-11-20T14:30:00Z'
+        domain: mywebsite.org
+        domainOwner:
+          id: owner456
+          company: Global Solutions Ltd.
+          firstName: Emma
+          lastName: Smith
+          email: emma.smith@globalsolutions.com
+          streetAddress1: 456 Business Road
+          streetAddress2: Floor 3
+          city: London
+          state: London
+          postalCode: EC1A 1BB
+          country: UK
+          phone: +44 20 7946 0000
+        redirectUrl: https://mywebsite.org/dashboard
+        status: active
+        type: outlook
+        nameservers:
+        - ns1.nameserver.com
+        - ns2.nameserver.com
+    DomainOwner:
+      type: object
+      title: DomainOwner
+      properties:
+        id:
+          type: string
+        company:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+        streetAddress1:
+          type: string
+        streetAddress2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        postalCode:
+          type: string
+        country:
+          type: string
+        phone:
+          type: string
+          nullable: true
+      required:
+      - id
+      - firstName
+      - lastName
+      - email
+      - streetAddress1
+      - city
+      - state
+      - postalCode
+      - country
+      examples:
+      - id: '001'
+        company: Tech Innovators Inc.
+        firstName: Alice
+        lastName: Johnson
+        email: alice.johnson@techinnovators.com
+        streetAddress1: 123 Innovation Lane
+        streetAddress2: Building B, Suite 101
+        city: Austin
+        state: TX
+        postalCode: '78701'
+        country: USA
+        phone: +1 555 000 0000
+      - id: '002'
+        company: NextGen Solutions Ltd.
+        firstName: David
+        lastName: Smith
+        email: david.smith@nextgensolutions.co.uk
+        streetAddress1: 789 Market Street
+        streetAddress2: Floor 5
+        city: Manchester
+        state: Greater Manchester
+        postalCode: M1 1AE
+        country: UK
+        phone: +44 20 7946 0000
+    DomainStatus:
+      type: string
+      enum:
+      - active
+      - pending
+      - inactive
+      title: DomainStatus
+      description: "Current status of the domain.\n\n- `active` \u2014 the domain\
+        \ is active and ready to be used.\n- `pending` \u2014 the domain is being\
+        \ provisioned and is not ready yet.\n- `inactive` \u2014 the domain has been\
+        \ disabled. When a domain is `inactive` because of a problem, the `error`\
+        \ field is populated with a `DomainErrorCode` and a human-readable message."
+      examples:
+      - active
+      - pending
+      - inactive
+    DomainType:
+      type: string
+      enum:
+      - google
+      - shared
+      - private
+      - outlook
+      - unassigned
+      title: DomainType
+      examples:
+      - google
+      - shared
+      - private
+      - outlook
+      - unassigned
+    DomainError:
+      type: object
+      title: DomainError
+      description: Details about why a domain is `inactive`. This object is only present
+        when the domain `status` is `inactive` and an error code has been assigned.
+      properties:
+        code:
+          type: integer
+          enum:
+          - 101
+          - 102
+          - 103
+          - 104
+          - 105
+          - 201
+          - 301
+          description: "Machine-readable error code (`DomainErrorCode`). Codes are\
+            \ grouped by the hundreds digit:\n\n**1xx \u2014 Disabled by Mailpool**\n\
+            - `101` UnauthorizedRedirect \u2014 Domain disabled due to an unauthorized\
+            \ redirect.\n- `102` SpamAbuse \u2014 Domain disabled due to spam abuse.\n\
+            - `103` TrademarkViolation \u2014 Domain disabled due to a trademark violation.\n\
+            - `104` PhishingAbuse \u2014 Domain disabled due to phishing abuse.\n\
+            - `105` MalwareAbuse \u2014 Domain disabled due to malware abuse.\n\n\
+            **2xx \u2014 Registry issues**\n- `201` OnHoldByRegistry \u2014 Domain\
+            \ is on hold by the registry.\n\n**3xx \u2014 Registrar issues**\n- `301`\
+            \ TransferredOut \u2014 Domain has been transferred out to another registrar."
+          examples:
+          - 102
+        message:
+          type: string
+          description: Human-readable description of the error.
+          examples:
+          - Domain example.com disabled due to spam abuse.
+      required:
+      - code
+      - message
+      examples:
+      - code: 102
+        message: Domain example.com disabled due to spam abuse.
+    DomainOwner_2:
+      type: object
+      title: DomainOwner
+      properties:
+        company:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+        streetAddress1:
+          type: string
+        streetAddress2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        postalCode:
+          type: string
+        country:
+          type: string
+        phone:
+          type: string
+          nullable: true
+      required:
+      - company
+      - firstName
+      - lastName
+      - email
+      - streetAddress1
+      - city
+      - state
+      - postalCode
+      - country
+      examples:
+      - company: Tech Innovators Inc.
+        firstName: John
+        lastName: Doe
+        email: john.doe@example.com
+        streetAddress1: 123 Innovation Lane
+        streetAddress2: Suite 200
+        city: San Francisco
+        state: CA
+        postalCode: '94107'
+        country: USA
+        phone: +1 555 000 0000
+      - company: Global Solutions Ltd.
+        firstName: Emma
+        lastName: Smith
+        email: emma.smith@globalsolutions.com
+        streetAddress1: 456 Business Road
+        streetAddress2: Floor 3
+        city: London
+        state: London
+        postalCode: EC1A 1BB
+        country: UK
+        phone: +44 20 7946 0000
+    DmarcPolicy:
+      type: string
+      enum:
+      - none
+      - quarantine
+      - reject
+      title: DmarcPolicy
+      examples:
+      - none
+      - quarantine
+      - reject
+    Domain_2:
+      type: object
+      title: Domain
+      properties:
+        id:
+          type: string
+        createdAt:
+          type: string
+        domain:
+          type: string
+        domainOwner:
+          $ref: '#/components/schemas/DomainOwner'
+        redirectUrl:
+          type: string
+        status:
+          $ref: '#/components/schemas/DomainStatus'
+        type:
+          $ref: '#/components/schemas/DomainType'
+        expireAt:
+          type: string
+        error:
+          $ref: '#/components/schemas/DomainError'
+      required:
+      - id
+      - createdAt
+      - domain
+      - domainOwner
+      - status
+      examples:
+      - id: '123'
+        createdAt: '2024-11-25T12:00:00Z'
+        domain: example.com
+        domainOwner:
+          id: '001'
+          company: Tech Innovators Inc.
+          firstName: Alice
+          lastName: Johnson
+          email: alice.johnson@techinnovators.com
+          streetAddress1: 123 Innovation Lane
+          streetAddress2: Building B, Suite 101
+          city: Austin
+          state: TX
+          postalCode: '78701'
+          country: USA
+          phone: +1 555 000 0000
+        redirectUrl: https://example.com/home
+        status: active
+        type: google
+      - id: '456'
+        createdAt: '2024-11-20T15:45:00Z'
+        domain: mywebsite.org
+        domainOwner:
+          id: '002'
+          company: Global Solutions Ltd.
+          firstName: Emma
+          lastName: Smith
+          email: emma.smith@globalsolutions.com
+          streetAddress1: 456 Business Road
+          streetAddress2: Floor 3
+          city: London
+          state: London
+          postalCode: EC1A 1BB
+          country: UK
+          phone: +44 20 7946 0000
+        redirectUrl: https://mywebsite.org/dashboard
+        status: active
+        type: outlook
+    TransferDomainResponse:
+      type: object
+      title: TransferDomainResponse
+      properties:
+        domainId:
+          type: number
+        domain:
+          type: string
+        nameservers:
+          type: array
+          items:
+            type: string
+      required:
+      - domainId
+      - domain
+    RenewDomainListItem:
+      type: object
+      title: RenewDomainListItem
+      description: 'Domain entry returned by `GET /domains/renew/domains`. Use the
+        `id` of any
+
+        item from this list as a `domainIds` value for the renewal price and
+
+        submit endpoints.
+
+        '
+      properties:
+        id:
+          type: number
+          description: Domain ID.
+        createdAt:
+          type: string
+          description: When the domain record was created in Mailpool.
+          format: date-time
+        domain:
+          type: string
+          description: Fully qualified domain name (e.g. `example.com`).
+        status:
+          type: string
+          description: 'Lowercased domain status (e.g. `active`, `pending`, `inactive`).
+
+            '
+        registeredAt:
+          type: string
+          description: When the domain was originally registered with the registrar.
+          format: date-time
+        renewedAt:
+          type: string
+          description: Timestamp of the latest successful renewal, if any.
+          format: date-time
+          nullable: true
+        expireAt:
+          type: string
+          description: Domain expiration date.
+          format: date-time
+        renewInProgress:
+          type: boolean
+          description: '`true` while the most recent renewal for this domain is still
+            in progress
+
+            (status `InProgress` or `AwaitingPayment`) or queued for manual handling.
+
+            Frontend clients should disable a "Renew" action while this is `true`.
+
+            '
+        requiresManualRenewal:
+          type: boolean
+          description: "Present and `true` only when the domain provider does not\
+            \ support\nautomatic renewal. Submitting such\na domain to `POST /domains/renew`\
+            \ still works, but no auto-renew order\nis created \u2014 the renewal\
+            \ is forwarded to the Mailpool team for manual\nprocessing.\n"
+      required:
+      - id
+      - createdAt
+      - domain
+      - status
+      - registeredAt
+      - renewInProgress
+      examples:
+      - id: 123456
+        createdAt: '2024-11-25T10:00:00Z'
+        domain: example.com
+        status: active
+        registeredAt: '2024-11-25T10:00:00Z'
+        renewedAt: null
+        expireAt: '2025-11-25T10:00:00Z'
+        renewInProgress: false
+      - id: 789101
+        createdAt: '2024-08-10T09:00:00Z'
+        domain: mywebsite.org
+        status: active
+        registeredAt: '2024-08-10T09:00:00Z'
+        renewedAt: '2025-08-10T09:00:00Z'
+        expireAt: '2026-08-10T09:00:00Z'
+        renewInProgress: true
+        requiresManualRenewal: true
+    RenewDomainPriceItem:
+      type: object
+      title: RenewDomainPriceItem
+      description: "Per-domain renewal price entry returned by `GET /domains/renew/prices`.\n\
+        One item is returned for every `domainId` from the request (de-duplicated),\n\
+        including domains that cannot be priced \u2014 those will have `price: null`\n\
+        and either `requiresManualRenewal: true` or an `error` string.\n"
+      properties:
+        domainId:
+          type: number
+          description: Domain ID echoed from the request.
+        domain:
+          type: string
+          description: 'Fully qualified domain name. `null` when the supplied `domainId`
+            was
+
+            not found in the current workspace.
+
+            '
+          nullable: true
+        price:
+          type: number
+          description: 'Renewal price in the workspace currency for one renewal period
+
+            (typically one year). `null` when a price could not be fetched
+
+            (e.g. the domain requires manual renewal or the provider returned
+
+            an error described in `error`).
+
+            '
+          nullable: true
+        requiresManualRenewal:
+          type: boolean
+          description: 'Present and `true` only when the domain provider does not
+            support
+
+            automatic renewal pricing.
+
+            '
+        error:
+          type: string
+          description: "Human-readable error message when the price for this specific\
+            \ domain\ncould not be retrieved. Other items in the same response remain\n\
+            valid \u2014 this endpoint never fails the whole batch because of a\n\
+            single bad item.\n"
+      required:
+      - domainId
+      examples:
+      - domainId: 123456
+        domain: example.com
+        price: 14.99
+      - domainId: 789101
+        domain: mywebsite.org
+        price: null
+        requiresManualRenewal: true
+      - domainId: 999999
+        domain: null
+        price: null
+        error: Domain not found
+    RenewOrder:
+      type: object
+      title: RenewOrder
+      description: 'Snapshot of a domain renewal order created by `POST /domains/renew`.
+
+        Use `GET /domains/renew/orders/{orderId}` to poll its progress.
+
+        '
+      properties:
+        orderId:
+          type: number
+          description: Renewal order ID.
+        status:
+          type: string
+          enum:
+          - Created
+          - AwaitingPayment
+          - InProgress
+          - Completed
+          - Failed
+          description: "Aggregated order status:\n* `Created` \u2014 the order has\
+            \ been recorded but renewals have not yet started.\n* `AwaitingPayment`\
+            \ \u2014 the order needs a payment to be confirmed.\n* `InProgress` \u2014\
+            \ at least one domain in the order is still being renewed.\n* `Completed`\
+            \ \u2014 every domain in the order renewed successfully.\n* `Failed` \u2014\
+            \ at least one domain in the order failed to renew.\n"
+        totalPrice:
+          type: number
+          description: 'Total order price in the workspace currency. `null` until
+            the order
+
+            total has been finalized by the provider.
+
+            '
+          nullable: true
+        domains:
+          type: array
+          description: Per-domain renewal items inside the order.
+          items:
+            $ref: '#/components/schemas/RenewOrderDomain'
+      required:
+      - orderId
+      - status
+      - domains
+      examples:
+      - orderId: 42
+        status: InProgress
+        totalPrice: 29.98
+        domains:
+        - domainId: 123456
+          domain: example.com
+          status: Completed
+        - domainId: 789101
+          domain: mywebsite.org
+          status: InProgress
+    RenewOrderDomain:
+      type: object
+      title: RenewOrderDomain
+      description: Single domain entry inside a renewal order snapshot.
+      properties:
+        domainId:
+          type: number
+          description: Domain ID.
+        domain:
+          type: string
+          description: Fully qualified domain name.
+        status:
+          type: string
+          enum:
+          - InProgress
+          - Completed
+          - Failed
+          - Manual
+          description: 'Per-domain renewal status inside the order. `Manual` means
+            the renewal
+
+            was forwarded to the Mailpool team for manual processing because the
+
+            domain provider does not support automatic renewal.
+
+            '
+      required:
+      - domainId
+      - domain
+      - status
+      examples:
+      - domainId: 123456
+        domain: example.com
+        status: Completed
+      - domainId: 789101
+        domain: mywebsite.org
+        status: InProgress
+    CreateMailbox:
+      type: object
+      title: CreateMailbox
+      properties:
+        email:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+        type:
+          $ref: '#/components/schemas/MailboxType'
+        avatar:
+          type: string
+      required:
+      - email
+      - firstName
+      - lastName
+      - type
+      examples:
+      - email: jane.doe@gmail.com
+        firstName: Jane
+        lastName: Doe
+        signature: 'Best regards,
+
+          Jane Doe'
+        forwardTo: support@example.com
+        type: google
+        avatar: https://example.com/avatar/jane_doe.png
+      - email: john.smith@gmail.com
+        firstName: John
+        lastName: Smith
+        signature: 'Thank you,
+
+          John Smith'
+        forwardTo: info@example.org
+        type: shared
+    MailboxType:
+      type: string
+      enum:
+      - google
+      - shared
+      - private
+      - outlook
+      title: MailboxType
+      examples:
+      - google
+      - shared
+      - private
+      - outlook
+    Mailbox:
+      type: object
+      title: Mailbox
+      anyOf:
+      - $ref: '#/components/schemas/GoogleMailbox'
+      - $ref: '#/components/schemas/OutlookMailbox'
+      - $ref: '#/components/schemas/SharedMailbox'
+      - $ref: '#/components/schemas/PrivateMailbox'
+    GoogleMailbox:
+      type: object
+      title: GoogleMailbox
+      properties:
+        id:
+          type: string
+        type:
+          const: google
+        email:
+          type: string
+        domain:
+          $ref: '#/components/schemas/Domain'
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+        password:
+          type: string
+        status:
+          $ref: '#/components/schemas/MailboxStatus'
+        avatar:
+          type: string
+        imapHost:
+          type: string
+        imapPort:
+          type: number
+        imapTLS:
+          type: boolean
+        imapUsername:
+          type: string
+        imapPassword:
+          type: string
+        smtpHost:
+          type: string
+        smtpPort:
+          type: number
+        smtpTLS:
+          type: boolean
+        smtpUsername:
+          type: string
+        smtpPassword:
+          type: string
+        isAdmin:
+          type: boolean
+        admin:
+          $ref: '#/components/schemas/MailboxAdminCredentials'
+        scheduledDeletionAt:
+          type: string
+        error:
+          $ref: '#/components/schemas/MailboxError'
+        ? ''
+        : type: string
+      required:
+      - id
+      - email
+      - domain
+      - firstName
+      - lastName
+      - signature
+      - password
+      - status
+      - imapHost
+      - imapPort
+      - imapTLS
+      - imapUsername
+      - imapPassword
+      - smtpHost
+      - smtpPort
+      - smtpTLS
+      - smtpUsername
+      - smtpPassword
+      examples:
+      - id: '789'
+        type: google
+        email: jane.doe@gmail.com
+        domain:
+          id: '123456'
+          createdAt: '2024-11-25T10:00:00Z'
+          domain: example.com
+          domainOwner:
+            id: '123'
+            company: Tech Innovators Inc.
+            firstName: John
+            lastName: Doe
+            email: john.doe@example.com
+            streetAddress1: 123 Innovation Lane
+            streetAddress2: Suite 200
+            city: San Francisco
+            state: CA
+            postalCode: '94107'
+            country: USA
+            phone: +1 555 000 0000
+          redirectUrl: https://example.com/home
+          status: active
+          type: google
+        firstName: Jane
+        lastName: Doe
+        signature: 'Kind regards,
+
+          Jane Doe'
+        forwardTo: support@example.com
+        password: securepassword123
+        status: active
+        avatar: https://example.com/avatar/jane_doe.png
+      - id: '456123'
+        type: outlook
+        email: emma.smith@gmail.com
+        domain:
+          id: '789101'
+          createdAt: '2024-11-20T15:45:00Z'
+          domain: mywebsite.org
+          domainOwner:
+            id: '456'
+            company: Global Solutions Ltd.
+            firstName: Emma
+            lastName: Smith
+            email: emma.smith@globalsolutions.com
+            streetAddress1: 456 Business Road
+            streetAddress2: Floor 3
+            city: London
+            state: London
+            postalCode: EC1A 1BB
+            country: UK
+            phone: +44 20 7946 0000
+          redirectUrl: https://mywebsite.org/dashboard
+          status: active
+          type: outlook
+        firstName: Emma
+        lastName: Smith
+        signature: 'Warm regards,
+
+          Emma Smith'
+        forwardTo: info@globalsolutions.com
+        password: mypassword456
+        status: active
+        avatar: https://mywebsite.org/avatar/emma_smith.jpg
+    MailboxStatus:
+      type: string
+      enum:
+      - active
+      - pending
+      - inactive
+      title: MailboxStatus
+      description: "Current status of the mailbox.\n\n- `active` \u2014 the mailbox\
+        \ is active and ready to be used.\n- `pending` \u2014 the mailbox is being\
+        \ provisioned and is not ready yet.\n- `inactive` \u2014 the mailbox has been\
+        \ disabled. When a mailbox is `inactive` because of a problem, the `error`\
+        \ field is populated with a `MailboxErrorCode` and a human-readable message."
+      examples:
+      - active
+      - pending
+      - inactive
+    MailboxAdminCredentials:
+      type: object
+      title: MailboxAdminCredentials
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        secret:
+          type: string
+      required:
+      - email
+      - password
+    MailboxError:
+      type: object
+      title: MailboxError
+      description: Details about why a mailbox is `inactive`. This object is only
+        present when the mailbox `status` is `inactive` and an error code has been
+        assigned.
+      properties:
+        code:
+          type: integer
+          enum:
+          - 101
+          - 201
+          - 202
+          - 301
+          - 401
+          - 402
+          description: "Machine-readable error code (`MailboxErrorCode`). Codes are\
+            \ grouped by the hundreds digit:\n\n**1xx \u2014 Domain-related errors**\n\
+            - `101` DomainAlreadyInUse \u2014 The domain is already in use in Google\
+            \ Workspace.\n\n**2xx \u2014 Admin account access errors**\n- `201` AdminTwoFactorChanged\
+            \ \u2014 The admin two-factor authentication was changed.\n- `202` AdminPasswordChanged\
+            \ \u2014 The admin password was changed.\n\n**3xx \u2014 Domain registration\
+            \ errors**\n- `301` InvalidDomain \u2014 The domain is invalid.\n\n**4xx\
+            \ \u2014 Account-level errors**\n- `401` AccountDisabledForSpam \u2014\
+            \ The account was disabled for sending spam.\n- `402` AdminAccountDisabledForSpam\
+            \ \u2014 The admin account was disabled for sending spam."
+          examples:
+          - 401
+        message:
+          type: string
+          description: Human-readable description of the error.
+          examples:
+          - Account disabled for sending spam on domain example.com.
+      required:
+      - code
+      - message
+      examples:
+      - code: 401
+        message: Account disabled for sending spam on domain example.com.
+    OutlookMailbox:
+      type: object
+      title: OutlookMailbox
+      properties:
+        id:
+          type: string
+        type:
+          const: outlook
+        email:
+          type: string
+        domain:
+          $ref: '#/components/schemas/Domain'
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+        password:
+          type: string
+        status:
+          $ref: '#/components/schemas/MailboxStatus'
+        avatar:
+          type: string
+        isAdmin:
+          type: boolean
+        admin:
+          $ref: '#/components/schemas/MailboxAdminCredentials'
+        error:
+          $ref: '#/components/schemas/MailboxError'
+      required:
+      - id
+      - email
+      - domain
+      - firstName
+      - lastName
+      - signature
+      - password
+      - status
+      examples:
+      - id: '987473'
+        type: outlook
+        email: mark.jones@outlook.com
+        domain:
+          id: '123456'
+          createdAt: '2024-11-25T10:00:00Z'
+          domain: example.com
+          domainOwner:
+            id: '123'
+            company: Tech Innovators Inc.
+            firstName: John
+            lastName: Doe
+            email: john.doe@example.com
+            streetAddress1: 123 Innovation Lane
+            streetAddress2: Suite 200
+            city: San Francisco
+            state: CA
+            postalCode: '94107'
+            country: USA
+            phone: +1 555 000 0000
+          redirectUrl: https://example.com/home
+          status: active
+          type: google
+        firstName: Mark
+        lastName: Jones
+        signature: 'Best regards,
+
+          Mark Jones'
+        forwardTo: admin@example.com
+        password: securepass987
+        status: active
+        avatar: https://example.com/avatar/mark_jones.png
+      - id: '654346'
+        type: outlook
+        email: sarah.connor@outlook.com
+        domain:
+          id: '789012'
+          createdAt: '2024-11-20T14:00:00Z'
+          domain: mywebsite.org
+          domainOwner:
+            id: '456'
+            company: Global Solutions Ltd.
+            firstName: Emma
+            lastName: Smith
+            email: emma.smith@globalsolutions.com
+            streetAddress1: 456 Business Road
+            streetAddress2: Floor 3
+            city: London
+            state: London
+            postalCode: EC1A 1BB
+            country: UK
+            phone: +44 20 7946 0000
+          redirectUrl: https://mywebsite.org/dashboard
+          status: active
+          type: google
+        firstName: Sarah
+        lastName: Connor
+        signature: 'Warm regards,
+
+          Sarah Connor'
+        forwardTo: helpdesk@mywebsite.org
+        password: password456secure
+        status: active
+        avatar: https://mywebsite.org/avatar/sarah_connor.jpg
+    SharedMailbox:
+      type: object
+      title: SharedMailbox
+      properties:
+        id:
+          type: string
+        type:
+          const: shared
+        email:
+          type: string
+        domain:
+          $ref: '#/components/schemas/Domain'
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+        password:
+          type: string
+        smtpHost:
+          type: string
+        smtpPort:
+          type: string
+        smtpUsername:
+          type: string
+        smtpPassword:
+          type: string
+        smtpTLS:
+          type: boolean
+        imapHost:
+          type: string
+        imapPort:
+          type: string
+        imapUsername:
+          type: string
+        imapPassword:
+          type: string
+        imapTLS:
+          type: boolean
+        status:
+          $ref: '#/components/schemas/MailboxStatus'
+        error:
+          $ref: '#/components/schemas/MailboxError'
+      required:
+      - id
+      - email
+      - domain
+      - firstName
+      - lastName
+      - signature
+      - password
+      - smtpHost
+      - smtpPort
+      - smtpUsername
+      - smtpPassword
+      - smtpTLS
+      - imapHost
+      - imapPort
+      - imapUsername
+      - imapPassword
+      - imapTLS
+      - status
+      examples:
+      - id: '321523'
+        type: shared
+        email: jack.brown@privatedomain.com
+        domain:
+          id: '123456'
+          createdAt: '2024-11-25T10:00:00Z'
+          domain: example.com
+          domainOwner:
+            id: '123'
+            company: Tech Innovators Inc.
+            firstName: John
+            lastName: Doe
+            email: john.doe@example.com
+            streetAddress1: 123 Innovation Lane
+            streetAddress2: Suite 200
+            city: San Francisco
+            state: CA
+            postalCode: '94107'
+            country: USA
+            phone: +1 555 000 0000
+          redirectUrl: https://example.com/home
+          status: active
+          type: shared
+        firstName: Jack
+        lastName: Brown
+        signature: 'Sincerely,
+
+          Jack Brown'
+        forwardTo: support@privatedomain.com
+        password: securePrivate123
+        smtpHost: smtp.privatedomain.com
+        smtpPort: '587'
+        smtpUsername: jack.brown
+        smtpPassword: smtpSecurePassword!
+        smtpTLS: true
+        imapHost: imap.privatedomain.com
+        imapPort: '993'
+        imapUsername: jack.brown
+        imapPassword: imapSecurePassword!
+        imapTLS: true
+        status: active
+      - id: '654735'
+        type: shared
+        email: lisa.williams@custommail.net
+        domain:
+          id: '789012'
+          createdAt: '2024-11-20T14:30:00Z'
+          domain: custommail.net
+          domainOwner:
+            id: '456'
+            company: Global Solutions Ltd.
+            firstName: Emma
+            lastName: Smith
+            email: emma.smith@globalsolutions.com
+            streetAddress1: 456 Business Road
+            streetAddress2: Floor 3
+            city: London
+            state: London
+            postalCode: EC1A 1BB
+            country: UK
+            phone: +44 20 7946 0000
+          redirectUrl: https://custommail.net/dashboard
+          status: active
+          type: shared
+        firstName: Lisa
+        lastName: Williams
+        signature: 'Warm regards,
+
+          Lisa Williams'
+        forwardTo: helpdesk@custommail.net
+        password: privatePass456
+        smtpHost: smtp.custommail.net
+        smtpPort: '465'
+        smtpUsername: lisa.williams
+        smtpPassword: smtpPass@Secure
+        smtpTLS: true
+        imapHost: imap.custommail.net
+        imapPort: '993'
+        imapUsername: lisa.williams
+        imapPassword: imapPass@Secure
+        imapTLS: true
+        status: active
+    PrivateMailbox:
+      type: object
+      title: PrivateMailbox
+      properties:
+        id:
+          type: string
+        type:
+          const: private
+        email:
+          type: string
+        domain:
+          $ref: '#/components/schemas/Domain'
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+        password:
+          type: string
+        smtpHost:
+          type: string
+        smtpPort:
+          type: number
+        smtpUsername:
+          type: string
+        smtpPassword:
+          type: string
+        smtpTLS:
+          type: boolean
+        imapHost:
+          type: string
+        imapPort:
+          type: number
+        imapUsername:
+          type: string
+        imapPassword:
+          type: string
+        imapTLS:
+          type: boolean
+        status:
+          $ref: '#/components/schemas/MailboxStatus'
+        error:
+          $ref: '#/components/schemas/MailboxError'
+      required:
+      - id
+      - email
+      - domain
+      - firstName
+      - lastName
+      - signature
+      - password
+      - smtpHost
+      - smtpPort
+      - smtpUsername
+      - smtpPassword
+      - smtpTLS
+      - imapHost
+      - imapPort
+      - imapUsername
+      - imapPassword
+      - imapTLS
+      - status
+      examples:
+      - id: '321523'
+        type: private
+        email: jack.brown@privatedomain.com
+        domain:
+          id: '123456'
+          createdAt: '2024-11-25T10:00:00Z'
+          domain: example.com
+          domainOwner:
+            id: '123'
+            company: Tech Innovators Inc.
+            firstName: John
+            lastName: Doe
+            email: john.doe@example.com
+            streetAddress1: 123 Innovation Lane
+            streetAddress2: Suite 200
+            city: San Francisco
+            state: CA
+            postalCode: '94107'
+            country: USA
+            phone: +1 555 000 0000
+          redirectUrl: https://example.com/home
+          status: active
+          type: private
+        firstName: Jack
+        lastName: Brown
+        signature: 'Sincerely,
+
+          Jack Brown'
+        forwardTo: support@privatedomain.com
+        password: securePrivate123
+        smtpHost: smtp.privatedomain.com
+        smtpPort: '587'
+        smtpUsername: jack.brown
+        smtpPassword: smtpSecurePassword!
+        smtpTLS: true
+        imapHost: imap.privatedomain.com
+        imapPort: '993'
+        imapUsername: jack.brown
+        imapPassword: imapSecurePassword!
+        imapTLS: true
+        status: active
+      - id: '654735'
+        type: private
+        email: lisa.williams@custommail.net
+        domain:
+          id: '789012'
+          createdAt: '2024-11-20T14:30:00Z'
+          domain: custommail.net
+          domainOwner:
+            id: '456'
+            company: Global Solutions Ltd.
+            firstName: Emma
+            lastName: Smith
+            email: emma.smith@globalsolutions.com
+            streetAddress1: 456 Business Road
+            streetAddress2: Floor 3
+            city: London
+            state: London
+            postalCode: EC1A 1BB
+            country: UK
+            phone: +44 20 7946 0000
+          redirectUrl: https://custommail.net/dashboard
+          status: active
+          type: private
+        firstName: Lisa
+        lastName: Williams
+        signature: 'Warm regards,
+
+          Lisa Williams'
+        forwardTo: helpdesk@custommail.net
+        password: privatePass456
+        smtpHost: smtp.custommail.net
+        smtpPort: '465'
+        smtpUsername: lisa.williams
+        smtpPassword: smtpPass@Secure
+        smtpTLS: true
+        imapHost: imap.custommail.net
+        imapPort: '993'
+        imapUsername: lisa.williams
+        imapPassword: imapPass@Secure
+        imapTLS: true
+        status: active
+    UpdateMailbox:
+      type: object
+      title: UpdateMailbox
+      anyOf:
+      - $ref: '#/components/schemas/UpdateGoogleMailbox'
+      - $ref: '#/components/schemas/UpdateOutlookMailbox'
+      - $ref: '#/components/schemas/UpdateSharedMailbox'
+      - $ref: '#/components/schemas/UpdatePrivateMailbox'
+    UpdateGoogleMailbox:
+      type: object
+      title: UpdateGoogleMailbox
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+        avatar:
+          type: string
+          description: URL of the mailbox avatar. Pass `null` to remove the current
+            avatar.
+          nullable: true
+      examples:
+      - firstName: Emily
+        lastName: Johnson
+        signature: 'Best regards,
+
+          Emily Johnson'
+        forwardTo: support@example.com
+        avatar: https://example.com/avatar/emily_johnson.png
+      - firstName: Michael
+        lastName: Brown
+        signature: 'Thank you,
+
+          Michael Brown'
+        forwardTo: info@mywebsite.org
+        avatar: https://mywebsite.org/avatar/michael_brown.jpg
+    UpdateOutlookMailbox:
+      type: object
+      title: UpdateOutlookMailbox
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+        avatar:
+          type: string
+          description: URL of the mailbox avatar. Pass `null` to remove the current
+            avatar.
+          nullable: true
+      examples:
+      - firstName: Sophia
+        lastName: Williams
+        signature: 'Warm regards,
+
+          Sophia Williams'
+        forwardTo: contact@businesshub.com
+        avatar: https://businesshub.com/avatars/sophia_williams.png
+      - firstName: James
+        lastName: Anderson
+        signature: 'Kind regards,
+
+          James Anderson'
+        forwardTo: james@supportcenter.net
+        avatar: https://supportcenter.net/avatars/james_anderson.jpg
+    UpdateSharedMailbox:
+      type: object
+      title: UpdateSharedMailbox
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+      examples:
+      - firstName: Ella
+        lastName: Smith
+        signature: 'Sincerely,
+
+          Ella Smith'
+        forwardTo: ella.smith@domain.com
+      - firstName: Liam
+        lastName: Johnson
+        signature: 'Kind regards,
+
+          Liam Johnson'
+        forwardTo: liam.johnson@helpdesk.com
+    UpdatePrivateMailbox:
+      type: object
+      title: UpdatePrivateMailbox
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+      examples:
+      - firstName: Olivia
+        lastName: Taylor
+        signature: 'Best wishes,
+
+          Olivia Taylor'
+        forwardTo: olivia.taylor@company.com
+      - firstName: Daniel
+        lastName: Clark
+        signature: 'Cheers,
+
+          Daniel Clark'
+        forwardTo: daniel.clark@servicehub.org
+    Mailbox_2:
+      type: object
+      title: Mailbox
+      anyOf:
+      - $ref: '#/components/schemas/GoogleMailboxWithAuthCode'
+      - $ref: '#/components/schemas/OutlookMailboxWithAuthCode'
+      - $ref: '#/components/schemas/SharedMailbox'
+      - $ref: '#/components/schemas/PrivateMailbox'
+    GoogleMailboxWithAuthCode:
+      type: object
+      title: GoogleMailboxWithAuthCode
+      properties:
+        id:
+          type: string
+        type:
+          const: google
+        email:
+          type: string
+        domain:
+          $ref: '#/components/schemas/Domain'
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+        password:
+          type: string
+        status:
+          $ref: '#/components/schemas/MailboxStatus'
+        avatar:
+          type: string
+        imapHost:
+          type: string
+        imapPort:
+          type: number
+        imapTLS:
+          type: boolean
+        imapUsername:
+          type: string
+        imapPassword:
+          type: string
+        smtpHost:
+          type: string
+        smtpPort:
+          type: number
+        smtpTLS:
+          type: boolean
+        smtpUsername:
+          type: string
+        smtpPassword:
+          type: string
+        authCode:
+          type: string
+        admin:
+          $ref: '#/components/schemas/MailboxAdminCredentialsWithAuthCode'
+        error:
+          $ref: '#/components/schemas/MailboxError'
+      required:
+      - id
+      - email
+      - domain
+      - firstName
+      - lastName
+      - signature
+      - password
+      - status
+      - imapHost
+      - imapPort
+      - imapTLS
+      - imapUsername
+      - imapPassword
+      - smtpHost
+      - smtpPort
+      - smtpTLS
+      - smtpUsername
+      - smtpPassword
+      examples:
+      - id: '789'
+        type: google
+        email: jane.doe@gmail.com
+        domain:
+          id: '123456'
+          createdAt: '2024-11-25T10:00:00Z'
+          domain: example.com
+          domainOwner:
+            id: '123'
+            company: Tech Innovators Inc.
+            firstName: John
+            lastName: Doe
+            email: john.doe@example.com
+            streetAddress1: 123 Innovation Lane
+            streetAddress2: Suite 200
+            city: San Francisco
+            state: CA
+            postalCode: '94107'
+            country: USA
+            phone: +1 555 000 0000
+          redirectUrl: https://example.com/home
+          status: active
+          type: google
+        firstName: Jane
+        lastName: Doe
+        signature: 'Kind regards,
+
+          Jane Doe'
+        forwardTo: support@example.com
+        password: securepassword123
+        status: active
+        avatar: https://example.com/avatar/jane_doe.png
+      - id: '456123'
+        type: outlook
+        email: emma.smith@gmail.com
+        domain:
+          id: '789101'
+          createdAt: '2024-11-20T15:45:00Z'
+          domain: mywebsite.org
+          domainOwner:
+            id: '456'
+            company: Global Solutions Ltd.
+            firstName: Emma
+            lastName: Smith
+            email: emma.smith@globalsolutions.com
+            streetAddress1: 456 Business Road
+            streetAddress2: Floor 3
+            city: London
+            state: London
+            postalCode: EC1A 1BB
+            country: UK
+            phone: +44 20 7946 0000
+          redirectUrl: https://mywebsite.org/dashboard
+          status: active
+          type: outlook
+        firstName: Emma
+        lastName: Smith
+        signature: 'Warm regards,
+
+          Emma Smith'
+        forwardTo: info@globalsolutions.com
+        password: mypassword456
+        status: active
+        avatar: https://mywebsite.org/avatar/emma_smith.jpg
+    MailboxAdminCredentialsWithAuthCode:
+      type: object
+      title: MailboxAdminCredentialsWithAuthCode
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        secret:
+          type: string
+        authCode:
+          type: string
+      required:
+      - email
+      - password
+      - authCode
+    OutlookMailboxWithAuthCode:
+      type: object
+      title: OutlookMailboxWithAuthCode
+      properties:
+        id:
+          type: string
+        type:
+          const: outlook
+        email:
+          type: string
+        domain:
+          $ref: '#/components/schemas/Domain'
+        firstName:
+          type: string
+        lastName:
+          type: string
+        signature:
+          type: string
+        forwardTo:
+          type: string
+        password:
+          type: string
+        status:
+          $ref: '#/components/schemas/MailboxStatus'
+        avatar:
+          type: string
+        isAdmin:
+          type: boolean
+        admin:
+          $ref: '#/components/schemas/MailboxAdminCredentialsWithAuthCode'
+        error:
+          $ref: '#/components/schemas/MailboxError'
+      required:
+      - id
+      - email
+      - domain
+      - firstName
+      - lastName
+      - signature
+      - password
+      - status
+      examples:
+      - id: '987473'
+        type: outlook
+        email: mark.jones@outlook.com
+        domain:
+          id: '123456'
+          createdAt: '2024-11-25T10:00:00Z'
+          domain: example.com
+          domainOwner:
+            id: '123'
+            company: Tech Innovators Inc.
+            firstName: John
+            lastName: Doe
+            email: john.doe@example.com
+            streetAddress1: 123 Innovation Lane
+            streetAddress2: Suite 200
+            city: San Francisco
+            state: CA
+            postalCode: '94107'
+            country: USA
+            phone: +1 555 000 0000
+          redirectUrl: https://example.com/home
+          status: active
+          type: google
+        firstName: Mark
+        lastName: Jones
+        signature: 'Best regards,
+
+          Mark Jones'
+        forwardTo: admin@example.com
+        password: securepass987
+        status: active
+        avatar: https://example.com/avatar/mark_jones.png
+      - id: '654346'
+        type: outlook
+        email: sarah.connor@outlook.com
+        domain:
+          id: '789012'
+          createdAt: '2024-11-20T14:00:00Z'
+          domain: mywebsite.org
+          domainOwner:
+            id: '456'
+            company: Global Solutions Ltd.
+            firstName: Emma
+            lastName: Smith
+            email: emma.smith@globalsolutions.com
+            streetAddress1: 456 Business Road
+            streetAddress2: Floor 3
+            city: London
+            state: London
+            postalCode: EC1A 1BB
+            country: UK
+            phone: +44 20 7946 0000
+          redirectUrl: https://mywebsite.org/dashboard
+          status: active
+          type: google
+        firstName: Sarah
+        lastName: Connor
+        signature: 'Warm regards,
+
+          Sarah Connor'
+        forwardTo: helpdesk@mywebsite.org
+        password: password456secure
+        status: active
+        avatar: https://mywebsite.org/avatar/sarah_connor.jpg
+    SpamCheck:
+      type: object
+      title: SpamCheck
+      properties:
+        id:
+          type: number
+        createdAt:
+          type: string
+        email:
+          type: string
+        result:
+          $ref: '#/components/schemas/SpamCheckResult'
+        mailbox:
+          $ref: '#/components/schemas/Mailbox'
+        state:
+          $ref: '#/components/schemas/SpamCheckState'
+        fromEmail:
+          type: string
+      required:
+      - id
+      - createdAt
+      - state
+      - fromEmail
+      examples:
+      - id: 0
+        createdAt: '2024-12-09 13:39:19.613'
+        email: email-28d8fb8d-ea83-48f2-8bb2-64da9dead625@test.mailpool.io
+        result:
+          subject: Deliverability check email - please disregard
+          fromEmail: john@trynew-test-account.com
+          score: 92
+          domainBlackList:
+            status: passed
+            domains:
+            - status: passed
+              listingName: rbl.blockedservers.com
+          ipBlackList:
+            status: passed
+            domains:
+            - status: passed
+              listingName: rbl.blockedservers.com
+          spamAssassin:
+            status: passed
+            score: 0
+          SPF:
+            status: passed
+            spfRecordExist:
+              status: passed
+            duplicateSpfRecords:
+              status: passed
+            spfAuthorization:
+              status: passed
+            allMechanism:
+              status: passed
+            ptrMechanism:
+              status: passed
+          DKIM:
+            status: passed
+            exists:
+              status: passed
+            verified:
+              status: passed
+          DMARK:
+            status: passed
+            published:
+              status: passed
+            duplicate:
+              status: passed
+            validPolicyTag:
+              status: passed
+            validVersion:
+              status: passed
+            authenticated:
+              status: passed
+            spfAuthenticated:
+              status: passed
+          reverseDNS:
+            status: passed
+            existingReverseDNSLookup:
+              status: passed
+            mailServerIPMatching:
+              status: passed
+          domainAge:
+            status: passed
+            domainValidity:
+              status: passed
+            domainAge:
+              status: passed
+          brokenLinks:
+            status: passed
+            links:
+            - status: passed
+              url: test.example.com
+          shortUrls:
+            status: passed
+            urls:
+            - status: passed
+              url: tinyurl.com/example
+        mailbox:
+          id: '789'
+          type: google
+          email: jane.doe@gmail.com
+          domain:
+            id: '123456'
+            createdAt: '2024-11-25T10:00:00Z'
+            domain: example.com
+            domainOwner:
+              id: '123'
+              company: Tech Innovators Inc.
+              firstName: John
+              lastName: Doe
+              email: john.doe@example.com
+              streetAddress1: 123 Innovation Lane
+              streetAddress2: Suite 200
+              city: San Francisco
+              state: CA
+              postalCode: '94107'
+              country: USA
+              phone: +1 555 000 0000
+            redirectUrl: https://example.com/home
+            status: active
+            type: google
+          firstName: Jane
+          lastName: Doe
+          signature: 'Kind regards,
+
+            Jane Doe'
+          forwardTo: support@example.com
+          password: securepassword123
+          status: active
+          avatar: https://example.com/avatar/jane_doe.png
+        state: pending
+        fromEmail: john@trynew-test-account.com
+    SpamCheckResult:
+      type: object
+      title: SpamCheckResult
+      properties:
+        subject:
+          type: string
+        fromEmail:
+          type: string
+        score:
+          type: number
+        domainBlackList:
+          $ref: '#/components/schemas/BlackListCheck'
+        ipBlackList:
+          $ref: '#/components/schemas/BlackListCheck'
+        spamAssassin:
+          $ref: '#/components/schemas/SpamAssassinCheck'
+        SPF:
+          $ref: '#/components/schemas/SpfCheck'
+        DKIM:
+          $ref: '#/components/schemas/DkimCheck'
+        DMARK:
+          $ref: '#/components/schemas/DmarkCheck'
+        reverseDNS:
+          $ref: '#/components/schemas/ReverseDNSCheck'
+        domainAge:
+          $ref: '#/components/schemas/DomainAgeCheck'
+        brokenLinks:
+          $ref: '#/components/schemas/BrokenLinksCheck'
+        shortUrls:
+          $ref: '#/components/schemas/ShortUrlsCheck'
+      required:
+      - subject
+      - fromEmail
+      - score
+      - domainBlackList
+      - ipBlackList
+      - spamAssassin
+      - SPF
+      - DKIM
+      - DMARK
+      - reverseDNS
+      - domainAge
+      examples:
+      - subject: Deliverability check email - please disregard
+        fromEmail: john@trynew-test-account.com
+        score: 92
+        domainBlackList:
+          status: passed
+          domains:
+          - status: passed
+            listingName: rbl.blockedservers.com
+        ipBlackList:
+          status: passed
+          domains:
+          - status: passed
+            listingName: rbl.blockedservers.com
+        spamAssassin:
+          status: passed
+          score: 0
+        SPF:
+          status: passed
+          spfRecordExist:
+            status: passed
+          duplicateSpfRecords:
+            status: passed
+          spfAuthorization:
+            status: passed
+          allMechanism:
+            status: passed
+          ptrMechanism:
+            status: passed
+        DKIM:
+          status: passed
+          exists:
+            status: passed
+          verified:
+            status: passed
+        DMARK:
+          status: passed
+          published:
+            status: passed
+          duplicate:
+            status: passed
+          validPolicyTag:
+            status: passed
+          validVersion:
+            status: passed
+          authenticated:
+            status: passed
+          spfAuthenticated:
+            status: passed
+        reverseDNS:
+          status: passed
+          existingReverseDNSLookup:
+            status: passed
+          mailServerIPMatching:
+            status: passed
+        domainAge:
+          status: passed
+          domainValidity:
+            status: passed
+          domainAge:
+            status: passed
+        brokenLinks:
+          status: passed
+          links:
+          - status: passed
+            url: test.example.com
+        shortUrls:
+          status: passed
+          urls:
+          - status: passed
+            url: tinyurl.com/example
+    BlackListCheck:
+      type: object
+      title: BlackListCheck
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        domains:
+          type: array
+          items:
+            $ref: '#/components/schemas/BlackListItem'
+    CheckStatus:
+      type: string
+      enum:
+      - passed
+      - warning
+      - error
+      title: CheckStatus
+    BlackListItem:
+      type: object
+      title: BlackListItem
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        listingName:
+          type: string
+      examples:
+      - status: passed
+        listingName: rbl.blockedservers.com
+    SpamAssassinCheck:
+      type: object
+      title: SpamAssassinCheck
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        score:
+          type: number
+      examples:
+      - status: passed
+        score: 0
+    SpfCheck:
+      type: object
+      title: SpfCheck
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        spfRecordExist:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        duplicateSpfRecords:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        spfAuthorization:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        allMechanism:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        ptrMechanism:
+          $ref: '#/components/schemas/PlainCheckStatus'
+    PlainCheckStatus:
+      type: object
+      title: PlainCheckStatus
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+    DkimCheck:
+      type: object
+      title: DkimCheck
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        exists:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        verified:
+          $ref: '#/components/schemas/PlainCheckStatus'
+    DmarkCheck:
+      type: object
+      title: DmarkCheck
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        published:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        duplicate:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        validPolicyTag:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        validVersion:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        authenticated:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        spfAuthenticated:
+          $ref: '#/components/schemas/PlainCheckStatus'
+    ReverseDNSCheck:
+      type: object
+      title: ReverseDNSCheck
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        existingReverseDNSLookup:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        mailServerIPMatching:
+          $ref: '#/components/schemas/PlainCheckStatus'
+    DomainAgeCheck:
+      type: object
+      title: DomainAgeCheck
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        domainValidity:
+          $ref: '#/components/schemas/PlainCheckStatus'
+        domainAge:
+          $ref: '#/components/schemas/PlainCheckStatus'
+    BrokenLinksCheck:
+      type: object
+      title: BrokenLinksCheck
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/BrokenLinksItem'
+    BrokenLinksItem:
+      type: object
+      title: BrokenLinksItem
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        url:
+          type: string
+      examples:
+      - status: passed
+        url: test.example.com
+    ShortUrlsCheck:
+      type: object
+      title: ShortUrlsCheck
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        urls:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShortUrlsItem'
+    ShortUrlsItem:
+      type: object
+      title: ShortUrlsItem
+      properties:
+        status:
+          $ref: '#/components/schemas/CheckStatus'
+        url:
+          type: string
+      examples:
+      - status: passed
+        url: tinyurl.com/example
+    SpamCheckState:
+      type: string
+      enum:
+      - pending
+      - completed
+      title: SpamCheckState
+    IpBlacklistCheck:
+      type: object
+      title: IpBlacklistCheck
+      properties:
+        id:
+          type: number
+          description: IP blacklist check ID.
+        createdAt:
+          type: string
+          description: ISO timestamp of when the check was created.
+          format: date-time
+        ip:
+          type: string
+          description: IPv4 or IPv6 address that was submitted for blacklist verification.
+        state:
+          $ref: '#/components/schemas/SpamCheckState'
+          description: 'Processing state of the check. New checks are created with
+            `pending`
+
+            and become `completed` once Mailpool finishes querying the
+
+            blacklist sources.
+
+            '
+        result:
+          description: 'Aggregated blacklist verification result. `null` while the
+            check is
+
+            `pending`; populated when the check transitions to `completed`.
+
+            '
+          nullable: true
+          $ref: '#/components/schemas/BlackListCheck'
+      required:
+      - id
+      - createdAt
+      - ip
+      - state
+      examples:
+      - id: 42
+        createdAt: '2026-05-26T10:00:00Z'
+        ip: 203.0.113.10
+        state: completed
+        result:
+          status: passed
+          domains:
+          - status: passed
+            listingName: zen.spamhaus.org
+          - status: passed
+            listingName: bl.spamcop.net
+      - id: 43
+        createdAt: '2026-05-26T10:05:00Z'
+        ip: 198.51.100.7
+        state: pending
+        result: null
+    CreateIpBlacklistCheck:
+      type: object
+      title: CreateIpBlacklistCheck
+      properties:
+        ip:
+          type: string
+          description: 'IPv4 or IPv6 address to check against the blacklist providers.
+
+            Must be a syntactically valid IP address.
+
+            '
+      required:
+      - ip
+      examples:
+      - ip: 203.0.113.10
+      - ip: 2001:db8::1
+    InboxPlacement:
+      type: object
+      title: InboxPlacement
+      properties:
+        id:
+          type: number
+        createdAt:
+          type: string
+        insertInBody:
+          type: string
+        result:
+          $ref: '#/components/schemas/InboxPlacementResult'
+        emails:
+          type: array
+          items:
+            type: string
+        state:
+          $ref: '#/components/schemas/InboxPlacementState'
+        fromEmail:
+          type: string
+      required:
+      - id
+      - createdAt
+      - insertInBody
+      - state
+      - fromEmail
+    InboxPlacementResult:
+      type: object
+      title: InboxPlacementResult
+      properties:
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxPlacementResultItem'
+        stats:
+          type: object
+          properties:
+            inbox:
+              type: number
+            promotion:
+              type: number
+            spam:
+              type: number
+            undelivered:
+              type: number
+    InboxPlacementResultItem:
+      type: object
+      title: InboxPlacementResultItem
+      properties:
+        provider:
+          $ref: '#/components/schemas/InboxPlacementProvider'
+        email:
+          type: string
+        mailboxId:
+          type: string
+        placement:
+          $ref: '#/components/schemas/InboxPlacementCheckStatus'
+        spf:
+          $ref: '#/components/schemas/InboxPlacementCheckSpfStatus'
+        dkim:
+          $ref: '#/components/schemas/InboxPlacementCheckDKIMStatus'
+        dmarc:
+          $ref: '#/components/schemas/InboxPlacementCheckDMARCStatus'
+        ip:
+          type: string
+        deliveredIn:
+          type: number
+    InboxPlacementProvider:
+      type: string
+      enum:
+      - GoogleWorkspace
+      - Gmail
+      - Outlook
+      - M365Outlook
+      - Yahoo
+      - Aol
+      - SMTP
+      - Hotmail
+      title: InboxPlacementProvider
+    InboxPlacementCheckStatus:
+      type: string
+      enum:
+      - inbox
+      - promotion
+      - spam
+      - unreceived
+      title: InboxPlacementCheckStatus
+    InboxPlacementCheckSpfStatus:
+      type: string
+      enum:
+      - none
+      - pass
+      - fail
+      - softfail
+      - policy
+      - neutral
+      - temperror
+      - permerror
+      title: InboxPlacementCheckSpfStatus
+    InboxPlacementCheckDKIMStatus:
+      type: string
+      enum:
+      - none
+      - pass
+      - unknown
+      - fail
+      - discard
+      title: InboxPlacementCheckDKIMStatus
+    InboxPlacementCheckDMARCStatus:
+      type: string
+      enum:
+      - none
+      - pass
+      - fail
+      - temperror
+      - permerror
+      title: InboxPlacementCheckDMARCStatus
+    InboxPlacementState:
+      type: string
+      enum:
+      - pending
+      - completed
+      title: InboxPlacementState
+    SavePlatformCredentials:
+      type: object
+      title: SavePlatformCredentials
+      description: 'Request body for saving or updating stored credentials for a third-party
+
+        platform. Credentials are validated against the platform before they are
+
+        stored; invalid credentials result in a `400 Bad Request`.
+
+        '
+      properties:
+        platform:
+          $ref: '#/components/schemas/AutomationExportPlatform'
+          description: Platform the credentials belong to.
+        credentials:
+          $ref: '#/components/schemas/PlatformCredentialsData'
+          description: Credential fields (plaintext).
+      required:
+      - platform
+      - credentials
+      examples:
+      - platform: instantly
+        credentials:
+          apiKey: sk_live_1234567890abcd
+      - platform: warmbox
+        credentials:
+          email: user@example.com
+          password: super-secret-password
+    AutomationExportPlatform:
+      type: string
+      enum:
+      - instantly
+      - smartlead
+      - reachinbox
+      - reply
+      - saleshandy
+      - warmbox
+      - emelia
+      - lemlist
+      - plusvibe
+      title: AutomationExportPlatform
+      description: 'Subset of `ExportPlatform` values that can be used for automated
+        mailbox export
+
+        (i.e. direct push to the third-party platform via stored credentials). Use
+
+        `csv` with the CSV export endpoint to retrieve a downloadable file instead.
+
+        '
+      examples:
+      - instantly
+      - smartlead
+      - warmbox
+    PlatformCredentialsData:
+      type: object
+      title: PlatformCredentialsData
+      description: 'Credential fields used to authenticate against a third-party platform.
+
+        The exact subset required depends on the platform (some require `apiKey`,
+
+        others require `email`/`password`). In responses secret values are masked
+
+        and only the last 4 characters are returned (e.g. `****abcd`).
+
+        '
+      properties:
+        email:
+          type: string
+          description: Account email, when the platform authenticates with credentials.
+          format: email
+        apiKey:
+          type: string
+          description: API key. Returned masked (e.g. `****abcd`) from `GET` endpoints.
+        password:
+          type: string
+          description: Account password. Returned masked (e.g. `****abcd`) from `GET`
+            endpoints.
+      examples:
+      - email: user@example.com
+        apiKey: sk_live_1234567890abcd
+      - email: user@example.com
+        password: '********'
+    PlatformCredentials:
+      type: object
+      title: PlatformCredentials
+      description: Stored credentials for a third-party platform, with secrets masked.
+      properties:
+        platform:
+          $ref: '#/components/schemas/ExportPlatform'
+          description: Platform the credentials belong to.
+        createdAt:
+          type: string
+          description: ISO 8601 timestamp of when the credentials were saved.
+          format: date-time
+        data:
+          $ref: '#/components/schemas/PlatformCredentialsData'
+          description: Credential fields (secret values are masked).
+      required:
+      - platform
+      - createdAt
+      - data
+      examples:
+      - platform: instantly
+        createdAt: '2026-04-21T10:00:00Z'
+        data:
+          email: user@example.com
+          apiKey: '****abcd'
+    ExportPlatform:
+      type: string
+      enum:
+      - instantly
+      - smartlead
+      - reachinbox
+      - firstquadrant
+      - luna
+      - saleshandy
+      - reply
+      - warmbox
+      - smartreach
+      - manyreach
+      - plusvibe
+      - woodpecker
+      - emelia
+      - lemlist
+      - csv
+      title: ExportPlatform
+      description: Third-party platform identifier that a mailbox export is targeted
+        at.
+      examples:
+      - instantly
+      - smartlead
+      - warmbox
+    ExportMailboxesRequest:
+      type: object
+      title: ExportMailboxesRequest
+      description: 'Request body used to push a list of mailboxes to a third-party
+        platform using
+
+        stored credentials. Credentials for the selected platform must already have
+
+        been saved via `POST /exports/credentials`.
+
+        '
+      properties:
+        platform:
+          $ref: '#/components/schemas/AutomationExportPlatform'
+          description: Target platform.
+        mailboxIds:
+          type: array
+          description: 'IDs of mailboxes to include in the export batch. Must contain
+            at least
+
+            one ID. Mailboxes whose inbox type is not supported by the target
+
+            platform are reported in the response `errors` array and skipped; if
+
+            none of the provided mailboxes are supported the endpoint returns
+
+            `400 Bad Request`.
+
+            '
+          minItems: 1
+          items:
+            type: number
+      required:
+      - platform
+      - mailboxIds
+      examples:
+      - platform: instantly
+        mailboxIds:
+        - 789
+        - 790
+        - 791
+    ExportBatchCreatedResponse:
+      type: object
+      title: ExportBatchCreatedResponse
+      description: "Response returned after a mailbox export batch has been scheduled.\n\
+        \nHas the same shape as `ExportBatch` (returned by\n`GET /exports/batches/{batchId}`)\
+        \ and additionally includes an `errors`\narray listing mailboxes from the\
+        \ request that could not be included in\nthe batch because exporting their\
+        \ inbox type to the target platform is\nnot supported. Such mailboxes are\
+        \ skipped \u2014 the remaining supported\nmailboxes are still scheduled for\
+        \ export. If **none** of the requested\nmailboxes can be exported to the target\
+        \ platform the endpoint returns\n`400 Bad Request` instead.\n"
+      properties:
+        id:
+          type: number
+          description: Export batch ID. Use it to poll export status.
+        createdAt:
+          type: string
+          description: ISO 8601 timestamp of when the batch was created.
+          format: date-time
+        status:
+          $ref: '#/components/schemas/ExportStatus'
+          description: Initial status of the batch (always `in_progress` on creation).
+        platform:
+          $ref: '#/components/schemas/ExportPlatform'
+          description: Platform the mailboxes were exported to.
+        exports:
+          type: array
+          description: Individual export items included in the batch.
+          items:
+            $ref: '#/components/schemas/ExportItem'
+        errors:
+          type: array
+          description: 'Mailboxes from the request that were not added to the batch
+            because
+
+            their inbox type is not supported for export to the target platform.
+
+            Empty when every requested mailbox was scheduled successfully.
+
+            '
+          items:
+            type: object
+            properties:
+              mailboxId:
+                type: number
+                description: ID of the mailbox that could not be exported.
+              error:
+                type: string
+                description: Human-readable reason the mailbox was skipped.
+            required:
+            - mailboxId
+            - error
+      required:
+      - id
+      - createdAt
+      - status
+      - platform
+      - exports
+      - errors
+      examples:
+      - id: 42
+        createdAt: '2026-04-23T10:00:00Z'
+        status: in_progress
+        platform: instantly
+        exports:
+        - id: 101
+          mailboxId: 789
+          mailboxEmail: jane.doe@example.com
+          status: in_progress
+          domainType: google
+        - id: 102
+          mailboxId: 790
+          mailboxEmail: john.doe@example.com
+          status: in_progress
+          domainType: google
+        errors:
+        - mailboxId: 791
+          error: Export shared inbox is not supported to this platform.
+    ExportStatus:
+      type: string
+      enum:
+      - in_progress
+      - retry
+      - completed
+      - failed
+      title: ExportStatus
+      description: Lifecycle status of a mailbox export batch or individual export.
+      examples:
+      - in_progress
+      - completed
+    ExportItem:
+      type: object
+      title: ExportItem
+      description: Single mailbox export belonging to an export batch.
+      properties:
+        id:
+          type: number
+          description: Export item ID.
+        mailboxId:
+          type: number
+          description: ID of the mailbox that is being exported.
+        mailboxEmail:
+          type: string
+          description: Email address of the mailbox that is being exported.
+        status:
+          $ref: '#/components/schemas/ExportStatus'
+          description: Status of this specific export item.
+        domainType:
+          $ref: '#/components/schemas/DomainType'
+          description: Type of the domain the mailbox belongs to, when known.
+      required:
+      - id
+      - mailboxId
+      - mailboxEmail
+      - status
+      examples:
+      - id: 15
+        mailboxId: 789
+        mailboxEmail: jane.doe@example.com
+        status: completed
+        domainType: google
+    ExportMailboxesCsvRequest:
+      type: object
+      title: ExportMailboxesCsvRequest
+      description: 'Request body used to export a list of mailboxes as a CSV file
+        formatted for a
+
+        specific platform. Unlike automated export, this endpoint does not require
+
+        stored credentials and supports every value of `ExportPlatform`.
+
+        '
+      properties:
+        platform:
+          $ref: '#/components/schemas/ExportPlatform'
+          description: Platform to format the CSV for.
+        mailboxIds:
+          type: array
+          description: "IDs of mailboxes to include in the CSV export. Must contain\
+            \ at least\none ID, and at least one of the referenced mailboxes must\
+            \ belong to\nthe current workspace \u2014 otherwise the endpoint returns\n\
+            `400 Bad Request`.\n"
+          minItems: 1
+          items:
+            type: number
+      required:
+      - platform
+      - mailboxIds
+      examples:
+      - platform: smartlead
+        mailboxIds:
+        - 789
+        - 790
+    ExportBatch:
+      type: object
+      title: ExportBatch
+      description: 'A group of mailbox exports that were submitted together to the
+        same platform.
+
+        '
+      properties:
+        id:
+          type: number
+          description: Export batch ID.
+        createdAt:
+          type: string
+          description: ISO 8601 timestamp of when the batch was created.
+          format: date-time
+        status:
+          $ref: '#/components/schemas/ExportStatus'
+          description: Aggregated status for the whole batch.
+        platform:
+          $ref: '#/components/schemas/ExportPlatform'
+          description: Platform the batch was exported to.
+        exports:
+          type: array
+          description: Individual export items included in the batch.
+          items:
+            $ref: '#/components/schemas/ExportItem'
+      required:
+      - id
+      - createdAt
+      - status
+      - platform
+      - exports
+      examples:
+      - id: 42
+        createdAt: '2026-04-21T10:00:00Z'
+        status: in_progress
+        platform: instantly
+        exports:
+        - id: 101
+          mailboxId: 789
+          mailboxEmail: jane.doe@example.com
+          status: in_progress
+          domainType: google
+        - id: 102
+          mailboxId: 790
+          mailboxEmail: john.doe@example.com
+          status: completed
+          domainType: google
+    SubscriptionSlots:
+      type: object
+      title: SubscriptionSlots
+      properties:
+        mailboxes:
+          type: object
+          properties:
+            google:
+              type: number
+            private:
+              type: number
+            outlook:
+              type: number
+        slots:
+          type: object
+          properties:
+            google:
+              type: number
+            private:
+              type: number
+            outlook:
+              type: number
+    UpdateSubscriptionSlots:
+      type: object
+      title: UpdateSubscriptionSlots
+      properties:
+        quantity:
+          type: number
+        type:
+          type: string
+          enum:
+          - google
+          - private
+          - outlook
+    IncreaseSubscriptionSlots:
+      type: object
+      title: IncreaseSubscriptionSlots
+      properties:
+        increaseBy:
+          type: number
+        type:
+          type: string
+          enum:
+          - google
+          - private
+          - outlook
+    DecreaseSubscriptionSlots:
+      type: object
+      title: DecreaseSubscriptionSlots
+      properties:
+        decreaseBy:
+          type: number
+        type:
+          type: string
+          enum:
+          - google
+          - private
+          - outlook
+    DomainsRegistered:
+      title: DomainsRegistered
+      x-stoplight:
+        id: 5tchkqgcoeccw
+      type: object
+      properties:
+        type:
+          type: string
+          x-stoplight:
+            id: c8l0izvkq8sca
+          default: domains.registered
+        domain:
+          $ref: '#/components/schemas/Domain'
+          x-stoplight:
+            id: kssvqytzf2bmm
+      description: Occurs when a domain is created and provisioned
+    DomainsUpdated:
+      title: DomainsUpdated
+      x-stoplight:
+        id: tpsp3lqfmczh2
+      type: object
+      properties:
+        type:
+          type: string
+          x-stoplight:
+            id: v5zu4hhndwqje
+          default: domains.updated
+        domain:
+          $ref: '#/components/schemas/Domain'
+          x-stoplight:
+            id: cildbz01codp7
+      description: Occurs when a domain is updated
+    MailboxesCreated:
+      title: MailboxesCreated
+      x-stoplight:
+        id: 0qqryjbse5ca6
+      type: object
+      description: Occurs when a mailbox is created and provisioned
+      properties:
+        type:
+          type: string
+          x-stoplight:
+            id: ur9g41e58ia0t
+          default: mailboxes.created
+        mailbox:
+          $ref: '#/components/schemas/Mailbox'
+          x-stoplight:
+            id: 49mgrjjait6jy
+    MailboxesUpdated:
+      title: MailboxesUpdated
+      x-stoplight:
+        id: 79p6dihjpm2cp
+      type: object
+      description: Occurs when a mailbox is updated
+      properties:
+        type:
+          type: string
+          x-stoplight:
+            id: stuar3r5z8k8a
+          default: mailboxes.updated
+        mailbox:
+          $ref: '#/components/schemas/Mailbox'
+          x-stoplight:
+            id: urjexmx0785ft
+    MailboxesDeleted:
+      title: MailboxesDeleted
+      x-stoplight:
+        id: aud8yse39q0mu
+      type: object
+      properties:
+        type:
+          x-stoplight:
+            id: 5d2xqht5tmq5w
+          default: mailboxes.deleted
+          type: string
+        mailbox:
+          $ref: '#/components/schemas/Mailbox'
+          x-stoplight:
+            id: 570jp83rck4s6
+      description: Occurs when a mailbox is deleted
+    SpamChecksCreated:
+      x-stoplight:
+        id: sgyb31ec8z7rt
+      title: SpamChecksCreated
+      description: Occurs when a spam check is created
+      type: object
+      properties:
+        type:
+          x-stoplight:
+            id: 76ttml7qe0zx0
+          enum:
+          - spam-checks.created
+        spamCheck:
+          $ref: '#/components/schemas/SpamCheck'
+          x-stoplight:
+            id: 900o37yha18ow
+    SpamChecksUpdated:
+      x-stoplight:
+        id: 5a146pajoczc7
+      title: SpamChecksUpdated
+      description: Occurs when a spam check is updated
+      type: object
+      properties:
+        type:
+          x-stoplight:
+            id: q1djdbplvahq0
+          enum:
+          - spam-checks.updated
+        spamCheck:
+          $ref: '#/components/schemas/SpamCheck'
+          x-stoplight:
+            id: jt3zxtl325rfi
+    SpamChecksDeleted:
+      x-stoplight:
+        id: b98bekp6undoz
+      title: SpamChecksDeleted
+      description: Occurs when a spam check is deleted
+      type: object
+      properties:
+        type:
+          x-stoplight:
+            id: fch3tfdncr53e
+          enum:
+          - spam-checks.deleted
+        spamCheck:
+          $ref: '#/components/schemas/SpamCheck'
+          x-stoplight:
+            id: tkn2qm740xqf0
+    IpBlacklistChecksCreated:
+      x-stoplight:
+        id: ipblchkwhcreate
+      title: IpBlacklistChecksCreated
+      description: Occurs when an IP blacklist check is created
+      type: object
+      properties:
+        type:
+          x-stoplight:
+            id: ipblchkwhcrtyp1
+          enum:
+          - ip-blacklist-checks.created
+        ipBlacklistCheck:
+          $ref: '#/components/schemas/IpBlacklistCheck'
+          x-stoplight:
+            id: ipblchkwhcrref1
+    IpBlacklistChecksUpdated:
+      x-stoplight:
+        id: ipblchkwhupdate
+      title: IpBlacklistChecksUpdated
+      description: 'Occurs when an IP blacklist check is updated (typically when its
+
+        `state` transitions to `completed` and the `result` is populated).
+
+        '
+      type: object
+      properties:
+        type:
+          x-stoplight:
+            id: ipblchkwhuptyp1
+          enum:
+          - ip-blacklist-checks.updated
+        ipBlacklistCheck:
+          $ref: '#/components/schemas/IpBlacklistCheck'
+          x-stoplight:
+            id: ipblchkwhupref1
+    IpBlacklistChecksDeleted:
+      x-stoplight:
+        id: ipblchkwhdelete
+      title: IpBlacklistChecksDeleted
+      description: Occurs when an IP blacklist check is deleted
+      type: object
+      properties:
+        type:
+          x-stoplight:
+            id: ipblchkwhdltyp1
+          enum:
+          - ip-blacklist-checks.deleted
+        ipBlacklistCheck:
+          $ref: '#/components/schemas/IpBlacklistCheck'
+          x-stoplight:
+            id: ipblchkwhdlref1
+    InboxPlacementsCreated:
+      title: InboxPlacementsCreated
+      x-stoplight:
+        id: ohcqnseay7i6h
+      type: object
+      description: Occurs when a inbox placement is created
+      properties:
+        type:
+          x-stoplight:
+            id: 3u961wexawrvz
+          enum:
+          - inbox-placements.created
+        inboxPlacement:
+          $ref: '#/components/schemas/InboxPlacement'
+          x-stoplight:
+            id: gyzbikh60pgir
+      x-internal: false
+    InboxPlacementsUpdated:
+      title: InboxPlacementsUpdated
+      x-stoplight:
+        id: o8amqerow7647
+      type: object
+      description: Occurs when a inbox placement is updated
+      properties:
+        type:
+          x-stoplight:
+            id: djo7wb6sqfwtv
+          enum:
+          - inbox-placements.updated
+        inboxPlacement:
+          $ref: '#/components/schemas/InboxPlacement'
+          x-stoplight:
+            id: 6nolbloi22pyj
+      x-internal: false
+    InboxPlacementsDeleted:
+      title: InboxPlacementsDeleted
+      x-stoplight:
+        id: v692krwwq8quu
+      type: object
+      description: Occurs when a inbox placement is deleted
+      properties:
+        type:
+          x-stoplight:
+            id: hatuavz1kuw6x
+          enum:
+          - inbox-placements.deleted
+        inboxPlacement:
+          $ref: '#/components/schemas/InboxPlacement'
+          x-stoplight:
+            id: vbmw405kzp9ac
+      x-internal: false

@@ -9,10 +9,11 @@ import (
 	"github.com/Yankzy/usetoro/internal/auth"
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/connectors"
+	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/internal/ingest"
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
-	"github.com/Yankzy/usetoro/internal/erp/ase"
+	"github.com/Yankzy/usetoro/internal/services/mailpool"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/Yankzy/usetoro/tap/pkg/micrion"
 	"github.com/nats-io/nats.go"
@@ -90,7 +91,17 @@ func NewServer(
 		transactionService, entityService,
 		st.Pool, st.Queries, natsClient, exporter, wm,
 	)
-	mux := NewRouter(h, wm)
+	var mpHandler *mailpool.Handler
+	if cfg.MailpoolAPIKey != "" {
+		mpClient, err := mailpool.NewMailpool(cfg.MailpoolEndpoint, cfg.MailpoolAPIKey)
+		if err == nil {
+			mpHandler = mailpool.NewHandler(mpClient, cfg.MailpoolAPIKey)
+		} else {
+			logger.Error("Failed to initialize Mailpool client", "error", err)
+		}
+	}
+
+	mux := NewRouter(h, wm, mpHandler)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

@@ -12,7 +12,7 @@ Instead of a closed-box marketing sequence, this architecture structures infrast
 
 * **Core Language:** Go (Golang)
 * **Event Broker:** NATS JetStream (durable streams, pull-consumers)
-* **Email API:** Mailpool API (for programmatic inbound parsing, webhooks, and outbound delivery)
+* **Email API:** Postmark API (for transactional/conversational bridging) & Mailpool API (for marketing/cold outbound sequences)
 * **State Management:** Autonomous Semantic Engine (ASE) DAGs
 * **Database:** PostgreSQL (storing conversation sessions, threads, and delivery states via sqlc)
 
@@ -20,15 +20,15 @@ Instead of a closed-box marketing sequence, this architecture structures infrast
 
 ## 2. Core Email Workflows & NATS Topology
 
-The email infrastructure in Toro acts as a dynamic conversational bridge connecting clients, virtual AI employees (e.g., `sarah@cpa.usetoro.io`), and internal Slack teams. 
+The email infrastructure in Toro acts as a dynamic conversational bridge connecting clients, virtual AI employees (e.g., `sarah@a.usetoro.io`), and internal Slack teams. 
 
 The architecture leverages NATS JetStream for decoupled, resilient worker processing.
 
 ```
-[Inbound Webhook (Mailpool)] ──> [Inbound Email Worker] ──> [ASE Email Triage DAG / General Agent Ingress]
+[Inbound Webhook (Postmark)] ──> [Inbound Email Worker] ──> [ASE Email Triage DAG / General Agent Ingress]
                                                                   │
                                                                   v
-[Outbound Webhook (Mailpool)] <── [Omni-Chat Worker]  <── [ASE Bookkeeping / Batch Email Worker]
+[Outbound Webhook (Postmark)] <── [Omni-Chat Worker]  <── [ASE Bookkeeping / Batch Email Worker]
 ```
 
 ---
@@ -37,10 +37,10 @@ The architecture leverages NATS JetStream for decoupled, resilient worker proces
 
 ### Step 1: Inbound Email Processing & Thread Resolution
 
-* **Worker:** `mailpool_inbound_email_worker` (replacing legacy Postmark logic)
-* **Objective:** Parse inbound webhook payloads from Mailpool, resolve entity/tenant context, and maintain conversational threads.
+* **Worker:** `postmark_inbound_email.go`
+* **Objective:** Parse inbound webhook payloads from Postmark, resolve entity/tenant context, and maintain conversational threads.
 * **Implementation Truths:**
-  * **Agent Alias Parsing:** Extracts the agent alias from the recipient email (e.g., parsing `mark` and `cpa2` from `mark@cpa2.usetoro.io`). Directs emails intended for the COO directly to `vcoo_ingress`.
+  * **Agent Alias Parsing:** Extracts the agent alias from the recipient email (e.g., parsing `mark` and `cpa2` from `mark@a.usetoro.io`). Directs emails intended for the COO directly to `vcoo_ingress`.
   * **Thread Resolution:** Parses `In-Reply-To` and `Message-ID` headers to accurately map replies to existing conversation sessions in the database.
   * **Entity Resolution:** Resolves the `EntityID` using three fallback strategies: 
     1) Matching thread IDs (`GetConversationByExternalID`).
@@ -52,22 +52,21 @@ The architecture leverages NATS JetStream for decoupled, resilient worker proces
 
 ### Step 2: The Autonomous Semantic Engine (ASE) Integration
 
-* **DAGs:** `email_inbound` and Domain DAGs (e.g., `ase_gaap_us`)
-* **Objective:** Understand email intent and extract structured data to unblock financial workflows.
-* **Implementation Truths:**
-  * **Email Triage DAG (`seed_email_dag.go`):** Inbound emails can be routed through a dedicated DAG to classify the intent using a specialized triage LLM agent.
-  * **Bookkeeping Domain Tool (`bookkeeping_tools.go`):** When transactions are blocked requiring human context (e.g., `HOLD_AMBIGUOUS`), the system intercepts the flow and generates an alert payload containing the required questions.
-  * **Email Domain Tool (`email_tools.go`):** When the client replies to a clarification email, the Email Tool maps the unstructured human reply back to the specific stuck transaction IDs (via LLM mapping) and emits an `ase.events.resume` event to unblock the DAG.
+* **DAGs:** `default_inbound_email` and Domain DAGs (e.g., `marketing_email`)
+* **Objective:** Understand inbound email intent, map conversational replies to existing system holds, and orchestrate outbound sequences through specialized domain DAGs like marketing outreach.
+* **Required ASE Domain Tools (Email/Communication Domain):**
+  * **`EmailTool` (`domain_tools/email_tools.go`):** (Currently implemented). Registered as `"email"`. Responsible for mapping unstructured client replies back to stuck session transactions, generating alert payloads, and emitting the `ase.events.resume` event.
+  * **`EmailMarketingTool` (`domain_tools/marketing_email_tools.go`):** (Needs implementation). Required by `marketing_email.yml` (`domain_tool: "email_marketing"`). This tool will be responsible for mapping the marketing intent (DEMO_REQUEST, COLD_OUTREACH) to actual Mailpool dispatch payloads and handling outbound sequence state.
 
 ### Step 3: Outbound Omni-Channel Dispatch
 
 * **Worker:** `omni_chat_worker`
-* **Objective:** Deliver outgoing AI responses or system alerts back to the user via Email (using Mailpool).
+* **Objective:** Deliver outgoing AI responses or system alerts back to the user via Email (using Postmark).
 * **Implementation Truths:**
   * Listens to the `proof.outgoing.chat` NATS subject.
   * Persists the outgoing message into the `conversations` table.
   * Generates robust, thread-safe `Message-ID`s (e.g., `<ase_txnID__hash@agents.usetoro.io>`) to ensure email clients group the messages correctly in threads.
-  * Utilizes the Mailpool API to send the email payload.
+  * Utilizes the Postmark API to send the email payload.
   * **Bi-directional Slack Sync:** If the response originated from an internal Slack thread, it updates the `email_latest_message_id` pointer in `toro_threads_mappings` so the subsequent user reply properly routes back to the exact Slack thread.
 
 ### Step 4: Automated Batch Clarifications
@@ -81,10 +80,10 @@ The architecture leverages NATS JetStream for decoupled, resilient worker proces
 
 ### Step 5: Delivery Status Tracking
 
-* **Worker:** `mailpool_outbound_events_worker`
+* **Worker:** `postmark_outbound_events.go`
 * **Objective:** Maintain the real-time delivery state of all outgoing communications.
 * **Implementation Truths:**
-  * Ingests delivery events (Delivery, Bounce, SpamComplaint, Open, Click) from Mailpool webhooks.
+  * Ingests delivery events (Delivery, Bounce, SpamComplaint, Open, Click) from Postmark webhooks.
   * Updates the respective `external_id` records in the `conversations` database table via `UpdateConversationDeliveryStatus`.
 
 ---

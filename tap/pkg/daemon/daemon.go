@@ -18,6 +18,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/internal/services/mailpool"
 	"github.com/Yankzy/usetoro/tap/agents"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
@@ -45,6 +46,7 @@ type ProtocolDaemon struct {
 	NATS           *nats.Conn
 	JS             nats.JetStreamContext
 	EntityResolver *ai.EntityResolver
+	Mailpool       *mailpool.Mailpool
 
 	// Orchestrator is the singleton Workflow Orchestrator.
 	// It loads pipeline YAMLs, subscribes to trigger topics, and advances WorkflowInstances.
@@ -66,6 +68,7 @@ func New(
 	nc *nats.Conn,
 	js nats.JetStreamContext,
 	entityResolver *ai.EntityResolver,
+	mpClient *mailpool.Mailpool,
 ) *ProtocolDaemon {
 	if adminPort == "" {
 		adminPort = ":9090"
@@ -78,6 +81,7 @@ func New(
 		NATS:           nc,
 		JS:             js,
 		EntityResolver: entityResolver,
+		Mailpool:       mpClient,
 	}
 }
 
@@ -102,7 +106,7 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 	mem := memory.NewManager(d.DBPool)
 
 	// 4. Initialize the Agent Supervisor (The Hive)
-	d.Supervisor = agent.NewSupervisor(d.Logger, bus, mem, d.DBPool, d.EntityResolver)
+	d.Supervisor = agent.NewSupervisor(d.Logger, bus, mem, d.DBPool, d.EntityResolver, d.Mailpool)
 
 	for name, factory := range agents.GetRegistry() {
 		d.Supervisor.RegisterInternalAgent(name, factory)
@@ -119,6 +123,11 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 	// 6. Sync blueprints from DB and reconcile trigger stream subjects.
 	if err := d.Orchestrator.SyncBlueprints(ctx); err != nil {
 		return fmt.Errorf("orchestrator blueprint sync failed: %w", err)
+	}
+
+	// 7. Sync Agent Configurations from YAML to Database
+	if err := agents.SyncAgentConfigurations(ctx, dbQueries, "tap/agents/configs"); err != nil {
+		d.Logger.Warn("Agent configurations sync failed (non-fatal)", "error", err)
 	}
 
 	// 8. Load Initial Agent Configuration into the supervisor

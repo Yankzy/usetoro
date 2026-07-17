@@ -10,6 +10,7 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/internal/services/mailpool"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
@@ -25,13 +26,14 @@ type Supervisor struct {
 	dbPool  *pgxpool.Pool
 	er      *ai.EntityResolver
 	Queries *database.Queries
+	Mailpool *mailpool.Mailpool
 
 	// Registry of internal compiled agent modules
 	internalRegistry map[string]func(core.Environment) core.Runnable
 }
 
 // NewSupervisor creates the control plane for the agent hive.
-func NewSupervisor(logger *slog.Logger, bus core.EventBus, mem core.MemoryStore, dbPool *pgxpool.Pool, er *ai.EntityResolver) *Supervisor {
+func NewSupervisor(logger *slog.Logger, bus core.EventBus, mem core.MemoryStore, dbPool *pgxpool.Pool, er *ai.EntityResolver, mp *mailpool.Mailpool) *Supervisor {
 	return &Supervisor{
 		agents:           make(map[string]core.Runnable),
 		internalRegistry: make(map[string]func(core.Environment) core.Runnable),
@@ -41,6 +43,7 @@ func NewSupervisor(logger *slog.Logger, bus core.EventBus, mem core.MemoryStore,
 		dbPool:           dbPool,
 		Queries:          database.New(dbPool),
 		er:               er,
+		Mailpool:         mp,
 	}
 }
 
@@ -95,10 +98,11 @@ func (s *Supervisor) LoadAgents(configs []core.AgentConfig) error {
 			}
 
 			env := core.Environment{
-				Logger: s.logger,
-				Bus:    s.bus,
-				Config: cfg,
-				Memory: s.mem,
+				Logger:   s.logger,
+				Bus:      s.bus,
+				Config:   cfg,
+				Memory:   s.mem,
+				Mailpool: s.Mailpool,
 			}
 
 			if cfg.Dependencies.Database {

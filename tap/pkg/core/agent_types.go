@@ -10,6 +10,7 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/internal/services/mailpool"
 )
 
 // EventBus abstracts the underlying messaging system (e.g., NATS).
@@ -95,4 +96,5 @@ type Environment struct {
 	Queries        *database.Queries // populated when db_queries: true in YAML
 	DBPool         *pgxpool.Pool     // populated when database: true in YAML
 	EntityResolver *ai.EntityResolver
+	Mailpool       *mailpool.Mailpool
 }

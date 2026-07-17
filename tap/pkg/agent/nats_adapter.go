@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 
 	"github.com/nats-io/nats.go"
 )
@@ -22,9 +23,13 @@ func (n *NatsAdapter) PublishCore(subject string, data []byte) error {
 }
 
 func (n *NatsAdapter) Publish(subject string, data []byte) error {
+	if strings.HasPrefix(subject, "_INBOX.") {
+		return n.nc.Publish(subject, data)
+	}
+
 	_, err := n.js.Publish(subject, data)
 	if err != nil {
-		if err.Error() == "nats: no response from stream" {
+		if err.Error() == "nats: no response from stream" || err.Error() == "nats: no stream matches subject" {
 			return n.nc.Publish(subject, data)
 		}
 		return err

@@ -19,6 +19,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/queue"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/services/ai"
+	"github.com/Yankzy/usetoro/internal/services/mailpool"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/Yankzy/usetoro/internal/workers"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
@@ -169,6 +170,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 					AllowRollup: compCfg.JetStream.AllowRollup,
 					AllowDirect: compCfg.JetStream.AllowDirect,
 					AllowMsgTTL: compCfg.JetStream.AllowMsgTTL,
+					Duplicates:  compCfg.JetStream.DuplicateWindow,
 				}
 				if compStreamCfg.Replicas == 0 {
 					compStreamCfg.Replicas = 1
@@ -306,6 +308,15 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		Redis:        redisClient,
 	}
 
+	if cfg.MailpoolAPIKey != "" {
+		mpClient, err := mailpool.NewMailpool(cfg.MailpoolEndpoint, cfg.MailpoolAPIKey)
+		if err == nil {
+			workerDeps.Mailpool = mpClient
+		} else {
+			logger.Error("Failed to initialize Mailpool client for workers", "error", err)
+		}
+	}
+
 	if err := workerManager.LoadFromRegistry(workerDeps); err != nil {
 		logger.Error("failed to load database workers from registry", "error", err)
 		return err
@@ -336,7 +347,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		
 		return c, v, nil
 	}
-	d := daemon.New(logger, loader, ":9090", dbPool, q.Conn(), js, entityResolver)
+	d := daemon.New(logger, loader, ":9090", dbPool, q.Conn(), js, entityResolver, workerDeps.Mailpool)
 
 	// 8. Run everything in errgroup
 	g, ctx := errgroup.WithContext(ctx)

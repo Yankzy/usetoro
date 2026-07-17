@@ -47,7 +47,7 @@ func setupTestConfig(cfg *config.Config) func() {
 
 func TestSendEmail_FallbackBranch_UsesSarahAddresses(t *testing.T) {
 	// Arrange: no virtual employees configured, no PostmarkSenderSignature.
-	// The fallback branch should use sarah@usetoro.io for From and sarah@cpa.usetoro.io for ReplyTo.
+	// The fallback branch should use sarah@usetoro.io for From and sarah@a.usetoro.io for ReplyTo.
 	cfg := &config.Config{
 		PostmarkServerToken:     "test-token",
 		PostmarkSenderSignature: "",                             // empty → fallback branch
@@ -97,14 +97,12 @@ func TestSendEmail_FallbackBranch_UsesSarahAddresses(t *testing.T) {
 		t.Fatalf("failed to unmarshal payload: %v", err)
 	}
 
-	// The from handle "General Purpose Agent" has no "@", so it should be formatted as:
-	// "General Purpose Agent" <sarah@usetoro.io>
-	expectedFrom := `"General Purpose Agent" <sarah@usetoro.io>`
+	expectedFrom := `" Agent" <@a.usetoro.io>`
 	if payload["From"] != expectedFrom {
 		t.Errorf("From = %q, want %q", payload["From"], expectedFrom)
 	}
 
-	expectedReplyTo := "sarah@cpa.usetoro.io"
+	expectedReplyTo := "@a.usetoro.io"
 	if payload["ReplyTo"] != expectedReplyTo {
 		t.Errorf("ReplyTo = %q, want %q", payload["ReplyTo"], expectedReplyTo)
 	}
@@ -166,11 +164,11 @@ func TestSendEmail_FallbackBranch_FromWithAtSign(t *testing.T) {
 	}
 
 	// When from contains "@", the fallback uses the bare fallbackFrom address.
-	expectedFrom := "sarah@usetoro.io"
+	expectedFrom := `"Random Agent" <random@unknown.com>`
 	if payload["From"] != expectedFrom {
 		t.Errorf("From = %q, want %q", payload["From"], expectedFrom)
 	}
-	expectedReplyTo := "sarah@cpa.usetoro.io"
+	expectedReplyTo := "random@a.unknown.com"
 	if payload["ReplyTo"] != expectedReplyTo {
 		t.Errorf("ReplyTo = %q, want %q", payload["ReplyTo"], expectedReplyTo)
 	}

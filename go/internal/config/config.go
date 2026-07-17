@@ -2,6 +2,8 @@ package config
 
 import (
 	"bufio"
+	"bytes"
+	_ "embed"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -15,6 +17,9 @@ import (
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/spf13/viper"
 )
+
+//go:embed defaults.yml
+var embeddedDefaults []byte
 
 var (
 	globalMu sync.RWMutex
@@ -87,9 +92,17 @@ type Config struct {
 	// Rule Engine
 	RuleEngine RuleEngineConfig `mapstructure:"rule_engine"`
 
+	TrackingProxyURL string `mapstructure:"tracking_proxy_url"`
+
 	// Postmark Config
-	PostmarkServerToken    string `mapstructure:"postmark_server_token"`
+	PostmarkServerToken     string `mapstructure:"postmark_server_token"`
 	PostmarkSenderSignature string `mapstructure:"postmark_sender_signature"` // verified root, e.g. mark@usetoro.io
+
+	// Mailpool Config
+	MailpoolAPIKey        string `mapstructure:"mailpool_api_key"`
+	MailpoolEndpoint      string `mapstructure:"mailpool_endpoint"`
+	MailpoolAESKey        string `mapstructure:"mailpool_aes_key"`
+	MailpoolWebhookSecret string `mapstructure:"mailpool_webhook_secret"`
 
 	// Twilio Config (SMS + WhatsApp)
 	TwilioAccountSID  string `mapstructure:"twilio_account_sid"`
@@ -142,14 +155,15 @@ type ComponentConfig struct {
 }
 
 type JetStreamConfig struct {
-	Replicas    int           `mapstructure:"replicas"`
-	MaxAge      time.Duration `mapstructure:"max_age"`
-	Subjects    []string      `mapstructure:"subjects"`
-	DenyDelete  bool          `mapstructure:"deny_delete"`
-	DenyPurge   bool          `mapstructure:"deny_purge"`
-	AllowRollup bool          `mapstructure:"allow_rollup"`
-	AllowDirect bool          `mapstructure:"allow_direct"`
-	AllowMsgTTL bool          `mapstructure:"allow_msg_ttl"`
+	Replicas        int           `mapstructure:"replicas"`
+	MaxAge          time.Duration `mapstructure:"max_age"`
+	Subjects        []string      `mapstructure:"subjects"`
+	DenyDelete      bool          `mapstructure:"deny_delete"`
+	DenyPurge       bool          `mapstructure:"deny_purge"`
+	AllowRollup     bool          `mapstructure:"allow_rollup"`
+	AllowDirect     bool          `mapstructure:"allow_direct"`
+	AllowMsgTTL     bool          `mapstructure:"allow_msg_ttl"`
+	DuplicateWindow time.Duration `mapstructure:"duplicate_window"`
 }
 
 // WorkerSubjects stores per-worker subscription settings keyed by worker name.
@@ -234,6 +248,10 @@ func loadEnvFile(filepath string) {
 				}
 			}
 		}
+
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading env file %s: %v\n", filepath, err)
+		}
 	}
 }
 
@@ -247,12 +265,20 @@ func Load() (*Config, *viper.Viper, error) {
 	loadEnvFile("./container/.env")
 	loadEnvFile("../container/.env")
 
-	// 1. Tell Viper where to look
-	v.SetConfigName("defaults")
+	// 1. Tell Viper to load from embedded defaults
 	v.SetConfigType("yaml")
-	v.AddConfigPath("./internal/config")
-	v.AddConfigPath("./go/internal/config")
+	if err := v.ReadConfig(bytes.NewReader(embeddedDefaults)); err != nil {
+		return nil, v, fmt.Errorf("failed to read embedded defaults: %w", err)
+	}
+
+	// Also allow standard deployment paths for production overrides (config.yml)
+	v.SetConfigName("config")
+	v.AddConfigPath("/etc/toro")
+	v.AddConfigPath("/app/config")
 	v.AddConfigPath(".")
+	
+	// Optional override merge
+	_ = v.MergeInConfig()
 
 	// 2. Setup Environment Variable Overrides
 	v.SetEnvPrefix("APP")
@@ -284,6 +310,9 @@ func Load() (*Config, *viper.Viper, error) {
 	_ = v.BindEnv("workers.erp_event.subject", "NATS_ERP_EVENT_SUBJECT")
 	_ = v.BindEnv("postmark_server_token", "POSTMARK_TRANSACTIONAL_SERVER_TOKEN")
 	_ = v.BindEnv("postmark_sender_signature", "POSTMARK_SENDER_SIGNATURE")
+	_ = v.BindEnv("mailpool_api_key", "MAILPOOL_API_KEY")
+	_ = v.BindEnv("mailpool_endpoint", "MAILPOOL_ENDPOINT")
+	_ = v.BindEnv("mailpool_aes_key", "MAILPOOL_AES_KEY")
 	_ = v.BindEnv("twilio_account_sid", "TWILIO_ACCOUNT_SID")
 	_ = v.BindEnv("twilio_auth_token", "TWILIO_AUTH_TOKEN")
 	_ = v.BindEnv("twilio_sms_number", "TWILIO_SMS_NUMBER")
@@ -323,15 +352,7 @@ func Load() (*Config, *viper.Viper, error) {
 	v.SetDefault("rule_engine.min_usage_count", 3)
 	v.SetDefault("vcoo_founder_email", "founder@yourplatform.com")
 
-	// 3. Actually read the file from disk
-	if err := v.ReadInConfig(); err != nil {
-		// It's okay if config file is missing IF we have all needed envs,
-		// but for NATS streams we likely need the file.
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, v, fmt.Errorf("found config file but failed to read: %w", err)
-		}
-		// Log or proceed? We proceed and rely on valid env vars / defaults.
-	}
+	// Since we already read defaults and merged configs, we don't need to ReadInConfig again here.
 
 	c, err := Unmarshal(v)
 	if err == nil {

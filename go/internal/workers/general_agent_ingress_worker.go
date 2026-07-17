@@ -135,6 +135,9 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		req.ToHandle = "general-agent"
 	}
 
+	var activityTypeToUse string = "agents.general.purpose"
+	var receiverDIDToUse string = "did:toro:agent:general_purpose_1"
+
 	// Resolve agent config from the alias registry.
 	// The caller (e.g. email worker) passes agent_alias; we map it to the
 	// correct system prompt here so channel workers stay dumb pipes.
@@ -143,7 +146,25 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 			req.SystemPrompt = cfg.SystemPrompt
 			req.AgentName = cfg.Name
 		} else {
-			w.logger.Warn("ingress(general): unknown agent alias", "alias", req.AgentAlias)
+			// Fallback: check the dynamic agent configurations in the database
+			dbCfg, err := w.db.GetAgentConfigurationByName(ctx, req.AgentAlias)
+			if err == nil {
+				req.SystemPrompt = dbCfg.SystemPrompt
+				req.AgentName = dbCfg.Name
+				activityTypeToUse = "agents.dynamic.purpose"
+				receiverDIDToUse = "did:toro:agent:dynamic_purpose_1"
+			} else {
+				// Try appending "-agent" if they just sent "mailpool" instead of "mailpool-agent"
+				dbCfg, err = w.db.GetAgentConfigurationByName(ctx, req.AgentAlias+"-agent")
+				if err == nil {
+					req.SystemPrompt = dbCfg.SystemPrompt
+					req.AgentName = dbCfg.Name
+					activityTypeToUse = "agents.dynamic.purpose"
+					receiverDIDToUse = "did:toro:agent:dynamic_purpose_1"
+				} else {
+					w.logger.Warn("ingress(general): unknown agent alias in registry or db", "alias", req.AgentAlias)
+				}
+			}
 		}
 	}
 
@@ -325,18 +346,19 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 	}
 
 	// 6. Route to General Agent: Dispatch the task to the generic agent via NATS and await the response.
-	agentInbox, err := w.resolveAgentInbox()
+	agentInbox, err := w.resolveAgentInbox(activityTypeToUse)
 	if err != nil {
-		w.logger.Error("ingress(general): agent resolution failed", "error", err)
+		w.logger.Error("ingress(general): agent resolution failed", "error", err, "activity_type", activityTypeToUse)
 		return nil
 	}
 
 	payload := map[string]any{
-		"prompt":      promptForAgent,
-		"entity_id":   req.EntityID,
-		"from_handle": req.FromHandle,
-		"to_handle":   req.ToHandle,
-		"source":      req.Source,
+		"prompt":          promptForAgent,
+		"entity_id":       req.EntityID,
+		"from_handle":     req.FromHandle,
+		"to_handle":       req.ToHandle,
+		"source":          req.Source,
+		"requested_agent": req.AgentName,
 	}
 	if len(structuredMessages) > 0 {
 		payload["messages"] = structuredMessages
@@ -368,7 +390,7 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		ID:           uuid.New().String(),
 		Timestamp:    time.Now(),
 		SenderDID:    "did:toro:ingress",
-		ReceiverDID:  "did:toro:agent:general_purpose_1",
+		ReceiverDID:  receiverDIDToUse,
 		Performative: core.REQUEST,
 		Body:         taskBytes,
 	}
@@ -474,14 +496,14 @@ func (w *GeneralAgentIngressWorker) handleAgentResponse(data []byte, entityUUID 
 	w.logger.Info("ingress(general): processed", "reply_len", len(replyText))
 }
 
-func (w *GeneralAgentIngressWorker) resolveAgentInbox() (string, error) {
+func (w *GeneralAgentIngressWorker) resolveAgentInbox(activityType string) (string, error) {
 	client := lookup.New(w.nc, "did:toro:ingress")
-	entries, err := client.FindAgents("agents.general.purpose", 2*time.Second)
+	entries, err := client.FindAgents(activityType, 2*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("almanac query: %w", err)
 	}
 	if len(entries) == 0 || len(entries[0].Endpoints) == 0 {
-		return "", fmt.Errorf("general agent not found in Almanac")
+		return "", fmt.Errorf("agent %s not found in Almanac", activityType)
 	}
 	return entries[0].Endpoints[0], nil
 }

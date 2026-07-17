@@ -4,7 +4,7 @@ PY := $(ENV) && python manage.py
 PACKAGE ?= $(shell bash -c 'read -p "Package name: " package; echo $$package')
 BRANCH ?= $(shell bash -c 'read -p "Branch name: " branch; echo $$package')
 MSG ?= $(shell bash -c 'read -p "What is the commit message?: " commit message; echo $$commit message')
-PRODUCTION_SERVER := 1
+# PRODUCTION_SERVER := 1
 ENVIRONMENT := $(if $(PRODUCTION_SERVER),prod,dev)
 PROJECT_NAME := usetoro
 

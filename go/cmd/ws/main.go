@@ -218,6 +218,7 @@ func main() {
 						AllowRollup: srvCfg.JetStream.AllowRollup,
 						AllowDirect: srvCfg.JetStream.AllowDirect,
 						AllowMsgTTL: srvCfg.JetStream.AllowMsgTTL,
+						Duplicates:  srvCfg.JetStream.DuplicateWindow,
 					}
 					if streamCfg.Replicas == 0 {
 						streamCfg.Replicas = 1
@@ -246,6 +247,7 @@ func main() {
 							AllowRollup: compCfg.JetStream.AllowRollup,
 							AllowDirect: compCfg.JetStream.AllowDirect,
 							AllowMsgTTL: compCfg.JetStream.AllowMsgTTL,
+							Duplicates:  compCfg.JetStream.DuplicateWindow,
 						}
 						if compStreamCfg.Replicas == 0 {
 							compStreamCfg.Replicas = 1

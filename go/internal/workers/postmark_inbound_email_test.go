@@ -14,7 +14,7 @@ func TestParseAgentEmail(t *testing.T) {
 			"robert": {},
 		},
 	})
-	
+
 	tests := []struct {
 		name          string
 		email         string
@@ -23,15 +23,15 @@ func TestParseAgentEmail(t *testing.T) {
 	}{
 		{
 			name:          "Basic",
-			email:         "mark@cpa2.usetoro.io",
+			email:         "mark@a.usetoro.io",
 			wantAlias:     "mark",
-			wantSubdomain: "cpa2",
+			wantSubdomain: "a",
 		},
 		{
 			name:          "With Name",
-			email:         "Mark Smith <mark@cpa2.usetoro.io>",
+			email:         "Mark Smith <mark@a.usetoro.io>",
 			wantAlias:     "mark",
-			wantSubdomain: "cpa2",
+			wantSubdomain: "a",
 		},
 		{
 			name:          "No Subdomain",

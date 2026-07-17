@@ -58,6 +58,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 			AllowRollup: erpCfg.JetStream.AllowRollup,
 			AllowDirect: erpCfg.JetStream.AllowDirect,
 			AllowMsgTTL: erpCfg.JetStream.AllowMsgTTL,
+			Duplicates:  erpCfg.JetStream.DuplicateWindow,
 		}); err != nil {
 			logger.Warn("Failed to ensure ERP stream", "error", err)
 		} else {
@@ -78,6 +79,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 			AllowRollup: ledgerCfg.JetStream.AllowRollup,
 			AllowDirect: ledgerCfg.JetStream.AllowDirect,
 			AllowMsgTTL: ledgerCfg.JetStream.AllowMsgTTL,
+			Duplicates:  ledgerCfg.JetStream.DuplicateWindow,
 		}); err != nil {
 			logger.Warn("Failed to ensure LEDGER stream", "error", err)
 		} else {

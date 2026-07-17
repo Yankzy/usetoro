@@ -28,6 +28,7 @@ COPY go/internal/config/defaults.yml /app/internal/config/defaults.yml
 COPY go/internal/erp/ase/dags /app/internal/erp/ase/dags
 COPY go/internal/erp/ase/debug /app/go/internal/erp/ase/debug
 COPY --from=builder /tap/workflows /app/tap/workflows
+COPY --from=builder /tap/agents/configs /app/tap/agents/configs
 
 USER nobody
 

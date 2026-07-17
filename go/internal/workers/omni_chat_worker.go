@@ -173,7 +173,7 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 
 		if cleanHandle != "" {
-			// Append a short random suffix with __ delimiter to make the message ID globally unique 
+			// Append a short random suffix with __ delimiter to make the message ID globally unique
 			// without breaking downstream parsing that splits by single _
 			customMsgID = fmt.Sprintf("<%s__%s@agents.usetoro.io>", cleanHandle, uuid.New().String()[:8])
 		} else {
@@ -236,35 +236,58 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 	fromAddr := from
 	replyTo := from
 
+	var agentName, agentEmail, agentReplyTo string
 	alias, _ := parseAgentEmail(from)
 	if cfg := agents.Lookup(alias); cfg != nil && cfg.Email != "" {
-		fromAddr = fmt.Sprintf(`"%s" <%s>`, cfg.Name, cfg.Email)
+		agentName = cfg.Name
+		agentEmail = cfg.Email
 		if cfg.ReplyTo != "" {
-			replyTo = cfg.ReplyTo
+			agentReplyTo = cfg.ReplyTo
 		} else {
-			if strings.Contains(cfg.Email, "@") && !strings.Contains(cfg.Email, "@cpa.") {
-				replyTo = strings.Replace(cfg.Email, "@", "@cpa.", 1)
+			if strings.Contains(cfg.Email, "@") && !strings.Contains(cfg.Email, "@a.") {
+				agentReplyTo = strings.Replace(cfg.Email, "@", "@a.", 1)
 			} else {
-				replyTo = cfg.Email
+				agentReplyTo = cfg.Email
 			}
 		}
-	} else if w.cfg.PostmarkSenderSignature != "" {
-		if !strings.Contains(from, "@") {
-			fromAddr = fmt.Sprintf(`"%s" <%s>`, from, w.cfg.PostmarkSenderSignature)
-		} else {
-			fromAddr = w.cfg.PostmarkSenderSignature
-		}
-		replyTo = w.cfg.PostmarkSenderSignature
 	} else {
-		fallbackFrom := "sarah@usetoro.io"
-		fallbackReplyTo := "sarah@cpa.usetoro.io"
-		if !strings.Contains(from, "@") {
-			fromAddr = fmt.Sprintf(`"%s" <%s>`, from, fallbackFrom)
-		} else {
-			fromAddr = fallbackFrom
+		// Fallback to dynamic agents in DB
+		var dbCfg database.ToroCoreAgentConfiguration
+		var err error = fmt.Errorf("db is nil")
+
+		if w.db != nil {
+			dbCfg, err = w.db.GetAgentConfigurationByName(ctx, alias)
+			if err != nil {
+				dbCfg, err = w.db.GetAgentConfigurationByName(ctx, alias+"-agent")
+			}
 		}
-		replyTo = fallbackReplyTo
+
+		if err == nil {
+			agentName = dbCfg.Name
+			emailAddr := from
+			if !strings.Contains(emailAddr, "@") {
+				emailAddr = fmt.Sprintf("%s@a.usetoro.io", alias)
+			}
+			agentEmail = emailAddr
+		} else {
+			// Ultimate fallback
+			emailAddr := from
+			if !strings.Contains(emailAddr, "@") {
+				emailAddr = fmt.Sprintf("%s@a.usetoro.io", alias)
+			}
+			agentName = strings.Title(alias) + " Agent"
+			agentEmail = emailAddr
+		}
+
+		if !strings.Contains(agentEmail, "@a.") {
+			agentReplyTo = strings.Replace(agentEmail, "@", "@a.", 1)
+		} else {
+			agentReplyTo = agentEmail
+		}
 	}
+
+	fromAddr = fmt.Sprintf(`"%s" <%s>`, agentName, agentEmail)
+	replyTo = agentReplyTo
 
 	payload := map[string]interface{}{
 		"From":          fromAddr,

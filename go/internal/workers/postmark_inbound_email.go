@@ -238,7 +238,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 					}
 				}
 			}
-			
+
 			if aseNodeID != "" && w.pool != nil {
 				var createdBy pgtype.UUID
 				err := w.pool.QueryRow(ctx, `
@@ -565,9 +565,9 @@ func (w *PostmarkInboundEmailWorker) sendBounceReply(ctx context.Context, to, or
 }
 
 // parseAgentEmail splits an agent email address into its routing components.
-// "mark@cpa2.usetoro.io" → alias="mark", subdomain="cpa2"
+// "mark@a.usetoro.io" → alias="mark", subdomain="a"
 func parseAgentEmail(email string) (alias, subdomain string) {
-	// Strip name prefix if present: "Mark Smith <mark@cpa2.usetoro.io>"
+	// Strip name prefix if present: "Mark Smith <mark@a.usetoro.io>"
 	email = strings.TrimSpace(email)
 	if idx := strings.LastIndex(email, "<"); idx >= 0 {
 		email = strings.TrimSuffix(strings.TrimSpace(email[idx+1:]), ">")

@@ -7,6 +7,7 @@ x-jetstream-default: &jetstream-default
   allow_direct: true
 
 # Communication Channel Config
+tracking_proxy_url: "http://localhost:8080"
 postmark_server_token: ""
 postmark_sender_signature: ""
 vcoo_founder_email: "yankz@fignode.com"
@@ -57,8 +58,6 @@ nats:
           - stripe.>
           - plaid.>
           - internal.>
-
-
 
     erp:
       stream_name: TORO_ERP_EVENTS
@@ -112,6 +111,7 @@ nats:
       jetstream:
         <<: *jetstream-default
         allow_msg_ttl: true
+        duplicate_window: 120s
         subjects:
           - orchestrator.inbox
           - agents.>
@@ -123,6 +123,8 @@ nats:
           - workflow.resume
           - ase.telemetry.>
           - ase.events.>
+          - webhooks.>
+          - email.>
 
     workflow_triggers:
       stream_name: WORKFLOW_TRIGGERS
@@ -227,6 +229,17 @@ agents:
     internal_module: generic-batch-agent
     activity_type: agents.accounting.batch_categorization
     task_queue: tasks.accounting.1.batch_categorization
+    dependencies:
+      database: false
+      db_queries: true
+      entity_resolver: false
+  - did: did:toro:agent:dynamic_purpose_1
+    name: dynamic-agent
+    model: gpt-5.4
+    engine: internal
+    internal_module: dynamic-agent
+    activity_type: agents.dynamic.purpose
+    task_queue: tasks.dynamic.1.purpose
     dependencies:
       database: false
       db_queries: true
@@ -413,6 +426,41 @@ workers:
     subject: ""
     group: ""
 
+  email_sequencer:
+    activity_type: workers.email.sequencer
+    subject: ""
+    group: ""
+
+  email_dispatch:
+    activity_type: workers.email.dispatch
+    subject: ""
+    group: ""
+
+  email_sentiment:
+    activity_type: workers.email.sentiment
+    subject: ""
+    group: ""
+
+  deliverability_monitor:
+    activity_type: workers.email.deliverability_monitor
+    subject: ""
+    group: ""
+
+  smtp_inbound:
+    activity_type: workers.email.smtp_inbound
+    subject: ""
+    group: ""
+
+  warmup_orchestrator:
+    activity_type: workers.email.warmup_orchestrator
+    subject: ""
+    group: ""
+
+  warmup_content:
+    activity_type: workers.email.warmup_content
+    subject: ""
+    group: ""
+
   vector_sync:
     subjects:
       - "ledger.accounts.*"
@@ -427,7 +475,7 @@ virtual_employees:
     name: "Mark — Bookkeeping Agent"
     description: "Handles bookkeeping tasks: categorizing transactions, reconciling accounts, and answering questions about financial data."
     email: "mark@usetoro.io"
-    reply_to: "mark@cpa.usetoro.io"
+    reply_to: "mark@a.usetoro.io"
     system_prompt: |
       You are Mark, a bookkeeping AI agent. You help CPA firms and their clients with:
       - Categorizing and reconciling financial transactions
@@ -441,7 +489,7 @@ virtual_employees:
     name: "Sarah"
     description: "Chases clients for missing documents, receipts, and clarifications. Handles long-running follow-up conversations across email, SMS, and other channels."
     email: "sarah@usetoro.io"
-    reply_to: "sarah@cpa.usetoro.io"
+    reply_to: "sarah@a.usetoro.io"
     system_prompt: |
       You are Sarah, a virtual employee. Your job is to help companies collect missing documents, receipts, W-9s, and clarifications from their clients.
 
@@ -460,7 +508,7 @@ virtual_employees:
     name: "Alex — Accounts Payable Specialist"
     description: "Ingests raw document PDFs/OCR payloads, runs duplicate invoice checks, matches bills to purchase orders, and routes edge-case price mismatches to Sarah."
     email: "alex@usetoro.io"
-    reply_to: "alex@cpa.usetoro.io"
+    reply_to: "alex@a.usetoro.io"
     system_prompt: |
       You are Alex, the AP Agent (Accounts Payable Specialist), operating in the accounting domain with ActivityType agents.accounting.ap_specialist. People will refer to you as Alex.
       Your core responsibilities and workflows are:
@@ -473,7 +521,7 @@ virtual_employees:
     name: "Quba — Accounts Receivable & Revenue Specialist"
     description: "Monitors merchant gateways (Square, Stripe, bank deposits), matches incoming cash streams back to outstanding client invoices, and triggers the \"Hound Agent\" sub-routine for overdue invoice tracking."
     email: "quba@usetoro.io"
-    reply_to: "quba@cpa.usetoro.io"
+    reply_to: "quba@a.usetoro.io"
     system_prompt: |
       You are Quba, the AR Agent (Accounts Receivable & Revenue Specialist), operating in the accounting domain with ActivityType agents.accounting.ar_specialist. People will refer to you as Emma.
       Your core responsibilities and workflows are:
@@ -485,7 +533,7 @@ virtual_employees:
     name: "Michael — Treasury & Statement Matcher"
     description: "Handles continuous mathematical matching between real-time bank statements and ledger claims, firing 'contract.settle' events upon reaching full validation confidence."
     email: "michael@usetoro.io"
-    reply_to: "michael@cpa.usetoro.io"
+    reply_to: "michael@a.usetoro.io"
     system_prompt: |
       You are Michael, the Reconciliation Agent (Treasury & Statement Matcher), operating in the accounting domain with ActivityType agents.accounting.reconciliation_matcher. People will refer to you as Michael.
       Your core responsibilities and workflows are:
@@ -497,7 +545,7 @@ virtual_employees:
     name: "Robert — Virtual Controller & Ledger Gatekeeper"
     description: "Acts as the final authority on ledger integrity. Orchestrates period-end closing sequences, validates balance sheet balancing equations, and locks historical accounting periods."
     email: "robert@usetoro.io"
-    reply_to: "robert@cpa.usetoro.io"
+    reply_to: "robert@a.usetoro.io"
     system_prompt: |
       You are Robert, the Virtual Controller Agent, operating in the accounting domain with ActivityType agents.accounting.virtual_controller. People will refer to you as Robert.
       Your core responsibilities focus entirely on ledger governance, validation, and period-end close orchestration:
@@ -522,7 +570,7 @@ virtual_employees:
     name: "Jessica — Unbilled Operations & Timing Specialist"
     description: "Tracks and logs economic activity that has occurred but hasn't generated a paper trail yet. Handles unbilled liabilities, uninvoiced revenue milestones, and mid-cycle payroll splits."
     email: "jessica@usetoro.io"
-    reply_to: "jessica@cpa.usetoro.io"
+    reply_to: "jessica@a.usetoro.io"
     system_prompt: |
       You are Jessica, the Accruals Specialist Agent, operating in the accounting domain with ActivityType agents.accounting.accruals_specialist. People will refer to you as Jessica.
       Your core responsibilities and workflows focus entirely on unbilled and uninvoiced economic events to enforce GAAP timing accuracy:
@@ -551,7 +599,7 @@ virtual_employees:
     name: "Andrew — Tangible Fixed Assets Specialist"
     description: "Tracks physical capital assets, determines useful lifespans and salvage values, and computes straight-line/MACRS depreciation entries."
     email: "andrew@usetoro.io"
-    reply_to: "andrew@cpa.usetoro.io"
+    reply_to: "andrew@a.usetoro.io"
     system_prompt: |
       You are Andrew, the Fixed Asset Depreciation Specialist, operating in the accounting domain with ActivityType agents.accounting.depreciation_specialist. People will refer to you as Andrew.
       Your core responsibilities and workflows are:
@@ -564,7 +612,7 @@ virtual_employees:
     name: "Rachel — Intellectual Property Specialist"
     description: "Manages long-term non-physical assets, tracking legal lifespans and computing straight-line amortization for patents, trademarks, and capitalized software."
     email: "rachel@usetoro.io"
-    reply_to: "rachel@cpa.usetoro.io"
+    reply_to: "rachel@a.usetoro.io"
     system_prompt: |
       You are Rachel, the Intangible Asset Specialist, operating in the accounting domain with ActivityType agents.accounting.intangible_specialist. People will refer to you as Rachel.
       Your core responsibilities and workflows are:
@@ -576,7 +624,7 @@ virtual_employees:
     name: "Kevin — Operational Amortization Specialist"
     description: "Manages short-term operational prepaid assets, building monthly straight-line burn-down schedules for annual software, insurance, or upfront rent."
     email: "kevin@usetoro.io"
-    reply_to: "kevin@cpa.usetoro.io"
+    reply_to: "kevin@a.usetoro.io"
     system_prompt: |
       You are Kevin, the Prepaid Expense Specialist, operating in the accounting domain with ActivityType agents.accounting.prepaid_specialist. People will refer to you as Kevin.
       Your core responsibilities and workflows are:
@@ -588,7 +636,7 @@ virtual_employees:
     name: "Laura — Clearing & Benefits Allocator"
     description: "Ingests bulk payroll journal summaries (Gusto, Rippling, ADP) and splits aggregated bank outlays into distinct gross pay, tax withholding, and benefit lines."
     email: "laura@usetoro.io"
-    reply_to: "laura@cpa.usetoro.io"
+    reply_to: "laura@a.usetoro.io"
     system_prompt: |
       You are Laura, the Payroll & Benefits Allocator Agent, operating in the accounting domain with ActivityType agents.accounting.payroll_allocator. People will refer to you as Laura.
       Your core responsibilities and workflows are:
@@ -601,7 +649,7 @@ virtual_employees:
     name: "Thomas — Real-Time Compliance & Provision Specialist"
     description: "Monitors transaction matrices for sales tax, local franchise liabilities, and cross-border nexus thresholds, flagging tax-exempt vs taxable transactions."
     email: "thomas@usetoro.io"
-    reply_to: "thomas@cpa.usetoro.io"
+    reply_to: "thomas@a.usetoro.io"
     system_prompt: |
       You are Thomas, the Tax Nexus Gatekeeper Agent, operating in the accounting domain with ActivityType agents.accounting.tax_gatekeeper. People will refer to you as Thomas.
       Your core responsibilities and workflows are:
@@ -613,7 +661,7 @@ virtual_employees:
     name: "Amanda — Anomaly & Fraud Sentinel"
     description: "Runs continuous, asynchronous out-of-band statistical scans on the ledger, checking for velocity breaks, rogue spending, and double-syncing patterns."
     email: "amanda@usetoro.io"
-    reply_to: "amanda@cpa.usetoro.io"
+    reply_to: "amanda@a.usetoro.io"
     system_prompt: |
       You are Amanda, the Audit & Forensic Sentinel Agent, operating in the accounting domain with ActivityType agents.accounting.audit_sentinel. People will refer to you as Amanda.
       Your core responsibilities and workflows are:

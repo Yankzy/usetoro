@@ -110,6 +110,8 @@ services:
       PINECONE_INDEX: ${PINECONE_INDEX}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
+      MAILPOOL_API_KEY: ${MAILPOOL_API_KEY}
+      MAILPOOL_ENDPOINT: ${MAILPOOL_ENDPOINT}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,fignode,public"
       LOG_LEVEL: "INFO"
       REDIS_URL: redis://redis:6379
@@ -159,6 +161,8 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
+      MAILPOOL_API_KEY: ${MAILPOOL_API_KEY}
+      MAILPOOL_ENDPOINT: ${MAILPOOL_ENDPOINT}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
     depends_on:
       db:
@@ -207,6 +211,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      MAILPOOL_API_KEY: ${MAILPOOL_API_KEY}
+      MAILPOOL_ENDPOINT: ${MAILPOOL_ENDPOINT}
     volumes:
       - ../keys:/keys:ro
     depends_on:

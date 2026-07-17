@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	AddListSubscriber(ctx context.Context, arg AddListSubscriberParams) (MarketingListSubscriber, error)
 	AddSessionEmailHold(ctx context.Context, arg AddSessionEmailHoldParams) error
 	AdjustAccuracyScore(ctx context.Context, arg AdjustAccuracyScoreParams) error
 	ApproveCleanupRow(ctx context.Context, id pgtype.UUID) (ApproveCleanupRowRow, error)
@@ -28,10 +29,13 @@ type Querier interface {
 	CountEnrichedTransactionsBySession(ctx context.Context, sessionID pgtype.UUID) (int64, error)
 	CountEntities(ctx context.Context) (int64, error)
 	CountSessionRows(ctx context.Context, arg CountSessionRowsParams) (int64, error)
+	CreateAgentConfiguration(ctx context.Context, arg CreateAgentConfigurationParams) (ToroCoreAgentConfiguration, error)
+	CreateAttribution(ctx context.Context, arg CreateAttributionParams) (MarketingAttribution, error)
 	// =========================================================================
 	// Cleanup Mode Queries (now stored in fignode schema)
 	// =========================================================================
 	CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (CreateCleanupSessionRow, error)
+	CreateConversion(ctx context.Context, arg CreateConversionParams) (MarketingConversion, error)
 	CreateEmployeeProfile(ctx context.Context, arg CreateEmployeeProfileParams) error
 	// =========================================================================
 	// Auth: Employee Registration & Login
@@ -39,6 +43,7 @@ type Querier interface {
 	CreateEmployeeUser(ctx context.Context, arg CreateEmployeeUserParams) (pgtype.UUID, error)
 	CreateEntity(ctx context.Context, arg CreateEntityParams) (pgtype.UUID, error)
 	CreateLeadForm(ctx context.Context, arg CreateLeadFormParams) (MarketingLeadForm, error)
+	CreateMarketingList(ctx context.Context, arg CreateMarketingListParams) (MarketingList, error)
 	CreateMemoryRule(ctx context.Context, arg CreateMemoryRuleParams) error
 	CreateOrGetWorkflow(ctx context.Context, arg CreateOrGetWorkflowParams) (ToroCoreWorkflow, error)
 	// session_id must point at a per-realm SYSTEM session (see GetOrCreateSystemSession).
@@ -57,6 +62,7 @@ type Querier interface {
 	DeleteSlackTenantMappingByTeamID(ctx context.Context, slackTeamID string) error
 	DeleteStalledMessage(ctx context.Context, id pgtype.UUID) error
 	DeleteWorkflowBlueprint(ctx context.Context, name string) error
+	FindLastTouch(ctx context.Context, arg FindLastTouchParams) (MarketingEmailLog, error)
 	GetASEConfigByRealm(ctx context.Context, arg GetASEConfigByRealmParams) (ToroCoreAseDag, error)
 	GetASEConfigByTenant(ctx context.Context, arg GetASEConfigByTenantParams) (ToroCoreAseDag, error)
 	GetASEConfigGlobalByName(ctx context.Context, name string) (ToroCoreAseDag, error)
@@ -75,15 +81,18 @@ type Querier interface {
 	GetActiveSessionByParticipant(ctx context.Context, arg GetActiveSessionByParticipantParams) (ToroCoreConversationSession, error)
 	GetActiveSessions(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreConversationSession, error)
 	GetActiveWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error)
+	GetAgentConfigurationByName(ctx context.Context, name string) (ToroCoreAgentConfiguration, error)
 	GetAiCorrectionByRawInput(ctx context.Context, arg GetAiCorrectionByRawInputParams) (GetAiCorrectionByRawInputRow, error)
 	GetAllAccountsForRealms(ctx context.Context, realmIds []string) ([]ShadowErpAccount, error)
 	GetAllActiveConnections(ctx context.Context) ([]GetAllActiveConnectionsRow, error)
+	GetAllActiveEmailAccounts(ctx context.Context) ([]GetAllActiveEmailAccountsRow, error)
 	GetAllCustomersForRealms(ctx context.Context, realmIds []string) ([]ShadowErpCustomer, error)
 	// =========================================================================
 	// Industries
 	// =========================================================================
 	GetAllIndustries(ctx context.Context) ([]GetAllIndustriesRow, error)
 	GetAllVendorsForRealms(ctx context.Context, realmIds []string) ([]ShadowErpVendor, error)
+	GetAllWarmingEmailAccounts(ctx context.Context) ([]GetAllWarmingEmailAccountsRow, error)
 	GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousProposalsParams) ([]FignodeStagingTransaction, error)
 	GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([]GetApprovedRowsRow, error)
 	GetAttachableByERPID(ctx context.Context, arg GetAttachableByERPIDParams) (ShadowErpAttachable, error)
@@ -93,6 +102,8 @@ type Querier interface {
 	GetBillByERPID(ctx context.Context, arg GetBillByERPIDParams) (ShadowErpBill, error)
 	GetBlueprintByName(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
 	GetBlueprintByNameOrTriggerTopic(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
+	GetCampaignRevenueMetrics(ctx context.Context, campaignID pgtype.UUID) ([]GetCampaignRevenueMetricsRow, error)
+	GetCampaignStep(ctx context.Context, arg GetCampaignStepParams) (GetCampaignStepRow, error)
 	GetCheckingAccounts(ctx context.Context) ([]string, error)
 	GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanupRowRow, error)
 	GetCleanupSession(ctx context.Context, id pgtype.UUID) (GetCleanupSessionRow, error)
@@ -122,6 +133,8 @@ type Querier interface {
 	GetERPConnection(ctx context.Context, entityID pgtype.UUID) (ToroCoreErpConnection, error)
 	GetERPConnectionByRealm(ctx context.Context, arg GetERPConnectionByRealmParams) (ToroCoreErpConnection, error)
 	GetERPTokens(ctx context.Context, arg GetERPTokensParams) (GetERPTokensRow, error)
+	GetEmailAccountByEmail(ctx context.Context, email string) (GetEmailAccountByEmailRow, error)
+	GetEmailAccountByID(ctx context.Context, id pgtype.UUID) (GetEmailAccountByIDRow, error)
 	GetEmployeeByEmail(ctx context.Context, email string) (GetEmployeeByEmailRow, error)
 	GetEmployeeByID(ctx context.Context, id pgtype.UUID) (GetEmployeeByIDRow, error)
 	// =========================================================================
@@ -174,7 +187,9 @@ type Querier interface {
 	GetInitialEnrichedTransactionsByRealm(ctx context.Context, realmID pgtype.Text) ([]FignodeStagingTransaction, error)
 	GetInvoiceByERPID(ctx context.Context, arg GetInvoiceByERPIDParams) (ShadowErpInvoice, error)
 	GetLatestLeaderboardSnapshot(ctx context.Context, period string) (GetLatestLeaderboardSnapshotRow, error)
+	GetListRevenueMetrics(ctx context.Context, listID pgtype.UUID) ([]GetListRevenueMetricsRow, error)
 	GetMemoryRules(ctx context.Context, realmID string) ([]GetMemoryRulesRow, error)
+	GetNextAvailableEmailAccount(ctx context.Context, tenantID pgtype.UUID) (GetNextAvailableEmailAccountRow, error)
 	// Returns the SYSTEM session for a given realm, creating it if it does not exist.
 	// Used by non-CSV transaction stagers (rule engine, Plaid webhooks) to satisfy the
 	// session_id linkage now that realm_id has been removed from staging_transactions.
@@ -197,6 +212,8 @@ type Querier interface {
 	GetPendingStagingTransactions(ctx context.Context, sessionID pgtype.UUID) ([]FignodeStagingTransaction, error)
 	GetProposedTransactionByID(ctx context.Context, id pgtype.UUID) (FignodeStagingTransaction, error)
 	GetProposedTransactionByValues(ctx context.Context, arg GetProposedTransactionByValuesParams) (FignodeStagingTransaction, error)
+	GetProspectByID(ctx context.Context, id pgtype.UUID) (GetProspectByIDRow, error)
+	GetProspectIDByEmail(ctx context.Context, arg GetProspectIDByEmailParams) (pgtype.UUID, error)
 	GetPurchaseByERPID(ctx context.Context, arg GetPurchaseByERPIDParams) (ShadowErpPurchase, error)
 	GetRealmIDByEntityID(ctx context.Context, entityID pgtype.UUID) (string, error)
 	GetRealmIDFromEntity(ctx context.Context, id pgtype.UUID) (pgtype.Text, error)
@@ -231,6 +248,7 @@ type Querier interface {
 	GetStrictDepositConsensus(ctx context.Context, arg GetStrictDepositConsensusParams) ([]GetStrictDepositConsensusRow, error)
 	GetSystemVectorConfig(ctx context.Context) (ToroCoreSystemVectorConfig, error)
 	GetTeamInviteByToken(ctx context.Context, token string) (ToroCoreTeamInvite, error)
+	GetTenantSettings(ctx context.Context, tenantID pgtype.UUID) (MarketingTenantSetting, error)
 	GetThreadMappingByEmailMessageID(ctx context.Context, emailLatestMessageID string) (ToroCoreToroThreadsMapping, error)
 	GetThreadMappingBySlackTS(ctx context.Context, arg GetThreadMappingBySlackTSParams) (ToroCoreToroThreadsMapping, error)
 	// =========================================================================
@@ -271,6 +289,7 @@ type Querier interface {
 	GetWorkflow(ctx context.Context, id pgtype.UUID) (ToroCoreWorkflow, error)
 	GetWorkflowBlueprints(ctx context.Context) ([]ToroCoreWorkflowBlueprint, error)
 	GetWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error)
+	IncrementEmailAccountSendCount(ctx context.Context, id pgtype.UUID) error
 	IncrementEmployeeCleared(ctx context.Context, userID pgtype.UUID) error
 	InsertCleanupRow(ctx context.Context, arg InsertCleanupRowParams) (pgtype.UUID, error)
 	InsertConversationSession(ctx context.Context, arg InsertConversationSessionParams) (ToroCoreConversationSession, error)
@@ -288,12 +307,14 @@ type Querier interface {
 	InsertSkip(ctx context.Context, id pgtype.UUID) error
 	ListASEConfigsByTenant(ctx context.Context, tenantID pgtype.UUID) ([]ToroCoreAseDag, error)
 	ListASEDagVersions(ctx context.Context, dagID pgtype.UUID) ([]ListASEDagVersionsRow, error)
+	ListAgentConfigurations(ctx context.Context) ([]ToroCoreAgentConfiguration, error)
 	ListAllASEConfigs(ctx context.Context) ([]ToroCoreAseDag, error)
 	// Returns CSV sessions for a realm (when realm_id is provided) OR CSV sessions created by a user
 	// (when realm_id is NULL). Excludes SYSTEM/PLAID sessions which are not user-facing.
 	ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]ListCleanupSessionsRow, error)
 	ListUsersWithVCOO(ctx context.Context) ([]ListUsersWithVCOORow, error)
 	LogBulkBurn(ctx context.Context, arg LogBulkBurnParams) (ToroCoreWalletTransaction, error)
+	LogEmailEvent(ctx context.Context, arg LogEmailEventParams) error
 	LogPurchase(ctx context.Context, arg LogPurchaseParams) (ToroCoreWalletTransaction, error)
 	LogStalledMessage(ctx context.Context, arg LogStalledMessageParams) (ToroCoreStalledMessage, error)
 	LogWorkflowHistory(ctx context.Context, arg LogWorkflowHistoryParams) (ToroCoreWorkflowHistory, error)
@@ -326,6 +347,7 @@ type Querier interface {
 	SoftDeletePurchase(ctx context.Context, arg SoftDeletePurchaseParams) error
 	SoftDeleteSalesReceipt(ctx context.Context, arg SoftDeleteSalesReceiptParams) error
 	SoftDeleteVendor(ctx context.Context, arg SoftDeleteVendorParams) error
+	UnsubscribeList(ctx context.Context, arg UnsubscribeListParams) error
 	UpdateASEConfigByID(ctx context.Context, arg UpdateASEConfigByIDParams) (ToroCoreAseDag, error)
 	UpdateCleanupSessionBankAccount(ctx context.Context, arg UpdateCleanupSessionBankAccountParams) error
 	UpdateCleanupSessionRowCount(ctx context.Context, arg UpdateCleanupSessionRowCountParams) error
@@ -338,6 +360,8 @@ type Querier interface {
 	UpdateCustomerVectorSync(ctx context.Context, arg UpdateCustomerVectorSyncParams) error
 	UpdateDepositRuleID(ctx context.Context, arg UpdateDepositRuleIDParams) error
 	UpdateERPTokens(ctx context.Context, arg UpdateERPTokensParams) error
+	UpdateEmailAccountStatus(ctx context.Context, arg UpdateEmailAccountStatusParams) error
+	UpdateEmailAccountWarmup(ctx context.Context, arg UpdateEmailAccountWarmupParams) error
 	UpdateLastSyncTimestamp(ctx context.Context, arg UpdateLastSyncTimestampParams) error
 	// =========================================================================
 	// Webhook Timestamp Tracking (for event-driven CDC)
@@ -352,6 +376,7 @@ type Querier interface {
 	UpdateLastWebhookTransaction(ctx context.Context, arg UpdateLastWebhookTransactionParams) error
 	UpdateLastWebhookVendor(ctx context.Context, arg UpdateLastWebhookVendorParams) error
 	UpdateProposedTransactionSyncStatus(ctx context.Context, arg UpdateProposedTransactionSyncStatusParams) error
+	UpdateProspectStatus(ctx context.Context, arg UpdateProspectStatusParams) error
 	UpdatePurchaseRuleID(ctx context.Context, arg UpdatePurchaseRuleIDParams) error
 	UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichmentParams) error
 	UpdateRuleGroupKeywords(ctx context.Context, arg UpdateRuleGroupKeywordsParams) error
@@ -378,6 +403,7 @@ type Querier interface {
 	// shadow_erp Entity Queries (Upsert / Soft-Delete)
 	// =========================================================================
 	UpsertAccount(ctx context.Context, arg UpsertAccountParams) error
+	UpsertAgentConfiguration(ctx context.Context, arg UpsertAgentConfigurationParams) (ToroCoreAgentConfiguration, error)
 	UpsertAttachable(ctx context.Context, arg UpsertAttachableParams) error
 	UpsertBill(ctx context.Context, arg UpsertBillParams) error
 	// =========================================================================
@@ -400,6 +426,7 @@ type Querier interface {
 	// $1 is the session_id (typically a SYSTEM session for the realm).
 	// $2 is realm_id, used only for the vendor/account lookups (joined via session at read time).
 	UpsertStagingTransaction(ctx context.Context, arg UpsertStagingTransactionParams) error
+	UpsertTenantSettings(ctx context.Context, arg UpsertTenantSettingsParams) (MarketingTenantSetting, error)
 	UpsertVectorSyncState(ctx context.Context, arg UpsertVectorSyncStateParams) error
 	UpsertVendor(ctx context.Context, arg UpsertVendorParams) error
 	UpsertWebhookSecret(ctx context.Context, arg UpsertWebhookSecretParams) error

@@ -107,12 +107,117 @@ type FignodeStagingTransaction struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+type MarketingAttribution struct {
+	ID              pgtype.UUID
+	ConversionID    pgtype.UUID
+	EmailLogID      pgtype.UUID
+	CampaignID      pgtype.UUID
+	ListID          pgtype.UUID
+	AttributedValue int32
+	CreatedAt       pgtype.Timestamptz
+}
+
+type MarketingCampaign struct {
+	ID        pgtype.UUID
+	Name      string
+	TenantID  pgtype.UUID
+	Status    string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type MarketingCampaignStep struct {
+	ID              pgtype.UUID
+	CampaignID      pgtype.UUID
+	StepNumber      int32
+	SubjectTemplate string
+	BodyTemplate    string
+	DelayDuration   pgtype.Interval
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type MarketingConversion struct {
+	ID              pgtype.UUID
+	TenantID        pgtype.UUID
+	ProspectID      pgtype.UUID
+	CustomerEmail   string
+	ConversionValue int32
+	Source          pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+}
+
+type MarketingEmailAccount struct {
+	ID                pgtype.UUID
+	Email             string
+	EncryptedPassword string
+	DailySendCount    int32
+	DailySendLimit    int32
+	Status            string
+	TenantID          pgtype.UUID
+	WarmupPhase       int32
+	DomainCreatedAt   pgtype.Timestamptz
+	BounceCount       int32
+	SpamComplaints    int32
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
+type MarketingEmailLog struct {
+	ID         pgtype.UUID
+	ProspectID pgtype.UUID
+	CampaignID pgtype.UUID
+	NatsMsgID  pgtype.Text
+	EventType  string
+	Metadata   []byte
+	CreatedAt  pgtype.Timestamptz
+	ListID     pgtype.UUID
+	UserAgent  pgtype.Text
+	IpAddress  pgtype.Text
+	IsHuman    pgtype.Bool
+}
+
 type MarketingLeadForm struct {
 	ID        pgtype.UUID
 	Website   string
 	FormData  []byte
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type MarketingList struct {
+	ID        pgtype.UUID
+	TenantID  pgtype.UUID
+	Name      string
+	CreatedAt pgtype.Timestamptz
+}
+
+type MarketingListSubscriber struct {
+	ListID     pgtype.UUID
+	ProspectID pgtype.UUID
+	Status     string
+	CreatedAt  pgtype.Timestamptz
+}
+
+type MarketingProspect struct {
+	ID            pgtype.UUID
+	Email         string
+	FirstName     pgtype.Text
+	LastName      pgtype.Text
+	Metadata      []byte
+	CampaignID    pgtype.UUID
+	CurrentStepID pgtype.UUID
+	Status        string
+	TenantID      pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type MarketingTenantSetting struct {
+	TenantID              pgtype.UUID
+	AttributionWindowDays int32
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 type ShadowErpAccount struct {
@@ -399,6 +504,17 @@ type ShadowErpVendor struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	DeletedAt          pgtype.Timestamptz
+}
+
+type ToroCoreAgentConfiguration struct {
+	ID           pgtype.UUID
+	Name         string
+	Description  pgtype.Text
+	SystemPrompt string
+	SdkClient    string
+	Metadata     []byte
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type ToroCoreAgentMemoryRule struct {

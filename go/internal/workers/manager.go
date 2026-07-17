@@ -18,6 +18,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/erp"
 	"github.com/Yankzy/usetoro/internal/infra/vector"
 	"github.com/Yankzy/usetoro/internal/services/accounting"
+	"github.com/Yankzy/usetoro/internal/services/mailpool"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -232,6 +233,7 @@ type Dependencies struct {
 	FetchEntityFn   func(ctx context.Context, tenantID, realmID, entityType, entityID, op string) error
 	QBOConnector    *connectors.QBOConnector
 	Redis           *redis.Client
+	Mailpool        *mailpool.Mailpool
 }
 
 type WorkerFactory func(deps Dependencies) (Worker, error)

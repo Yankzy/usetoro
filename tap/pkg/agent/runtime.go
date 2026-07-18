@@ -38,11 +38,53 @@ func NewRuntime(logger *slog.Logger, bus core.EventBus, cfg core.AgentConfig) *R
 
 type contextKey string
 
-const ctxKeyModel contextKey = "tap_model_override"
+const (
+	ctxKeyModel      contextKey = "tap_model_override"
+	ctxKeyLLMContext contextKey = "tap_llm_context"
+)
+
+// LLMContext carries metadata about the turn for telemetry.
+type LLMContext struct {
+	TenantID       string
+	ConversationID string
+	DagID          string
+	NodeID         string
+	AgentID        string
+	CampaignID     string
+	ProspectID     string
+	StepNumber     int
+	Entropy        float64
+	Confidence     float64
+	HoldReason     string
+	StateTransition string
+	Metadata       map[string]any
+}
+
+// LLMTurnTelemetry is the payload emitted after each LLM call.
+type LLMTurnTelemetry struct {
+	Context      LLMContext `json:"context"`
+	Model        string     `json:"model"`
+	Provider     string     `json:"provider"`
+	InputTokens  int        `json:"input_tokens"`
+	OutputTokens int        `json:"output_tokens"`
+	TotalTokens  int        `json:"total_tokens"`
+}
 
 // WithModel returns a context with a per-call model override.
 func WithModel(ctx context.Context, model string) context.Context {
 	return context.WithValue(ctx, ctxKeyModel, model)
+}
+
+// WithLLMContext returns a context with telemetry metadata.
+func WithLLMContext(ctx context.Context, llmCtx LLMContext) context.Context {
+	return context.WithValue(ctx, ctxKeyLLMContext, llmCtx)
+}
+
+func llmContextFromContext(ctx context.Context) LLMContext {
+	if v, ok := ctx.Value(ctxKeyLLMContext).(LLMContext); ok {
+		return v
+	}
+	return LLMContext{}
 }
 
 func modelFromContext(ctx context.Context, fallback string) string {
@@ -87,6 +129,32 @@ func (r *Runtime) Stop() error {
 	return nil
 }
 
+func (r *Runtime) emitTelemetry(ctx context.Context, pc ProviderConfig, model string, inputTokens, outputTokens, totalTokens int64) {
+	if r.Bus == nil {
+		return
+	}
+	llmCtx := llmContextFromContext(ctx)
+
+	payload := LLMTurnTelemetry{
+		Context:      llmCtx,
+		Model:        model,
+		Provider:     string(pc.Name),
+		InputTokens:  int(inputTokens),
+		OutputTokens: int(outputTokens),
+		TotalTokens:  int(totalTokens),
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		r.Logger.Error("failed to marshal llm telemetry", "error", err)
+		return
+	}
+
+	if err := r.Bus.Publish("llm.telemetry.turn_completed", data); err != nil {
+		r.Logger.Error("failed to publish llm telemetry", "error", err)
+	}
+}
+
 func (r *Runtime) resolveClient(ctx context.Context) (ProviderConfig, openai.Client, error) {
 	model := r.effectiveModel(ctx)
 	pc, err := ResolveModel(model)
@@ -129,10 +197,11 @@ func (r *Runtime) Exec(ctx context.Context, prompt string, systemPrompt string) 
 		if err != nil {
 			return "", err
 		}
+		r.emitTelemetry(ctx, pc, r.effectiveModel(ctx), resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.TotalTokens)
 		return mapper.Restore(resp.OutputText()), nil
 
 	case ParadigmChat:
-		return r.execChatCompletion(ctx, fullPrompt, systemPrompt, client, mapper)
+		return r.execChatCompletion(ctx, pc, fullPrompt, systemPrompt, client, mapper)
 
 	default:
 		return "", fmt.Errorf("paradigm %q not yet implemented", pc.Paradigm)
@@ -140,7 +209,7 @@ func (r *Runtime) Exec(ctx context.Context, prompt string, systemPrompt string) 
 }
 
 // execChatCompletion uses the Chat Completions API for providers that do not support the Responses API.
-func (r *Runtime) execChatCompletion(ctx context.Context, userContent, systemContent string, client openai.Client, mapper *UUIDMapper) (string, error) {
+func (r *Runtime) execChatCompletion(ctx context.Context, pc ProviderConfig, userContent, systemContent string, client openai.Client, mapper *UUIDMapper) (string, error) {
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.UserMessage(userContent),
 	}
@@ -161,6 +230,9 @@ func (r *Runtime) execChatCompletion(ctx context.Context, userContent, systemCon
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("chat completion: no choices returned")
 	}
+	
+	r.emitTelemetry(ctx, pc, r.effectiveModel(ctx), resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.TotalTokens)
+	
 	return mapper.Restore(resp.Choices[0].Message.Content), nil
 }
 
@@ -208,15 +280,15 @@ func (r *Runtime) ExecWithPaging(ctx context.Context, prompt string, systemPromp
 
 	switch pc.Paradigm {
 	case ParadigmResponses:
-		return r.execWithPagingResponses(ctx, client, prompt, systemPrompt, pages, fetcher, mapper)
+		return r.execWithPagingResponses(ctx, pc, client, prompt, systemPrompt, pages, fetcher, mapper)
 	case ParadigmChat:
-		return r.execWithPagingChat(ctx, client, prompt, systemPrompt, pages, fetcher, mapper)
+		return r.execWithPagingChat(ctx, pc, client, prompt, systemPrompt, pages, fetcher, mapper)
 	default:
 		return "", fmt.Errorf("paradigm %q not yet implemented", pc.Paradigm)
 	}
 }
 
-func (r *Runtime) execWithPagingResponses(ctx context.Context, client openai.Client, prompt, systemPrompt string, pages []PageContext, fetcher DocumentFetcher, mapper *UUIDMapper) (string, error) {
+func (r *Runtime) execWithPagingResponses(ctx context.Context, pc ProviderConfig, client openai.Client, prompt, systemPrompt string, pages []PageContext, fetcher DocumentFetcher, mapper *UUIDMapper) (string, error) {
 	localMap, pagesJSON := GenerateLocalContextMap(pages)
 
 	sysPrompt := ""
@@ -268,6 +340,8 @@ func (r *Runtime) execWithPagingResponses(ctx context.Context, client openai.Cli
 		if err != nil {
 			return "", err
 		}
+		
+		r.emitTelemetry(ctx, pc, r.effectiveModel(ctx), resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.TotalTokens)
 
 		lastResponseID = resp.ID
 		r.Logger.Info("[DEBUG] LLM RESPONSE API", "response_id", resp.ID, "status", resp.Status)
@@ -338,7 +412,7 @@ func (r *Runtime) execWithPagingResponses(ctx context.Context, client openai.Cli
 
 // execWithPagingChat implements the tool-calling paging loop using the Chat Completions API
 // (messages-array paradigm) for providers that do not support the Responses API.
-func (r *Runtime) execWithPagingChat(ctx context.Context, client openai.Client, prompt, systemPrompt string, pages []PageContext, fetcher DocumentFetcher, mapper *UUIDMapper) (string, error) {
+func (r *Runtime) execWithPagingChat(ctx context.Context, pc ProviderConfig, client openai.Client, prompt, systemPrompt string, pages []PageContext, fetcher DocumentFetcher, mapper *UUIDMapper) (string, error) {
 	localMap, pagesJSON := GenerateLocalContextMap(pages)
 
 	sysPrompt := systemPrompt
@@ -386,6 +460,8 @@ func (r *Runtime) execWithPagingChat(ctx context.Context, client openai.Client, 
 		if len(resp.Choices) == 0 {
 			return "", fmt.Errorf("chat completion: no choices returned")
 		}
+		
+		r.emitTelemetry(ctx, pc, r.effectiveModel(ctx), resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.TotalTokens)
 
 		choice := resp.Choices[0]
 
@@ -483,9 +559,9 @@ func (r *Runtime) ExecWithToolCalling(ctx context.Context, prompt string, system
 
 	switch pc.Paradigm {
 	case ParadigmResponses:
-		return r.execWithToolsResponses(ctx, client, prompt, systemPrompt, pages, fetcher, extraTools, toolHandler, mapper)
+		return r.execWithToolsResponses(ctx, pc, client, prompt, systemPrompt, pages, fetcher, extraTools, toolHandler, mapper)
 	case ParadigmChat:
-		return r.execWithToolsChat(ctx, client, prompt, systemPrompt, pages, fetcher, extraTools, toolHandler, mapper)
+		return r.execWithToolsChat(ctx, pc, client, prompt, systemPrompt, pages, fetcher, extraTools, toolHandler, mapper)
 	default:
 		return "", fmt.Errorf("paradigm %q not yet implemented", pc.Paradigm)
 	}
@@ -509,7 +585,7 @@ type ToolCallInput struct {
 
 // Model abstracts the underlying execution API paradigm (Chat vs Responses).
 type Model interface {
-	ExecWithMessages(ctx context.Context, messages []MessageInput, tools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, []MessageInput, error)
+	ExecWithMessages(ctx context.Context, messages []MessageInput, tools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper, emit func(context.Context, ProviderConfig, string, int64, int64, int64)) (string, []MessageInput, error)
 }
 
 // ModelProvider routes a model name string to an initialized Model client.
@@ -524,12 +600,12 @@ type OpenAIModel struct {
 	modelName string
 }
 
-func (m *OpenAIModel) ExecWithMessages(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, []MessageInput, error) {
+func (m *OpenAIModel) ExecWithMessages(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper, emit func(context.Context, ProviderConfig, string, int64, int64, int64)) (string, []MessageInput, error) {
 	switch m.config.Paradigm {
 	case ParadigmResponses:
-		return m.execWithMessagesResponses(ctx, messages, extraTools, toolHandler, mapper)
+		return m.execWithMessagesResponses(ctx, messages, extraTools, toolHandler, mapper, emit)
 	case ParadigmChat:
-		return m.execWithMessagesChat(ctx, messages, extraTools, toolHandler, mapper)
+		return m.execWithMessagesChat(ctx, messages, extraTools, toolHandler, mapper, emit)
 	default:
 		return "", nil, fmt.Errorf("paradigm %q not yet implemented", m.config.Paradigm)
 	}
@@ -578,7 +654,7 @@ func (r *Runtime) ExecWithMessages(ctx context.Context, messages []MessageInput,
 		return "", nil, err
 	}
 
-	output, newMsgs, err := model.ExecWithMessages(ctx, obfuscated, extraTools, toolHandler, mapper)
+	output, newMsgs, err := model.ExecWithMessages(ctx, obfuscated, extraTools, toolHandler, mapper, r.emitTelemetry)
 
 	for i := range newMsgs {
 		newMsgs[i].Content = mapper.Restore(newMsgs[i].Content)
@@ -587,7 +663,7 @@ func (r *Runtime) ExecWithMessages(ctx context.Context, messages []MessageInput,
 	return output, newMsgs, nil
 }
 
-func (m *OpenAIModel) execWithMessagesResponses(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, []MessageInput, error) {
+func (m *OpenAIModel) execWithMessagesResponses(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper, emit func(context.Context, ProviderConfig, string, int64, int64, int64)) (string, []MessageInput, error) {
 	// Build tools
 	rtools := make([]responses.ToolUnionParam, 0, len(extraTools))
 	for _, t := range extraTools {
@@ -641,6 +717,11 @@ func (m *OpenAIModel) execWithMessagesResponses(ctx context.Context, messages []
 		if err != nil {
 			return "", nil, err
 		}
+		
+		if emit != nil {
+			emit(ctx, m.config, m.modelName, resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.TotalTokens)
+		}
+
 		lastResponseID = resp.ID
 		toolOutputs = nil
 		hasToolCalls := false
@@ -717,7 +798,7 @@ func (m *OpenAIModel) execWithMessagesResponses(ctx context.Context, messages []
 	return "", nil, fmt.Errorf("exceeded max reasoning loops")
 }
 
-func (m *OpenAIModel) execWithMessagesChat(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, []MessageInput, error) {
+func (m *OpenAIModel) execWithMessagesChat(ctx context.Context, messages []MessageInput, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper, emit func(context.Context, ProviderConfig, string, int64, int64, int64)) (string, []MessageInput, error) {
 	// Build chat messages with strict role handling
 	chatMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, msg := range messages {
@@ -780,6 +861,11 @@ func (m *OpenAIModel) execWithMessagesChat(ctx context.Context, messages []Messa
 		if err != nil {
 			return "", nil, err
 		}
+		
+		if emit != nil {
+			emit(ctx, m.config, m.modelName, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.TotalTokens)
+		}
+
 		if len(resp.Choices) == 0 {
 			return "", nil, fmt.Errorf("chat: no choices returned")
 		}
@@ -833,7 +919,8 @@ func (m *OpenAIModel) execWithMessagesChat(ctx context.Context, messages []Messa
 	return "", nil, fmt.Errorf("exceeded max reasoning loops")
 }
 
-func (r *Runtime) execWithToolsResponses(ctx context.Context, client openai.Client, prompt, systemPrompt string, pages []PageContext, fetcher DocumentFetcher, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, error) {
+// execWithToolsResponses runs the tool-calling loop using Responses API
+func (r *Runtime) execWithToolsResponses(ctx context.Context, pc ProviderConfig, client openai.Client, prompt, systemPrompt string, pages []PageContext, fetcher DocumentFetcher, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, error) {
 	localMap, pagesJSON := GenerateLocalContextMap(pages)
 
 	sysPrompt := ""
@@ -883,6 +970,9 @@ func (r *Runtime) execWithToolsResponses(ctx context.Context, client openai.Clie
 		if err != nil {
 			return "", err
 		}
+		
+		r.emitTelemetry(ctx, pc, r.effectiveModel(ctx), resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.TotalTokens)
+
 		lastResponseID = resp.ID
 		toolOutputs = nil
 		hasToolCalls := false
@@ -944,7 +1034,8 @@ func (r *Runtime) execWithToolsResponses(ctx context.Context, client openai.Clie
 	return "", fmt.Errorf("exceeded max reasoning loops")
 }
 
-func (r *Runtime) execWithToolsChat(ctx context.Context, client openai.Client, prompt, systemPrompt string, pages []PageContext, fetcher DocumentFetcher, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, error) {
+// execWithToolsChat implements tool-calling with the Chat Completions API
+func (r *Runtime) execWithToolsChat(ctx context.Context, pc ProviderConfig, client openai.Client, prompt, systemPrompt string, pages []PageContext, fetcher DocumentFetcher, extraTools []ToolDef, toolHandler ToolCallHandler, mapper *UUIDMapper) (string, error) {
 	localMap, pagesJSON := GenerateLocalContextMap(pages)
 
 	sysPrompt := systemPrompt
@@ -994,6 +1085,9 @@ func (r *Runtime) execWithToolsChat(ctx context.Context, client openai.Client, p
 		if err != nil {
 			return "", err
 		}
+		
+		r.emitTelemetry(ctx, pc, r.effectiveModel(ctx), resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.TotalTokens)
+
 		if len(resp.Choices) == 0 {
 			return "", fmt.Errorf("chat: no choices returned")
 		}

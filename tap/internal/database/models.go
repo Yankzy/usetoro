@@ -669,6 +669,41 @@ type ToroCoreLinkedBankAccount struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type ToroCoreLlmPricingModel struct {
+	ID              pgtype.UUID
+	Model           string
+	Provider        string
+	InputCostPer1m  pgtype.Numeric
+	OutputCostPer1m pgtype.Numeric
+	CacheCostPer1m  pgtype.Numeric
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type ToroCoreLlmTurnMetric struct {
+	ID              pgtype.UUID
+	TenantID        pgtype.UUID
+	ConversationID  pgtype.UUID
+	DagID           pgtype.Text
+	NodeID          pgtype.Text
+	AgentID         pgtype.Text
+	Model           string
+	Provider        pgtype.Text
+	InputTokens     int32
+	OutputTokens    int32
+	TotalTokens     int32
+	CostUsd         pgtype.Numeric
+	Entropy         pgtype.Float8
+	Confidence      pgtype.Float8
+	StateTransition pgtype.Text
+	HoldReason      pgtype.Text
+	CampaignID      pgtype.UUID
+	ProspectID      pgtype.UUID
+	StepNumber      pgtype.Int4
+	Metadata        []byte
+	CreatedAt       pgtype.Timestamptz
+}
+
 type ToroCoreRefreshToken struct {
 	TokenHash string
 	UserID    pgtype.UUID

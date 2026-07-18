@@ -186,6 +186,7 @@ type Querier interface {
 	// =========================================================================
 	GetInitialEnrichedTransactionsByRealm(ctx context.Context, realmID pgtype.Text) ([]FignodeStagingTransaction, error)
 	GetInvoiceByERPID(ctx context.Context, arg GetInvoiceByERPIDParams) (ShadowErpInvoice, error)
+	GetLLMPricingModel(ctx context.Context, model string) (ToroCoreLlmPricingModel, error)
 	GetLatestLeaderboardSnapshot(ctx context.Context, period string) (GetLatestLeaderboardSnapshotRow, error)
 	GetListRevenueMetrics(ctx context.Context, listID pgtype.UUID) ([]GetListRevenueMetricsRow, error)
 	GetMemoryRules(ctx context.Context, realmID string) ([]GetMemoryRulesRow, error)
@@ -293,6 +294,7 @@ type Querier interface {
 	IncrementEmployeeCleared(ctx context.Context, userID pgtype.UUID) error
 	InsertCleanupRow(ctx context.Context, arg InsertCleanupRowParams) (pgtype.UUID, error)
 	InsertConversationSession(ctx context.Context, arg InsertConversationSessionParams) (ToroCoreConversationSession, error)
+	InsertLLMTurnMetric(ctx context.Context, arg InsertLLMTurnMetricParams) (ToroCoreLlmTurnMetric, error)
 	InsertLeaderboardSnapshot(ctx context.Context, arg InsertLeaderboardSnapshotParams) error
 	// Registers a new source row for future hydration (embedding = NULL).
 	// The VectorHydrator will pick this up on its next tick.

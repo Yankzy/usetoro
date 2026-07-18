@@ -154,7 +154,7 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 				activityTypeToUse = "agents.dynamic.purpose"
 				receiverDIDToUse = "did:toro:agent:dynamic_purpose_1"
 			} else {
-				// Try appending "-agent" if they just sent "mailpool" instead of "mailpool-agent"
+				// Try appending "-agent" if they just sent "email" instead of "email-agent"
 				dbCfg, err = w.db.GetAgentConfigurationByName(ctx, req.AgentAlias+"-agent")
 				if err == nil {
 					req.SystemPrompt = dbCfg.SystemPrompt

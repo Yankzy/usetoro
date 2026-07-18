@@ -214,6 +214,28 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 }
 
+// enforceEmailSubdomainRules ensures that emails ending in usetoro.io are correctly formatted.
+// It removes the 'a.' subdomain for the From address to comply with Sender Signatures,
+// but enforces the 'a.' subdomain in the Reply-To address for proper inbound routing.
+// For all other domains, it leaves the email untouched.
+func enforceEmailSubdomainRules(email string) (fromEmail, replyToEmail string) {
+	fromEmail = email
+	replyToEmail = email
+
+	if strings.Contains(email, "usetoro.io") {
+		// Make sure Reply-To has @a.usetoro.io
+		if !strings.Contains(email, "@a.usetoro.io") {
+			replyToEmail = strings.Replace(email, "@usetoro.io", "@a.usetoro.io", 1)
+		}
+		// Make sure From does NOT have @a.usetoro.io
+		if strings.Contains(email, "@a.usetoro.io") {
+			fromEmail = strings.Replace(email, "@a.usetoro.io", "@usetoro.io", 1)
+		}
+	}
+
+	return fromEmail, replyToEmail
+}
+
 // sendEmail sends an outbound email using the Postmark API.
 // When slackChannelID and slackParentTs are provided, this email is part of
 // a bridged Slack thread — the Postmark MessageID is used to update
@@ -243,12 +265,6 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 		agentEmail = cfg.Email
 		if cfg.ReplyTo != "" {
 			agentReplyTo = cfg.ReplyTo
-		} else {
-			if strings.Contains(cfg.Email, "@") && !strings.Contains(cfg.Email, "@a.") {
-				agentReplyTo = strings.Replace(cfg.Email, "@", "@a.", 1)
-			} else {
-				agentReplyTo = cfg.Email
-			}
 		}
 	} else {
 		// Fallback to dynamic agents in DB
@@ -264,27 +280,26 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 
 		if err == nil {
 			agentName = dbCfg.Name
-			emailAddr := from
-			if !strings.Contains(emailAddr, "@") {
-				emailAddr = fmt.Sprintf("%s@a.usetoro.io", alias)
+			agentEmail = from
+			if !strings.Contains(agentEmail, "@") {
+				agentEmail = fmt.Sprintf("%s@a.usetoro.io", alias)
 			}
-			agentEmail = emailAddr
 		} else {
 			// Ultimate fallback
-			emailAddr := from
-			if !strings.Contains(emailAddr, "@") {
-				emailAddr = fmt.Sprintf("%s@a.usetoro.io", alias)
+			agentEmail = from
+			if !strings.Contains(agentEmail, "@") {
+				agentEmail = fmt.Sprintf("%s@a.usetoro.io", alias)
 			}
 			agentName = strings.Title(alias) + " Agent"
-			agentEmail = emailAddr
-		}
-
-		if !strings.Contains(agentEmail, "@a.") {
-			agentReplyTo = strings.Replace(agentEmail, "@", "@a.", 1)
-		} else {
-			agentReplyTo = agentEmail
 		}
 	}
+
+	finalFrom, defaultReplyTo := enforceEmailSubdomainRules(agentEmail)
+	
+	if agentReplyTo == "" {
+		agentReplyTo = defaultReplyTo
+	}
+	agentEmail = finalFrom
 
 	fromAddr = fmt.Sprintf(`"%s" <%s>`, agentName, agentEmail)
 	replyTo = agentReplyTo

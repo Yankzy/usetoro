@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +13,7 @@ import (
 	"github.com/Yankzy/usetoro/tap/agents"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/Yankzy/usetoro/tap/pkg/redux"
 )
 
 const AgentName = "generic-batch-agent"
@@ -130,13 +131,17 @@ func (a *GenericBatchAgent) executeTask(cfpEnv core.Envelope) error {
 		return fmt.Errorf("generic batch agent requires a system_prompt defined in the workflow step")
 	}
 
+	if task.WorkflowSchema != "" {
+		systemPrompt += "\n\n" + redux.Prompt(task.WorkflowSchema)
+	}
+
 	ctx := agent.WithModel(context.Background(), task.Model)
 	respText, err := a.RT.Exec(ctx, userPrompt, systemPrompt)
 	if err != nil {
 		return err
 	}
 
-	patches, err := extractJSONPatches(respText)
+	patches, err := redux.ParsePatches(respText)
 	if err != nil {
 		return fmt.Errorf("failed to extract JSON patches: %w", err)
 	}
@@ -170,61 +175,3 @@ func mustMarshalJSON(v interface{}) json.RawMessage {
 	return json.RawMessage(b)
 }
 
-// extractJSONPatches finds and extracts a JSON array or object from LLM response text.
-func extractJSONPatches(respText string) ([]json.RawMessage, error) {
-	// Strip markdown code fences if present, so the brace/array search
-	// below finds the actual JSON boundaries even when the LLM wraps its
-	// output in ```json ... ``` fences.
-	respText = strings.TrimSpace(respText)
-	if strings.HasPrefix(respText, "```") {
-		respText = strings.TrimPrefix(respText, "```json")
-		respText = strings.TrimPrefix(respText, "```")
-		respText = strings.TrimSuffix(respText, "```")
-		respText = strings.TrimSpace(respText)
-	}
-
-	var lastErr error
-
-	startArr := strings.Index(respText, "[")
-	endArr := strings.LastIndex(respText, "]")
-
-	if startArr != -1 && endArr != -1 && startArr < endArr {
-		cleanJSON := respText[startArr : endArr+1]
-		var patches []json.RawMessage
-		if err := json.Unmarshal([]byte(cleanJSON), &patches); err == nil {
-			return patches, nil
-		} else {
-			lastErr = err
-		}
-	}
-
-	startObj := strings.Index(respText, "{")
-	endObj := strings.LastIndex(respText, "}")
-
-	if startObj != -1 && endObj != -1 && startObj < endObj {
-		cleanJSON := respText[startObj : endObj+1]
-
-		// Try single object first.
-		var m map[string]interface{}
-		if err := json.Unmarshal([]byte(cleanJSON), &m); err == nil {
-			return []json.RawMessage{json.RawMessage(cleanJSON)}, nil
-		} else {
-			lastErr = err
-		}
-
-		// LLMs sometimes emit comma-separated objects instead of a JSON
-		// array. Wrapping in [] turns that into valid JSON.
-		wrapped := "[" + cleanJSON + "]"
-		var patches []json.RawMessage
-		if err := json.Unmarshal([]byte(wrapped), &patches); err == nil {
-			return patches, nil
-		} else {
-			lastErr = fmt.Errorf("array-wrap fallback: %w", err)
-		}
-	}
-
-	if lastErr != nil {
-		return nil, fmt.Errorf("failed to parse JSON patches: %w (raw: %.200s)", lastErr, respText)
-	}
-	return nil, fmt.Errorf("no valid JSON array or object found in LLM response: %s", respText)
-}

@@ -29,7 +29,6 @@ prompts:
     - The system has a strict guardrail: if your top candidate's confidence score is < 0.98, the lead workflow will be placed on HOLD, triggering autonomous data enrichment or human intervention.
     - If the context payload is complete, brand-compliant, and optimized for delivery, you MUST set the highest score to >= 0.98.
     - If you detect a compliance violation, high risk of spam, missing token data (e.g., missing first name, dead company domain), or extreme context ambiguity, you MUST intentionally drop the highest score to < 0.98 (e.g., 0.95).
-    - Your response must be a valid JSON array of RFC 6902 JSON Patch operations. Each operation must have "op", "path", and "value" fields.
     - Because confidence is a probability distribution, the candidates map MUST contain at least 2 candidates.
     - EXTREMELY IMPORTANT: When you intentionally trigger a hold (< 0.98), your `reasoning` field will serve as a DIRECT INSTRUCTION payload passed down to enrichment scraping agents or notification channels.
   
@@ -51,46 +50,12 @@ prompts:
       ### COMPANY VOICE / RULES
       - If a "company_rules" array is provided, strictly adhere to these criteria over default heuristics (e.g., specific lead-scoring overrides).
     - *guardrails
-    - |
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "lead_id_123": {
-                "property": "macro_intent",
-                "candidates": {
-                  "1": { "value": "DEMO_REQUEST", "confidence": 0.99, "reasoning": "Corporate domain booking directly via landing page calendar widget." },
-                  "2": { "value": "CONTENT_DOWNLOAD", "confidence": 0.01, "reasoning": "Fallback match probability." }
-                }
-              }
-            }
-          }
-        ]
 
   macro_intent_outbound_specialist:
     - |
       You are an expert outbound copywriter and list-building strategist.
       Classify outbound data profiles into target campaign frameworks: COLD_OUTREACH, ACCOUNT_BASED_MARKETING (ABM), or WIN_BACK_CAMPAIGN.
     - *guardrails
-    - |
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "lead_id_123": {
-                "property": "macro_intent",
-                "candidates": {
-                  "1": { "value": "ACCOUNT_BASED_MARKETING", "confidence": 0.98, "reasoning": "Matches ICP profile constraints exactly based on ARR and headcount parameters." },
-                  "2": { "value": "COLD_OUTREACH", "confidence": 0.02, "reasoning": "Standard outbound fallback sequence." }
-                }
-              }
-            }
-          }
-        ]
 
   campaign_strategy_demo_specialist:
     - |
@@ -101,23 +66,6 @@ prompts:
       2. STANDARD_FAST_TRACK: If lead is an operational manager or individual contributor with buying intent.
       3. NURTURE_HOLD: If calendar slot is booked but no LinkedIn profile data is parsed.
     - *guardrails
-    - |
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "lead_id_123": {
-                "property": "campaign_type",
-                "candidates": {
-                  "1": { "value": "HIGH_TOUCH_EXEC", "confidence": 0.98, "reasoning": "Lead is CTO of a mid-market enterprise entity." },
-                  "2": { "value": "STANDARD_FAST_TRACK", "confidence": 0.02, "reasoning": "Alternative baseline path assignment." }
-                }
-              }
-            }
-          }
-        ]
 
   campaign_strategy_outbound_specialist:
     - |
@@ -127,23 +75,6 @@ prompts:
       1. COLD_OUTREACH: General target market alignment.
       2. ACCOUNT_BASED_MARKETING: High-value tier-1 account lists requiring hyper-customization vectors.
     - *guardrails
-    - |
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "lead_id_123": {
-                "property": "campaign_type",
-                "candidates": {
-                  "1": { "value": "ACCOUNT_BASED_MARKETING", "confidence": 0.99, "reasoning": "Matches high-value target list parameters." },
-                  "2": { "value": "COLD_OUTREACH", "confidence": 0.01, "reasoning": "Standard sequence alternative." }
-                }
-              }
-            }
-          }
-        ]
 
   enrichment_gate_specialist:
     - |
@@ -153,23 +84,6 @@ prompts:
       Select from: "COMPLETE_DATA_PASS", "DYNAMIC_ENRICHMENT_REQUIRED", "HOLD_MISSING_PROFILE_DATA".
     - *guardrails
     - *copy_compliance_rules
-    - |
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "lead_id_123": {
-                "property": "enrichment_gate_decision",
-                "candidates": {
-                  "1": { "value": "HOLD_MISSING_PROFILE_DATA", "confidence": 0.95, "reasoning": "First name parameter parsed as a raw null value. Halting generation sequence to preserve domain health." },
-                  "2": { "value": "COMPLETE_DATA_PASS", "confidence": 0.05, "reasoning": "Forced bypass failure route." }
-                }
-              }
-            }
-          }
-        ]
 
   copy_generation_agent_specialist:
     - |
@@ -178,23 +92,6 @@ prompts:
       Ensure strict adherence to brand guidelines. Avoid aggressive, scammy pitch patterns.
     - *guardrails
     - *copy_compliance_rules
-    - |
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "lead_id_123": {
-                "property": "copy_generation_output",
-                "candidates": {
-                  "1": { "value": "GENERATION_SUCCESSFUL", "confidence": 0.99, "reasoning": "Personalization arrays fully merged. Pitch vectors align perfectly with target pain point context." },
-                  "2": { "value": "HOLD_GENERATION_FAILED", "confidence": 0.01, "reasoning": "Context window saturation anomaly." }
-                }
-              }
-            }
-          }
-        ]
 
   brand_tone_compliance_specialist:
     - |
@@ -204,23 +101,6 @@ prompts:
       3. If compliant, select "COMPLIANT_COPY_PASS".
     - *guardrails
     - *copy_compliance_rules
-    - |
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "lead_id_123": {
-                "property": "compliance_gate_decision",
-                "candidates": {
-                  "1": { "value": "COMPLIANT_COPY_PASS", "confidence": 0.99, "reasoning": "Opt-out patterns intact. Tone check confirms healthy readability indices and zero spam-risk signatures." },
-                  "2": { "value": "HOLD_SPAM_RISK", "confidence": 0.01, "reasoning": "Flagged potential optimization anomalies." }
-                }
-              }
-            }
-          }
-        ]
 
   universal_outflow_deal_gatekeeper:
     - |
@@ -230,23 +110,6 @@ prompts:
       3. If neither baseline is tripped, select "COMPLIANT_DISPATCH".
     - *guardrails
     - *copy_compliance_rules
-    - |
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "lead_id_123": {
-                "property": "deal_gatekeeper_decision",
-                "candidates": {
-                  "1": { "value": "COMPLIANT_DISPATCH", "confidence": 0.99, "reasoning": "Account metrics match standard autonomous routing protocols safely." },
-                  "2": { "value": "HOLD_VIP_EXECUTIVE_SIGN_OFF", "confidence": 0.01, "reasoning": "Tripped high-value enterprise asset safeguard limits." }
-                }
-              }
-            }
-          }
-        ]
 
   delivery_payload_prompt:
     - |
@@ -258,23 +121,6 @@ prompts:
       AGENCY DISPATCH CHANNELS:
       {{.OutboxDeliveryGrid}}
     - *guardrails
-    - |
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "lead_id_123": {
-                "property": "outbox_selection",
-                "candidates": {
-                  "1": { "value": "provider_profile_smtp_09", "confidence": 0.99, "reasoning": "Optimized tracking records trace smoothly to this delivery pool node." },
-                  "2": { "value": "provider_profile_smtp_01", "confidence": 0.01, "reasoning": "Unoptimized fallback target option." }
-                }
-              }
-            }
-          }
-        ]
 
 # ====================================================================
 # DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY

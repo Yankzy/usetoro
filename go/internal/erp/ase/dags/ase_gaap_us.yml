@@ -58,7 +58,6 @@ prompts:
     - The system has a strict guardrail: if your top candidate's confidence is < 0.98, the transaction will be placed on HOLD and will NOT progress.
     - If the transaction is fully compliant and should progress, you MUST set the highest score to >= 0.98.
     - If you determine the transaction is NON-COMPLIANT (e.g. missing receipt, IRS rules, W9, missing context) and MUST be placed on HOLD, you MUST intentionally set the highest score to < 0.98 (e.g. 0.96 or 0.97).
-    - Your response must be a valid JSON array of RFC 6902 JSON Patch operations. Each operation must have "op", "path", and "value" fields.
     - Because confidence is probability distribution, candidates map MUST contain at least 2 candidates.
     - EXTREMELY IMPORTANT: When you intentionally set the confidence to < 0.98 to trigger a hold, you MUST write your `reasoning` as a highly detailed DIRECT INSTRUCTION to the email agent.
   
@@ -85,24 +84,6 @@ prompts:
       - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
 
     - *guardrails
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "macro_class",
-              "candidates": {
-              "1": { "value": "REVENUE", "confidence": 0.98, "reasoning": "Standard operating cash receipt." },
-              "2": { "value": "LIABILITY", "confidence": 0.02, "reasoning": "Could potentially be a short-term loan advance." }
-                }
-              }
-            }
-          }
-        ]
 
 
   macro_classifier_outflow_specialist:
@@ -122,24 +103,6 @@ prompts:
       - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
 
     - *guardrails
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "macro_class",
-              "candidates": {
-              "1": { "value": "EXPENSE", "confidence": 0.98, "reasoning": "Standard operational purchase." },
-              "2": { "value": "ASSET", "confidence": 0.02, "reasoning": "Possible hardware capitalization if over threshold." }
-                }
-              }
-            }
-          }
-        ]
 
   account_type_asset_specialist:
     - |
@@ -165,24 +128,6 @@ prompts:
       - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
 
     - *guardrails
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "account_type",
-              "candidates": {
-              "1": { "value": "Fixed Assets", "confidence": 0.98, "reasoning": "High likelihood of hardware footprint." },
-              "2": { "value": "Other Current Assets", "confidence": 0.02, "reasoning": "If this is a small tool below capitalization threshold." }
-                }
-              }
-            }
-          }
-        ]
 
   account_type_liability_specialist:
     - |
@@ -206,24 +151,6 @@ prompts:
       - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
 
     - *guardrails
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "account_type",
-              "candidates": {
-              "1": { "value": "Credit Cards", "confidence": 0.98, "reasoning": "Explicit statement matching clearing account format." },
-              "2": { "value": "Accounts Payable", "confidence": 0.02, "reasoning": "Unlikely, but possible generic payable settlement." }
-                }
-              }
-            }
-          }
-        ]
 
   account_type_equity_specialist:
     - |
@@ -244,24 +171,6 @@ prompts:
       - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
 
     - *guardrails
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "account_type",
-              "candidates": {
-              "1": { "value": "Equity", "confidence": 0.98, "reasoning": "Owner draw or investment." },
-              "2": { "value": "Other Current Assets", "confidence": 0.02, "reasoning": "If this is a small tool below capitalization threshold." }
-                }
-              }
-            }
-          }
-        ]
 
   account_type_revenue_specialist:
     - |
@@ -283,24 +192,6 @@ prompts:
       - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
 
     - *guardrails
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "account_type",
-              "candidates": {
-              "1": { "value": "Income", "confidence": 0.98, "reasoning": "Standard operating cash receipt." },
-              "2": { "value": "Other Income", "confidence": 0.02, "reasoning": "Possible non-operating income source." }
-                }
-              }
-            }
-          }
-        ]
 
   account_type_expense_specialist:
     - |
@@ -324,24 +215,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "account_type",
-              "candidates": {
-              "1": { "value": "Expense", "confidence": 0.98, "reasoning": "Standard overhead." },
-              "2": { "value": "Cost of Goods Sold", "confidence": 0.02, "reasoning": "If this relates to direct product delivery." }
-                }
-              }
-            }
-          }
-        ]
 
   # --- ASSET PROMPTS ---
   bank_gate_specialist:
@@ -351,24 +224,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "bank_gate_decision",
-              "candidates": {
-              "1": { "value": "STANDARD_LIQUIDITY_FLOW", "confidence": 0.85, "reasoning": "Unclear inter-account matching; safely holding for context." },
-              "2": { "value": "INTERNAL_TRANSFER", "confidence": 0.15, "reasoning": "Indicates some transfer signs but requires manual audit." }
-                }
-              }
-            }
-          }
-        ]
 
   fixed_assets_gate_specialist:
     - |
@@ -380,24 +235,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "fixed_assets_gate_decision",
-              "candidates": {
-              "1": { "value": "CAPITALIZE_ASSET", "confidence": 0.99, "reasoning": "Transaction total exceeds the static $2,500 threshold criteria and invoice is attached." },
-              "2": { "value": "HOLD_MISSING_FIXED_ASSET_INVOICE", "confidence": 0.01, "reasoning": "Invoice missing." }
-                }
-              }
-            }
-          }
-        ]
 
   leasehold_improvements_gate_specialist:
     - |
@@ -406,24 +243,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "leasehold_improvements_gate_decision",
-              "candidates": {
-              "1": { "value": "CAPITALIZE_IMPROVEMENT", "confidence": 0.90, "reasoning": "Permit details indicate permanent structural alterations to layout." },
-              "2": { "value": "REPAIRS_MAINTENANCE_EXPENSE", "confidence": 0.10, "reasoning": "Minor allocation ambiguity over wear-and-tear items." }
-                }
-              }
-            }
-          }
-        ]
 
   other_current_assets_gate_specialist:
     - |
@@ -432,24 +251,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "other_current_assets_gate_decision",
-              "candidates": {
-              "1": { "value": "SECURITY_DEPOSIT", "confidence": 0.98, "reasoning": "Direct contractual matching for commercial space utility initiation." },
-              "2": { "value": "STANDARD_CURRENT_ASSET", "confidence": 0.02, "reasoning": "Safety fallback option." }
-                }
-              }
-            }
-          }
-        ]
 
   other_assets_gate_specialist:
     - |
@@ -458,24 +259,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "other_assets_gate_decision",
-              "candidates": {
-              "1": { "value": "INTANGIBLE_ASSET", "confidence": 0.98, "reasoning": "Payment identified for trademark registration." },
-              "2": { "value": "STANDARD_OTHER_ASSET", "confidence": 0.02, "reasoning": "Bypass safety threshold." }
-                }
-              }
-            }
-          }
-        ]
 
   # --- EQUITY PROMPTS ---
   equity_flow_specialist:
@@ -485,24 +268,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "equity_flow_decision",
-              "candidates": {
-              "1": { "value": "OWNER_DRAW", "confidence": 0.99, "reasoning": "Personal transfer markers matched with zero operational invoice markers." },
-              "2": { "value": "OWNER_INVESTMENT", "confidence": 0.01, "reasoning": "Unlikely contra equity sweep." }
-                }
-              }
-            }
-          }
-        ]
 
   # --- REVENUE PROMPTS ---
   operating_income_specialist:
@@ -512,24 +277,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "operating_income_decision",
-              "candidates": {
-              "1": { "value": "STANDARD_CASH_RECEIPT", "confidence": 0.85, "reasoning": "Raw customer deposit; not clearly a split merchant payout." },
-              "2": { "value": "GROMENT_STRIPE_SQUARE_SPLIT", "confidence": 0.15, "reasoning": "Alternative merchant split possibility." }
-                }
-              }
-            }
-          }
-        ]
 
   other_income_gate_specialist:
     - |
@@ -538,24 +285,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "other_income_gate_decision",
-              "candidates": {
-              "1": { "value": "INTEREST_DIVIDEND_INCOME", "confidence": 0.98, "reasoning": "Bank interest yield detected." },
-              "2": { "value": "STANDARD_OTHER_INCOME", "confidence": 0.02, "reasoning": "Secondary classification threshold." }
-                }
-              }
-            }
-          }
-        ]
 
   # --- EXPENSE PROMPTS ---
   cogs_validation_specialist:
@@ -565,24 +294,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "cogs_validation_decision",
-              "candidates": {
-              "1": { "value": "VALIDATED_DIRECT_COGS", "confidence": 0.98, "reasoning": "Raw material batch acquisition maps cleanly to production workflows." },
-              "2": { "value": "RECLASSIFY_TO_OVERHEAD_EXPENSE", "confidence": 0.02, "reasoning": "Reclassify to overhead expense threshold." }
-                }
-              }
-            }
-          }
-        ]
 
   operating_expense_specialist:
     - |
@@ -591,24 +302,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "operating_expense_decision",
-              "candidates": {
-              "1": { "value": "STANDARD_OVERHEAD", "confidence": 0.98, "reasoning": "Subscription utility matching known SaaS tooling." },
-              "2": { "value": "PERSONAL_MIXIN_DETECTED", "confidence": 0.02, "reasoning": "Low probability co-mingling safety check." }
-                }
-              }
-            }
-          }
-        ]
 
   other_expense_gate_specialist:
     - |
@@ -617,24 +310,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "other_expense_gate_decision",
-              "candidates": {
-              "1": { "value": "PENALTY_OR_FINE", "confidence": 0.99, "reasoning": "Late payment fee identified." },
-              "2": { "value": "STANDARD_OTHER_EXPENSE", "confidence": 0.01, "reasoning": "Bypass safety limit." }
-                }
-              }
-            }
-          }
-        ]
 
   # --- LIABILITIES PROMPTS ---
   credit_cards_gate_specialist:
@@ -644,24 +319,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "credit_cards_gate_decision",
-              "candidates": {
-              "1": { "value": "CC_BALANCE_TRANSFER", "confidence": 0.99, "reasoning": "Direct automated clearing house transfer trace matching Visa subledger payload." },
-              "2": { "value": "ANOMALOUS_CC_FLOW", "confidence": 0.01, "reasoning": "Safeguard sweep boundary." }
-                }
-              }
-            }
-          }
-        ]
 
   other_current_liability_gate_specialist:
     - |
@@ -670,24 +327,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "other_current_liability_gate_decision",
-              "candidates": {
-              "1": { "value": "SALES_TAX_COLLECTED", "confidence": 0.98, "reasoning": "State point of sale transaction payload parsing indicator." },
-              "2": { "value": "DEFAULT_OPERATIONAL_FLOW", "confidence": 0.02, "reasoning": "Fallback threshold." }
-                }
-              }
-            }
-          }
-        ]
 
   long_term_liability_gate_specialist:
     - |
@@ -696,24 +335,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "long_term_liability_gate_decision",
-              "candidates": {
-              "1": { "value": "LOAN_REPAYMENT_SPLIT", "confidence": 0.99, "reasoning": "Note identification index matches SBA amortized registry." },
-              "2": { "value": "UNIDENTIFIED_DEBT_FLOW", "confidence": 0.01, "reasoning": "Threshold boundary safety check." }
-                }
-              }
-            }
-          }
-        ]
 
   expense_compliance_specialist:
     - |
@@ -725,24 +346,6 @@ prompts:
       3. If the transaction has valid documentation satisfying the rules above, or is < $75.00 and NOT Meals & Entertainment, select "COMPLIANT_EXPENSE".
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "expense_compliance_decision",
-              "candidates": {
-              "1": { "value": "COMPLIANT_EXPENSE", "confidence": 0.99, "reasoning": "Under $75 threshold." },
-              "2": { "value": "HOLD_MISSING_RECEIPT", "confidence": 0.01, "reasoning": "Missing." }
-                }
-              }
-            }
-          }
-        ]
 
   other_expense_compliance_specialist:
     - |
@@ -754,24 +357,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "other_expense_compliance_decision",
-              "candidates": {
-              "1": { "value": "COMPLIANT_OTHER_EXPENSE", "confidence": 0.99, "reasoning": "Compliant." },
-              "2": { "value": "HOLD_MISSING_CHARITY_ACKNOWLEDGEMENT", "confidence": 0.01, "reasoning": "Missing." }
-                }
-              }
-            }
-          }
-        ]
 
   universal_outflow_compliance_specialist:
     - |
@@ -784,24 +369,6 @@ prompts:
 
     - *guardrails
     - *accounting_rules
-    - |
-
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-              "property": "outflow_compliance_decision",
-              "candidates": {
-              "1": { "value": "COMPLIANT_OUTFLOW", "confidence": 0.99, "reasoning": "Compliant." },
-              "2": { "value": "HOLD_MATERIALITY_REVIEW", "confidence": 0.01, "reasoning": "Over $10,000 limit." }
-                }
-              }
-            }
-          }
-        ]
         
   account_selection_prompt:
     - |
@@ -825,24 +392,6 @@ prompts:
       3. This single patch MUST use exactly "op": "add" and "path": "/rows".
       4. The "value" of the patch MUST be an object where the keys are EXACTLY the unique transaction identifiers from the input.
     - *guardrails
-    - |
-
-      EXPECTED OUTPUT FORMAT:
-      [
-        {
-          "op": "add",
-          "path": "/rows",
-          "value": {
-            "row_id_1": {
-            "property": "account_selection",
-            "candidates": {
-            "1": { "value": "account_id_1", "confidence": 0.99, "reasoning": "Account description matches transaction." },
-            "2": { "value": "account_id_2", "confidence": 0.01, "reasoning": "Account description does not match transaction." }
-              }
-            }
-          }
-        }
-      ]
 
 # ====================================================================
 # DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY

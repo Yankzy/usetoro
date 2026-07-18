@@ -167,3 +167,63 @@ func (s *Store) initializeState(baseBytes []byte) (map[string]interface{}, error
 	}
 	return env, nil
 }
+
+// Prompt generates a standardized system prompt block
+// instructing the LLM to output RFC 6902 patches matching the provided schema.
+// This centralizes the instruction in the Redux package so any consumer can use it.
+func Prompt(schemaString string) string {
+	return fmt.Sprintf("OUTPUT FORMAT: You MUST produce a JSON array of RFC 6902 JSON Patch operations. The target state schema is:\n%s\n\nEach operation must have 'op', 'path', and 'value' fields. Example: [{\"op\":\"add\",\"path\":\"/target/path\",\"value\":\"...\"}]", schemaString)
+}
+
+// ParsePatches safely extracts JSON patches from LLM output,
+// handling common artifacts like markdown code fences.
+func ParsePatches(output string) ([]json.RawMessage, error) {
+	output = strings.TrimSpace(output)
+	// Strip markdown code fences if present
+	if strings.HasPrefix(output, "```") {
+		output = strings.TrimPrefix(output, "```json")
+		output = strings.TrimPrefix(output, "```")
+		output = strings.TrimSuffix(output, "```")
+		output = strings.TrimSpace(output)
+	}
+
+	// Try unmarshaling directly as array
+	var patches []json.RawMessage
+	if err := json.Unmarshal([]byte(output), &patches); err == nil {
+		return patches, nil
+	}
+
+	// Fallback 1: Extract Array
+	startArr := strings.Index(output, "[")
+	endArr := strings.LastIndex(output, "]")
+	if startArr != -1 && endArr != -1 && startArr < endArr {
+		cleanJSON := output[startArr : endArr+1]
+		if err := json.Unmarshal([]byte(cleanJSON), &patches); err == nil {
+			return patches, nil
+		}
+	}
+
+	// Fallback 2: Extract Object (Single Patch) or Comma-Separated Objects
+	startObj := strings.Index(output, "{")
+	endObj := strings.LastIndex(output, "}")
+	if startObj != -1 && endObj != -1 && startObj <= endObj {
+		cleanJSON := output[startObj : endObj+1]
+		
+		// Try single object first
+		var single map[string]any
+		if err := json.Unmarshal([]byte(cleanJSON), &single); err == nil {
+			if _, ok := single["op"]; ok {
+				b, _ := json.Marshal(single)
+				return []json.RawMessage{b}, nil
+			}
+		}
+
+		// Try wrapping in array (for comma-separated objects)
+		wrapped := "[" + cleanJSON + "]"
+		if err := json.Unmarshal([]byte(wrapped), &patches); err == nil {
+			return patches, nil
+		}
+	}
+
+	return nil, fmt.Errorf("parse patches: failed to extract valid JSON array or object (raw: %.200s)", output)
+}

@@ -3,6 +3,8 @@ package csvmapping
 import (
 	"strings"
 	"testing"
+
+	"github.com/Yankzy/usetoro/tap/pkg/redux"
 )
 
 func TestExtractJSONPatches(t *testing.T) {
@@ -40,7 +42,7 @@ func TestExtractJSONPatches(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			patches, err := ExtractJSONPatches(tt.input)
+			patches, err := redux.ParsePatches(tt.input)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("expected error but got none")

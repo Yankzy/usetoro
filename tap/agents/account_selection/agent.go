@@ -30,10 +30,6 @@ type SelectionTaskPayload struct {
 	FilteredAccounts json.RawMessage `json:"json_array_of_filtered_accounts_with_ids_and_names"`
 }
 
-type SelectionResult struct {
-	AccountID string `json:"account_id"`
-	Reasoning string `json:"reasoning"`
-}
 
 type AccountSelectionAgent struct {
 	*agent.BaseAgent
@@ -142,22 +138,18 @@ func (a *AccountSelectionAgent) executeTask(cfpEnv core.Envelope) error {
 	llmCallback := func(previousFaults []redux.DomainFault, currentSeq uint64, baseState []byte) ([]json.RawMessage, error) {
 		prompt := a.buildUserPrompt(payload)
 
+		sysPrompt := task.SystemPrompt
+		if schema != "" {
+			sysPrompt += "\n\n" + redux.Prompt(schema)
+		}
+
 		ctx := agent.WithModel(context.Background(), task.Model)
-		respText, err := a.RT.Exec(ctx, prompt, task.SystemPrompt)
+		respText, err := a.RT.Exec(ctx, prompt, sysPrompt)
 		if err != nil {
 			return nil, err
 		}
 
-		var result SelectionResult
-		cleanJSON := a.extractJSON(respText)
-		if err := json.Unmarshal([]byte(cleanJSON), &result); err != nil {
-			return nil, fmt.Errorf("failed to parse selection response: %w", err)
-		}
-
-		patch1 := fmt.Sprintf(`{"op": "add", "path": "/account_id", "value": "%s"}`, result.AccountID)
-		patch2 := fmt.Sprintf(`{"op": "add", "path": "/reasoning", "value": "%s"}`, strings.ReplaceAll(result.Reasoning, `"`, `\"`))
-
-		return []json.RawMessage{[]byte(patch1), []byte(patch2)}, nil
+		return redux.ParsePatches(respText)
 	}
 
 	onComplete := func(nextState []byte) error {
@@ -202,11 +194,3 @@ Select the exact QuickBooks Online Account ID based on the context and rules. [c
 		p.RawDescription, p.CleanEntityName, p.InflowOrOutflow, p.Amount, p.CompanyIndustry, p.MacroClass, p.AccountType, string(p.FilteredAccounts))
 }
 
-func (a *AccountSelectionAgent) extractJSON(text string) string {
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start == -1 || end == -1 {
-		return text
-	}
-	return text[start : end+1]
-}

@@ -76,7 +76,7 @@ func TestExtractTaskConfig_EmptyObject(t *testing.T) {
 }
 
 func TestParsePatches_Array(t *testing.T) {
-	patches, err := parsePatches(`[{"op":"add","path":"/x","value":1}]`)
+	patches, err := redux.ParsePatches(`[{"op":"add","path":"/x","value":1}]`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestParsePatches_Array(t *testing.T) {
 }
 
 func TestParsePatches_SingleObject(t *testing.T) {
-	patches, err := parsePatches(`{"op":"replace","path":"/y","value":"hello"}`)
+	patches, err := redux.ParsePatches(`{"op":"replace","path":"/y","value":"hello"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestParsePatches_SingleObject(t *testing.T) {
 }
 
 func TestParsePatches_CodeFence(t *testing.T) {
-	patches, err := parsePatches("```json\n[{\"op\":\"add\",\"path\":\"/z\",\"value\":true}]\n```")
+	patches, err := redux.ParsePatches("```json\n[{\"op\":\"add\",\"path\":\"/z\",\"value\":true}]\n```")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestParsePatches_CodeFence(t *testing.T) {
 }
 
 func TestParsePatches_Invalid(t *testing.T) {
-	_, err := parsePatches(`not json at all`)
+	_, err := redux.ParsePatches(`not json at all`)
 	if err == nil {
 		t.Error("expected error for invalid input")
 	}
@@ -200,7 +200,7 @@ func TestReduxCircuitBreaker(t *testing.T) {
 	t.Run("valid patches pass on first attempt", func(t *testing.T) {
 		// This simulates what the handler does with Redux
 		output := `[{"op":"add","path":"/result","value":"success"}]`
-		patches, err := parsePatches(output)
+		patches, err := redux.ParsePatches(output)
 		if err != nil {
 			t.Fatalf("parse patches: %v", err)
 		}
@@ -228,7 +228,7 @@ func TestReduxCircuitBreaker(t *testing.T) {
 	t.Run("invalid patches trigger faults", func(t *testing.T) {
 		// Patch that violates schema (wrong type)
 		output := `[{"op":"add","path":"/result","value":42}]`
-		patches, err := parsePatches(output)
+		patches, err := redux.ParsePatches(output)
 		if err != nil {
 			t.Fatalf("parse patches: %v", err)
 		}

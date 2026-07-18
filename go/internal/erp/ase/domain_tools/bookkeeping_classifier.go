@@ -130,12 +130,7 @@ func (cs *BookkeepingClassifier) classifyGeneric(ctx context.Context, promptKey 
 	systemPrompt = strings.ReplaceAll(systemPrompt, "{{.CompanyIndustry}}", companyIndustry)
 
 	systemPrompt += "\n\nCRITICAL RULES FOR BATCH PROCESSING:\n" +
-		"1. The USER REQUEST provides a map of transactions under the 'rows' key. The keys in this map are unique identifiers for each transaction.\n" +
-		"2. Your output MUST be a valid JSON array containing exactly ONE RFC 6902 JSON patch operation.\n" +
-		"3. This single patch MUST use exactly \"op\": \"add\" and \"path\": \"/rows\".\n" +
-		"4. The \"value\" of the patch MUST be an object where the keys are EXACTLY the unique transaction identifiers from the input.\n" +
-		"5. Inside each row's classification object, you MUST return a 'property' string AND a 'candidates' map.\n" +
-		"6. The 'candidates' map MUST contain at least 2 numbered candidate entries (e.g. \"1\": {...}, \"2\": {...}) for that row."
+		"The USER REQUEST provides a map of transactions under the 'rows' key. The keys in this map are unique identifiers for each transaction. Ensure you classify every item."
 
 	// Keep track of remaining rows to be processed/classified.
 	remainingRows := make(map[string]RowPayload, len(rows))

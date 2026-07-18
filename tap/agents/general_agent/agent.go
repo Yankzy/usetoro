@@ -21,8 +21,6 @@ import (
 	"github.com/Yankzy/usetoro/tap/workflows"
 )
 
-
-
 func init() {
 	agents.Register("general-agent", NewGeneralAgent)
 }
@@ -259,7 +257,7 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 		if systemPrompt != "" {
 			systemPrompt += "\n\n"
 		}
-		systemPrompt += fmt.Sprintf("OUTPUT FORMAT: You MUST produce a JSON array of RFC 6902 JSON Patch operations. The target state schema is:\n%s\n\nEach operation must have 'op', 'path', and 'value' fields. Example: [{\"op\":\"add\",\"path\":\"/result\",\"value\":\"...\"}]", wfSchema)
+		systemPrompt += redux.Prompt(wfSchema)
 	}
 
 	var messages []tools.Message
@@ -309,7 +307,7 @@ func (ga *GeneralAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 		}
 
 		// Parse output as RFC 6902 patches and validate through Redux
-		patches, parseErr := parsePatches(finalOutput)
+		patches, parseErr := redux.ParsePatches(finalOutput)
 		if parseErr != nil {
 			faults = []redux.DomainFault{{EventID: "parse", Error: parseErr.Error()}}
 			continue
@@ -423,7 +421,7 @@ func extractTaskConfig(body json.RawMessage) (prompt string, systemPrompt string
 				msgsBytes, _ := json.Marshal(msgsRaw)
 				_ = json.Unmarshal(msgsBytes, &messages)
 			}
-			
+
 			if eid, ok := payload["entity_id"].(string); ok {
 				entityID = eid
 			}
@@ -472,31 +470,6 @@ func extractTaskConfig(body json.RawMessage) (prompt string, systemPrompt string
 	}
 
 	return string(body), "", wfSchema, rbac, nil, "", "", ""
-}
-
-func parsePatches(output string) ([]json.RawMessage, error) {
-	output = strings.TrimSpace(output)
-	// Strip markdown code fences if present
-	if strings.HasPrefix(output, "```") {
-		output = strings.TrimPrefix(output, "```json")
-		output = strings.TrimPrefix(output, "```")
-		output = strings.TrimSuffix(output, "```")
-		output = strings.TrimSpace(output)
-	}
-
-	var patches []json.RawMessage
-	if err := json.Unmarshal([]byte(output), &patches); err != nil {
-		// Try single patch
-		var single map[string]any
-		if err2 := json.Unmarshal([]byte(output), &single); err2 == nil {
-			if _, ok := single["op"]; ok {
-				b, _ := json.Marshal(single)
-				return []json.RawMessage{b}, nil
-			}
-		}
-		return nil, fmt.Errorf("parse patches: %w (raw: %.200s)", err, output)
-	}
-	return patches, nil
 }
 
 func replyFailure(msg *nats.Msg, envlp core.Envelope, env core.Environment, logger *slog.Logger, err error, replySubject string) error {

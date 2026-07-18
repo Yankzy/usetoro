@@ -31,11 +31,6 @@ type EntitySelectionTaskPayload struct {
 	ExistingDatabaseEntities json.RawMessage `json:"json_list_of_existing_vendors_or_customers_with_ids"`
 }
 
-type EntitySelectionResult struct {
-	EntityID        *string `json:"entity_id"`
-	NewCleanName    string  `json:"new_clean_name"`
-	MatchConfidence string  `json:"match_confidence"`
-}
 
 type EntitySelectionAgent struct {
 	*agent.BaseAgent
@@ -140,31 +135,18 @@ func (a *EntitySelectionAgent) executeTask(cfpEnv core.Envelope) error {
 	llmCallback := func(previousFaults []redux.DomainFault, currentSeq uint64, baseState []byte) ([]json.RawMessage, error) {
 		prompt := a.buildUserPrompt(payload)
 
+		sysPrompt := task.SystemPrompt
+		if schema != "" {
+			sysPrompt += "\n\n" + redux.Prompt(schema)
+		}
+
 		ctx := agent.WithModel(context.Background(), task.Model)
-		respText, err := a.RT.Exec(ctx, prompt, task.SystemPrompt)
+		respText, err := a.RT.Exec(ctx, prompt, sysPrompt)
 		if err != nil {
 			return nil, err
 		}
 
-		var result EntitySelectionResult
-		cleanJSON := a.extractJSON(respText)
-		if err := json.Unmarshal([]byte(cleanJSON), &result); err != nil {
-			return nil, fmt.Errorf("failed to parse LLM response: %w", err)
-		}
-
-		var entityIDVal interface{}
-		if result.EntityID != nil {
-			entityIDVal = *result.EntityID
-		} else {
-			entityIDVal = nil
-		}
-
-		entityIDJSON, _ := json.Marshal(entityIDVal)
-		patch1 := fmt.Sprintf(`{"op": "add", "path": "/entity_id", "value": %s}`, string(entityIDJSON))
-		patch2 := fmt.Sprintf(`{"op": "add", "path": "/new_clean_name", "value": "%s"}`, strings.ReplaceAll(result.NewCleanName, `"`, `\"`))
-		patch3 := fmt.Sprintf(`{"op": "add", "path": "/match_confidence", "value": "%s"}`, result.MatchConfidence)
-
-		return []json.RawMessage{[]byte(patch1), []byte(patch2), []byte(patch3)}, nil
+		return redux.ParsePatches(respText)
 	}
 
 	onComplete := func(nextState []byte) error {
@@ -202,11 +184,3 @@ Identify the true merchant or customer based on the provided RULES.`,
 		p.RawDescription, p.InflowOrOutflow, string(p.ExistingDatabaseEntities))
 }
 
-func (a *EntitySelectionAgent) extractJSON(text string) string {
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start == -1 || end == -1 {
-		return text
-	}
-	return text[start : end+1]
-}

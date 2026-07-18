@@ -28,10 +28,6 @@ type SelectionTaskPayload struct {
 	SubsetAccountTypes         json.RawMessage `json:"json_subset_of_account_types"`
 }
 
-type SelectionResult struct {
-	AccountType string `json:"account_type"`
-	Reasoning   string `json:"reasoning"`
-}
 
 type AccountTypeSelectionAgent struct {
 	*agent.BaseAgent
@@ -141,22 +137,18 @@ func (a *AccountTypeSelectionAgent) executeTask(cfpEnv core.Envelope) error {
 	llmCallback := func(previousFaults []redux.DomainFault, currentSeq uint64, baseState []byte) ([]json.RawMessage, error) {
 		prompt := a.buildUserPrompt(payload)
 
+		sysPrompt := task.SystemPrompt
+		if schema != "" {
+			sysPrompt += "\n\n" + redux.Prompt(schema)
+		}
+
 		ctx := agent.WithModel(context.Background(), task.Model)
-		respText, err := a.RT.Exec(ctx, prompt, task.SystemPrompt)
+		respText, err := a.RT.Exec(ctx, prompt, sysPrompt)
 		if err != nil {
 			return nil, err
 		}
 
-		var result SelectionResult
-		cleanJSON := a.extractJSON(respText)
-		if err := json.Unmarshal([]byte(cleanJSON), &result); err != nil {
-			return nil, fmt.Errorf("failed to parse LLM response: %w", err)
-		}
-
-		patch1 := fmt.Sprintf(`{"op": "add", "path": "/account_type", "value": "%s"}`, result.AccountType)
-		patch2 := fmt.Sprintf(`{"op": "add", "path": "/reasoning", "value": "%s"}`, strings.ReplaceAll(result.Reasoning, `"`, `\"`))
-
-		return []json.RawMessage{[]byte(patch1), []byte(patch2)}, nil
+		return redux.ParsePatches(respText)
 	}
 
 	onComplete := func(nextState []byte) error {
@@ -196,11 +188,3 @@ Select the most accurate QuickBooks Online 'AccountType' based on the SELECTION 
 		p.NormalizedDescription, p.InflowOrOutflow, p.Amount, p.CompanyIndustryDescription, p.MacroClass, string(p.SubsetAccountTypes))
 }
 
-func (a *AccountTypeSelectionAgent) extractJSON(text string) string {
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start == -1 || end == -1 {
-		return text
-	}
-	return text[start : end+1]
-}

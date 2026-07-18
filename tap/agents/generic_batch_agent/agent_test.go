@@ -3,6 +3,8 @@ package genericbatch
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/Yankzy/usetoro/tap/pkg/redux"
 )
 
 func TestExtractJSONPatches(t *testing.T) {
@@ -83,13 +85,13 @@ Have a nice day.`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			patches, err := extractJSONPatches(tt.respText)
+			patches, err := redux.ParsePatches(tt.respText)
 			if (err != nil) != tt.expectErr {
-				t.Fatalf("extractJSONPatches() error = %v, expectErr = %v", err, tt.expectErr)
+				t.Fatalf("redux.ParsePatches() error = %v, expectErr = %v", err, tt.expectErr)
 			}
 			if !tt.expectErr {
 				if len(patches) != tt.wantLen {
-					t.Errorf("extractJSONPatches() got len = %d, want = %d", len(patches), tt.wantLen)
+					t.Errorf("redux.ParsePatches() got len = %d, want = %d", len(patches), tt.wantLen)
 				}
 				// Verify it unmarshals successfully
 				for _, p := range patches {

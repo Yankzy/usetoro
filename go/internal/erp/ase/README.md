@@ -22,6 +22,13 @@ The ASE is built on a **Directed Acyclic Graph (DAG)** architecture. Instead of 
 2. **Generic Execution:** It bundles this context and sends it over a messaging queue to a fleet of generic agents that execute the LLM call (e.g., GPT-4o) and return the results.
 3. **Mathematical Guardrails:** The ASE protects against hallucinations by forcing the LLM to return a "probability distribution" (e.g., 98% confident it's X, 2% confident it's Y). The ASE runs strict mathematical validation to ensure confidence scores equal exactly 100%.
 
+## Validation & Messaging Architecture
+The ASE leverages NATS JetStream and the Redux engine to achieve decoupled, schema-safe execution at massive scale.
+
+1. **RFC 6902 Patches:** Instead of asking the LLM to return loosely typed JSON objects, the ASE explicitly prompts the LLM to return valid RFC 6902 JSON patch operations (e.g., `[{"op": "add", "path": "/rows/123/candidates", "value": ...}]`). This standardizes state mutations into a single, predictable, machine-readable format.
+2. **NATS JetStream Decoupling:** The ASE DAG does not run LLM calls synchronously, which would block its own threads. It wraps the classification tasks (along with strict JSON schemas) into NATS Call For Proposal (CFP) messages. These are dispatched asynchronously via JetStream to generic autonomous agents. This allows the high-velocity DAG layer to remain non-blocking while scaling LLM inference horizontally.
+3. **Asynchronous Redux Engine Validation:** When the generic agent receives a classification task, it dynamically spins up an ephemeral Redux engine in-memory using the provided JSON Schema. It passes the generated RFC 6902 patches through the Redux `store.Reduce()` pipeline. If the patch violates the schema or attempts unauthorized state mutations (RBAC), Redux throws a `DomainFault`. The agent feeds this fault directly back into the LLM up to 3 times for autonomous self-correction. Only fully verified, schema-safe patches are returned to the DAG.
+
 ## Decoupled Domain Logic & Persistence
 The ASE is completely decoupled from any specific database schema or business logic. It achieves this genericity through two primary interfaces:
 

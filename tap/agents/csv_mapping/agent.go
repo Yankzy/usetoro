@@ -368,8 +368,13 @@ func ParseRows(payload CSVMappingTaskPayload, mapping *LLMColumnMapping) map[str
 func (a *CSVMappingAgent) MapColumnsUsingLLM(ctx context.Context, task core.TaskDefinition, rows [][]string) ([]json.RawMessage, error) {
 	prompt := BuildUserPrompt(rows)
 
+	sysPrompt := task.SystemPrompt
+	if task.WorkflowSchema != "" {
+		sysPrompt += "\n\n" + redux.Prompt(task.WorkflowSchema)
+	}
+
 	ctx = agent.WithModel(ctx, task.Model)
-	respText, err := a.RT.ExecWithPaging(ctx, prompt, task.SystemPrompt, nil, nil)
+	respText, err := a.RT.ExecWithPaging(ctx, prompt, sysPrompt, nil, nil)
 	a.Logger.Info("🧠 [DEBUG] LLM Mapping Response Received",
 		"workflow_id", task.ID,
 		"response", respText,
@@ -379,26 +384,10 @@ func (a *CSVMappingAgent) MapColumnsUsingLLM(ctx context.Context, task core.Task
 		return nil, err
 	}
 
-	return ExtractJSONPatches(respText)
+	return redux.ParsePatches(respText)
 }
 
-func ExtractJSONPatches(respText string) ([]json.RawMessage, error) {
-	firstIdx := strings.Index(respText, "[")
-	lastIdx := strings.LastIndex(respText, "]")
 
-	if firstIdx == -1 || lastIdx == -1 || lastIdx <= firstIdx {
-		return nil, fmt.Errorf("no valid JSON array found in LLM response (first=[ at %d, last=] at %d)", firstIdx, lastIdx)
-	}
-
-	extracted := strings.TrimSpace(respText[firstIdx : lastIdx+1])
-
-	var patches []json.RawMessage
-	if err := json.Unmarshal([]byte(extracted), &patches); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal extracted JSON array: %w", err)
-	}
-
-	return patches, nil
-}
 
 func fieldAt(rec []string, idx int) string {
 	if idx < 0 || idx >= len(rec) {

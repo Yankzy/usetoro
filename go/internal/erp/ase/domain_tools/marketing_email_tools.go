@@ -2,12 +2,13 @@ package domain_tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
+
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
-	"encoding/json"
+	"github.com/google/uuid"
 )
 
 func init() {
@@ -21,7 +22,7 @@ func (t *EmailMarketingTool) BuildAgents(ctx context.Context, env core.Envelope,
 	if err := json.Unmarshal(env.Body, &task); err != nil {
 		return nil, fmt.Errorf("marketing_email_tool: failed to unmarshal envelope body: %w", err)
 	}
-	
+
 	var payload map[string]interface{}
 	if err := json.Unmarshal(task.Payload, &payload); err != nil {
 		return nil, fmt.Errorf("marketing_email_tool: failed to unmarshal payload: %w", err)
@@ -31,7 +32,7 @@ func (t *EmailMarketingTool) BuildAgents(ctx context.Context, env core.Envelope,
 	if eid, ok := payload["entity_id"].(string); ok {
 		entityID = eid
 	}
-	
+
 	nodeID := uuid.New().String()
 	agent := ase.NewASENode(entityID, "", dagName, payload)
 	agent.NodeID = nodeID
@@ -66,7 +67,7 @@ func (t *EmailMarketingTool) GetBacktrackingInstructions(a *ase.AutonomousSemant
 }
 
 func (t *EmailMarketingTool) GetClassifier(deps ToolDependencies) ase.Classifier {
-	// Re-using the BookkeepingClassifier as a generic FIPA/LLM dispatcher 
+	// Re-using the BookkeepingClassifier as a generic FIPA/LLM dispatcher
 	// for the marketing tool, assuming the marketing DAG handles the specialized prompts.
 	return NewBookkeepingClassifier(deps.Runtime, deps.NC, "worker.inbox.marketing", deps.Logger)
 }

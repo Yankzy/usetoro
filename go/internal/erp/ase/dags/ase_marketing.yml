@@ -6,7 +6,7 @@ hyper_parameters:
   batch_flush_seconds: 5
   active_agent_ttl_minutes: 10
   lock_ttl_seconds: 30
-  domain_tool: "marketing"
+  domain_tool: "email_marketing"
 
 dag:
   entry_node: target_ingestion

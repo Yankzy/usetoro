@@ -158,17 +158,32 @@ func (w *EmailDispatchWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	// Cleanup & Metrics
 	_ = w.db.IncrementEmailAccountSendCount(ctx, account.ID)
 	
-	meta, _ := json.Marshal(map[string]string{"smtp_host": smtpHost})
+	var lpID pgtype.UUID
+	if event.LandingPageID != nil {
+		lpID = pgtype.UUID{Bytes: *event.LandingPageID, Valid: true}
+	}
+	var efID pgtype.UUID
+	if event.EmailFormID != nil {
+		efID = pgtype.UUID{Bytes: *event.EmailFormID, Valid: true}
+	}
+
+	meta, _ := json.Marshal(map[string]string{
+		"smtp_host": smtpHost,
+		"subject":   event.Subject,
+		"body_html": event.BodyHTML,
+	})
 	_ = w.db.LogEmailEvent(ctx, database.LogEmailEventParams{
-		ProspectID: pgtype.UUID{Bytes: event.ProspectID, Valid: true},
-		CampaignID: pgtype.UUID{Bytes: event.CampaignID, Valid: true},
-		ListID:     pgtype.UUID{Valid: false},
-		NatsMsgID:  pgtype.Text{String: msg.Subject, Valid: true},
-		EventType:  "sent",
-		Metadata:   meta,
-		UserAgent:  pgtype.Text{Valid: false},
-		IpAddress:  pgtype.Text{Valid: false},
-		IsHuman:    pgtype.Bool{Bool: true, Valid: true},
+		ProspectID:    pgtype.UUID{Bytes: event.ProspectID, Valid: true},
+		CampaignID:    pgtype.UUID{Bytes: event.CampaignID, Valid: true},
+		ListID:        pgtype.UUID{Valid: false},
+		NatsMsgID:     pgtype.Text{String: msg.Subject, Valid: true},
+		EventType:     "sent",
+		Metadata:      meta,
+		UserAgent:     pgtype.Text{Valid: false},
+		IpAddress:     pgtype.Text{Valid: false},
+		IsHuman:       pgtype.Bool{Bool: true, Valid: true},
+		LandingPageID: lpID,
+		EmailFormID:   efID,
 	})
 
 	w.logger.Info("email dispatched successfully", "to", event.ToEmail)

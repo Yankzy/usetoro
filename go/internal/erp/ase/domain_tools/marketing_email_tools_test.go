@@ -82,3 +82,9 @@ func TestMarketingStore_PersistReadyForSync(t *testing.T) {
 	toObj := toHeader[0].(map[string]interface{})
 	require.Equal(t, "lead@company.com", toObj["email"])
 }
+
+func TestEmailMarketingTool_Registration(t *testing.T) {
+	tool1 := Get("email_marketing")
+	require.NotNil(t, tool1)
+	require.IsType(t, &EmailMarketingTool{}, tool1)
+}

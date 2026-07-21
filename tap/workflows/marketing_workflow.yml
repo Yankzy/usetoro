@@ -9,7 +9,7 @@ steps:
     description: "Fans out Autonomous Semantic Engine micro-agents for marketing prospects."
     config:
       dag_name: "ase_marketing"
-      domain_tool: "marketing"
+      domain_tool: "email_marketing"
     workflow_schema: |
       {
         "type": "object",

@@ -108,7 +108,7 @@ func (q *Queries) GetAllWarmingEmailAccounts(ctx context.Context) ([]GetAllWarmi
 }
 
 const getCampaignStep = `-- name: GetCampaignStep :one
-SELECT id, campaign_id, step_number, subject_template, body_template, delay_duration
+SELECT id, campaign_id, step_number, subject_template, body_template, delay_duration, landing_page_id, email_form_id
 FROM marketing.campaign_steps
 WHERE campaign_id = $1 AND step_number = $2
 `
@@ -125,6 +125,8 @@ type GetCampaignStepRow struct {
 	SubjectTemplate string
 	BodyTemplate    string
 	DelayDuration   pgtype.Interval
+	LandingPageID   pgtype.UUID
+	EmailFormID     pgtype.UUID
 }
 
 func (q *Queries) GetCampaignStep(ctx context.Context, arg GetCampaignStepParams) (GetCampaignStepRow, error) {
@@ -137,6 +139,8 @@ func (q *Queries) GetCampaignStep(ctx context.Context, arg GetCampaignStepParams
 		&i.SubjectTemplate,
 		&i.BodyTemplate,
 		&i.DelayDuration,
+		&i.LandingPageID,
+		&i.EmailFormID,
 	)
 	return i, err
 }
@@ -201,6 +205,60 @@ func (q *Queries) GetEmailAccountByID(ctx context.Context, id pgtype.UUID) (GetE
 		&i.TenantID,
 	)
 	return i, err
+}
+
+const getEmailLogsForProspect = `-- name: GetEmailLogsForProspect :many
+SELECT id, prospect_id, campaign_id, nats_msg_id, event_type, metadata, created_at, landing_page_id, email_form_id
+FROM marketing.email_logs
+WHERE prospect_id = $1 AND campaign_id = $2
+ORDER BY created_at DESC
+`
+
+type GetEmailLogsForProspectParams struct {
+	ProspectID pgtype.UUID
+	CampaignID pgtype.UUID
+}
+
+type GetEmailLogsForProspectRow struct {
+	ID            pgtype.UUID
+	ProspectID    pgtype.UUID
+	CampaignID    pgtype.UUID
+	NatsMsgID     pgtype.Text
+	EventType     string
+	Metadata      []byte
+	CreatedAt     pgtype.Timestamptz
+	LandingPageID pgtype.UUID
+	EmailFormID   pgtype.UUID
+}
+
+func (q *Queries) GetEmailLogsForProspect(ctx context.Context, arg GetEmailLogsForProspectParams) ([]GetEmailLogsForProspectRow, error) {
+	rows, err := q.db.Query(ctx, getEmailLogsForProspect, arg.ProspectID, arg.CampaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetEmailLogsForProspectRow
+	for rows.Next() {
+		var i GetEmailLogsForProspectRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProspectID,
+			&i.CampaignID,
+			&i.NatsMsgID,
+			&i.EventType,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.LandingPageID,
+			&i.EmailFormID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getNextAvailableEmailAccount = `-- name: GetNextAvailableEmailAccount :one
@@ -271,6 +329,28 @@ func (q *Queries) GetProspectByID(ctx context.Context, id pgtype.UUID) (GetProsp
 	return i, err
 }
 
+const hasProspectInteracted = `-- name: HasProspectInteracted :one
+SELECT EXISTS (
+    SELECT 1 
+    FROM marketing.email_logs 
+    WHERE prospect_id = $1 
+      AND campaign_id = $2 
+      AND event_type IN ('clicked', 'replied')
+)
+`
+
+type HasProspectInteractedParams struct {
+	ProspectID pgtype.UUID
+	CampaignID pgtype.UUID
+}
+
+func (q *Queries) HasProspectInteracted(ctx context.Context, arg HasProspectInteractedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasProspectInteracted, arg.ProspectID, arg.CampaignID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const incrementEmailAccountSendCount = `-- name: IncrementEmailAccountSendCount :exec
 UPDATE marketing.email_accounts
 SET daily_send_count = daily_send_count + 1, updated_at = NOW()
@@ -284,22 +364,24 @@ func (q *Queries) IncrementEmailAccountSendCount(ctx context.Context, id pgtype.
 
 const logEmailEvent = `-- name: LogEmailEvent :exec
 INSERT INTO marketing.email_logs (
-    prospect_id, campaign_id, list_id, nats_msg_id, event_type, metadata, user_agent, ip_address, is_human
+    prospect_id, campaign_id, list_id, nats_msg_id, event_type, metadata, user_agent, ip_address, is_human, landing_page_id, email_form_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 `
 
 type LogEmailEventParams struct {
-	ProspectID pgtype.UUID
-	CampaignID pgtype.UUID
-	ListID     pgtype.UUID
-	NatsMsgID  pgtype.Text
-	EventType  string
-	Metadata   []byte
-	UserAgent  pgtype.Text
-	IpAddress  pgtype.Text
-	IsHuman    pgtype.Bool
+	ProspectID    pgtype.UUID
+	CampaignID    pgtype.UUID
+	ListID        pgtype.UUID
+	NatsMsgID     pgtype.Text
+	EventType     string
+	Metadata      []byte
+	UserAgent     pgtype.Text
+	IpAddress     pgtype.Text
+	IsHuman       pgtype.Bool
+	LandingPageID pgtype.UUID
+	EmailFormID   pgtype.UUID
 }
 
 func (q *Queries) LogEmailEvent(ctx context.Context, arg LogEmailEventParams) error {
@@ -313,6 +395,8 @@ func (q *Queries) LogEmailEvent(ctx context.Context, arg LogEmailEventParams) er
 		arg.UserAgent,
 		arg.IpAddress,
 		arg.IsHuman,
+		arg.LandingPageID,
+		arg.EmailFormID,
 	)
 	return err
 }

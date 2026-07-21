@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
@@ -93,7 +94,7 @@ func (w *LLMTelemetryWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 		
 		totalCost := (float64(payload.InputTokens)*inputCostPer1M + float64(payload.OutputTokens)*outputCostPer1M) / 1000000.0
-		err = cost.Scan(totalCost)
+		err = cost.Scan(strconv.FormatFloat(totalCost, 'f', -1, 64))
 		if err != nil {
 			w.logger.Error("Failed to convert calculated cost to pgtype.Numeric", "error", err)
 		}

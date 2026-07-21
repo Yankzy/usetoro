@@ -97,7 +97,7 @@ func TestSendEmail_FallbackBranch_UsesSarahAddresses(t *testing.T) {
 		t.Fatalf("failed to unmarshal payload: %v", err)
 	}
 
-	expectedFrom := `" Agent" <@a.usetoro.io>`
+	expectedFrom := `" Agent" <@usetoro.io>`
 	if payload["From"] != expectedFrom {
 		t.Errorf("From = %q, want %q", payload["From"], expectedFrom)
 	}
@@ -168,7 +168,7 @@ func TestSendEmail_FallbackBranch_FromWithAtSign(t *testing.T) {
 	if payload["From"] != expectedFrom {
 		t.Errorf("From = %q, want %q", payload["From"], expectedFrom)
 	}
-	expectedReplyTo := "random@a.unknown.com"
+	expectedReplyTo := "random@unknown.com"
 	if payload["ReplyTo"] != expectedReplyTo {
 		t.Errorf("ReplyTo = %q, want %q", payload["ReplyTo"], expectedReplyTo)
 	}

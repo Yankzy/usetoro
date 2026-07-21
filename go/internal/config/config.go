@@ -101,8 +101,10 @@ type Config struct {
 	// Mailpool Config
 	MailpoolAPIKey        string `mapstructure:"mailpool_api_key"`
 	MailpoolEndpoint      string `mapstructure:"mailpool_endpoint"`
-	MailpoolAESKey        string `mapstructure:"mailpool_aes_key"`
-	MailpoolWebhookSecret string `mapstructure:"mailpool_webhook_secret"`
+	MailpoolAESKey          string   `mapstructure:"mailpool_aes_key"`
+	MailpoolWebhookSecret   string   `mapstructure:"mailpool_webhook_secret"`
+	MailpoolWarmupSenders   []string `mapstructure:"mailpool_warmup_senders"`
+	WarmupLoopIntervalHours int      `mapstructure:"warmup_loop_interval_hours"`
 
 	// Twilio Config (SMS + WhatsApp)
 	TwilioAccountSID  string `mapstructure:"twilio_account_sid"`

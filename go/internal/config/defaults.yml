@@ -15,6 +15,13 @@ twilio_account_sid: ""
 twilio_auth_token: ""
 twilio_sms_number: ""
 twilio_wa_number: ""
+mailpool_endpoint: "https://app.mailpool.io/v1/api"
+mailpool_aes_key: ""
+mailpool_webhook_secret: ""
+warmup_loop_interval_hours: 6
+mailpool_warmup_senders:
+  - "sales@usetoro.io"
+  - "hello@usetoro.io"
 telegram_bot_token: ""
 slack_bot_token: ""
 slack_signing_secret: ""
@@ -125,6 +132,7 @@ nats:
           - ase.events.>
           - webhooks.>
           - email.>
+          - llm.telemetry.>
 
     workflow_triggers:
       stream_name: WORKFLOW_TRIGGERS
@@ -240,6 +248,17 @@ agents:
     internal_module: dynamic-agent
     activity_type: agents.dynamic.purpose
     task_queue: tasks.dynamic.1.purpose
+    dependencies:
+      database: false
+      db_queries: true
+      entity_resolver: false
+  - did: did:toro:agent:cee_cognitive_1
+    name: cee-cognitive-agent
+    model: gpt-5.4-mini
+    engine: internal
+    internal_module: dynamic-agent
+    activity_type: agents.cee.cognitive_enrichment
+    task_queue: tasks.cee.1.cognitive_enrichment
     dependencies:
       database: false
       db_queries: true
@@ -428,8 +447,8 @@ workers:
 
   email_sequencer:
     activity_type: workers.email.sequencer
-    subject: ""
-    group: ""
+    subject: "ase.events.email.campaign.triggered"
+    group: "email-sequencer-worker"
 
   email_dispatch:
     activity_type: workers.email.dispatch

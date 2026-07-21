@@ -129,7 +129,7 @@ func (q *Queries) CreateMarketingList(ctx context.Context, arg CreateMarketingLi
 }
 
 const findLastTouch = `-- name: FindLastTouch :one
-SELECT id, prospect_id, campaign_id, nats_msg_id, event_type, metadata, created_at, list_id, user_agent, ip_address, is_human
+SELECT id, prospect_id, campaign_id, nats_msg_id, event_type, metadata, created_at, list_id, user_agent, ip_address, is_human, landing_page_id, email_form_id
 FROM marketing.email_logs
 WHERE prospect_id = $1
   AND is_human = true
@@ -159,6 +159,8 @@ func (q *Queries) FindLastTouch(ctx context.Context, arg FindLastTouchParams) (M
 		&i.UserAgent,
 		&i.IpAddress,
 		&i.IsHuman,
+		&i.LandingPageID,
+		&i.EmailFormID,
 	)
 	return i, err
 }

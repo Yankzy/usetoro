@@ -2,16 +2,18 @@ package workers
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
-
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
@@ -23,6 +25,7 @@ import (
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/redux"
 	"github.com/Yankzy/usetoro/tap/workflows"
+	"github.com/redis/go-redis/v9"
 )
 
 var cleanDescRegex = regexp.MustCompile(`(?i)[0-9]+|\b(?:ID|REF|POS)\b|[^a-zA-Z\s]`)
@@ -39,6 +42,13 @@ func FormatHashTags(raw string) string {
 	return fixHashRegex.ReplaceAllString(raw, "$1 #$2")
 }
 
+var noiseRegex = regexp.MustCompile(`(?i)([\d]{4,})|(SQ\s*\*)|(AMZN\*)|(PAYPAL\s*\*)|(TST\*)|(CARD\s*\d+)|(\bUS\b)|(\b[A-Z]{2}\b)`)
+
+func SanitizeDescriptor(raw string) string {
+	cleaned := noiseRegex.ReplaceAllString(raw, "")
+	return strings.ToUpper(strings.TrimSpace(cleaned))
+}
+
 const (
 	enrichmentLegacyProofSubject = "proof.accounting.cleanup.enrichment"
 	enrichmentWorkerDID          = "did:toro:worker:enrichment-worker"
@@ -52,6 +62,7 @@ type EnrichmentWorker struct {
 	nc     *nats.Conn
 	logger *slog.Logger
 	cfg    *config.Config
+	rdb    *redis.Client
 }
 
 // EnrichmentWorkerPayload defines the expected JSON payload for LLM tool invocation.
@@ -79,6 +90,7 @@ func NewEnrichmentWorker(
 	nc *nats.Conn,
 	logger *slog.Logger,
 	cfg *config.Config,
+	rdb *redis.Client,
 ) (*EnrichmentWorker, error) {
 	return &EnrichmentWorker{
 		db:     db,
@@ -86,6 +98,7 @@ func NewEnrichmentWorker(
 		dedup:  cleanup.NewDeduplicator(),
 		logger: logger,
 		cfg:    cfg,
+		rdb:    rdb,
 	}, nil
 }
 
@@ -569,6 +582,7 @@ func (e *EnrichmentWorker) persistEnrichedRow(ctx context.Context, er cleanup.En
 		SplitSuggestion:       splitJSON,
 		MerchantName:          pgtype.Text{String: er.MerchantName, Valid: er.MerchantName != ""},
 		Category:              pgtype.Text{String: er.Category, Valid: er.Category != ""},
+		Status:                pgtype.Text{String: er.Status, Valid: er.Status != ""},
 		ID:                    rowID,
 	})
 }
@@ -653,8 +667,235 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 		er.RawDate = row.ParsedDate.Time
 	}
 
-	er.ConfidenceScore = 1.0
+	sanitized := SanitizeDescriptor(er.RawDescription)
+
+	var match database.FignodeMasterMerchant
+	var found bool
+
+	// L1 Exact Lookup (Redis)
+	if e.rdb != nil {
+		hasher := md5.New()
+		hasher.Write([]byte(sanitized))
+		hashStr := hex.EncodeToString(hasher.Sum(nil))
+		redisKey := "cee:raw:" + hashStr
+		val, err := e.rdb.Get(ctx, redisKey).Result()
+		if err == nil {
+			var cached database.FignodeMasterMerchant
+			if err := json.Unmarshal([]byte(val), &cached); err == nil {
+				match = cached
+				found = true
+			}
+		}
+	}
+
+	// L1 Database exact pattern fallback
+	if !found {
+		mm, err := e.db.GetMasterMerchantByExactPattern(ctx, sanitized)
+		if err == nil {
+			match = mm
+			found = true
+		}
+	}
+
+	// L2 Substring Trie Match
+	if !found {
+		mm, err := e.db.GetMasterMerchantBySubstringPattern(ctx, sanitized)
+		if err == nil {
+			match = mm
+			found = true
+		}
+	}
+
+	// L3 Postgres Trigram Matching
+	if !found {
+		mm, err := e.db.GetMasterMerchantByTrigramSimilarity(ctx, sanitized)
+		if err == nil {
+			match = mm
+			found = true
+		}
+	}
+
+	// L4 Sweep Gate (Transfers)
+	var parsedTime time.Time
+	if row.ParsedDate.Valid {
+		parsedTime = row.ParsedDate.Time
+	}
+	bankAccountID := row.BankAccountID
+	var realmText pgtype.Text
+	if row.RealmID.Valid && row.RealmID.String != "" {
+		realmText = row.RealmID
+	} else {
+		realmText = pgtype.Text{String: realmID, Valid: realmID != ""}
+	}
+
+	isTransferTerm := strings.Contains(sanitized, "INTERNAL TRANSFER") ||
+		strings.Contains(sanitized, "ONLINE PAYMENT") ||
+		strings.Contains(sanitized, "ONLINE PMNT")
+
+	if !found && (er.RawAmount > 0 || isTransferTerm) && bankAccountID.Valid && realmText.Valid && !parsedTime.IsZero() {
+		var ts pgtype.Timestamp
+		ts.Time = parsedTime
+		ts.Valid = true
+
+		potential, err := e.db.GetPotentialTransfers(ctx, database.GetPotentialTransfersParams{
+			RealmID:       realmText,
+			BankAccountID: bankAccountID,
+			Column3:       ts,
+		})
+		if err == nil {
+			for _, p := range potential {
+				parsedPot := ParseDirtyAmount(p.RawAmount)
+				if parsedPot == -er.RawAmount {
+					er.Category = "Transfer"
+					er.PredictedAccountName = "Transfer"
+					er.ConfidenceScore = 1.0
+					er.AIReasoning = "Enriched via Transfer Sweep Gate: matched inverse transaction " + uuidStr(p.ID)
+					found = true
+					break
+				}
+			}
+		}
+	}
+
+	// L5 Compliance Threshold Alert
+	if found {
+		threshold := 75.00
+		if match.IrsReceiptThreshold.Valid {
+			if f8, err := match.IrsReceiptThreshold.Float64Value(); err == nil && f8.Valid {
+				threshold = f8.Float64
+			}
+		}
+		if math.Abs(er.RawAmount) > threshold {
+			complianceMsg := fmt.Sprintf("[COMPLIANCE ALERT] Transaction amount $%.2f exceeds IRS receipt threshold for merchant %s ($%.2f). Receipt is required.", math.Abs(er.RawAmount), match.NormalizedName, threshold)
+			er.AIReasoning = complianceMsg
+		}
+	}
+
+	// Phase 6: Cognitive LLM Node delegation (DynamicAgent call)
+	if !found {
+		output, err := e.callCognitiveAgent(ctx, sanitized, er.RawAmount)
+		if err == nil {
+			var patches []struct {
+				Op    string          `json:"op"`
+				Path  string          `json:"path"`
+				Value json.RawMessage `json:"value"`
+			}
+			if err := json.Unmarshal([]byte(output), &patches); err == nil {
+				for _, p := range patches {
+					var valStr string
+					_ = json.Unmarshal(p.Value, &valStr)
+
+					switch p.Path {
+					case "/macro_class":
+						er.Category = valStr
+						er.PredictedAccountName = valStr
+					case "/predicted_vendor_name":
+						er.NormalizedVendor = valStr
+					case "/status":
+						er.Status = valStr
+					case "/ai_reasoning":
+						er.AIReasoning = valStr
+					}
+				}
+				er.ConfidenceScore = 0.8
+			} else {
+				e.logger.Error("failed to parse CEE agent patches", "output", output, "error", err)
+				er.ConfidenceScore = 0.0
+			}
+		} else {
+			e.logger.Error("failed to call CEE dynamic agent", "error", err)
+			er.ConfidenceScore = 0.0
+		}
+	} else {
+		// Populate resolved merchant fields
+		er.NormalizedVendor = match.NormalizedName
+		er.Category = match.DefaultQboCategory
+		er.PredictedAccountName = match.DefaultQboCategory
+		er.ConfidenceScore = 1.0
+		er.Status = "ENRICHED"
+
+		// Write to L1 Redis cache for next hits
+		if e.rdb != nil {
+			hasher := md5.New()
+			hasher.Write([]byte(sanitized))
+			hashStr := hex.EncodeToString(hasher.Sum(nil))
+			redisKey := "cee:raw:" + hashStr
+			b, err := json.Marshal(match)
+			if err == nil {
+				_ = e.rdb.Set(ctx, redisKey, b, 24*time.Hour).Err()
+			}
+		}
+	}
+
 	return er, nil
+}
+
+func (e *EnrichmentWorker) callCognitiveAgent(ctx context.Context, sanitized string, amount float64) (string, error) {
+	replySubject := fmt.Sprintf("cee.reply.%s", uuid.New().String())
+
+	sub, err := e.nc.SubscribeSync(replySubject)
+	if err != nil {
+		return "", err
+	}
+	defer sub.Unsubscribe()
+
+	payload := map[string]interface{}{
+		"requested_agent": "cee-cognitive-agent",
+		"prompt":          fmt.Sprintf("Descriptor: %s, Amount: %.2f", sanitized, amount),
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	taskDef := core.TaskDefinition{
+		ID:      uuid.New().String(),
+		Domain:  "agents.cee.cognitive_enrichment",
+		Payload: json.RawMessage(payloadBytes),
+	}
+
+	reqEnv, err := core.NewEnvelope(
+		uuid.New().String(),
+		enrichmentWorkerDID,
+		"did:toro:agent:cee-cognitive-agent",
+		uuid.New().String(),
+		core.REQUEST,
+		taskDef,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	reqBytes, _ := json.Marshal(reqEnv)
+
+	msg := &nats.Msg{
+		Subject: "tasks.cee.1.cognitive_enrichment",
+		Reply:   replySubject,
+		Data:    reqBytes,
+	}
+
+	if err := e.nc.PublishMsg(msg); err != nil {
+		return "", err
+	}
+
+	reply, err := sub.NextMsg(60 * time.Second)
+	if err != nil {
+		return "", err
+	}
+
+	var replyEnv core.Envelope
+	if err := json.Unmarshal(reply.Data, &replyEnv); err != nil {
+		return "", err
+	}
+
+	var proof core.Proof
+	if err := json.Unmarshal(replyEnv.Body, &proof); err != nil {
+		return "", err
+	}
+
+	var outMap map[string]string
+	if err := json.Unmarshal(proof.Data, &outMap); err != nil {
+		return "", err
+	}
+
+	return outMap["output"], nil
 }
 
 // RunEnrichmentRedux wraps the Redux engine initialization and reduce invocation,
@@ -693,9 +934,8 @@ func RunEnrichmentRedux(ctx context.Context, baseState []byte, currentSeq uint64
 
 	return store.Reduce(ctx, baseState, currentSeq, []redux.RFC6902Event{event})
 }
-
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		return NewEnrichmentWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.Config)
+		return NewEnrichmentWorker(deps.Store.Queries, deps.Queue, deps.Logger, deps.Config, deps.Redis)
 	})
 }

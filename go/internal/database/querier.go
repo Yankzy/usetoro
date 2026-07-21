@@ -41,9 +41,13 @@ type Querier interface {
 	// Auth: Employee Registration & Login
 	// =========================================================================
 	CreateEmployeeUser(ctx context.Context, arg CreateEmployeeUserParams) (pgtype.UUID, error)
+	CreateEnterpriseAgentAlias(ctx context.Context, arg CreateEnterpriseAgentAliasParams) (ToroCoreEnterpriseAgentAlias, error)
+	CreateEnterpriseDomain(ctx context.Context, arg CreateEnterpriseDomainParams) (ToroCoreEnterpriseDomain, error)
 	CreateEntity(ctx context.Context, arg CreateEntityParams) (pgtype.UUID, error)
 	CreateLeadForm(ctx context.Context, arg CreateLeadFormParams) (MarketingLeadForm, error)
 	CreateMarketingList(ctx context.Context, arg CreateMarketingListParams) (MarketingList, error)
+	CreateMasterMerchant(ctx context.Context, arg CreateMasterMerchantParams) (FignodeMasterMerchant, error)
+	CreateMasterPattern(ctx context.Context, arg CreateMasterPatternParams) (FignodeMasterPattern, error)
 	CreateMemoryRule(ctx context.Context, arg CreateMemoryRuleParams) error
 	CreateOrGetWorkflow(ctx context.Context, arg CreateOrGetWorkflowParams) (ToroCoreWorkflow, error)
 	// session_id must point at a per-realm SYSTEM session (see GetOrCreateSystemSession).
@@ -57,6 +61,8 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.UUID, error)
 	CreateWallet(ctx context.Context, entityID pgtype.UUID) (ToroCoreWallet, error)
 	DeleteAndReturnTeamInvite(ctx context.Context, token string) (ToroCoreTeamInvite, error)
+	DeleteEnterpriseAgentAlias(ctx context.Context, id pgtype.UUID) error
+	DeleteEnterpriseDomain(ctx context.Context, id pgtype.UUID) error
 	DeleteExpiredTeamInvites(ctx context.Context) error
 	DeleteRefreshToken(ctx context.Context, tokenHash string) error
 	DeleteSlackTenantMappingByTeamID(ctx context.Context, slackTeamID string) error
@@ -135,6 +141,7 @@ type Querier interface {
 	GetERPTokens(ctx context.Context, arg GetERPTokensParams) (GetERPTokensRow, error)
 	GetEmailAccountByEmail(ctx context.Context, email string) (GetEmailAccountByEmailRow, error)
 	GetEmailAccountByID(ctx context.Context, id pgtype.UUID) (GetEmailAccountByIDRow, error)
+	GetEmailLogsForProspect(ctx context.Context, arg GetEmailLogsForProspectParams) ([]GetEmailLogsForProspectRow, error)
 	GetEmployeeByEmail(ctx context.Context, email string) (GetEmployeeByEmailRow, error)
 	GetEmployeeByID(ctx context.Context, id pgtype.UUID) (GetEmployeeByIDRow, error)
 	// =========================================================================
@@ -146,6 +153,10 @@ type Querier interface {
 	// Stats: Employee dashboard
 	// =========================================================================
 	GetEmployeeStats(ctx context.Context, userID pgtype.UUID) (GetEmployeeStatsRow, error)
+	GetEnterpriseAgentAlias(ctx context.Context, arg GetEnterpriseAgentAliasParams) (ToroCoreEnterpriseAgentAlias, error)
+	GetEnterpriseAgentAliasesByDomain(ctx context.Context, domainID pgtype.UUID) ([]ToroCoreEnterpriseAgentAlias, error)
+	GetEnterpriseDomainByName(ctx context.Context, domainName string) (ToroCoreEnterpriseDomain, error)
+	GetEnterpriseDomainsByEntity(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreEnterpriseDomain, error)
 	GetEntities(ctx context.Context, arg GetEntitiesParams) ([]ToroCoreEntity, error)
 	GetEntityBySubdomain(ctx context.Context, name string) (pgtype.UUID, error)
 	GetEntityDescendants(ctx context.Context, id pgtype.UUID) ([]pgtype.UUID, error)
@@ -189,6 +200,9 @@ type Querier interface {
 	GetLLMPricingModel(ctx context.Context, model string) (ToroCoreLlmPricingModel, error)
 	GetLatestLeaderboardSnapshot(ctx context.Context, period string) (GetLatestLeaderboardSnapshotRow, error)
 	GetListRevenueMetrics(ctx context.Context, listID pgtype.UUID) ([]GetListRevenueMetricsRow, error)
+	GetMasterMerchantByExactPattern(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error)
+	GetMasterMerchantBySubstringPattern(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error)
+	GetMasterMerchantByTrigramSimilarity(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error)
 	GetMemoryRules(ctx context.Context, realmID string) ([]GetMemoryRulesRow, error)
 	GetNextAvailableEmailAccount(ctx context.Context, tenantID pgtype.UUID) (GetNextAvailableEmailAccountRow, error)
 	// Returns the SYSTEM session for a given realm, creating it if it does not exist.
@@ -211,11 +225,13 @@ type Querier interface {
 	// Rule evaluation worker
 	// =========================================================================
 	GetPendingStagingTransactions(ctx context.Context, sessionID pgtype.UUID) ([]FignodeStagingTransaction, error)
+	GetPotentialTransfers(ctx context.Context, arg GetPotentialTransfersParams) ([]GetPotentialTransfersRow, error)
 	GetProposedTransactionByID(ctx context.Context, id pgtype.UUID) (FignodeStagingTransaction, error)
 	GetProposedTransactionByValues(ctx context.Context, arg GetProposedTransactionByValuesParams) (FignodeStagingTransaction, error)
 	GetProspectByID(ctx context.Context, id pgtype.UUID) (GetProspectByIDRow, error)
 	GetProspectIDByEmail(ctx context.Context, arg GetProspectIDByEmailParams) (pgtype.UUID, error)
 	GetPurchaseByERPID(ctx context.Context, arg GetPurchaseByERPIDParams) (ShadowErpPurchase, error)
+	GetRandomEnterpriseAgentAlias(ctx context.Context) (GetRandomEnterpriseAgentAliasRow, error)
 	GetRealmIDByEntityID(ctx context.Context, entityID pgtype.UUID) (string, error)
 	GetRealmIDFromEntity(ctx context.Context, id pgtype.UUID) (pgtype.Text, error)
 	GetRealmIDFromSession(ctx context.Context, id pgtype.UUID) (pgtype.Text, error)
@@ -290,6 +306,7 @@ type Querier interface {
 	GetWorkflow(ctx context.Context, id pgtype.UUID) (ToroCoreWorkflow, error)
 	GetWorkflowBlueprints(ctx context.Context) ([]ToroCoreWorkflowBlueprint, error)
 	GetWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error)
+	HasProspectInteracted(ctx context.Context, arg HasProspectInteractedParams) (bool, error)
 	IncrementEmailAccountSendCount(ctx context.Context, id pgtype.UUID) error
 	IncrementEmployeeCleared(ctx context.Context, userID pgtype.UUID) error
 	InsertCleanupRow(ctx context.Context, arg InsertCleanupRowParams) (pgtype.UUID, error)
@@ -334,6 +351,7 @@ type Querier interface {
 	RejectCleanupRow(ctx context.Context, id pgtype.UUID) error
 	ResetStaleStreaks(ctx context.Context) error
 	ResetTodayCleared(ctx context.Context) error
+	ResolveAgentByAliasAndDomain(ctx context.Context, arg ResolveAgentByAliasAndDomainParams) (ResolveAgentByAliasAndDomainRow, error)
 	SaveConversationSessionMessage(ctx context.Context, arg SaveConversationSessionMessageParams) error
 	SaveInboundConversation(ctx context.Context, arg SaveInboundConversationParams) error
 	SearchClientsByEntityID(ctx context.Context, arg SearchClientsByEntityIDParams) ([]SearchClientsByEntityIDRow, error)
@@ -364,6 +382,7 @@ type Querier interface {
 	UpdateERPTokens(ctx context.Context, arg UpdateERPTokensParams) error
 	UpdateEmailAccountStatus(ctx context.Context, arg UpdateEmailAccountStatusParams) error
 	UpdateEmailAccountWarmup(ctx context.Context, arg UpdateEmailAccountWarmupParams) error
+	UpdateEnterpriseDomainStatus(ctx context.Context, arg UpdateEnterpriseDomainStatusParams) error
 	UpdateLastSyncTimestamp(ctx context.Context, arg UpdateLastSyncTimestampParams) error
 	// =========================================================================
 	// Webhook Timestamp Tracking (for event-driven CDC)

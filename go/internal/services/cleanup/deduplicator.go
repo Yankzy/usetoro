@@ -27,8 +27,8 @@ type EnrichedRow struct {
 	AIReasoning          string
 	IsRecurring          bool
 	SplitSuggestion      []SplitLine
-	// Set by dedup pass:
-	DuplicateOf string // ID of the canonical row, empty if not a duplicate
+	DuplicateOf          string
+	Status               string
 }
 
 // SplitLine represents one line of a split transaction suggestion.

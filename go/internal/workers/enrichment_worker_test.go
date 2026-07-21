@@ -108,3 +108,24 @@ func TestRunEnrichmentRedux_SystemWrapper(t *testing.T) {
 		}
 	})
 }
+
+func TestSanitizeDescriptor(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{input: "AMZN*AWS BILL 1234", expected: "AWS BILL"},
+		{input: "SQ *TOAST INC CARD 12", expected: "TOAST INC"},
+		{input: "PAYPAL *XYZ CARD 9999 US", expected: "XYZ"},
+		{input: "TST* BILLS NY", expected: "BILLS"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			res := SanitizeDescriptor(tc.input)
+			if res != tc.expected {
+				t.Errorf("expected %q, got %q for input %q", tc.expected, res, tc.input)
+			}
+		})
+	}
+}

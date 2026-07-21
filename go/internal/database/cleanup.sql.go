@@ -204,6 +204,77 @@ func (q *Queries) CreateCleanupSession(ctx context.Context, arg CreateCleanupSes
 	return i, err
 }
 
+const createMasterMerchant = `-- name: CreateMasterMerchant :one
+INSERT INTO fignode.master_merchants (
+    normalized_name, primary_domain, logo_url, mcc, naics, default_macro_class, default_qbo_category, irs_receipt_threshold
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8
+) RETURNING id, normalized_name, primary_domain, logo_url, mcc, naics, default_macro_class, default_qbo_category, irs_receipt_threshold
+`
+
+type CreateMasterMerchantParams struct {
+	NormalizedName      string
+	PrimaryDomain       string
+	LogoUrl             string
+	Mcc                 int32
+	Naics               string
+	DefaultMacroClass   string
+	DefaultQboCategory  string
+	IrsReceiptThreshold pgtype.Numeric
+}
+
+func (q *Queries) CreateMasterMerchant(ctx context.Context, arg CreateMasterMerchantParams) (FignodeMasterMerchant, error) {
+	row := q.db.QueryRow(ctx, createMasterMerchant,
+		arg.NormalizedName,
+		arg.PrimaryDomain,
+		arg.LogoUrl,
+		arg.Mcc,
+		arg.Naics,
+		arg.DefaultMacroClass,
+		arg.DefaultQboCategory,
+		arg.IrsReceiptThreshold,
+	)
+	var i FignodeMasterMerchant
+	err := row.Scan(
+		&i.ID,
+		&i.NormalizedName,
+		&i.PrimaryDomain,
+		&i.LogoUrl,
+		&i.Mcc,
+		&i.Naics,
+		&i.DefaultMacroClass,
+		&i.DefaultQboCategory,
+		&i.IrsReceiptThreshold,
+	)
+	return i, err
+}
+
+const createMasterPattern = `-- name: CreateMasterPattern :one
+INSERT INTO fignode.master_patterns (
+    cleaned_stem, master_merchant_id, is_intermediary
+) VALUES (
+    $1, $2, $3
+) RETURNING id, cleaned_stem, master_merchant_id, is_intermediary
+`
+
+type CreateMasterPatternParams struct {
+	CleanedStem      string
+	MasterMerchantID int64
+	IsIntermediary   bool
+}
+
+func (q *Queries) CreateMasterPattern(ctx context.Context, arg CreateMasterPatternParams) (FignodeMasterPattern, error) {
+	row := q.db.QueryRow(ctx, createMasterPattern, arg.CleanedStem, arg.MasterMerchantID, arg.IsIntermediary)
+	var i FignodeMasterPattern
+	err := row.Scan(
+		&i.ID,
+		&i.CleanedStem,
+		&i.MasterMerchantID,
+		&i.IsIntermediary,
+	)
+	return i, err
+}
+
 const getAiCorrectionByRawInput = `-- name: GetAiCorrectionByRawInput :one
 SELECT user_correction, correction_type
 FROM shadow_erp.ai_corrections
@@ -435,6 +506,76 @@ func (q *Queries) GetCleanupSession(ctx context.Context, id pgtype.UUID) (GetCle
 		&i.AmbiguityReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getMasterMerchantByExactPattern = `-- name: GetMasterMerchantByExactPattern :one
+SELECT mm.id, mm.normalized_name, mm.primary_domain, mm.logo_url, mm.mcc, mm.naics, mm.default_macro_class, mm.default_qbo_category, mm.irs_receipt_threshold FROM fignode.master_patterns mp
+JOIN fignode.master_merchants mm ON mm.id = mp.master_merchant_id
+WHERE mp.cleaned_stem = $1 LIMIT 1
+`
+
+func (q *Queries) GetMasterMerchantByExactPattern(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error) {
+	row := q.db.QueryRow(ctx, getMasterMerchantByExactPattern, cleanedStem)
+	var i FignodeMasterMerchant
+	err := row.Scan(
+		&i.ID,
+		&i.NormalizedName,
+		&i.PrimaryDomain,
+		&i.LogoUrl,
+		&i.Mcc,
+		&i.Naics,
+		&i.DefaultMacroClass,
+		&i.DefaultQboCategory,
+		&i.IrsReceiptThreshold,
+	)
+	return i, err
+}
+
+const getMasterMerchantBySubstringPattern = `-- name: GetMasterMerchantBySubstringPattern :one
+SELECT mm.id, mm.normalized_name, mm.primary_domain, mm.logo_url, mm.mcc, mm.naics, mm.default_macro_class, mm.default_qbo_category, mm.irs_receipt_threshold FROM fignode.master_patterns mp
+JOIN fignode.master_merchants mm ON mm.id = mp.master_merchant_id
+WHERE $1 LIKE CONCAT('%', mp.cleaned_stem, '%') LIMIT 1
+`
+
+func (q *Queries) GetMasterMerchantBySubstringPattern(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error) {
+	row := q.db.QueryRow(ctx, getMasterMerchantBySubstringPattern, cleanedStem)
+	var i FignodeMasterMerchant
+	err := row.Scan(
+		&i.ID,
+		&i.NormalizedName,
+		&i.PrimaryDomain,
+		&i.LogoUrl,
+		&i.Mcc,
+		&i.Naics,
+		&i.DefaultMacroClass,
+		&i.DefaultQboCategory,
+		&i.IrsReceiptThreshold,
+	)
+	return i, err
+}
+
+const getMasterMerchantByTrigramSimilarity = `-- name: GetMasterMerchantByTrigramSimilarity :one
+SELECT mm.id, mm.normalized_name, mm.primary_domain, mm.logo_url, mm.mcc, mm.naics, mm.default_macro_class, mm.default_qbo_category, mm.irs_receipt_threshold FROM fignode.master_patterns mp
+JOIN fignode.master_merchants mm ON mm.id = mp.master_merchant_id
+WHERE mp.cleaned_stem % $1 AND similarity(mp.cleaned_stem, $1) > 0.75
+ORDER BY similarity(mp.cleaned_stem, $1) DESC LIMIT 1
+`
+
+func (q *Queries) GetMasterMerchantByTrigramSimilarity(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error) {
+	row := q.db.QueryRow(ctx, getMasterMerchantByTrigramSimilarity, cleanedStem)
+	var i FignodeMasterMerchant
+	err := row.Scan(
+		&i.ID,
+		&i.NormalizedName,
+		&i.PrimaryDomain,
+		&i.LogoUrl,
+		&i.Mcc,
+		&i.Naics,
+		&i.DefaultMacroClass,
+		&i.DefaultQboCategory,
+		&i.IrsReceiptThreshold,
 	)
 	return i, err
 }
@@ -690,6 +831,54 @@ func (q *Queries) GetPendingSessionRows(ctx context.Context, sessionID pgtype.UU
 			&i.OverrideVendorName,
 			&i.OverrideCustomerName,
 			&i.OverrideAccountName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPotentialTransfers = `-- name: GetPotentialTransfers :many
+SELECT tx.id, tx.raw_amount, tx.parsed_date, ss.bank_account_id
+FROM fignode.staging_transactions tx
+JOIN fignode.staging_sessions ss ON ss.id = tx.session_id
+WHERE ss.realm_id = $1
+  AND ss.bank_account_id != $2
+  AND tx.parsed_date IS NOT NULL
+  AND ABS(EXTRACT(EPOCH FROM (tx.parsed_date::TIMESTAMP - $3::TIMESTAMP))) <= 172800
+`
+
+type GetPotentialTransfersParams struct {
+	RealmID       pgtype.Text
+	BankAccountID pgtype.UUID
+	Column3       pgtype.Timestamp
+}
+
+type GetPotentialTransfersRow struct {
+	ID            pgtype.UUID
+	RawAmount     string
+	ParsedDate    pgtype.Date
+	BankAccountID pgtype.UUID
+}
+
+func (q *Queries) GetPotentialTransfers(ctx context.Context, arg GetPotentialTransfersParams) ([]GetPotentialTransfersRow, error) {
+	rows, err := q.db.Query(ctx, getPotentialTransfers, arg.RealmID, arg.BankAccountID, arg.Column3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetPotentialTransfersRow
+	for rows.Next() {
+		var i GetPotentialTransfersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RawAmount,
+			&i.ParsedDate,
+			&i.BankAccountID,
 		); err != nil {
 			return nil, err
 		}
@@ -1392,9 +1581,9 @@ SET
     split_suggestion        = $11,
     merchant_name           = COALESCE(NULLIF($12, ''), merchant_name),
     category                = COALESCE(NULLIF($13, ''), category),
-    status                  = 'ENRICHED',
+    status                  = COALESCE(NULLIF($14, ''), 'ENRICHED'),
     updated_at              = NOW()
-WHERE id = $14
+WHERE id = $15
 `
 
 type UpdateRowEnrichmentParams struct {
@@ -1411,6 +1600,7 @@ type UpdateRowEnrichmentParams struct {
 	SplitSuggestion       []byte
 	MerchantName          interface{}
 	Category              interface{}
+	Status                interface{}
 	ID                    pgtype.UUID
 }
 
@@ -1429,6 +1619,7 @@ func (q *Queries) UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichme
 		arg.SplitSuggestion,
 		arg.MerchantName,
 		arg.Category,
+		arg.Status,
 		arg.ID,
 	)
 	return err

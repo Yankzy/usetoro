@@ -42,6 +42,25 @@ type FignodeLeaderboardSnapshot struct {
 	Entries    []byte
 }
 
+type FignodeMasterMerchant struct {
+	ID                  int64
+	NormalizedName      string
+	PrimaryDomain       string
+	LogoUrl             string
+	Mcc                 int32
+	Naics               string
+	DefaultMacroClass   string
+	DefaultQboCategory  string
+	IrsReceiptThreshold pgtype.Numeric
+}
+
+type FignodeMasterPattern struct {
+	ID               int64
+	CleanedStem      string
+	MasterMerchantID int64
+	IsIntermediary   bool
+}
+
 type FignodeStagingSession struct {
 	ID              pgtype.UUID
 	RealmID         pgtype.Text
@@ -135,6 +154,8 @@ type MarketingCampaignStep struct {
 	DelayDuration   pgtype.Interval
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	LandingPageID   pgtype.UUID
+	EmailFormID     pgtype.UUID
 }
 
 type MarketingConversion struct {
@@ -164,17 +185,19 @@ type MarketingEmailAccount struct {
 }
 
 type MarketingEmailLog struct {
-	ID         pgtype.UUID
-	ProspectID pgtype.UUID
-	CampaignID pgtype.UUID
-	NatsMsgID  pgtype.Text
-	EventType  string
-	Metadata   []byte
-	CreatedAt  pgtype.Timestamptz
-	ListID     pgtype.UUID
-	UserAgent  pgtype.Text
-	IpAddress  pgtype.Text
-	IsHuman    pgtype.Bool
+	ID            pgtype.UUID
+	ProspectID    pgtype.UUID
+	CampaignID    pgtype.UUID
+	NatsMsgID     pgtype.Text
+	EventType     string
+	Metadata      []byte
+	CreatedAt     pgtype.Timestamptz
+	ListID        pgtype.UUID
+	UserAgent     pgtype.Text
+	IpAddress     pgtype.Text
+	IsHuman       pgtype.Bool
+	LandingPageID pgtype.UUID
+	EmailFormID   pgtype.UUID
 }
 
 type MarketingLeadForm struct {
@@ -601,6 +624,25 @@ type ToroCoreConversationSession struct {
 	LastActivityAt    pgtype.Timestamptz
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
+}
+
+type ToroCoreEnterpriseAgentAlias struct {
+	ID         pgtype.UUID
+	DomainID   pgtype.UUID
+	AgentAlias string
+	TargetDid  string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type ToroCoreEnterpriseDomain struct {
+	ID                      pgtype.UUID
+	EntityID                pgtype.UUID
+	DomainName              string
+	DkimPrivateKeyEncrypted string
+	Status                  string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
 }
 
 type ToroCoreEntity struct {

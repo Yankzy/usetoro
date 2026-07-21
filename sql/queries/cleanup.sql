@@ -213,7 +213,7 @@ SET
     split_suggestion        = sqlc.narg('split_suggestion'),
     merchant_name           = COALESCE(NULLIF(sqlc.narg('merchant_name'), ''), merchant_name),
     category                = COALESCE(NULLIF(sqlc.narg('category'), ''), category),
-    status                  = 'ENRICHED',
+    status                  = COALESCE(NULLIF(sqlc.narg('status'), ''), 'ENRICHED'),
     updated_at              = NOW()
 WHERE id = sqlc.narg('id');
 
@@ -313,3 +313,42 @@ WHERE id = $1 AND erp_provider = 'qbo';
 SELECT realm_id 
 FROM fignode.staging_sessions 
 WHERE id = $1;
+
+-- name: GetMasterMerchantByExactPattern :one
+SELECT mm.* FROM fignode.master_patterns mp
+JOIN fignode.master_merchants mm ON mm.id = mp.master_merchant_id
+WHERE mp.cleaned_stem = $1 LIMIT 1;
+
+-- name: GetMasterMerchantBySubstringPattern :one
+SELECT mm.* FROM fignode.master_patterns mp
+JOIN fignode.master_merchants mm ON mm.id = mp.master_merchant_id
+WHERE $1 LIKE CONCAT('%', mp.cleaned_stem, '%') LIMIT 1;
+
+-- name: GetMasterMerchantByTrigramSimilarity :one
+SELECT mm.* FROM fignode.master_patterns mp
+JOIN fignode.master_merchants mm ON mm.id = mp.master_merchant_id
+WHERE mp.cleaned_stem % $1 AND similarity(mp.cleaned_stem, $1) > 0.75
+ORDER BY similarity(mp.cleaned_stem, $1) DESC LIMIT 1;
+
+-- name: GetPotentialTransfers :many
+SELECT tx.id, tx.raw_amount, tx.parsed_date, ss.bank_account_id
+FROM fignode.staging_transactions tx
+JOIN fignode.staging_sessions ss ON ss.id = tx.session_id
+WHERE ss.realm_id = $1
+  AND ss.bank_account_id != $2
+  AND tx.parsed_date IS NOT NULL
+  AND ABS(EXTRACT(EPOCH FROM (tx.parsed_date::TIMESTAMP - $3::TIMESTAMP))) <= 172800;
+
+-- name: CreateMasterMerchant :one
+INSERT INTO fignode.master_merchants (
+    normalized_name, primary_domain, logo_url, mcc, naics, default_macro_class, default_qbo_category, irs_receipt_threshold
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8
+) RETURNING *;
+
+-- name: CreateMasterPattern :one
+INSERT INTO fignode.master_patterns (
+    cleaned_stem, master_merchant_id, is_intermediary
+) VALUES (
+    $1, $2, $3
+) RETURNING *;

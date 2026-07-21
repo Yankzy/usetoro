@@ -80,7 +80,7 @@ Phase 4: Multi-Account Sweep Gate ➔ Phase 5: Deterministic Post-Enrichment ➔
        ▼
 Phase 6: Cognitive LLM Node (Shannon Entropy Gate)
        ├── Low Entropy  ➔ Write to L1/L2 Cache ➔ Proceed to Phase 4
-       └── High Entropy ➔ Execute Hold State   ➔ Dispatch Hound Agent
+       └── High Entropy ➔ Execute Hold State   ➔ Dispatch Hound Agent (Sarah the virtual employee)
 
 ```
 

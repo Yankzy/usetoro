@@ -62,27 +62,35 @@ INSERT INTO toro_core.wallet_transactions (
     wallet_id, 
     transaction_type, 
     nats_revision, 
-    micrion_amount
+    micrion_amount,
+    metadata
 )
 SELECT 
     id, 
     'burn', 
     $2, 
-    $3
+    $3,
+    $4
 FROM updated_wallet
 ON CONFLICT (wallet_id, nats_revision) WHERE nats_revision IS NOT NULL
 DO NOTHING
-RETURNING id, wallet_id, transaction_type, micrion_amount, usd_amount, stripe_session_id, nats_revision, created_at
+RETURNING id, wallet_id, transaction_type, micrion_amount, usd_amount, stripe_session_id, nats_revision, created_at, metadata
 `
 
 type LogBulkBurnParams struct {
 	EntityID      pgtype.UUID
 	NatsRevision  pgtype.Int8
 	MicrionAmount int64
+	Metadata      []byte
 }
 
 func (q *Queries) LogBulkBurn(ctx context.Context, arg LogBulkBurnParams) (ToroCoreWalletTransaction, error) {
-	row := q.db.QueryRow(ctx, logBulkBurn, arg.EntityID, arg.NatsRevision, arg.MicrionAmount)
+	row := q.db.QueryRow(ctx, logBulkBurn,
+		arg.EntityID,
+		arg.NatsRevision,
+		arg.MicrionAmount,
+		arg.Metadata,
+	)
 	var i ToroCoreWalletTransaction
 	err := row.Scan(
 		&i.ID,
@@ -93,6 +101,7 @@ func (q *Queries) LogBulkBurn(ctx context.Context, arg LogBulkBurnParams) (ToroC
 		&i.StripeSessionID,
 		&i.NatsRevision,
 		&i.CreatedAt,
+		&i.Metadata,
 	)
 	return i, err
 }
@@ -120,7 +129,7 @@ SELECT
 FROM updated_wallet
 ON CONFLICT (stripe_session_id) WHERE stripe_session_id IS NOT NULL
 DO NOTHING
-RETURNING id, wallet_id, transaction_type, micrion_amount, usd_amount, stripe_session_id, nats_revision, created_at
+RETURNING id, wallet_id, transaction_type, micrion_amount, usd_amount, stripe_session_id, nats_revision, created_at, metadata
 `
 
 type LogPurchaseParams struct {
@@ -147,6 +156,7 @@ func (q *Queries) LogPurchase(ctx context.Context, arg LogPurchaseParams) (ToroC
 		&i.StripeSessionID,
 		&i.NatsRevision,
 		&i.CreatedAt,
+		&i.Metadata,
 	)
 	return i, err
 }

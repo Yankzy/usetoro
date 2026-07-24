@@ -14,6 +14,16 @@ type FignodeAseSessionEmailHold struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type FignodeCanonicalVendor struct {
+	ID             pgtype.UUID
+	EntityID       pgtype.UUID
+	RealmID        pgtype.Text
+	DisplayName    string
+	IceNumber      pgtype.Text
+	DefaultAccount string
+	CreatedAt      pgtype.Timestamptz
+}
+
 type FignodeEmployeeProfile struct {
 	UserID           pgtype.UUID
 	FirstName        pgtype.Text
@@ -59,6 +69,19 @@ type FignodeMasterPattern struct {
 	CleanedStem      string
 	MasterMerchantID int64
 	IsIntermediary   bool
+}
+
+type FignodeOrderReconciliation struct {
+	ID                pgtype.UUID
+	EntityID          pgtype.UUID
+	RealmID           pgtype.Text
+	BankTransactionID pgtype.UUID
+	FactureID         pgtype.UUID
+	BlID              pgtype.UUID
+	BcID              pgtype.UUID
+	Status            string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type FignodeStagingSession struct {
@@ -124,6 +147,16 @@ type FignodeStagingTransaction struct {
 	AseExecutionTrace     []byte
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+}
+
+type FignodeVendorAlias struct {
+	ID                pgtype.UUID
+	EntityID          pgtype.UUID
+	RealmID           pgtype.Text
+	RawVariant        string
+	CanonicalVendorID pgtype.UUID
+	Source            string
+	ConfidenceScore   pgtype.Numeric
 }
 
 type MarketingAttribution struct {
@@ -744,6 +777,7 @@ type ToroCoreLlmTurnMetric struct {
 	StepNumber      pgtype.Int4
 	Metadata        []byte
 	CreatedAt       pgtype.Timestamptz
+	PayerTenantID   pgtype.UUID
 }
 
 type ToroCoreRefreshToken struct {
@@ -882,6 +916,7 @@ type ToroCoreWalletTransaction struct {
 	StripeSessionID pgtype.Text
 	NatsRevision    pgtype.Int8
 	CreatedAt       pgtype.Timestamptz
+	Metadata        []byte
 }
 
 type ToroCoreWebhooksProviderconnection struct {

@@ -44,13 +44,15 @@ INSERT INTO toro_core.wallet_transactions (
     wallet_id, 
     transaction_type, 
     nats_revision, 
-    micrion_amount
+    micrion_amount,
+    metadata
 )
 SELECT 
     id, 
     'burn', 
     $2, 
-    $3
+    $3,
+    $4
 FROM updated_wallet
 ON CONFLICT (wallet_id, nats_revision) WHERE nats_revision IS NOT NULL
 DO NOTHING

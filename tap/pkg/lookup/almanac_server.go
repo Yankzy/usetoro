@@ -100,6 +100,13 @@ func (r *Registry) Start(ctx context.Context) error {
 			}
 		}
 
+		if len(results) == 0 {
+			r.logger.Warn("almanac telemetry: unmet market demand (zero gatekeepers found)", 
+				"query_did", query.DID, 
+				"query_capability", query.CapabilityType,
+			)
+		}
+
 		resp, _ := json.Marshal(results)
 		msg.Respond(resp)
 	})

@@ -1,0 +1,71 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  max_llm_retries: 3
+  llm_timeout_seconds: 120
+  batch_flush_seconds: 5
+  active_agent_ttl_minutes: 10
+  lock_ttl_seconds: 30
+  domain_tool: "pcm_bank_reconciliation"
+
+dag:
+  nodes:
+    root:
+      kind: normalization_and_hash
+      name: Normalization and Hash Node
+      children:
+        normalized: document_chain_matcher
+      edge_type: static
+      batch_size: 50
+      prompt_key: pcm_bank_reconciliation_normalizer
+      
+    document_chain_matcher:
+      kind: 4_way_match
+      name: Document Chain Matcher Node
+      children:
+        MATCHED: vendor_resolution_cache
+      edge_type: dynamic
+      dynamic_edge_provider: 4_way_match_math
+      batch_size: 50
+      prompt_key: pcm_bank_reconciliation_matcher
+
+    vendor_resolution_cache:
+      kind: cache_lookup
+      name: Vendor Resolution Cache Lookup
+      children:
+        RESOLVED: export
+        UNRESOLVED: vendor_resolution_llm
+      edge_type: dynamic
+      dynamic_edge_provider: vendor_db_lookup
+      batch_size: 50
+
+    vendor_resolution_llm:
+      kind: vendor_resolution
+      name: Vendor Resolution LLM Fallback
+      children:
+        RESOLVED: export
+      edge_type: static
+      batch_size: 50
+      prompt_key: pcm_bank_reconciliation_vendor_resolver
+
+    export:
+      kind: terminal
+      name: Export Node
+      children: {}
+      edge_type: static
+      batch_size: 50
+      prompt_key: pcm_bank_reconciliation_exporter
+
+prompts:
+  pcm_bank_reconciliation_normalizer:
+    - |
+      You are an expert Moroccan CPA. Your task is to extract and normalize the total amounts, dates, and vendor names from raw OCR text of Bon de Commande (BC), Bon de Livraison (BL), Facture, and Bank Settlement records.
+      Ensure the currency is normalized to MAD (Moroccan Dirham).
+
+  pcm_bank_reconciliation_vendor_resolver:
+    - |
+      You are an expert in Moroccan business entities. Your task is to resolve the raw vendor name extracted from the documents to the canonical vendor entity in the Fignode database.
+
+  pcm_bank_reconciliation_exporter:
+    - |
+      You are an expert system. Format the reconciled 4-way match into the final export payload.

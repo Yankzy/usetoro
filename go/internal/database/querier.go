@@ -31,6 +31,7 @@ type Querier interface {
 	CountSessionRows(ctx context.Context, arg CountSessionRowsParams) (int64, error)
 	CreateAgentConfiguration(ctx context.Context, arg CreateAgentConfigurationParams) (ToroCoreAgentConfiguration, error)
 	CreateAttribution(ctx context.Context, arg CreateAttributionParams) (MarketingAttribution, error)
+	CreateCanonicalVendor(ctx context.Context, arg CreateCanonicalVendorParams) (FignodeCanonicalVendor, error)
 	// =========================================================================
 	// Cleanup Mode Queries (now stored in fignode schema)
 	// =========================================================================
@@ -59,6 +60,7 @@ type Querier interface {
 	CreateTeamInvite(ctx context.Context, arg CreateTeamInviteParams) (ToroCoreTeamInvite, error)
 	CreateThreadMapping(ctx context.Context, arg CreateThreadMappingParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.UUID, error)
+	CreateVendorAlias(ctx context.Context, arg CreateVendorAliasParams) (FignodeVendorAlias, error)
 	CreateWallet(ctx context.Context, entityID pgtype.UUID) (ToroCoreWallet, error)
 	DeleteAndReturnTeamInvite(ctx context.Context, token string) (ToroCoreTeamInvite, error)
 	DeleteEnterpriseAgentAlias(ctx context.Context, id pgtype.UUID) error
@@ -287,6 +289,7 @@ type Querier interface {
 	// =========================================================================
 	GetVectorSyncState(ctx context.Context, realmID string) (ShadowErpVectorSyncState, error)
 	GetVendor(ctx context.Context, arg GetVendorParams) (ShadowErpVendor, error)
+	GetVendorAlias(ctx context.Context, arg GetVendorAliasParams) (FignodeVendorAlias, error)
 	// Gets amount statistics per vendor per target account for boundary detection.
 	// Used by bootstrap_amounts.go (Priority 90).
 	GetVendorAmountDistribution(ctx context.Context, realmID string) ([]GetVendorAmountDistributionRow, error)
@@ -313,6 +316,7 @@ type Querier interface {
 	InsertConversationSession(ctx context.Context, arg InsertConversationSessionParams) (ToroCoreConversationSession, error)
 	InsertLLMTurnMetric(ctx context.Context, arg InsertLLMTurnMetricParams) (ToroCoreLlmTurnMetric, error)
 	InsertLeaderboardSnapshot(ctx context.Context, arg InsertLeaderboardSnapshotParams) error
+	InsertOrderReconciliation(ctx context.Context, arg InsertOrderReconciliationParams) (FignodeOrderReconciliation, error)
 	// Registers a new source row for future hydration (embedding = NULL).
 	// The VectorHydrator will pick this up on its next tick.
 	InsertPendingVectorRow(ctx context.Context, arg InsertPendingVectorRowParams) error
@@ -396,6 +400,7 @@ type Querier interface {
 	UpdateLastWebhookSalesReceipt(ctx context.Context, arg UpdateLastWebhookSalesReceiptParams) error
 	UpdateLastWebhookTransaction(ctx context.Context, arg UpdateLastWebhookTransactionParams) error
 	UpdateLastWebhookVendor(ctx context.Context, arg UpdateLastWebhookVendorParams) error
+	UpdateOrderReconciliationStatus(ctx context.Context, arg UpdateOrderReconciliationStatusParams) (FignodeOrderReconciliation, error)
 	UpdateProposedTransactionSyncStatus(ctx context.Context, arg UpdateProposedTransactionSyncStatusParams) error
 	UpdateProspectStatus(ctx context.Context, arg UpdateProspectStatusParams) error
 	UpdatePurchaseRuleID(ctx context.Context, arg UpdatePurchaseRuleIDParams) error

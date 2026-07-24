@@ -166,6 +166,19 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 		return nil
 	}
 
+	if agentAlias == "reconciliation" {
+		w.logger.Info("routing inbound email directly to PCM OCR ingress", "from", payload.From, "to", recipient)
+		if w.nc != nil {
+			if err := w.nc.Publish("worker.inbox.pcm_ocr", msg.Data); err != nil {
+				w.logger.Error("failed to publish PCM OCR message", "error", err)
+				msg.Nak()
+				return err
+			}
+		}
+		msg.Ack()
+		return nil
+	}
+
 	// 2. Extract In-Reply-To and Message-ID from headers.
 	// We parse the Message-ID (with angle brackets) from the HTTP API Headers
 	// array, not the top-level MessageID which is Postmark's internal ID.

@@ -38,6 +38,9 @@ func NewRouter(h *Handler, wm *micrion.WalletManager, mailpoolHandler *mailpool.
 	mux.HandleFunc("POST /webhooks/telegram/{bot_token}", h.HandleTelegramWebhook)
 	mux.HandleFunc("POST /webhooks/slack", h.HandleSlackWebhook)
 
+	// PCM Auto-Reconciliation OCR Webhook
+	mux.HandleFunc("POST /webhooks/pcm/ocr", h.HandlePcmOcrWebhook)
+
 	// QBO OAuth2 endpoints
 	mux.HandleFunc("GET /auth/qbo/callback", h.HandleQBOCallback)
 	mux.HandleFunc("GET /auth/qbo/url", h.HandleGetQBOAuthURL)

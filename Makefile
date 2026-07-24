@@ -191,9 +191,9 @@ scr:
 	scrcpy --window-title "iPhone"
 
 vndr:
-	go work vendor
 	cd go && GOWORK=off go mod tidy && GOWORK=off go mod vendor
 	cd tap && GOWORK=off go mod tidy && GOWORK=off go mod vendor
+	go work vendor
 
 # Preference should be given to rebuilding specific services (e.g., make rebuild gate)
 rebuild_all:

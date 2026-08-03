@@ -18,8 +18,9 @@ from fastapi.responses import JSONResponse
 from app.config import DATABASE_URL, NATS_URL
 from app.database import init_pool, close_pool
 from app.errors import StripeAPIError, NATSPublishError
-from app.nats_client import connect as nats_connect, close as nats_close, subscribe_jetstream
+from app.nats_client import connect as nats_connect, close as nats_close, subscribe_jetstream, subscribe as nats_subscribe
 from app.marketing import handlers
+from app.openai.ocr import handle_ocr_request
 from app.routes import router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -37,6 +38,17 @@ async def lifespan(app: FastAPI):
     await subscribe_jetstream("worker.inbox.marketing.analyze", "marketing_analyze_group", handlers.handle_analyze_request)
     await subscribe_jetstream("worker.inbox.marketing.discover", "marketing_discover_group", handlers.handle_discover_request)
     await subscribe_jetstream("worker.inbox.marketing.verify", "marketing_verify_group", handlers.handle_verify_request)
+    
+    # Register Python OCR NATS subscribers (JetStream with core NATS fallback)
+    try:
+        await subscribe_jetstream("worker.inbox.python.ocr", "python_ocr_group", handle_ocr_request)
+        # await subscribe_jetstream("tasks.perception.1.ocr", "perception_ocr_group", handle_ocr_request)
+    except Exception as e:
+        logging.warning(f"JetStream subscription fallback to core NATS: {e}")
+        await nats_subscribe("worker.inbox.python.ocr", handle_ocr_request)
+        # await nats_subscribe("tasks.perception.1.ocr", handle_ocr_request)
+
+
     
     logging.info("Stripe Integration Microservice started")
     yield

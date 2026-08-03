@@ -33,6 +33,17 @@ async def publish(subject: str, payload: dict) -> None:
         logger.error("Failed to publish to NATS", extra={"subject": subject, "error": str(e)})
         raise NATSPublishError(f"Failed to publish to {subject}: {e}") from e
 
+async def subscribe(subject: str, callback) -> None:
+    global _nc
+    if _nc is None:
+        raise NATSPublishError("NATS not connected")
+    try:
+        await _nc.subscribe(subject, cb=callback)
+        logger.info(f"Subscribed to core NATS subject {subject}")
+    except Exception as e:
+        logger.error("Failed to subscribe to NATS subject", extra={"subject": subject, "error": str(e)})
+        raise e
+
 async def subscribe_jetstream(subject: str, durable_name: str, callback) -> None:
     global _nc
     if _nc is None:
@@ -50,3 +61,4 @@ async def subscribe_jetstream(subject: str, durable_name: str, callback) -> None
     except Exception as e:
         logger.error("Failed to subscribe to JetStream", extra={"subject": subject, "error": str(e)})
         raise e
+

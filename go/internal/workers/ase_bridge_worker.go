@@ -117,6 +117,8 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 					node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 				} else if node.PromptKey != "" {
 					node.SetThinkFunc(classifier.BuildGenericThinkFunc(node.PromptKey))
+				} else if node.Kind == "debug_terminal" || node.ID == "debug_terminal" || node.Name == "debug_terminal" {
+					node.SetThinkFunc(nil)
 				} else {
 					node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
 						return nil, nil // No-op
@@ -144,6 +146,8 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 				node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 			} else if node.PromptKey != "" {
 				node.SetThinkFunc(classifier.BuildGenericThinkFunc(node.PromptKey))
+			} else if node.Kind == "debug_terminal" || node.ID == "debug_terminal" || node.Name == "debug_terminal" {
+				node.SetThinkFunc(nil)
 			} else {
 				// e.g. terminal nodes or holding nodes with no dynamic logic
 				node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
@@ -168,8 +172,7 @@ func (w *AseBridgeWorker) Subscriptions() []SubscriptionConfig {
 
 	activityType := workerCfg.ActivityType
 	if activityType == "" {
-		w.logger.Error("ase_orchestrator: no activity_type configured")
-		return nil
+		activityType = "workers.ase_bridge"
 	}
 
 	subject := workerCfg.Subject
@@ -305,6 +308,8 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 					node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 				} else if node.PromptKey != "" {
 					node.SetThinkFunc(classifier.BuildGenericThinkFunc(node.PromptKey))
+				} else if node.Kind == "debug_terminal" || node.ID == "debug_terminal" || node.Name == "debug_terminal" {
+					node.SetThinkFunc(nil)
 				} else {
 					node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
 						return nil, nil // No-op
@@ -353,6 +358,9 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 						deps := w.buildDeps(t)
 						payload, pErr := t.GenerateAlertPayload(context.Background(), a, deps)
 						if pErr == nil && payload != nil {
+							if _, ok := payload["entity_id"]; !ok && a.TenantID != "" {
+								payload["entity_id"] = a.TenantID
+							}
 							payloadBytes, _ := json.Marshal(payload)
 							ingressSubject, sErr := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
 							if sErr == nil {
@@ -482,6 +490,8 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 				node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 			} else if node.PromptKey != "" {
 				node.SetThinkFunc(classifier.BuildGenericThinkFunc(node.PromptKey))
+			} else if node.Kind == "debug_terminal" || node.ID == "debug_terminal" || node.Name == "debug_terminal" {
+				node.SetThinkFunc(nil)
 			} else {
 				node.SetThinkFunc(func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
 					return nil, nil // No-op
@@ -515,7 +525,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			doneCh := make(chan struct{}, 1)
 			var terminalOnce sync.Once
 			a.SetOnStateChange(func(node *ase.AutonomousSemanticEngineNode, oldState, newState ase.NodeState) {
-				if newState == ase.StateReadyForSync || strings.HasPrefix(string(newState), "HOLD_") || newState == ase.StateCollapsed || newState == ase.StateUninitialized {
+				if newState == ase.StateReadyForSync || strings.HasPrefix(string(newState), "HOLD_") || newState == ase.StateCollapsed || newState == ase.StateClassified || newState == ase.StateUninitialized {
 					terminalOnce.Do(func() { doneCh <- struct{}{} })
 				}
 			})
@@ -535,6 +545,9 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 						deps := w.buildDeps(t)
 						payload, pErr := t.GenerateAlertPayload(ctx, a, deps)
 						if pErr == nil && payload != nil {
+							if _, ok := payload["entity_id"]; !ok && a.TenantID != "" {
+								payload["entity_id"] = a.TenantID
+							}
 							payloadBytes, _ := json.Marshal(payload)
 							ingressSubject, sErr := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
 							if sErr == nil {
@@ -547,7 +560,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}(agent)
 	}
 
-	// Wait for all agents to finish, then reply to Orchestrator.
+	// Wait for all DAG micro-agents to finish executing before assembling attachments
 	wg.Wait()
 	w.logger.Info("ase_bridge: all agents completed")
 
@@ -557,14 +570,44 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			sessionID = sid
 		}
 	}
-	if sessionID != "" {
-		emailPayload := map[string]interface{}{
-			"session_id": sessionID,
-		}
-		emailPayloadBytes, _ := json.Marshal(emailPayload)
 
-		emailSubject, sErr := core.BuildWorkerInboxFromActivity("workers.batch_email_generation")
+	if sessionID != "" {
+		var exportPayload map[string]interface{}
+		var activityTarget string
+		var err error
+
+		if expTool, ok := tool.(domain_tools.ExportableDomainTool); ok {
+			exportPayload, activityTarget, err = expTool.GenerateExportPayload(ctx, sessionID, agents, deps)
+		} else {
+			exportPayload = map[string]interface{}{
+				"session_id": sessionID,
+			}
+			if len(agents) > 0 {
+				if att, ok := agents[0].Payload["attachments"]; ok {
+					exportPayload["attachments"] = att
+				}
+			}
+			activityTarget = "workers.batch_email_generation"
+		}
+
+		if err != nil || exportPayload == nil {
+			w.logger.Error("ase_bridge: failed to generate export payload", "session_id", sessionID, "error", err)
+			return nil
+		}
+
+		// Verify that non-empty attachments exist before triggering outbound email
+		atts, hasAtts := exportPayload["attachments"].([]map[string]interface{})
+		if !hasAtts || len(atts) == 0 {
+			w.logger.Error("ase_bridge: no data/attachments generated after DAG completion, skipping email dispatch", "session_id", sessionID)
+			return nil
+		}
+
+		if activityTarget == "" {
+			activityTarget = "workers.batch_email_generation"
+		}
+		emailSubject, sErr := core.BuildWorkerInboxFromActivity(activityTarget)
 		if sErr == nil {
+			emailPayloadBytes, _ := json.Marshal(exportPayload)
 			envEmail := core.Envelope{
 				ID:           uuid.New().String(),
 				Performative: core.REQUEST,
@@ -573,7 +616,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			envEmailBytes, _ := json.Marshal(envEmail)
 			if w.nc != nil {
 				_ = w.nc.Publish(emailSubject, envEmailBytes)
-				w.logger.Info("ase_bridge: triggered batch_email_generation directly", "session_id", sessionID)
+				w.logger.Info("ase_bridge: triggered "+activityTarget+" directly", "session_id", sessionID)
 			}
 		}
 	}
@@ -708,7 +751,7 @@ func (w *AseBridgeWorker) buildEmitResumeSignalFunc() ase.ThinkFunc {
 					if dt := domain_tools.Get(domainTool); dt != nil {
 						store = dt.GetStatePersister(w.buildDeps(dt))
 					}
-					
+
 					var traceJSON []byte
 					if store != nil {
 						_ = store.UpdateNodeState(ctx, nodeID, ase.NodeState("RESUME_PENDING"))

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Yankzy/usetoro/internal/erp/ase"
+	"github.com/Yankzy/usetoro/internal/erp/ase/domain_tools"
 )
 
 var clsTestWorker = &ClassificationStageWorker{logger: testLogger()}
@@ -43,7 +43,7 @@ func TestRenderPrompt_AccountTypeOptions(t *testing.T) {
 	for _, mc := range []string{"ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"} {
 		t.Run(mc, func(t *testing.T) {
 			got := clsTestWorker.renderPrompt(tmpl, mc, nil)
-			if !strings.Contains(got, ase.AccountTypeOptions[mc]) {
+			if !strings.Contains(got, domain_tools.AccountTypeOptions[mc]) {
 				t.Errorf("missing account_type_options for %s: %q", mc, got)
 			}
 		})
@@ -55,7 +55,7 @@ func TestRenderPrompt_MacroClassSpecificRules(t *testing.T) {
 	for _, mc := range []string{"ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"} {
 		t.Run(mc, func(t *testing.T) {
 			got := clsTestWorker.renderPrompt(tmpl, mc, nil)
-			want := ase.MacroClassSpecificRules[mc]
+			want := domain_tools.MacroClassSpecificRules[mc]
 			if !strings.Contains(got, want) {
 				t.Errorf("missing macro_class_specific_rules for %s", mc)
 			}
@@ -616,7 +616,7 @@ func TestPatchColumnMap_AllExpectedMappings(t *testing.T) {
 
 func TestMacroClassSpecificRules_AllClassesPresent(t *testing.T) {
 	for _, mc := range []string{"ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"} {
-		rules, ok := ase.MacroClassSpecificRules[mc]
+		rules, ok := domain_tools.MacroClassSpecificRules[mc]
 		if !ok {
 			t.Errorf("missing macroClassSpecificRules for %s", mc)
 		}
@@ -632,7 +632,7 @@ func TestMacroClassSpecificRules_AllClassesPresent(t *testing.T) {
 
 func TestAccountTypeOptions_AllClassesPresent(t *testing.T) {
 	for _, mc := range []string{"ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"} {
-		opts, ok := ase.AccountTypeOptions[mc]
+		opts, ok := domain_tools.AccountTypeOptions[mc]
 		if !ok {
 			t.Errorf("missing accountTypeOptions for %s", mc)
 		}

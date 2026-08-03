@@ -177,13 +177,22 @@ func (e *EnrichmentWorker) handleColumnsProof(ctx context.Context, msg *nats.Msg
 	}
 
 	rows, err := e.extractRowsPayload(bodyBytes, 0)
-	if err != nil {
-		e.logger.Warn("enrichment worker: failed to extract rows payload", "error", err)
-		return nil
-	}
-
-	if len(rows) == 0 {
-		return nil
+	if err != nil || len(rows) == 0 {
+		var sessionPayload struct {
+			SessionID string `json:"session_id"`
+			RealmID   string `json:"realm_id"`
+		}
+		if errUnmarshal := core.UnmarshalTaskPayload(env.Body, &sessionPayload); errUnmarshal == nil && sessionPayload.SessionID != "" {
+			rows = []map[string]interface{}{
+				{
+					"session_id": sessionPayload.SessionID,
+					"realm_id":   sessionPayload.RealmID,
+				},
+			}
+		} else {
+			e.logger.Warn("enrichment worker: failed to extract rows payload", "error", err)
+			return nil
+		}
 	}
 
 	sessionID := core.RowString(rows[0], "SessionID", "session_id")
@@ -771,42 +780,7 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 		}
 	}
 
-	// Phase 6: Cognitive LLM Node delegation (DynamicAgent call)
-	if !found {
-		output, err := e.callCognitiveAgent(ctx, sanitized, er.RawAmount)
-		if err == nil {
-			var patches []struct {
-				Op    string          `json:"op"`
-				Path  string          `json:"path"`
-				Value json.RawMessage `json:"value"`
-			}
-			if err := json.Unmarshal([]byte(output), &patches); err == nil {
-				for _, p := range patches {
-					var valStr string
-					_ = json.Unmarshal(p.Value, &valStr)
-
-					switch p.Path {
-					case "/macro_class":
-						er.Category = valStr
-						er.PredictedAccountName = valStr
-					case "/predicted_vendor_name":
-						er.NormalizedVendor = valStr
-					case "/status":
-						er.Status = valStr
-					case "/ai_reasoning":
-						er.AIReasoning = valStr
-					}
-				}
-				er.ConfidenceScore = 0.8
-			} else {
-				e.logger.Error("failed to parse CEE agent patches", "output", output, "error", err)
-				er.ConfidenceScore = 0.0
-			}
-		} else {
-			e.logger.Error("failed to call CEE dynamic agent", "error", err)
-			er.ConfidenceScore = 0.0
-		}
-	} else {
+	if found {
 		// Populate resolved merchant fields
 		er.NormalizedVendor = match.NormalizedName
 		er.Category = match.DefaultQboCategory
@@ -825,77 +799,12 @@ func (e *EnrichmentWorker) enrichRow(ctx context.Context, realmID string, row da
 				_ = e.rdb.Set(ctx, redisKey, b, 24*time.Hour).Err()
 			}
 		}
+	} else {
+		er.ConfidenceScore = 0.0
+		er.Status = "ENRICHED"
 	}
 
 	return er, nil
-}
-
-func (e *EnrichmentWorker) callCognitiveAgent(ctx context.Context, sanitized string, amount float64) (string, error) {
-	replySubject := fmt.Sprintf("cee.reply.%s", uuid.New().String())
-
-	sub, err := e.nc.SubscribeSync(replySubject)
-	if err != nil {
-		return "", err
-	}
-	defer sub.Unsubscribe()
-
-	payload := map[string]interface{}{
-		"requested_agent": "cee-cognitive-agent",
-		"prompt":          fmt.Sprintf("Descriptor: %s, Amount: %.2f", sanitized, amount),
-	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	taskDef := core.TaskDefinition{
-		ID:      uuid.New().String(),
-		Domain:  "agents.cee.cognitive_enrichment",
-		Payload: json.RawMessage(payloadBytes),
-	}
-
-	reqEnv, err := core.NewEnvelope(
-		uuid.New().String(),
-		enrichmentWorkerDID,
-		"did:toro:agent:cee-cognitive-agent",
-		uuid.New().String(),
-		core.REQUEST,
-		taskDef,
-	)
-	if err != nil {
-		return "", err
-	}
-
-	reqBytes, _ := json.Marshal(reqEnv)
-
-	msg := &nats.Msg{
-		Subject: "tasks.cee.1.cognitive_enrichment",
-		Reply:   replySubject,
-		Data:    reqBytes,
-	}
-
-	if err := e.nc.PublishMsg(msg); err != nil {
-		return "", err
-	}
-
-	reply, err := sub.NextMsg(60 * time.Second)
-	if err != nil {
-		return "", err
-	}
-
-	var replyEnv core.Envelope
-	if err := json.Unmarshal(reply.Data, &replyEnv); err != nil {
-		return "", err
-	}
-
-	var proof core.Proof
-	if err := json.Unmarshal(replyEnv.Body, &proof); err != nil {
-		return "", err
-	}
-
-	var outMap map[string]string
-	if err := json.Unmarshal(proof.Data, &outMap); err != nil {
-		return "", err
-	}
-
-	return outMap["output"], nil
 }
 
 // RunEnrichmentRedux wraps the Redux engine initialization and reduce invocation,

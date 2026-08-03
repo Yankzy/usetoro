@@ -156,7 +156,15 @@ func (m *Manager) StartAll(ctx context.Context) error {
 					strings.Contains(errMsg, "subject does not match") ||
 					strings.Contains(errMsg, "configuration requests")
 
-				if isMismatch {
+				if strings.Contains(errMsg, "no stream matches subject") {
+					m.logger.Info("No JetStream stream for subject, falling back to core NATS subscription", "subject", subCfg.Subject, "group", subCfg.Group)
+					sub, err = m.nc.QueueSubscribe(subCfg.Subject, subCfg.Group, func(msg *nats.Msg) {
+						if err := worker.Handle(ctx, msg); err != nil {
+							m.logger.Error("worker handle error", "subject", msg.Subject, "error", err)
+							return
+						}
+					})
+				} else if isMismatch {
 					durable := durableFromSubject(subCfg.Subject)
 					durables := []string{durable}
 					if strings.Contains(subCfg.Subject, "ase_bridge") {

@@ -20,7 +20,7 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/erp/ase"
+	"github.com/Yankzy/usetoro/internal/erp/ase/domain_tools"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
@@ -437,7 +437,7 @@ func (w *ClassificationStageWorker) Handle(ctx context.Context, msg *nats.Msg) e
 			}
 			chunk := groupRows[i:end]
 			// Single-option class? Skip LLM, assign directly.
-			if opts, ok := ase.AccountTypeOptions[groupKey]; ok && !strings.Contains(opts, ",") {
+			if opts, ok := domain_tools.AccountTypeOptions[groupKey]; ok && !strings.Contains(opts, ",") {
 				wg.Add(1)
 				go func(gk string, chunkRows []map[string]interface{}) {
 					defer wg.Done()
@@ -841,8 +841,7 @@ func (w *ClassificationStageWorker) dispatchGroup(
 	stageCfg StageConfig,
 	ctxMap map[string]interface{},
 ) ([]map[string]interface{}, error) {
-	replyDID := fmt.Sprintf("did:toro:reply:%s", uuid.New().String())
-	replySubject := fmt.Sprintf("agents.%s.inbox", replyDID)
+	replySubject := w.nc.NewInbox()
 
 	sub, err := w.nc.SubscribeSync(replySubject)
 	if err != nil {
@@ -895,7 +894,7 @@ func (w *ClassificationStageWorker) dispatchGroup(
 
 	cfpEnv, err := core.NewEnvelope(
 		uuid.New().String(),
-		replyDID,
+		replySubject,
 		"",
 		uuid.New().String(),
 		core.CFP,
@@ -906,7 +905,11 @@ func (w *ClassificationStageWorker) dispatchGroup(
 	}
 
 	cfpBytes, _ := json.Marshal(cfpEnv)
-	if err := w.nc.Publish(agentTaskQueue, cfpBytes); err != nil {
+	if err := w.nc.PublishMsg(&nats.Msg{
+		Subject: agentTaskQueue,
+		Reply:   replySubject,
+		Data:    cfpBytes,
+	}); err != nil {
 		return nil, fmt.Errorf("publish cfp: %w", err)
 	}
 
@@ -986,11 +989,11 @@ func (w *ClassificationStageWorker) renderPrompt(tmpl string, groupKey string, c
 	result = strings.ReplaceAll(result, "{cash_direction}", groupKey)
 	result = strings.ReplaceAll(result, "{macro_class}", groupKey)
 
-	if opts, ok := ase.AccountTypeOptions[groupKey]; ok {
+	if opts, ok := domain_tools.AccountTypeOptions[groupKey]; ok {
 		result = strings.ReplaceAll(result, "{account_type_options}", opts)
 	}
 
-	if rules, ok := ase.MacroClassSpecificRules[groupKey]; ok {
+	if rules, ok := domain_tools.MacroClassSpecificRules[groupKey]; ok {
 		result = strings.ReplaceAll(result, "{macro_class_specific_rules}", rules)
 	}
 

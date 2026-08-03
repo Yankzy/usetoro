@@ -71,11 +71,12 @@ func TestSendEmail_FallbackBranch_UsesSarahAddresses(t *testing.T) {
 		"General Purpose Agent", // from — no "@", no alias match
 		"Test Subject",
 		"Test body",
-		"", // no in-reply-to
-		"", // no slack channel
-		"", // no slack parent ts
-		"", // entityID
-		"", // customMessageID
+		"",  // no in-reply-to
+		"",  // no slack channel
+		"",  // no slack parent ts
+		"",  // entityID
+		"",  // customMessageID
+		nil, // attachments
 	)
 
 	// Assert
@@ -149,6 +150,7 @@ func TestSendEmail_FallbackBranch_FromWithAtSign(t *testing.T) {
 		"",
 		"",
 		"",
+		nil,
 	)
 
 	if err != nil {
@@ -202,6 +204,7 @@ func TestSendEmail_PostmarkTokenNotConfigured(t *testing.T) {
 		"",
 		"",
 		"",
+		nil,
 	)
 
 	if err == nil {
@@ -241,6 +244,7 @@ func TestSendEmail_UsesReSubjectWhenInReplyToPresent(t *testing.T) {
 		"",
 		"",
 		"",
+		nil,
 	)
 
 	if err != nil {
@@ -295,6 +299,7 @@ func TestSendEmail_EmptySubjectDefaults(t *testing.T) {
 		"",
 		"",
 		"",
+		nil,
 	)
 
 	if err != nil {
@@ -346,6 +351,7 @@ func TestSendEmail_PostmarkHTTPError(t *testing.T) {
 		"",
 		"",
 		"",
+		nil,
 	)
 
 	if err == nil {
@@ -385,6 +391,7 @@ func TestSendEmail_NoReDuplicate(t *testing.T) {
 		"",
 		"",
 		"",
+		nil,
 	)
 
 	if err != nil {

@@ -3,23 +3,47 @@ package workers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/internal/conversation"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/infra"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/go-pdf/fpdf"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 )
+
+func convertImageToPDF(imgBytes []byte, contentType string) ([]byte, error) {
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	var opts fpdf.ImageOptions
+	switch {
+	case strings.Contains(contentType, "png"):
+		opts.ImageType = "png"
+	case strings.Contains(contentType, "jpeg"), strings.Contains(contentType, "jpg"):
+		opts.ImageType = "jpg"
+	default:
+		opts.ImageType = "png"
+	}
+	pdf.RegisterImageOptionsReader("img", opts, bytes.NewReader(imgBytes))
+	pdf.ImageOptions("img", 10, 10, 190, 0, false, opts, 0, "")
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // PostmarkInboundEmail represents the JSON payload received from Postmark
 type PostmarkInboundEmail struct {
@@ -37,26 +61,25 @@ type PostmarkInboundEmail struct {
 		Name        string `json:"Name"`
 		MailboxHash string `json:"MailboxHash"`
 	} `json:"ToFull"`
-	Cc                string `json:"Cc"`
-	Bcc               string `json:"Bcc"`
-	OriginalRecipient string `json:"OriginalRecipient"`
-	Subject           string `json:"Subject"`
-	MessageID         string `json:"MessageID"`
-	ReplyTo           string `json:"ReplyTo"`
-	MailboxHash       string `json:"MailboxHash"`
-	Date              string `json:"Date"`
-	TextBody          string `json:"TextBody"`
-	HtmlBody          string `json:"HtmlBody"`
-	StrippedTextReply string `json:"StrippedTextReply"`
-	Headers           []struct {
-		Name  string `json:"Name"`
-		Value string `json:"Value"`
-	} `json:"Headers"`
-	Attachments []struct {
+	Cc                string           `json:"Cc"`
+	Bcc               string           `json:"Bcc"`
+	OriginalRecipient string           `json:"OriginalRecipient"`
+	Subject           string           `json:"Subject"`
+	MessageID         string           `json:"MessageID"`
+	ReplyTo           string           `json:"ReplyTo"`
+	MailboxHash       string           `json:"MailboxHash"`
+	Date              string           `json:"Date"`
+	TextBody          string           `json:"TextBody"`
+	HtmlBody          string           `json:"HtmlBody"`
+	StrippedTextReply string           `json:"StrippedTextReply"`
+	Headers           []PostmarkHeader `json:"Headers"`
+	Attachments       []struct {
 		Name          string `json:"Name"`
 		ContentType   string `json:"ContentType"`
 		ContentLength int    `json:"ContentLength"`
 		Content       string `json:"Content"`
+		S3Key         string `json:"S3Key,omitempty"`
+		SHA256        string `json:"SHA256,omitempty"`
 	} `json:"Attachments"`
 }
 
@@ -66,7 +89,6 @@ type PostmarkInboundEmailWorker struct {
 	logger  *slog.Logger
 	cfg     *config.Config
 	nc      *nats.Conn
-	client  *http.Client
 	storage infra.S3Service
 }
 
@@ -75,7 +97,6 @@ func init() {
 		storageSvc, err := infra.NewS3Service(deps.Config)
 		if err != nil {
 			deps.Logger.Warn("PostmarkInboundEmailWorker: S3 storage not configured", "error", err)
-			// We can proceed without it, but attachments won't upload to S3
 		}
 
 		return &PostmarkInboundEmailWorker{
@@ -84,7 +105,6 @@ func init() {
 			logger:  deps.Logger,
 			cfg:     deps.Config,
 			nc:      deps.Queue,
-			client:  &http.Client{},
 			storage: storageSvc,
 		}, nil
 	})
@@ -139,494 +159,214 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	}
 
 	var payload PostmarkInboundEmail
-	if err := json.Unmarshal(msg.Data, &payload); err != nil {
-		w.logger.Error("failed to unmarshal postmark email payload", "error", err)
-		msg.Term()
+	if errUnmarshal := json.Unmarshal(msg.Data, &payload); errUnmarshal != nil {
+		w.logger.Error("PostmarkInboundEmailWorker: failed to unmarshal postmark email payload", "error", errUnmarshal)
 		return nil
 	}
 
-	// 1. Parse the agent alias from the recipient.
-	// Emails go to mark@usetoro.io (not subdomain-routed). The alias
-	// determines which agent handles the message.
+	// 1. Parse the recipient and determine canonical addresses
 	recipient := payload.OriginalRecipient
 	if recipient == "" {
 		recipient = payload.To
 	}
-	agentAlias, _ := parseAgentEmail(recipient)
-	if agentAlias == "coo" {
-		w.logger.Info("routing inbound email directly to VCOO ingress", "from", payload.From, "to", recipient)
+
+	// 2. Check if this is a bridged Slack thread (bypasses standard routing)
+	payloadBytes, isBridged, slackErr := ProcessBridgedSlackThread(
+		ctx, w.logger, w.db, w.pool, &payload,
+	)
+	if slackErr != nil {
+		w.logger.Error("failed to process slack bridged thread", "error", slackErr)
+	}
+	if isBridged {
 		if w.nc != nil {
-			if err := w.nc.Publish("worker.inbox.vcoo_ingress", msg.Data); err != nil {
-				w.logger.Error("failed to publish VCOO ingress message", "error", err)
-				msg.Nak()
-				return err
+			if pubErr := w.nc.Publish("proof.outgoing.chat", payloadBytes); pubErr != nil {
+				return fmt.Errorf("failed to publish bridged email to slack: %w", pubErr)
 			}
 		}
-		msg.Ack()
 		return nil
 	}
 
-	if agentAlias == "reconciliation" {
-		w.logger.Info("routing inbound email directly to PCM OCR ingress", "from", payload.From, "to", recipient)
-		if w.nc != nil {
-			if err := w.nc.Publish("worker.inbox.pcm_ocr", msg.Data); err != nil {
-				w.logger.Error("failed to publish PCM OCR message", "error", err)
-				msg.Nak()
-				return err
-			}
-		}
-		msg.Ack()
+	// 3. Resolve sender identity (entity_id, agent alias, realm).
+	// If unverified, bounce immediately — do not run OCR or any downstream task.
+	inReplyToHeader, _ := ExtractMessageHeaders(payload.Headers)
+	sender, resolveErr := ResolveSender(ctx, w.logger, w.db, w.pool, payload.From, recipient, inReplyToHeader)
+	if resolveErr != nil {
+		Bounce(ctx, w.logger, w.cfg, payload.From, payload.TextBody, payload.Subject)
 		return nil
 	}
 
-	// 2. Extract In-Reply-To and Message-ID from headers.
-	// We parse the Message-ID (with angle brackets) from the HTTP API Headers
-	// array, not the top-level MessageID which is Postmark's internal ID.
-	// Email clients use the Message-ID for threading via In-Reply-To
-	// and References headers.
-	var inReplyTo string
-	var smtpMessageID string
-	for _, header := range payload.Headers {
-		if strings.EqualFold(header.Name, "In-Reply-To") {
-			inReplyTo = header.Value
-			break
-		}
-		if strings.EqualFold(header.Name, "Message-ID") {
-			smtpMessageID = header.Value
-			break
-		}
-	}
-
-	// log the session ID
-	w.logger.Info("inbound email session", "postmark_message_id", payload.MessageID, "from", payload.From, "to", recipient, "agent_alias", agentAlias, "in_reply_to", inReplyTo, "smtp_message_id", smtpMessageID)
-
-	if smtpMessageID == "" {
-		w.logger.Warn("Message-ID header not found in inbound API payload, falling back to Postmark internal MessageID which will not support email threading",
-			"postmark_message_id", payload.MessageID,
-			"from", payload.From,
-			"subject", payload.Subject,
-		)
-		smtpMessageID = payload.MessageID
-	}
-
-	// 3. Resolve Entity ID.
-	// Priority 1: In-Reply-To references an existing conversation.
-	// Priority 2: Sender's email matches a recent conversation (from_handle or to_handle).
-	// Priority 3: Sender is a registered user (e.g., CPA emailing their agent).
-	var entityID pgtype.UUID
-
-	// Priority 1: In-Reply-To
-	if inReplyTo != "" {
-		// Try to find the entity from the referenced conversation's session
-		cleanID := cleanMessageID(inReplyTo)
-		refSessionID, err := w.db.GetConversationByExternalID(ctx, cleanID)
-
-		if err != nil || !refSessionID.Valid {
-			refSessionID, err = w.db.GetConversationByExternalID(ctx, inReplyTo)
-		}
-
-		if err == nil && refSessionID.Valid {
-			sess, err := w.db.GetConversationSession(ctx, refSessionID)
-			if err == nil {
-				entityID = sess.EntityID
-			}
-		}
-
-		// ASE DAG Lookup
-		if !entityID.Valid && strings.Contains(inReplyTo, "<ase_") {
-			var aseNodeID string
-			for _, idStr := range strings.Split(inReplyTo, " ") {
-				if strings.HasPrefix(idStr, "<ase_") {
-					clean := strings.Trim(idStr, "<>")
-					if idx := strings.Index(clean, "@"); idx != -1 {
-						clean = clean[:idx]
-					}
-					if idx := strings.Index(clean, "__"); idx != -1 {
-						clean = clean[:idx]
-					}
-					parts := strings.Split(clean, "_")
-					if len(parts) >= 4 && parts[0] == "ase" {
-						aseNodeID = parts[1]
-						break
-					}
-				}
-			}
-
-			if aseNodeID != "" && w.pool != nil {
-				var createdBy pgtype.UUID
-				err := w.pool.QueryRow(ctx, `
-					SELECT s.created_by 
-					FROM fignode.staging_transactions t 
-					JOIN fignode.staging_sessions s ON t.session_id = s.id 
-					WHERE t.id = $1
-				`, aseNodeID).Scan(&createdBy)
-				if err == nil {
-					entityID = createdBy
-					w.logger.Info("resolved entity_id from ASE transaction", "entity_id", entityID, "ase_node_id", aseNodeID)
-				} else {
-					w.logger.Warn("failed to resolve entity_id from ASE transaction", "error", err, "ase_node_id", aseNodeID)
-				}
-			}
-		}
-	}
-
-	// log the session
-	w.logger.Info("inbound email session", "postmark_message_id", payload.MessageID, "from", payload.From, "to", recipient, "agent_alias", agentAlias, "in_reply_to", inReplyTo, "smtp_message_id", smtpMessageID, "entity_id", entityID.String())
-
-	// Priority 2: Recent conversations
-	if !entityID.Valid && payload.From != "" {
-		recentConvs, err := w.db.GetRecentConversationsByHandle(ctx, database.GetRecentConversationsByHandleParams{
-			FromHandle: payload.From,
-			Limit:      10, // Fetch up to 10 recent conversations
-		})
-		if err == nil && len(recentConvs) > 0 {
-			// Find unique entity IDs
-			entityMap := make(map[string][]database.ToroCoreConversation)
-			var uniqueEntities []string
-			for _, conv := range recentConvs {
-				if !conv.EntityID.Valid {
-					continue
-				}
-				eID := fmt.Sprintf("%x-%x-%x-%x-%x", conv.EntityID.Bytes[0:4], conv.EntityID.Bytes[4:6], conv.EntityID.Bytes[6:8], conv.EntityID.Bytes[8:10], conv.EntityID.Bytes[10:16])
-
-				if _, exists := entityMap[eID]; !exists {
-					uniqueEntities = append(uniqueEntities, eID)
-				}
-				entityMap[eID] = append(entityMap[eID], conv)
-			}
-
-			if len(uniqueEntities) == 1 {
-				// No ambiguity
-				_ = entityID.Scan(uniqueEntities[0])
-			}
-		}
-	}
-
-	// Priority 3: Registered users
-	if !entityID.Valid && payload.From != "" {
-		id, err := w.db.GetEntityIDByEmail(ctx, payload.From)
-		if err == nil {
-			entityID = id
-		}
-	}
-
-	if !entityID.Valid {
-		w.logger.Warn("bouncing email: entity not found",
-			"from", payload.From,
-			"recipient", recipient,
-			"agent_alias", agentAlias,
-		)
-		w.sendBounceReply(ctx, payload.From, payload.TextBody, payload.Subject)
-		msg.Ack()
-		return nil
-	}
-
-	// 3. Prepare metadata and upload attachments to S3
-	metadata := make(map[string]interface{})
-	metadata["headers"] = payload.Headers
-
-	processedAttachments := make([]map[string]interface{}, 0, len(payload.Attachments))
-	for i, att := range payload.Attachments {
-		attMeta := map[string]interface{}{
-			"Name":          att.Name,
-			"ContentType":   att.ContentType,
-			"ContentLength": att.ContentLength,
-		}
-
+	// 4. Process attachments: Convert images to PDF, calculate sha256, upload to S3
+	var attachmentMetadata []map[string]interface{}
+	for idx, att := range payload.Attachments {
 		if w.storage != nil && att.Content != "" {
-			// Decode base64
-			decodedBytes, err := base64.StdEncoding.DecodeString(att.Content)
-			if err != nil {
-				w.logger.Error("failed to decode attachment base64", "error", err, "name", att.Name)
-				attMeta["Content"] = att.Content
-			} else {
-				// Upload to S3 directly, no folders
-				s3Key := fmt.Sprintf("%s-%s", uuid.New().String(), att.Name)
+			decodedBytes, decodeErr := base64.StdEncoding.DecodeString(att.Content)
+			if decodeErr != nil {
+				w.logger.Error("failed to decode attachment base64", "error", decodeErr, "name", att.Name)
+				continue
+			}
 
-				err = w.storage.UploadFileToS3(ctx, s3Key, bytes.NewReader(decodedBytes), att.ContentType)
-				if err != nil {
-					w.logger.Error("failed to upload attachment to S3", "error", err, "name", att.Name)
-					attMeta["Content"] = att.Content
+			// Convert non-PDF image attachments to PDF format for standardized S3 storage
+			contentType := att.ContentType
+			if strings.HasPrefix(contentType, "image/") && !strings.Contains(contentType, "pdf") {
+				pdfBytes, err := convertImageToPDF(decodedBytes, contentType)
+				if err == nil {
+					decodedBytes = pdfBytes
+					contentType = "application/pdf"
+					if !strings.HasSuffix(strings.ToLower(att.Name), ".pdf") {
+						att.Name = att.Name + ".pdf"
+					}
 				} else {
-					attMeta["S3Key"] = s3Key
+					w.logger.Warn("failed to convert image attachment to PDF", "name", att.Name, "error", err)
 				}
 			}
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+
+			// Calculate sha256 hash
+			hashSum := sha256.Sum256(decodedBytes)
+			sha256Str := hex.EncodeToString(hashSum[:])
+
+			s3Key := fmt.Sprintf("%s-%s", uuid.New().String(), att.Name)
+			uploadErr := w.storage.UploadFileToS3(ctx, s3Key, bytes.NewReader(decodedBytes), contentType)
+			if uploadErr != nil {
+				w.logger.Error("failed to upload attachment to S3", "error", uploadErr, "name", att.Name)
+			} else {
+				payload.Attachments[idx].Content = ""
+				payload.Attachments[idx].S3Key = s3Key
+				payload.Attachments[idx].SHA256 = sha256Str
+				payload.Attachments[idx].ContentType = contentType
+
+				attMetadata := map[string]interface{}{
+					"name":           att.Name,
+					"s3_key":         s3Key,
+					"sha256":         sha256Str,
+					"content_type":   contentType,
+					"content_length": len(decodedBytes),
+				}
+				attachmentMetadata = append(attachmentMetadata, attMetadata)
+			}
+		}
+	}
+
+	// 5. Save conversation session and conversation message in DB
+	if w.db != nil {
+		sessionManager := conversation.NewSessionManager(w.db, w.logger)
+		session, _, err := sessionManager.FindOrCreateSession(ctx, conversation.FindOrCreateParams{
+			EntityID:          sender.EntityID,
+			ParticipantHandle: sender.FromHandle,
+			ToroHandle:        sender.ToHandle,
+			Source:            "email",
+			Subject:           payload.Subject,
+		})
+		if err != nil {
+			w.logger.Error("PostmarkInboundEmailWorker: failed to find or create conversation session", "error", err)
 		} else {
-			// Fallback if S3 is not configured
-			attMeta["Content"] = att.Content
+			sender.SessionID = uuidFromPG(session.ID)
 		}
 
-		// Ensure we don't save the raw base64 content back into the database if we uploaded it
-		payload.Attachments[i].Content = ""
+		inReplyTo, _ := ExtractMessageHeaders(payload.Headers)
 
-		processedAttachments = append(processedAttachments, attMeta)
+		metaBytes, _ := json.Marshal(map[string]interface{}{
+			"attachments": attachmentMetadata,
+			"headers":     payload.Headers,
+			"agent_alias": sender.AgentAlias,
+		})
+
+		if err := w.db.SaveConversationSessionMessage(ctx, database.SaveConversationSessionMessageParams{
+			EntityID:     sender.EntityID,
+			Source:       "email",
+			ExternalID:   payload.MessageID,
+			FromHandle:   sender.FromHandle,
+			ToHandle:     sender.ToHandle,
+			ReplyTo:      pgtype.Text{String: payload.ReplyTo, Valid: payload.ReplyTo != ""},
+			InReplyTo:    pgtype.Text{String: inReplyTo, Valid: inReplyTo != ""},
+			Subject:      pgtype.Text{String: payload.Subject, Valid: payload.Subject != ""},
+			BodyText:     pgtype.Text{String: payload.TextBody, Valid: payload.TextBody != ""},
+			BodyHtml:     pgtype.Text{String: payload.HtmlBody, Valid: payload.HtmlBody != ""},
+			StrippedText: pgtype.Text{String: payload.StrippedTextReply, Valid: payload.StrippedTextReply != ""},
+			Metadata:     metaBytes,
+			SessionID:    session.ID,
+			Role:         "user",
+		}); err != nil {
+			w.logger.Warn("PostmarkInboundEmailWorker: failed to save conversation message", "error", err)
+		}
 	}
 
-	metadata["attachments"] = processedAttachments
-	metadata["from_name"] = payload.FromName
-	metadata["date"] = payload.Date
-
-	metadataJSON, err := json.Marshal(metadata)
-	if err != nil {
-		w.logger.Error("failed to marshal metadata", "error", err)
-		metadataJSON = []byte("{}")
+	// 6. Determine final destination subject based on alias
+	var destSubject string
+	switch {
+	case sender.AgentAlias == "coo":
+		destSubject, _ = core.BuildWorkerInboxFromActivity("workers.vcoo_ingress")
+	case strings.HasPrefix(sender.AgentAlias, "rap_"):
+		destSubject = "events.accounting.1.pcm_bookkeeping"
+	default:
+		derived, deriveErr := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
+		if deriveErr != nil {
+			return fmt.Errorf("failed to derive general agent ingress subject: %w", deriveErr)
+		}
+		destSubject = derived
 	}
 
-	promptText := payload.StrippedTextReply
-	if promptText == "" {
-		promptText = payload.TextBody
-	}
+	// 7. Route: Send all attachments in a single payload to the workflow ingress (destSubject).
+	totalAttachments := len(attachmentMetadata)
+	enrichedAttachments := make([]map[string]interface{}, 0, totalAttachments)
 
-	if len(processedAttachments) > 0 {
-		var attNames []string
-		for _, attMeta := range processedAttachments {
-			if name, ok := attMeta["Name"].(string); ok && name != "" {
-				attNames = append(attNames, name)
+	for _, attMeta := range attachmentMetadata {
+		docURL := ""
+		if s3Key, ok := attMeta["s3_key"].(string); ok && s3Key != "" && w.storage != nil {
+			if url, err := w.storage.GeneratePresignedURL(ctx, s3Key, 24*time.Hour); err == nil {
+				w.logger.Info("S3 URL", "url", url, "s3_key", s3Key)
+				docURL = url
+			} else {
+				w.logger.Warn("failed to generate presigned url for attachment", "error", err, "s3_key", s3Key)
 			}
 		}
-		if len(attNames) > 0 {
-			promptText += fmt.Sprintf("\n\n[SYSTEM: The user attached %d file(s): %s]", len(attNames), strings.Join(attNames, ", "))
-		} else {
-			promptText += fmt.Sprintf("\n\n[SYSTEM: The user attached %d file(s)]", len(processedAttachments))
+		enriched := map[string]interface{}{
+			"name":           attMeta["name"],
+			"document_url":   docURL,
+			"content_type":   attMeta["content_type"],
+			"content_length": attMeta["content_length"],
+		}
+		enrichedAttachments = append(enrichedAttachments, enriched)
+	}
+
+	firstDocURL := ""
+	if len(enrichedAttachments) > 0 {
+		if u, ok := enrichedAttachments[0]["document_url"].(string); ok {
+			firstDocURL = u
 		}
 	}
 
-	externalID := smtpMessageID
-
-	err = w.db.SaveInboundConversation(ctx, database.SaveInboundConversationParams{
-		EntityID:     entityID,
-		Source:       "email",
-		ExternalID:   externalID,
-		FromHandle:   payload.From,
-		ToHandle:     payload.To,
-		ReplyTo:      pgtype.Text{String: payload.ReplyTo, Valid: payload.ReplyTo != ""},
-		InReplyTo:    pgtype.Text{String: inReplyTo, Valid: inReplyTo != ""},
-		Subject:      pgtype.Text{String: payload.Subject, Valid: true},
-		BodyText:     pgtype.Text{String: promptText, Valid: true},
-		BodyHtml:     pgtype.Text{String: payload.HtmlBody, Valid: true},
-		StrippedText: pgtype.Text{String: promptText, Valid: promptText != ""},
-		Metadata:     metadataJSON,
-	})
-
-	if err != nil {
-		w.logger.Error("failed to save inbound email to conversations table", "error", err)
-		msg.Nak()
-		return err
+	taskPayload := map[string]interface{}{
+		"entity_id":         sender.EntityIDStr,
+		"session_id":        sender.SessionID,
+		"external_id":       payload.MessageID,
+		"from_handle":       sender.FromHandle,
+		"to_handle":         sender.ToHandle,
+		"reply_to":          payload.ReplyTo,
+		"document_url":      firstDocURL,
+		"attachments":       enrichedAttachments,
+		"total_attachments": totalAttachments,
+		"subject":           payload.Subject,
+		"body_text":         payload.TextBody,
+		"body_html":         payload.HtmlBody,
+		"agent_alias":       sender.AgentAlias,
 	}
 
-	w.logger.Info("successfully saved inbound email", "message_id", smtpMessageID, "from", payload.From, "entity_id", entityID)
+	packagedPayload, packErr := json.Marshal(taskPayload)
+	if packErr != nil {
+		w.logger.Error("failed to marshal structured payload", "error", packErr)
+		return packErr
+	}
 
-	// 5. Check whether this email is a reply to a bridged Slack thread.
-	// If the In-Reply-To header matches a known email_latest_message_id in
-	// toro_threads_mappings, this is Flow 3: email follow-up → append to
-	// existing Slack thread.
-	if inReplyTo != "" {
-		cleanID := cleanMessageID(inReplyTo)
-		mapping, mappingErr := w.db.GetThreadMappingByEmailMessageID(ctx, cleanID)
-
-		if mappingErr != nil || mapping.SlackChannelID == "" {
-			mapping, mappingErr = w.db.GetThreadMappingByEmailMessageID(ctx, inReplyTo)
+	if w.nc != nil {
+		if err := w.nc.Publish(destSubject, packagedPayload); err != nil {
+			w.logger.Error("failed to publish task to workflow", "target", destSubject, "error", err)
+			return err
 		}
-
-		if mappingErr == nil && mapping.SlackChannelID != "" {
-			w.logger.Info("email follow-up to bridged slack thread",
-				"slack_channel", mapping.SlackChannelID,
-				"slack_thread_ts", mapping.SlackParentTs,
-				"in_reply_to", inReplyTo,
-			)
-
-			// Route to OmniChatWorker to post as a threaded Slack reply.
-			outProof := core.Proof{
-				Type:      core.ProofAPI,
-				Timestamp: time.Now().Unix(),
-				Data: mustMarshalRaw(map[string]interface{}{
-					"body_text":        promptText,
-					"source":           "slack",
-					"from_handle":      payload.From,
-					"to_handle":        mapping.SlackChannelID,
-					"slack_channel_id": mapping.SlackChannelID,
-					"slack_thread_ts":  mapping.SlackParentTs,
-					"entity_id":        entityID,
-				}),
-			}
-			proofBytes, _ := json.Marshal(outProof)
-
-			outEnv := core.Envelope{
-				ID:           uuid.New().String(),
-				Timestamp:    time.Now(),
-				SenderDID:    "did:toro:worker:postmark_inbound_email",
-				ReceiverDID:  "did:toro:worker:omni_chat",
-				Performative: core.INFORM,
-				Body:         proofBytes,
-			}
-			outgoingBytes, _ := json.Marshal(outEnv)
-			if err := w.nc.Publish("proof.outgoing.chat", outgoingBytes); err != nil {
-				w.logger.Error("failed to publish bridged email to slack", "error", err)
-				msg.Nak()
-				return err
-			}
-
-			// Advance the email pointer so the next reply cycle can find the mapping.
-			_ = w.db.UpdateThreadMappingEmailMessageID(ctx, database.UpdateThreadMappingEmailMessageIDParams{
-				EmailLatestMessageID: smtpMessageID,
-				SlackChannelID:       mapping.SlackChannelID,
-				SlackParentTs:        mapping.SlackParentTs,
-			})
-
-			w.logger.Info("routed email follow-up to slack thread", "thread_ts", mapping.SlackParentTs)
-			msg.Ack()
-			return nil
-		}
+		w.logger.Info("PostmarkInboundEmailWorker: successfully routed event with attachments", "target", destSubject, "session", sender.SessionID, "total_attachments", totalAttachments)
 	}
 
-	// 6. Route to the General Agent ingress worker (same path as HTTP /ingress?domain=general)
-	// The GeneralAgentIngressWorker handles conversation persistence, agent dispatch, and
-	// publishing to proof.outgoing.chat for OmniChatWorker channel delivery.
-	subject, err := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
-	if err != nil {
-		w.logger.Error("failed to derive general agent ingress subject", "error", err)
-		msg.Ack()
-		return nil
-	}
-
-	eventData := map[string]interface{}{
-		"prompt":          promptText,
-		"entity_id":       entityID,
-		"from_handle":     payload.From,
-		"to_handle":       payload.To,
-		"source":          "email",
-		"subject":         payload.Subject,
-		"agent_alias":     agentAlias,
-		"in_reply_to":     inReplyTo,
-		"message_id":      smtpMessageID,
-		"has_attachments": len(processedAttachments) > 0,
-	}
-
-	eventBytes, _ := json.Marshal(eventData)
-	if err := w.nc.Publish(subject, eventBytes); err != nil {
-		w.logger.Error("failed to publish to general agent ingress", "error", err)
-		msg.Nak()
-		return err
-	}
-
-	w.logger.Info("routed email to general agent ingress", "subject", subject)
-	msg.Ack()
 	return nil
-}
-
-// sendBounceReply sends a direct reply via Postmark when the inbound message
-// cannot be matched to a known entity. This avoids wasting LLM tokens on
-// unresolvable messages.
-func (w *PostmarkInboundEmailWorker) sendBounceReply(ctx context.Context, to, originalBody, originalSubject string) {
-	// We wont reply to spam emails
-	w.logger.Warn("Unknown user emailed us, No replies will be sent")
-
-	// 	if w.cfg.PostmarkServerToken == "" {
-	// 		w.logger.Warn("cannot send bounce reply: postmark token not configured")
-	// 		return
-	// 	}
-
-	// 	subject := "Unable to process your message"
-	// 	if originalSubject != "" {
-	// 		subject = fmt.Sprintf("Re: %s", originalSubject)
-	// 	}
-
-	// 	body := fmt.Sprintf(`The recipient to your message below could not be resolved. Please double check.
-
-	// ---
-	// %s
-	// ---
-
-	// Do not reply to this email.`, originalBody)
-
-	// 	payload := map[string]interface{}{
-	// 		"From":          "do-not-reply@usetoro.io",
-	// 		"To":            to,
-	// 		"Subject":       subject,
-	// 		"TextBody":      body,
-	// 		"MessageStream": "outbound",
-	// 	}
-
-	// 	jsonPayload, _ := json.Marshal(payload)
-	// 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.postmarkapp.com/email", bytes.NewBuffer(jsonPayload))
-	// 	if err != nil {
-	// 		w.logger.Error("bounce reply: failed to create request", "error", err)
-	// 		return
-	// 	}
-	// 	req.Header.Set("Accept", "application/json")
-	// 	req.Header.Set("Content-Type", "application/json")
-	// 	req.Header.Set("X-Postmark-Server-Token", w.cfg.PostmarkServerToken)
-
-	// 	resp, err := w.client.Do(req)
-	// 	if err != nil {
-	// 		w.logger.Error("bounce reply: failed to send", "error", err)
-	// 		return
-	// 	}
-	// 	defer resp.Body.Close()
-
-	// 	if resp.StatusCode != http.StatusOK {
-	// 		var errResp map[string]interface{}
-	// 		_ = json.NewDecoder(resp.Body).Decode(&errResp)
-	// 		w.logger.Error("bounce reply: postmark API error",
-	// 			"status", resp.StatusCode,
-	// 			"error", errResp,
-	// 		)
-	// 		return
-	// 	}
-
-	// w.logger.Info("bounce reply sent", "to", to)
-}
-
-// parseAgentEmail splits an agent email address into its routing components.
-// "mark@a.usetoro.io" → alias="mark", subdomain="a"
-func parseAgentEmail(email string) (alias, subdomain string) {
-	// Strip name prefix if present: "Mark Smith <mark@a.usetoro.io>"
-	email = strings.TrimSpace(email)
-	if idx := strings.LastIndex(email, "<"); idx >= 0 {
-		email = strings.TrimSuffix(strings.TrimSpace(email[idx+1:]), ">")
-	}
-
-	parts := strings.SplitN(email, "@", 2)
-	// Fallback: If the string isn't a fully qualified email address (no '@' symbol),
-	// check if it's just the raw name of a configured virtual employee.
-	// This acts as a lenient parser for edge cases (e.g. legacy payloads or test data).
-	if len(parts) != 2 {
-		cleaned := strings.ToLower(strings.TrimSpace(email))
-		cfg := config.GetGlobal()
-		if cfg != nil {
-			if _, ok := cfg.VirtualEmployees[cleaned]; ok {
-				return cleaned, ""
-			}
-		}
-
-		if idx := strings.Index(cleaned, " "); idx >= 0 {
-			firstWord := cleaned[:idx]
-			if cfg != nil {
-				if _, ok := cfg.VirtualEmployees[firstWord]; ok {
-					return firstWord, ""
-				}
-			}
-		}
-		return "", ""
-	}
-	alias = strings.ToLower(strings.TrimSpace(parts[0]))
-
-	domainParts := strings.SplitN(parts[1], ".", 3)
-	if len(domainParts) >= 2 {
-		subdomain = strings.ToLower(strings.TrimSpace(domainParts[0]))
-	}
-
-	return alias, subdomain
-}
-
-// cleanMessageID strips brackets and domain from an SMTP Message-ID
-// so it can be matched against the Postmark MessageID stored in the DB.
-func cleanMessageID(id string) string {
-	id = strings.TrimSpace(id)
-	id = strings.TrimPrefix(id, "<")
-	id = strings.TrimSuffix(id, ">")
-	if idx := strings.Index(id, "@"); idx >= 0 {
-		id = id[:idx]
-	}
-	return id
 }

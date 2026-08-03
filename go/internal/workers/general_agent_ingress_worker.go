@@ -108,11 +108,59 @@ func (w *GeneralAgentIngressWorker) Subscriptions() []SubscriptionConfig {
 }
 
 func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) error {
-	// 1. Parse the raw body: Extract the prompt, handles, and identifiers from the JSON payload.
 	var req conversation.IngressRequest
-	if err := json.Unmarshal(msg.Data, &req); err != nil {
-		w.logger.Error("ingress(general): bad payload", "error", err)
-		return nil
+
+	// 1. Payload Detection & Standardization
+	// w.logger.Info("DEBUG: Received payload in general ingress", "raw", string(msg.Data))
+
+	var postmarkPayload PostmarkInboundEmail
+	if err := json.Unmarshal(msg.Data, &postmarkPayload); err == nil && postmarkPayload.From != "" && (postmarkPayload.TextBody != "" || postmarkPayload.HtmlBody != "") {
+		// Detected Postmark Inbound Email payload
+		inReplyTo, smtpMessageID := ExtractMessageHeaders(postmarkPayload.Headers)
+		if smtpMessageID == "" {
+			smtpMessageID = postmarkPayload.MessageID
+		}
+
+		// Attempt to resolve the entity ID
+		entityID := ResolveEntityID(ctx, w.logger, w.db, w.pool, postmarkPayload.From, inReplyTo)
+		if !entityID.Valid {
+			w.logger.Warn("ingress(general): could not resolve entity id for postmark email", "from", postmarkPayload.From)
+			SendBounceReply(ctx, nil, w.cfg, w.logger, postmarkPayload.From, postmarkPayload.TextBody, postmarkPayload.Subject)
+			return nil
+		}
+
+		agentAlias, _ := ParseAgentEmail(postmarkPayload.To)
+
+		req = conversation.IngressRequest{
+			Prompt:     postmarkPayload.StrippedTextReply,
+			EntityID:   uuidFromPG(entityID),
+			Source:     "email",
+			FromHandle: postmarkPayload.From,
+			ToHandle:   postmarkPayload.To,
+			Subject:    postmarkPayload.Subject,
+			InReplyTo:  inReplyTo,
+			MessageID:  smtpMessageID,
+			AgentAlias: agentAlias,
+		}
+		if req.Prompt == "" {
+			req.Prompt = postmarkPayload.TextBody
+		}
+
+		w.logger.Info("DEBUG: Postmark payload parsed", "text_body", postmarkPayload.TextBody, "stripped", postmarkPayload.StrippedTextReply, "final_prompt", req.Prompt, "has_from_full", postmarkPayload.FromFull.Email != "")
+
+		// Inject S3 Attachments into the Prompt
+		if len(postmarkPayload.Attachments) > 0 {
+			req.Prompt += "\n\n[SYSTEM NOTE: User attached files:]\n"
+			for _, att := range postmarkPayload.Attachments {
+				req.Prompt += fmt.Sprintf("- Name: %s, S3Key: %s, Type: %s\n", att.Name, att.Content, att.ContentType)
+			}
+		}
+	} else {
+		// Standard API / SES Gateway IngressRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			w.logger.Error("ingress(general): bad payload", "error", err)
+			return nil
+		}
 	}
 	if req.Prompt == "" {
 		req.Prompt = req.BodyText
@@ -122,7 +170,18 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		return nil
 	}
 	if req.EntityID == "" {
-		w.logger.Error("ingress(general): missing entity_id")
+		if entityID := ResolveEntityID(ctx, w.logger, w.db, w.pool, req.FromHandle, req.InReplyTo); entityID.Valid {
+			req.EntityID = uuidFromPG(entityID)
+		}
+	}
+	if req.EntityID == "" {
+		w.logger.Error("ingress(general): missing entity_id",
+			"from_handle", req.FromHandle,
+			"source", req.Source,
+			"agent_alias", req.AgentAlias,
+			"subject", req.Subject,
+			"raw_payload", string(msg.Data),
+		)
 		return nil
 	}
 	if req.Source == "" {
@@ -182,11 +241,11 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 	var err error
 
 	if req.Source == "email" && req.InReplyTo != "" {
-		cleanInReplyTo := cleanMessageID(req.InReplyTo)
-		w.logger.Info("DEBUG InReplyTo matching", "raw", req.InReplyTo, "clean", cleanInReplyTo)
+		cleanID := CleanMessageID(req.InReplyTo)
+		w.logger.Info("DEBUG InReplyTo matching", "raw", req.InReplyTo, "clean", cleanID)
 
 		// Try clean first (matches outbound emails sent via Postmark)
-		refSessionID, lookupErr := w.db.GetConversationByExternalID(ctx, cleanInReplyTo)
+		refSessionID, lookupErr := w.db.GetConversationByExternalID(ctx, cleanID)
 
 		// Fallback to exact raw string (matches original inbound emails with brackets and domain)
 		if lookupErr != nil || !refSessionID.Valid {
@@ -268,7 +327,7 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 		sessionID = sess.ID
 	}
 
-	if req.MessageID == "" {
+	if req.Source != "api" {
 		_ = w.db.SaveConversationSessionMessage(ctx, database.SaveConversationSessionMessageParams{
 			EntityID:   entityUUID,
 			Source:     req.Source,
@@ -397,14 +456,29 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 	envlpBytes, _ := json.Marshal(envlp)
 
 	replyInbox := nats.NewInbox()
-	sub, err := w.nc.Subscribe(replyInbox, func(msg *nats.Msg) {
-		w.handleAgentResponse(msg.Data, entityUUID, req.Source, req.ToHandle, req.FromHandle, req.Subject, req.MessageID, sess.ID)
+	var timer *time.Timer
+
+	var sub *nats.Subscription
+	sub, err = w.nc.Subscribe(replyInbox, func(msg *nats.Msg) {
+		done := w.handleAgentResponse(msg.Data, entityUUID, req.Source, req.ToHandle, req.FromHandle, req.Subject, req.MessageID, sess.ID)
+		if done {
+			if timer != nil {
+				timer.Stop()
+			}
+			_ = sub.Unsubscribe()
+		}
 	})
 	if err != nil {
 		w.logger.Error("ingress(general): failed to subscribe to reply inbox", "error", err)
 		return fmt.Errorf("subscribe reply inbox: %w", err)
 	}
-	sub.SetPendingLimits(1, 1024*1024)
+	sub.SetPendingLimits(100, 1024*1024)
+
+	// Set a 5 minute timeout to prevent memory leaks if the agent fails to reply
+	timer = time.AfterFunc(5*time.Minute, func() {
+		w.logger.Warn("ingress(general): agent response timed out, cleaning up subscription", "reply_inbox", replyInbox)
+		_ = sub.Unsubscribe()
+	})
 
 	msgMsg := &nats.Msg{
 		Subject: agentInbox,
@@ -426,25 +500,29 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 }
 
 // handleAgentResponse processes the general agent's async response.
-func (w *GeneralAgentIngressWorker) handleAgentResponse(data []byte, entityUUID pgtype.UUID, source, fromHandle, toHandle, subject, inReplyTo string, sessionID pgtype.UUID) {
+func (w *GeneralAgentIngressWorker) handleAgentResponse(data []byte, entityUUID pgtype.UUID, source, fromHandle, toHandle, subject, inReplyTo string, sessionID pgtype.UUID) bool {
+	w.logger.Info("DEBUG: handleAgentResponse started", "len", len(data), "raw", string(data))
 	if len(data) == 0 {
-		return // ignore empty messages on the reply inbox
+		return false // ignore empty messages on the reply inbox
 	}
 
 	var replyEnv core.Envelope
 	if err := json.Unmarshal(data, &replyEnv); err != nil {
-		return
+		w.logger.Info("DEBUG: handleAgentResponse unmarshal envelope failed", "err", err)
+		return false
 	}
+	w.logger.Info("DEBUG: handleAgentResponse envelope", "performative", replyEnv.Performative)
 
 	if replyEnv.Performative != core.INFORM {
-		return
+		return false
 	}
 
 	var proof core.Proof
 	if err := json.Unmarshal(replyEnv.Body, &proof); err != nil {
 		w.logger.Error("ingress(general): agent response is not a proof", "error", err)
-		return
+		return true // It's an INFORM, but broken, so stop listening
 	}
+	w.logger.Info("DEBUG: handleAgentResponse got proof")
 
 	var output struct {
 		Output string `json:"output"`
@@ -494,6 +572,7 @@ func (w *GeneralAgentIngressWorker) handleAgentResponse(data []byte, entityUUID 
 	}
 
 	w.logger.Info("ingress(general): processed", "reply_len", len(replyText))
+	return true
 }
 
 func (w *GeneralAgentIngressWorker) resolveAgentInbox(activityType string) (string, error) {

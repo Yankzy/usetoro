@@ -88,17 +88,18 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 	// Extract the structured response from the agent
 	var response struct {
-		BodyText       string `json:"body_text"`
-		FromHandle     string `json:"from_handle"`
-		ToHandle       string `json:"to_handle"`
-		Source         string `json:"source"`
-		Subject        string `json:"subject"`
-		InReplyTo      string `json:"in_reply_to"`
-		SessionID      string `json:"session_id"`
-		EntityID       string `json:"entity_id"`
-		SlackChannelID string `json:"slack_channel_id"`
-		SlackThreadTS  string `json:"slack_thread_ts"`
-		CustomMsgID    string `json:"custom_msg_id"`
+		BodyText       string                   `json:"body_text"`
+		FromHandle     string                   `json:"from_handle"`
+		ToHandle       string                   `json:"to_handle"`
+		Source         string                   `json:"source"`
+		Subject        string                   `json:"subject"`
+		InReplyTo      string                   `json:"in_reply_to"`
+		SessionID      string                   `json:"session_id"`
+		EntityID       string                   `json:"entity_id"`
+		SlackChannelID string                   `json:"slack_channel_id"`
+		SlackThreadTS  string                   `json:"slack_thread_ts"`
+		CustomMsgID    string                   `json:"custom_msg_id"`
+		Attachments    []map[string]interface{} `json:"attachments"`
 	}
 
 	if err := json.Unmarshal(proof.Data, &response); err != nil {
@@ -153,7 +154,7 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	// 2. Dispatch to the appropriate channel
 	switch response.Source {
 	case "email":
-		w.logger.Info("omni_chat: dispatching email source", "to", response.ToHandle, "subject", response.Subject)
+		w.logger.Info("omni_chat: dispatching email source", "to", response.ToHandle, "subject", response.Subject, "attachments", len(response.Attachments))
 
 		var customMsgID string
 		participantHandle := ""
@@ -180,7 +181,7 @@ func (w *OmniChatWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			customMsgID = fmt.Sprintf("<%s@agents.usetoro.io>", tempExternalID)
 		}
 
-		_, err := w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText, response.InReplyTo, response.SlackChannelID, response.SlackThreadTS, response.EntityID, customMsgID)
+		_, err := w.sendEmail(ctx, response.ToHandle, response.FromHandle, response.Subject, response.BodyText, response.InReplyTo, response.SlackChannelID, response.SlackThreadTS, response.EntityID, customMsgID, response.Attachments)
 		if err != nil {
 			w.logger.Error("omni_chat: failed to send email", "error", err, "to", response.ToHandle)
 			return err
@@ -240,8 +241,8 @@ func enforceEmailSubdomainRules(email string) (fromEmail, replyToEmail string) {
 // When slackChannelID and slackParentTs are provided, this email is part of
 // a bridged Slack thread — the Postmark MessageID is used to update
 // toro_threads_mappings.email_latest_message_id on success.
-func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body, inReplyTo, slackChannelID, slackParentTs, entityID, customMessageID string) (string, error) {
-	w.logger.Info("omni_chat: sendEmail triggered", "to", to, "from", from, "subject", subject)
+func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body, inReplyTo, slackChannelID, slackParentTs, entityID, customMessageID string, attachments []map[string]interface{}) (string, error) {
+	w.logger.Info("omni_chat: sendEmail triggered", "to", to, "from", from, "subject", subject, "attachments", len(attachments))
 	if w.cfg.PostmarkServerToken == "" {
 		w.logger.Warn("omni_chat: postmark server token not configured")
 		return "", fmt.Errorf("postmark server token not configured")
@@ -259,7 +260,7 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 	replyTo := from
 
 	var agentName, agentEmail, agentReplyTo string
-	alias, _ := parseAgentEmail(from)
+	alias, _ := ParseAgentEmail(from)
 	if cfg := agents.Lookup(alias); cfg != nil && cfg.Email != "" {
 		agentName = cfg.Name
 		agentEmail = cfg.Email
@@ -314,6 +315,20 @@ func (w *OmniChatWorker) sendEmail(ctx context.Context, to, from, subject, body,
 		"TrackLinks":    "HtmlAndText",
 		"MessageStream": "outbound",
 	}
+
+	if len(attachments) > 0 {
+		var validAttachments []map[string]interface{}
+		for _, att := range attachments {
+			content, _ := att["Content"].(string)
+			if strings.TrimSpace(content) != "" {
+				validAttachments = append(validAttachments, att)
+			}
+		}
+		if len(validAttachments) > 0 {
+			payload["Attachments"] = validAttachments
+		}
+	}
+
 
 	if entityID != "" {
 		var eUUID pgtype.UUID

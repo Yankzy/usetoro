@@ -1,15 +1,12 @@
 package domain_tools
 
 import (
-	"github.com/Yankzy/usetoro/internal/erp/ase"
-)
-
-import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -84,7 +81,7 @@ func (s *StateStore) prepareUpdateArgs(ctx context.Context, node *ase.Autonomous
 			accountName = aName
 		}
 	}
-	
+
 	if accountID == nil && accountType != "" {
 		var aID string
 		var aName string
@@ -228,12 +225,12 @@ func (s *StateStore) CacheActiveAgent(ctx context.Context, node *ase.AutonomousS
 		return fmt.Errorf("marshal agent for cache: %w", err)
 	}
 	key := activeAgentPrefix + node.NodeID
-	
+
 	ttl := 10 * time.Minute
 	if cfg := ase.GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
 		ttl = time.Duration(cfg.HyperParameters.ActiveAgentTTLMinutes) * time.Minute
 	}
-	
+
 	return s.redis.Set(ctx, key, data, ttl).Err()
 }
 
@@ -275,12 +272,12 @@ func (s *StateStore) AcquireLock(ctx context.Context, nodeID string) (bool, erro
 		return true, nil // No Redis = no distributed locking, always succeed.
 	}
 	key := lockPrefix + nodeID
-	
+
 	ttl := 30 * time.Second
 	if cfg := ase.GetConfig("", "", "default"); cfg != nil {
 		ttl = time.Duration(cfg.HyperParameters.LockTTLSeconds) * time.Second
 	}
-	
+
 	ok, err := s.redis.SetNX(ctx, key, "1", ttl).Result()
 	if err != nil {
 		return false, fmt.Errorf("acquire lock: %w", err)

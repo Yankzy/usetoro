@@ -163,3 +163,50 @@ func TestDAG_ComplianceRouting_CompliantOutflow(t *testing.T) {
 		t.Errorf("Transaction did not reach entity_outflow branch for a compliant flow, state: %s, hold_reason: %s", node.GetState(), node.HoldReason)
 	}
 }
+
+func TestDAG_ComplianceRouting_DefaultInboundEmail(t *testing.T) {
+	logger := testLogger()
+	b, err := os.ReadFile("dags/default_inbound_email.yml")
+	if err != nil {
+		b, err = os.ReadFile("go/internal/erp/ase/dags/default_inbound_email.yml")
+	}
+	if err != nil {
+		t.Fatalf("failed to read default_inbound_email.yml: %v", err)
+	}
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("failed to parse default_inbound_email.yml: %v", err)
+	}
+
+	dagRaw, ok := raw["dag"]
+	if !ok {
+		t.Fatal("missing dag key in default_inbound_email.yml")
+	}
+
+	j, err := json.Marshal(dagRaw)
+	if err != nil {
+		t.Fatalf("failed to marshal to json: %v", err)
+	}
+
+	var cfg DAGConfig
+	if err := json.Unmarshal(j, &cfg); err != nil {
+		t.Fatalf("failed to unmarshal into DAGConfig: %v", err)
+	}
+
+	dag := BuildDAGFromConfig(cfg, logger)
+
+	entryNode := dag.GetNode("extract_intent")
+	if entryNode == nil {
+		t.Fatal("extract_intent node not found in default_inbound_email DAG")
+	}
+
+	completeNode := dag.GetNode("triage_complete")
+	if completeNode == nil {
+		t.Fatal("triage_complete node not found in default_inbound_email DAG")
+	}
+
+	if len(cfg.Nodes) != 5 {
+		t.Errorf("expected 5 nodes in default_inbound_email DAG, got %d", len(cfg.Nodes))
+	}
+}
+

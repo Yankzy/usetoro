@@ -2,6 +2,7 @@ package ase
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -39,6 +40,9 @@ type DAGNode struct {
 
 	// ExecutionParams holds node-level execution configuration (e.g. close_status for terminals).
 	ExecutionParams map[string]string `json:"execution_params"`
+
+	// ContextConfig holds node-level context provider definitions.
+	ContextConfig map[string]any `json:"context"`
 
 	// Children are downstream DAG nodes keyed by classification result value.
 	// e.g., a MacroClassifierNode may have children keyed by "ASSET", "EXPENSE", etc.
@@ -117,6 +121,7 @@ func NewDAGNode(id string, kind DAGNodeKind, name string, batchSize int, batchFl
 		HoldReasonString:    cfg.HoldReasonString,
 		Email:               cfg.Email,
 		ExecutionParams:     cfg.ExecutionParams,
+		ContextConfig:       cfg.Context,
 		queue:               make([]*AutonomousSemanticEngineNode, 0),
 		batchSize:           batchSize,
 		batchFlush:          batchFlush,
@@ -173,7 +178,8 @@ func (dn *DAGNode) ResumeChild() *DAGNode {
 func (dn *DAGNode) Accept(node *AutonomousSemanticEngineNode) {
 	dn.mu.Lock()
 	dn.queue = append(dn.queue, node)
-	shouldFlush := len(dn.queue) >= dn.batchSize
+	// Force flush if we're dealing with the debug terminal.
+	shouldFlush := (dn.batchSize > 0 && len(dn.queue) >= dn.batchSize) || dn.ID == "debug_terminal" || dn.Name == "debug_terminal" || dn.Kind == "debug_terminal"
 	dn.mu.Unlock()
 
 	if shouldFlush {
@@ -227,7 +233,7 @@ func (dn *DAGNode) Stop() {
 
 func (dn *DAGNode) flush() {
 	dn.mu.Lock()
-	if len(dn.queue) == 0 || (dn.thinkFn == nil && dn.HoldStateSignal == "" && dn.Kind != "initial_router" && dn.Kind != "terminal") {
+	if len(dn.queue) == 0 || (dn.thinkFn == nil && dn.HoldStateSignal == "" && dn.Kind != "initial_router" && dn.Kind != "terminal" && dn.Kind != "debug_terminal") {
 		dn.mu.Unlock()
 		return
 	}
@@ -288,17 +294,27 @@ func (dn *DAGNode) flush() {
 
 	// 1b) Fast-Path Terminal Nodes
 	// Terminal nodes with no thinkFn carry a close_status execution parameter
-	// (e.g. COLLAPSED) to properly finalize the agent.
-	if dn.Kind == "terminal" && dn.thinkFn == nil {
+	// (e.g. COLLAPSED or CLASSIFIED) to properly finalize the agent.
+	if (dn.Kind == "terminal" || dn.Kind == "debug_terminal") && dn.thinkFn == nil {
+		if dn.ID == "debug_terminal" || dn.Name == "debug_terminal" || dn.Kind == "debug_terminal" {
+			printDebugTerminalState(dn, batch)
+		}
 		closeStatus := dn.ExecutionParams["close_status"]
 		if closeStatus == "" {
-			closeStatus = string(StateCollapsed)
+			if dn.ID == "debug_terminal" || dn.Name == "debug_terminal" || dn.Kind == "debug_terminal" {
+				closeStatus = string(StateClassified)
+			} else {
+				closeStatus = string(StateCollapsed)
+			}
 		}
 		var wg sync.WaitGroup
 		for _, node := range batch {
 			wg.Add(1)
 			go func(n *AutonomousSemanticEngineNode) {
 				defer wg.Done()
+				n.Mu.Lock()
+				n.HoldReason = ""
+				n.Mu.Unlock()
 				n.transition(NodeState(closeStatus))
 			}(node)
 		}
@@ -364,6 +380,9 @@ func (dn *DAGNode) flush() {
 		node.Mu.Lock()
 		node.PromptKey = dn.PromptKey
 		node.Mu.Unlock()
+		if dn.logger != nil {
+			dn.logger.Info("ase_dag: node entered DAG stage", "node_id", node.NodeID, "dag_node", dn.Name, "kind", string(dn.Kind))
+		}
 		node.transition(StateThinking)
 	}
 
@@ -433,24 +452,6 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 	// Update the execution step with the results of the routing decision.
 	node.UpdateLastExecutionStep(propertyKey, candidatesCopy, routeKey)
 
-	// Enforce strict top candidate confidence guardrail at each routing step.
-	threshold := 0.98
-	cfg := GetConfig(node.TenantID, node.RealmID, node.DagName)
-	if cfg != nil && cfg.HyperParameters.ConfidenceThreshold > 0 {
-		threshold = cfg.HyperParameters.ConfidenceThreshold
-	}
-
-	if top.Confidence < threshold && !strings.HasPrefix(strings.ToUpper(routeKey), "HOLD_") {
-		node.Mu.Lock()
-		node.HoldReason = fmt.Sprintf("top candidate '%s' confidence (%v) below %v guardrail during routing at %s. AI Reasoning: %s", top.Value, top.Confidence, threshold, dn.Name, top.Reasoning)
-		// We can explicitly update UnifiedConfidence to match the failing node's confidence
-		// so the UI clearly shows the drop in confidence.
-		node.UnifiedConfidence = top.Confidence
-		node.Mu.Unlock()
-		node.transition(StateHoldAmbiguous)
-		return
-	}
-
 	searchKey := strings.ToLower(routeKey)
 
 	dn.mu.Lock()
@@ -458,13 +459,46 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 	if !exists {
 		child = dn.defaultChild
 	}
+	if child == nil {
+		if debugChild, ok := dn.children["debug_terminal"]; ok {
+			child = debugChild
+		}
+	}
 	dn.mu.Unlock()
+
+	// Enforce strict top candidate confidence guardrail at each routing step (unless routing to debug_terminal).
+	isDebugTarget := (child != nil && (child.ID == "debug_terminal" || child.Name == "debug_terminal" || child.Kind == "debug_terminal")) || strings.EqualFold(routeKey, "debug_terminal")
+	if !isDebugTarget {
+		threshold := 0.98
+		cfg := GetConfig(node.TenantID, node.RealmID, node.DagName)
+		if cfg != nil && cfg.HyperParameters.ConfidenceThreshold > 0 {
+			threshold = cfg.HyperParameters.ConfidenceThreshold
+		}
+
+		if top.Confidence < threshold && !strings.HasPrefix(strings.ToUpper(routeKey), "HOLD_") {
+			node.Mu.Lock()
+			node.HoldReason = fmt.Sprintf("top candidate '%s' confidence (%v) below %v guardrail during routing at %s. AI Reasoning: %s", top.Value, top.Confidence, threshold, dn.Name, top.Reasoning)
+			// We can explicitly update UnifiedConfidence to match the failing node's confidence
+			// so the UI clearly shows the drop in confidence.
+			node.UnifiedConfidence = top.Confidence
+			node.Mu.Unlock()
+			node.transition(StateHoldAmbiguous)
+			return
+		}
+	}
+
+	if child != nil && dn.logger != nil {
+		dn.logger.Info("ase_dag: node routing to next DAG stage", "node_id", node.NodeID, "from", dn.Name, "to", child.Name, "route_key", routeKey)
+	}
 
 	if child == nil {
 		// No downstream DAG node — check if we can collapse.
-		if dn.Kind == "terminal" {
+		if dn.Kind == "terminal" || dn.Kind == "debug_terminal" || dn.ID == "debug_terminal" || dn.Name == "debug_terminal" {
+			if dn.logger != nil {
+				dn.logger.Info("ase_dag: node reached terminal stage", "node_id", node.NodeID, "dag_node", dn.Name)
+			}
 			// Terminal classification stage: ready for final check.
-			if node.IsConfident() {
+			if node.IsConfident() || dn.ID == "debug_terminal" || dn.Name == "debug_terminal" || dn.Kind == "debug_terminal" {
 				closeStatus := dn.ExecutionParams["close_status"]
 				if closeStatus != "" {
 					node.transition(NodeState(closeStatus))
@@ -678,6 +712,7 @@ func (d *DAG) UpdateFromConfig(cfg DAGConfig, logger *slog.Logger) {
 		node.HoldStateSignal = nCfg.HoldStateSignal
 		node.HoldReasonString = nCfg.HoldReasonString
 		node.ExecutionParams = nCfg.ExecutionParams
+		node.ContextConfig = nCfg.Context
 		node.batchSize = nCfg.BatchSize
 		node.batchFlush = time.Duration(nCfg.BatchFlushSeconds) * time.Second
 
@@ -794,4 +829,52 @@ func (dn *DAGNode) PopHoldingAgent() *AutonomousSemanticEngineNode {
 	agent := dn.holding[0]
 	dn.holding = dn.holding[1:]
 	return agent
+}
+
+// printDebugTerminalState prints out the current state, micro-agent execution traces, candidate evaluations,
+// and payload for micro-agents reaching the debug_terminal node.
+func printDebugTerminalState(dn *DAGNode, batch []*AutonomousSemanticEngineNode) {
+	var sb strings.Builder
+	sb.WriteString("\n================================================================================\n")
+	sb.WriteString(fmt.Sprintf("[DEBUG TERMINAL] DAG Stage Reached: %s (Kind: %s)\n", dn.Name, dn.Kind))
+	sb.WriteString(fmt.Sprintf("Batch Size: %d micro-agent(s)\n", len(batch)))
+	sb.WriteString("--------------------------------------------------------------------------------\n")
+	for i, node := range batch {
+		node.Mu.RLock()
+		sb.WriteString(fmt.Sprintf("Agent #%d | Node ID: %s | Tenant: %s | Realm: %s | DAG: %s\n", i+1, node.NodeID, node.TenantID, node.RealmID, node.DagName))
+		sb.WriteString(fmt.Sprintf("  Current State: %s -> Final State: CLASSIFIED\n", node.CurrentState))
+		sb.WriteString(fmt.Sprintf("  Unified Confidence: %.4f | Current Entropy: %.4f\n", node.UnifiedConfidence, node.CurrentEntropy))
+		if len(node.Candidates) > 0 {
+			sb.WriteString("  Property Candidates:\n")
+			for prop, cands := range node.Candidates {
+				sb.WriteString(fmt.Sprintf("    - %s:\n", prop))
+				for _, c := range cands {
+					sb.WriteString(fmt.Sprintf("        * %s (confidence: %.4f) [reasoning: %s]\n", c.Value, c.Confidence, c.Reasoning))
+				}
+			}
+		}
+		if len(node.ExecutionTrace) > 0 {
+			sb.WriteString(fmt.Sprintf("  Execution Trace (%d step(s)):\n", len(node.ExecutionTrace)))
+			for stepIdx, step := range node.ExecutionTrace {
+				sb.WriteString(fmt.Sprintf("    Step %d: DAG Node: %s (Kind: %s) -> Selected Edge: %s [Timestamp: %s]\n",
+					stepIdx+1, step.DAGNodeID, step.Kind, step.SelectedEdge, step.Timestamp.Format(time.RFC3339)))
+			}
+		}
+		if len(node.Payload) > 0 {
+			if payloadBytes, err := json.Marshal(node.Payload); err == nil {
+				sb.WriteString(fmt.Sprintf("  Payload: %s\n", string(payloadBytes)))
+			}
+		}
+		node.Mu.RUnlock()
+		sb.WriteString("--------------------------------------------------------------------------------\n")
+	}
+	sb.WriteString("================================================================================\n")
+	fmt.Print(sb.String())
+
+	if dn.logger != nil {
+		dn.logger.Info("[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+			"dag_node", dn.Name,
+			"batch_size", len(batch),
+		)
+	}
 }

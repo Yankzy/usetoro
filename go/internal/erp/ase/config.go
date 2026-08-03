@@ -77,6 +77,7 @@ type DAGNodeConfig struct {
 	Children            map[string]string `json:"children"`
 	DefaultChild        string            `json:"default_child"`
 	ExecutionParams     map[string]string `json:"execution_parameters"`
+	Context             map[string]any    `json:"context"`
 }
 
 var (

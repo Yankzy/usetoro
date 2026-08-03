@@ -488,3 +488,78 @@ type testError struct {
 }
 
 func (e *testError) Error() string { return e.msg }
+
+func TestDebugTerminal(t *testing.T) {
+	logger := testLogger()
+	cfg := DAGConfig{
+		EntryNode: "macro_classifier_inflow",
+		Nodes: map[string]DAGNodeConfig{
+			"macro_classifier_inflow": {
+				Kind:      "macro_classifier",
+				Name:      "macro_classifier_inflow",
+				BatchSize: 1,
+				Children: map[string]string{
+					"debug_terminal": "debug_terminal",
+				},
+			},
+			"debug_terminal": {
+				Kind: "terminal",
+				Name: "debug_terminal",
+				ExecutionParams: map[string]string{
+					"close_status": "CLASSIFIED",
+				},
+			},
+		},
+	}
+
+	dag := BuildDAGFromConfig(cfg, logger)
+	inflowNode := dag.GetNode("macro_classifier_inflow")
+	debugNode := dag.GetNode("debug_terminal")
+
+	if inflowNode == nil || debugNode == nil {
+		t.Fatal("failed to construct DAG with debug_terminal")
+	}
+
+	inflowNode.SetThinkFunc(func(ctx context.Context, batch []*AutonomousSemanticEngineNode) (map[string]NodeClassification, error) {
+		results := make(map[string]NodeClassification, len(batch))
+		for _, node := range batch {
+			results[node.NodeID] = NodeClassification{
+				Property: "macro_class",
+				Candidates: []ProbabilityCandidate{
+					{Value: "EXPENSE", Confidence: 0.85, Reasoning: "rolling node debug test"},
+				},
+			}
+		}
+		return results, nil
+	})
+
+	dag.StartAll()
+	defer dag.StopAll()
+
+	node := NewASENode("t_tenant", "t_realm", "pcm_bank_reconciliation", map[string]any{
+		"raw_description": "DEBUG ROLLOUT TEST",
+		"raw_amount":      "123.45",
+	})
+
+	inflowNode.Accept(node)
+
+	var finalState NodeState
+	var holdReason string
+	for i := 0; i < 20; i++ {
+		time.Sleep(50 * time.Millisecond)
+		node.Mu.RLock()
+		finalState = node.CurrentState
+		holdReason = node.HoldReason
+		node.Mu.RUnlock()
+		if finalState == StateClassified {
+			break
+		}
+	}
+
+	if finalState != StateClassified {
+		t.Errorf("expected final state StateClassified for debug_terminal, got: %s (hold_reason: %s)", finalState, holdReason)
+	}
+	if holdReason != "" {
+		t.Errorf("expected empty holdReason, got: %s", holdReason)
+	}
+}

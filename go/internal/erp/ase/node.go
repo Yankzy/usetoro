@@ -101,7 +101,7 @@ func NewASENode(tenantID, realmID, dagName string, payload map[string]any) *Auto
 	nodeID := uuid.New().String()
 
 	cfg := GetConfig(tenantID, realmID, dagName)
-	expectedProperties := 4 // Fallback
+	expectedProperties := 4 // Default initial entropy fallback
 	if cfg != nil && cfg.HyperParameters.ExpectedProperties > 0 {
 		expectedProperties = cfg.HyperParameters.ExpectedProperties
 	}
@@ -188,6 +188,9 @@ func (n *AutonomousSemanticEngineNode) transition(newState NodeState) {
 	n.CurrentState = newState
 	n.UpdatedAt = time.Now().UTC()
 	cb := n.onStateChange
+	if n.logger != nil {
+		n.logger.Info("ase_node: state transition", "node_id", n.NodeID, "old_state", oldState, "new_state", newState)
+	}
 	n.Mu.Unlock()
 
 	if cb != nil {
@@ -228,7 +231,10 @@ func (n *AutonomousSemanticEngineNode) SetPropertyCandidates(propertyKey string,
 	n.Candidates[propertyKey] = candidates
 	n.PropertyEntropies[propertyKey] = CalculateEntropy(candidates)
 
-	expectedProperties := 4
+	expectedProperties := len(n.Candidates)
+	if expectedProperties < 1 {
+		expectedProperties = 1
+	}
 	cfg := GetConfig(n.TenantID, n.RealmID, n.DagName)
 	if cfg != nil && cfg.HyperParameters.ExpectedProperties > 0 {
 		expectedProperties = cfg.HyperParameters.ExpectedProperties

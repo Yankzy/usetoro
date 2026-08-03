@@ -49,7 +49,7 @@ UPDATE toro_core.conversation_sessions
 SET
     status = CASE WHEN sqlc.narg('status')::text IS NOT NULL THEN sqlc.narg('status')::text ELSE status END,
     system_prompt = COALESCE(sqlc.narg('system_prompt'), system_prompt),
-    context_json = COALESCE(sqlc.narg('context_json'), context_json),
+    context_json = COALESCE(sqlc.narg('context_json')::jsonb, context_json),
     last_activity_at = NOW()
 WHERE id = $1;
 

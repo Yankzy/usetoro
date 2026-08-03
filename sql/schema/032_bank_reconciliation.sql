@@ -4,6 +4,7 @@
 -- =========================================================================
 
 -- Master Vendors
+-- This table is used to find vendor names that might have variants from the fignode.vendor_aliases table.
 CREATE TABLE fignode.canonical_vendors (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     entity_id UUID NOT NULL,
@@ -15,6 +16,7 @@ CREATE TABLE fignode.canonical_vendors (
 );
 
 -- Variant Lookup Table
+-- This all the variants of a vendor name.
 CREATE TABLE fignode.vendor_aliases (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     entity_id UUID NOT NULL,

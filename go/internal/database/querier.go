@@ -53,6 +53,7 @@ type Querier interface {
 	CreateOrGetWorkflow(ctx context.Context, arg CreateOrGetWorkflowParams) (ToroCoreWorkflow, error)
 	// session_id must point at a per-realm SYSTEM session (see GetOrCreateSystemSession).
 	CreateProposedTransaction(ctx context.Context, arg CreateProposedTransactionParams) (FignodeStagingTransaction, error)
+	CreateReconciliationTask(ctx context.Context, arg CreateReconciliationTaskParams) (ShadowErpReconciliationTask, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error
 	CreateRuleAuditLog(ctx context.Context, arg CreateRuleAuditLogParams) (ShadowErpRuleAuditLog, error)
 	CreateRuleCondition(ctx context.Context, arg CreateRuleConditionParams) (ShadowErpRuleCondition, error)
@@ -107,14 +108,17 @@ type Querier interface {
 	GetAwaitingReplySessions(ctx context.Context) ([]ToroCoreConversationSession, error)
 	GetBankAccountName(ctx context.Context, id pgtype.UUID) (string, error)
 	GetBankAccounts(ctx context.Context) ([]string, error)
+	GetBankAccountsByRealm(ctx context.Context, realmID string) ([]ShadowErpBankAccount, error)
 	GetBillByERPID(ctx context.Context, arg GetBillByERPIDParams) (ShadowErpBill, error)
 	GetBlueprintByName(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
 	GetBlueprintByNameOrTriggerTopic(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
 	GetCampaignRevenueMetrics(ctx context.Context, campaignID pgtype.UUID) ([]GetCampaignRevenueMetricsRow, error)
 	GetCampaignStep(ctx context.Context, arg GetCampaignStepParams) (GetCampaignStepRow, error)
+	GetCanonicalVendorsByRealm(ctx context.Context, realmID pgtype.Text) ([]FignodeCanonicalVendor, error)
 	GetCheckingAccounts(ctx context.Context) ([]string, error)
 	GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanupRowRow, error)
 	GetCleanupSession(ctx context.Context, id pgtype.UUID) (GetCleanupSessionRow, error)
+	GetClientDossierByRealm(ctx context.Context, realmID string) (ShadowErpClientDossier, error)
 	GetCompanyInfo(ctx context.Context, realmID string) (ShadowErpCompanyInfo, error)
 	GetConditionsByRuleGroups(ctx context.Context, ruleGroupIds []int32) ([]ShadowErpRuleCondition, error)
 	GetConnectionWithWebhookTimes(ctx context.Context, arg GetConnectionWithWebhookTimesParams) (GetConnectionWithWebhookTimesRow, error)
@@ -199,6 +203,7 @@ type Querier interface {
 	// =========================================================================
 	GetInitialEnrichedTransactionsByRealm(ctx context.Context, realmID pgtype.Text) ([]FignodeStagingTransaction, error)
 	GetInvoiceByERPID(ctx context.Context, arg GetInvoiceByERPIDParams) (ShadowErpInvoice, error)
+	GetJournalsByRealm(ctx context.Context, realmID string) ([]ShadowErpJournal, error)
 	GetLLMPricingModel(ctx context.Context, model string) (ToroCoreLlmPricingModel, error)
 	GetLatestLeaderboardSnapshot(ctx context.Context, period string) (GetLatestLeaderboardSnapshotRow, error)
 	GetListRevenueMetrics(ctx context.Context, listID pgtype.UUID) ([]GetListRevenueMetricsRow, error)
@@ -241,10 +246,12 @@ type Querier interface {
 	GetRecentConversations(ctx context.Context, arg GetRecentConversationsParams) ([]ToroCoreConversation, error)
 	GetRecentConversationsByHandle(ctx context.Context, arg GetRecentConversationsByHandleParams) ([]ToroCoreConversation, error)
 	GetRecentCorrections(ctx context.Context, arg GetRecentCorrectionsParams) ([]ShadowErpAiCorrection, error)
+	GetReconciliationTaskByEmailThreadID(ctx context.Context, emailThreadID pgtype.Text) (ShadowErpReconciliationTask, error)
 	GetRefreshToken(ctx context.Context, tokenHash string) (ToroCoreRefreshToken, error)
 	GetRuleAuditLogsByTransaction(ctx context.Context, transactionID pgtype.UUID) ([]ShadowErpRuleAuditLog, error)
 	GetRuleConditionByExample(ctx context.Context, arg GetRuleConditionByExampleParams) (ShadowErpRuleCondition, error)
 	GetRuleGroupByRealmAndName(ctx context.Context, arg GetRuleGroupByRealmAndNameParams) (ShadowErpRuleGroup, error)
+	GetSageImportTemplate(ctx context.Context, id pgtype.UUID) (ShadowErpSageImportTemplate, error)
 	GetSessionConversations(ctx context.Context, sessionID pgtype.UUID) ([]ToroCoreConversation, error)
 	GetSessionRows(ctx context.Context, arg GetSessionRowsParams) ([]GetSessionRowsRow, error)
 	GetSessionRowsPaginated(ctx context.Context, arg GetSessionRowsPaginatedParams) ([]GetSessionRowsPaginatedRow, error)
@@ -284,6 +291,7 @@ type Querier interface {
 	GetUserVCOODataByEmail(ctx context.Context, email string) (GetUserVCOODataByEmailRow, error)
 	GetUsersByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreUser, error)
 	GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]ToroCoreUser, error)
+	GetVatRulesByRealm(ctx context.Context, realmID string) ([]ShadowErpVatRule, error)
 	// =========================================================================
 	// AI Vector Sync State
 	// =========================================================================
@@ -404,6 +412,7 @@ type Querier interface {
 	UpdateProposedTransactionSyncStatus(ctx context.Context, arg UpdateProposedTransactionSyncStatusParams) error
 	UpdateProspectStatus(ctx context.Context, arg UpdateProspectStatusParams) error
 	UpdatePurchaseRuleID(ctx context.Context, arg UpdatePurchaseRuleIDParams) error
+	UpdateReconciliationTaskStatus(ctx context.Context, arg UpdateReconciliationTaskStatusParams) (ShadowErpReconciliationTask, error)
 	UpdateRowEnrichment(ctx context.Context, arg UpdateRowEnrichmentParams) error
 	UpdateRuleGroupKeywords(ctx context.Context, arg UpdateRuleGroupKeywordsParams) error
 	UpdateSessionContextJSON(ctx context.Context, arg UpdateSessionContextJSONParams) error

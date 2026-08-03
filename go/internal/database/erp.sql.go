@@ -175,7 +175,7 @@ func (q *Queries) CreateProposedTransaction(ctx context.Context, arg CreatePropo
 }
 
 const getAccountByERPID = `-- name: GetAccountByERPID :one
-SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at, account_code, parent_code, is_posting FROM shadow_erp.accounts
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -211,12 +211,15 @@ func (q *Queries) GetAccountByERPID(ctx context.Context, arg GetAccountByERPIDPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.AccountCode,
+		&i.ParentCode,
+		&i.IsPosting,
 	)
 	return i, err
 }
 
 const getAccountByName = `-- name: GetAccountByName :one
-SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at, account_code, parent_code, is_posting FROM shadow_erp.accounts
 WHERE realm_id = $1 AND name = $2 
   AND active = true 
   AND account_type IN ('Bank', 'Credit Card')
@@ -256,12 +259,15 @@ func (q *Queries) GetAccountByName(ctx context.Context, arg GetAccountByNamePara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.AccountCode,
+		&i.ParentCode,
+		&i.IsPosting,
 	)
 	return i, err
 }
 
 const getAccountsByRealm = `-- name: GetAccountsByRealm :many
-SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at, account_code, parent_code, is_posting FROM shadow_erp.accounts
 WHERE realm_id = $1 AND deleted_at IS NULL
 ORDER BY name ASC
 `
@@ -299,6 +305,9 @@ func (q *Queries) GetAccountsByRealm(ctx context.Context, realmID string) ([]Sha
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.AccountCode,
+			&i.ParentCode,
+			&i.IsPosting,
 		); err != nil {
 			return nil, err
 		}
@@ -311,7 +320,7 @@ func (q *Queries) GetAccountsByRealm(ctx context.Context, realmID string) ([]Sha
 }
 
 const getAccountsUpdatedSince = `-- name: GetAccountsUpdatedSince :many
-SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at, account_code, parent_code, is_posting FROM shadow_erp.accounts
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
 ORDER BY updated_at ASC
 `
@@ -354,6 +363,9 @@ func (q *Queries) GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUp
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.AccountCode,
+			&i.ParentCode,
+			&i.IsPosting,
 		); err != nil {
 			return nil, err
 		}
@@ -428,7 +440,7 @@ func (q *Queries) GetActiveRealms(ctx context.Context) ([]string, error) {
 }
 
 const getAllAccountsForRealms = `-- name: GetAllAccountsForRealms :many
-SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at, account_code, parent_code, is_posting FROM shadow_erp.accounts
 WHERE realm_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY name ASC
 `
@@ -466,6 +478,9 @@ func (q *Queries) GetAllAccountsForRealms(ctx context.Context, realmIds []string
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.AccountCode,
+			&i.ParentCode,
+			&i.IsPosting,
 		); err != nil {
 			return nil, err
 		}
@@ -516,7 +531,7 @@ func (q *Queries) GetAllActiveConnections(ctx context.Context) ([]GetAllActiveCo
 }
 
 const getAllCustomersForRealms = `-- name: GetAllCustomersForRealms :many
-SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at, customer_code, ice_number, receivable_account_code, revenue_account_code, default_vat_rule_code FROM shadow_erp.customers
 WHERE realm_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -544,6 +559,11 @@ func (q *Queries) GetAllCustomersForRealms(ctx context.Context, realmIds []strin
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.CustomerCode,
+			&i.IceNumber,
+			&i.ReceivableAccountCode,
+			&i.RevenueAccountCode,
+			&i.DefaultVatRuleCode,
 		); err != nil {
 			return nil, err
 		}
@@ -556,7 +576,7 @@ func (q *Queries) GetAllCustomersForRealms(ctx context.Context, realmIds []strin
 }
 
 const getAllVendorsForRealms = `-- name: GetAllVendorsForRealms :many
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at, vendor_code, ice_number, payable_account_code, default_expense_account_code, default_vat_rule_code FROM shadow_erp.vendors
 WHERE realm_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -586,6 +606,11 @@ func (q *Queries) GetAllVendorsForRealms(ctx context.Context, realmIds []string)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.VendorCode,
+			&i.IceNumber,
+			&i.PayableAccountCode,
+			&i.DefaultExpenseAccountCode,
+			&i.DefaultVatRuleCode,
 		); err != nil {
 			return nil, err
 		}
@@ -822,7 +847,7 @@ func (q *Queries) GetConnectionWithWebhookTimes(ctx context.Context, arg GetConn
 }
 
 const getCustomerByERPID = `-- name: GetCustomerByERPID :one
-SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at, customer_code, ice_number, receivable_account_code, revenue_account_code, default_vat_rule_code FROM shadow_erp.customers
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -848,12 +873,17 @@ func (q *Queries) GetCustomerByERPID(ctx context.Context, arg GetCustomerByERPID
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.CustomerCode,
+		&i.IceNumber,
+		&i.ReceivableAccountCode,
+		&i.RevenueAccountCode,
+		&i.DefaultVatRuleCode,
 	)
 	return i, err
 }
 
 const getCustomerByID = `-- name: GetCustomerByID :one
-SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at, customer_code, ice_number, receivable_account_code, revenue_account_code, default_vat_rule_code FROM shadow_erp.customers
 WHERE id = $1
 `
 
@@ -874,12 +904,17 @@ func (q *Queries) GetCustomerByID(ctx context.Context, id pgtype.UUID) (ShadowEr
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.CustomerCode,
+		&i.IceNumber,
+		&i.ReceivableAccountCode,
+		&i.RevenueAccountCode,
+		&i.DefaultVatRuleCode,
 	)
 	return i, err
 }
 
 const getCustomerByName = `-- name: GetCustomerByName :one
-SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at, customer_code, ice_number, receivable_account_code, revenue_account_code, default_vat_rule_code FROM shadow_erp.customers
 WHERE realm_id = $1
   AND deleted_at IS NULL
   AND display_name ILIKE $2
@@ -908,6 +943,11 @@ func (q *Queries) GetCustomerByName(ctx context.Context, arg GetCustomerByNamePa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.CustomerCode,
+		&i.IceNumber,
+		&i.ReceivableAccountCode,
+		&i.RevenueAccountCode,
+		&i.DefaultVatRuleCode,
 	)
 	return i, err
 }
@@ -1026,7 +1066,7 @@ func (q *Queries) GetCustomerTemporalChanges(ctx context.Context, realmID string
 }
 
 const getCustomersByRealm = `-- name: GetCustomersByRealm :many
-SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at, customer_code, ice_number, receivable_account_code, revenue_account_code, default_vat_rule_code FROM shadow_erp.customers
 WHERE realm_id = $1 AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -1054,6 +1094,11 @@ func (q *Queries) GetCustomersByRealm(ctx context.Context, realmID string) ([]Sh
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.CustomerCode,
+			&i.IceNumber,
+			&i.ReceivableAccountCode,
+			&i.RevenueAccountCode,
+			&i.DefaultVatRuleCode,
 		); err != nil {
 			return nil, err
 		}
@@ -1066,7 +1111,7 @@ func (q *Queries) GetCustomersByRealm(ctx context.Context, realmID string) ([]Sh
 }
 
 const getCustomersUpdatedSince = `-- name: GetCustomersUpdatedSince :many
-SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.customers
+SELECT id, erp_id, realm_id, display_name, sync_token, industry, industry_icon, customer_description, customer_url, event_source, created_at, updated_at, deleted_at, customer_code, ice_number, receivable_account_code, revenue_account_code, default_vat_rule_code FROM shadow_erp.customers
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
 ORDER BY updated_at ASC
 `
@@ -1099,6 +1144,11 @@ func (q *Queries) GetCustomersUpdatedSince(ctx context.Context, arg GetCustomers
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.CustomerCode,
+			&i.IceNumber,
+			&i.ReceivableAccountCode,
+			&i.RevenueAccountCode,
+			&i.DefaultVatRuleCode,
 		); err != nil {
 			return nil, err
 		}
@@ -2919,7 +2969,7 @@ func (q *Queries) GetVectorSyncState(ctx context.Context, realmID string) (Shado
 }
 
 const getVendor = `-- name: GetVendor :one
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at, vendor_code, ice_number, payable_account_code, default_expense_account_code, default_vat_rule_code FROM shadow_erp.vendors
 WHERE realm_id = $1 AND id = $2
 `
 
@@ -2947,6 +2997,11 @@ func (q *Queries) GetVendor(ctx context.Context, arg GetVendorParams) (ShadowErp
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.VendorCode,
+		&i.IceNumber,
+		&i.PayableAccountCode,
+		&i.DefaultExpenseAccountCode,
+		&i.DefaultVatRuleCode,
 	)
 	return i, err
 }
@@ -2996,7 +3051,7 @@ func (q *Queries) GetVendorAmountDistribution(ctx context.Context, realmID strin
 }
 
 const getVendorByERPID = `-- name: GetVendorByERPID :one
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at, vendor_code, ice_number, payable_account_code, default_expense_account_code, default_vat_rule_code FROM shadow_erp.vendors
 WHERE realm_id = $1 AND erp_id = $2
 `
 
@@ -3024,13 +3079,18 @@ func (q *Queries) GetVendorByERPID(ctx context.Context, arg GetVendorByERPIDPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.VendorCode,
+		&i.IceNumber,
+		&i.PayableAccountCode,
+		&i.DefaultExpenseAccountCode,
+		&i.DefaultVatRuleCode,
 	)
 	return i, err
 }
 
 const getVendorByNameOrSynonym = `-- name: GetVendorByNameOrSynonym :one
 
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at, vendor_code, ice_number, payable_account_code, default_expense_account_code, default_vat_rule_code FROM shadow_erp.vendors
 WHERE realm_id = $1
   AND deleted_at IS NULL
   AND (
@@ -3068,6 +3128,11 @@ func (q *Queries) GetVendorByNameOrSynonym(ctx context.Context, arg GetVendorByN
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.VendorCode,
+		&i.IceNumber,
+		&i.PayableAccountCode,
+		&i.DefaultExpenseAccountCode,
+		&i.DefaultVatRuleCode,
 	)
 	return i, err
 }
@@ -3138,7 +3203,7 @@ func (q *Queries) GetVendorTemporalChanges(ctx context.Context, realmID string) 
 }
 
 const getVendorsByRealm = `-- name: GetVendorsByRealm :many
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at, vendor_code, ice_number, payable_account_code, default_expense_account_code, default_vat_rule_code FROM shadow_erp.vendors
 WHERE realm_id = $1 AND deleted_at IS NULL
 ORDER BY display_name ASC
 `
@@ -3168,6 +3233,11 @@ func (q *Queries) GetVendorsByRealm(ctx context.Context, realmID string) ([]Shad
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.VendorCode,
+			&i.IceNumber,
+			&i.PayableAccountCode,
+			&i.DefaultExpenseAccountCode,
+			&i.DefaultVatRuleCode,
 		); err != nil {
 			return nil, err
 		}
@@ -3180,7 +3250,7 @@ func (q *Queries) GetVendorsByRealm(ctx context.Context, realmID string) ([]Shad
 }
 
 const getVendorsUpdatedSince = `-- name: GetVendorsUpdatedSince :many
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at, vendor_code, ice_number, payable_account_code, default_expense_account_code, default_vat_rule_code FROM shadow_erp.vendors
 WHERE realm_id = $1 AND updated_at > $2 AND deleted_at IS NULL
 ORDER BY updated_at ASC
 `
@@ -3215,6 +3285,11 @@ func (q *Queries) GetVendorsUpdatedSince(ctx context.Context, arg GetVendorsUpda
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.VendorCode,
+			&i.IceNumber,
+			&i.PayableAccountCode,
+			&i.DefaultExpenseAccountCode,
+			&i.DefaultVatRuleCode,
 		); err != nil {
 			return nil, err
 		}

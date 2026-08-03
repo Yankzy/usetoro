@@ -142,7 +142,7 @@ func (q *Queries) CreateRuleGroup(ctx context.Context, arg CreateRuleGroupParams
 }
 
 const getAccountByID = `-- name: GetAccountByID :one
-SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at FROM shadow_erp.accounts WHERE id = $1
+SELECT id, erp_id, realm_id, name, account_type, account_sub_type, classification, fully_qualified_name, active, sync_token, domain, currency_ref_name, currency_ref_value, current_balance_with_sub_accounts, sparse, erp_created_time, erp_updated_time, current_balance, sub_account, event_source, created_at, updated_at, deleted_at, account_code, parent_code, is_posting FROM shadow_erp.accounts WHERE id = $1
 `
 
 func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (ShadowErpAccount, error) {
@@ -172,6 +172,9 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (ShadowErp
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.AccountCode,
+		&i.ParentCode,
+		&i.IsPosting,
 	)
 	return i, err
 }
@@ -351,7 +354,7 @@ func (q *Queries) GetRuleGroupByRealmAndName(ctx context.Context, arg GetRuleGro
 }
 
 const getVendorByID = `-- name: GetVendorByID :one
-SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at FROM shadow_erp.vendors WHERE id = $1
+SELECT id, erp_id, realm_id, display_name, sync_token, last_known_account_id, ai_synonyms, industry, industry_icon, vendor_description, vendor_url, event_source, created_at, updated_at, deleted_at, vendor_code, ice_number, payable_account_code, default_expense_account_code, default_vat_rule_code FROM shadow_erp.vendors WHERE id = $1
 `
 
 func (q *Queries) GetVendorByID(ctx context.Context, id pgtype.UUID) (ShadowErpVendor, error) {
@@ -373,6 +376,11 @@ func (q *Queries) GetVendorByID(ctx context.Context, id pgtype.UUID) (ShadowErpV
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.VendorCode,
+		&i.IceNumber,
+		&i.PayableAccountCode,
+		&i.DefaultExpenseAccountCode,
+		&i.DefaultVatRuleCode,
 	)
 	return i, err
 }

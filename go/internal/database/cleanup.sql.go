@@ -1233,6 +1233,12 @@ VALUES (
     $26, $27, $28, $29,
     $30, $31, $32, COALESCE($33, FALSE)
 )
+ON CONFLICT (session_id, row_index) WHERE session_id IS NOT NULL AND row_index IS NOT NULL
+DO UPDATE SET
+    raw_description = EXCLUDED.raw_description,
+    raw_amount = EXCLUDED.raw_amount,
+    raw_date = EXCLUDED.raw_date,
+    updated_at = NOW()
 RETURNING id
 `
 

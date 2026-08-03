@@ -544,7 +544,7 @@ UPDATE toro_core.conversation_sessions
 SET
     status = CASE WHEN $2::text IS NOT NULL THEN $2::text ELSE status END,
     system_prompt = COALESCE($3, system_prompt),
-    context_json = COALESCE($4, context_json),
+    context_json = COALESCE($4::jsonb, context_json),
     last_activity_at = NOW()
 WHERE id = $1
 `

@@ -15,13 +15,17 @@ type FignodeAseSessionEmailHold struct {
 }
 
 type FignodeCanonicalVendor struct {
-	ID             pgtype.UUID
-	EntityID       pgtype.UUID
-	RealmID        pgtype.Text
-	DisplayName    string
-	IceNumber      pgtype.Text
-	DefaultAccount string
-	CreatedAt      pgtype.Timestamptz
+	ID                        pgtype.UUID
+	EntityID                  pgtype.UUID
+	RealmID                   pgtype.Text
+	DisplayName               string
+	IceNumber                 pgtype.Text
+	DefaultAccount            string
+	CreatedAt                 pgtype.Timestamptz
+	VendorCode                pgtype.Text
+	PayableAccountCode        pgtype.Text
+	DefaultExpenseAccountCode pgtype.Text
+	DefaultVatRuleCode        pgtype.Text
 }
 
 type FignodeEmployeeProfile struct {
@@ -300,6 +304,9 @@ type ShadowErpAccount struct {
 	CreatedAt                     pgtype.Timestamptz
 	UpdatedAt                     pgtype.Timestamptz
 	DeletedAt                     pgtype.Timestamptz
+	AccountCode                   pgtype.Text
+	ParentCode                    pgtype.Text
+	IsPosting                     pgtype.Bool
 }
 
 // Records when users correct AI predictions for learning and synonym updates
@@ -335,6 +342,19 @@ type ShadowErpAttachable struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type ShadowErpBankAccount struct {
+	ID                pgtype.UUID
+	RealmID           string
+	BankName          string
+	AccountNumber     string
+	Rib               pgtype.Text
+	Iban              pgtype.Text
+	LedgerAccountCode string
+	Currency          pgtype.Text
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
 type ShadowErpBill struct {
 	ID          pgtype.UUID
 	ErpID       string
@@ -350,6 +370,19 @@ type ShadowErpBill struct {
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
+}
+
+type ShadowErpClientDossier struct {
+	ID                    pgtype.UUID
+	RealmID               string
+	FiduciaireID          pgtype.UUID
+	DossierCode           string
+	CompanyName           string
+	IceNumber             pgtype.Text
+	SageTemplateProfileID pgtype.UUID
+	EventSource           string
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 // Mirror of QBO CompanyInfo; keyed by realm_id. One row per connected QBO company.
@@ -383,19 +416,24 @@ type ShadowErpCompanyInfo struct {
 }
 
 type ShadowErpCustomer struct {
-	ID                  pgtype.UUID
-	ErpID               string
-	RealmID             string
-	DisplayName         string
-	SyncToken           string
-	Industry            pgtype.Text
-	IndustryIcon        pgtype.Text
-	CustomerDescription pgtype.Text
-	CustomerUrl         pgtype.Text
-	EventSource         string
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	DeletedAt           pgtype.Timestamptz
+	ID                    pgtype.UUID
+	ErpID                 string
+	RealmID               string
+	DisplayName           string
+	SyncToken             string
+	Industry              pgtype.Text
+	IndustryIcon          pgtype.Text
+	CustomerDescription   pgtype.Text
+	CustomerUrl           pgtype.Text
+	EventSource           string
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
+	CustomerCode          pgtype.Text
+	IceNumber             pgtype.Text
+	ReceivableAccountCode pgtype.Text
+	RevenueAccountCode    pgtype.Text
+	DefaultVatRuleCode    pgtype.Text
 }
 
 type ShadowErpDeposit struct {
@@ -435,6 +473,17 @@ type ShadowErpInvoice struct {
 	DeletedAt   pgtype.Timestamptz
 }
 
+type ShadowErpJournal struct {
+	ID                 pgtype.UUID
+	RealmID            string
+	JournalCode        string
+	JournalName        string
+	JournalType        string
+	DefaultAccountCode pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type ShadowErpPayment struct {
 	ID                 pgtype.UUID
 	ErpID              string
@@ -469,6 +518,20 @@ type ShadowErpPurchase struct {
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
 	DeletedAt       pgtype.Timestamptz
+}
+
+type ShadowErpReconciliationTask struct {
+	ID                 pgtype.UUID
+	RealmID            string
+	PeriodLabel        string
+	Status             string
+	EmailThreadID      pgtype.Text
+	MissingDocsSummary []byte
+	Discrepancies      []byte
+	EventSource        string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	DeletedAt          pgtype.Timestamptz
 }
 
 type ShadowErpRuleAuditLog struct {
@@ -510,6 +573,18 @@ type ShadowErpRuleGroup struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type ShadowErpSageImportTemplate struct {
+	ID            pgtype.UUID
+	RealmID       string
+	TemplateName  string
+	Delimiter     string
+	DateFormat    string
+	ColumnMapping []byte
+	EventSource   string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type ShadowErpSalesReceipt struct {
 	ID                 pgtype.UUID
 	ErpID              string
@@ -526,6 +601,18 @@ type ShadowErpSalesReceipt struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	DeletedAt          pgtype.Timestamptz
+}
+
+type ShadowErpVatRule struct {
+	ID                pgtype.UUID
+	RealmID           string
+	VatCode           string
+	Description       string
+	Rate              pgtype.Numeric
+	InputAccountCode  string
+	OutputAccountCode string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
 // Tracks Pinecone vector database sync state per ERP realm
@@ -545,21 +632,26 @@ type ShadowErpVectorSyncState struct {
 }
 
 type ShadowErpVendor struct {
-	ID                 pgtype.UUID
-	ErpID              string
-	RealmID            string
-	DisplayName        string
-	SyncToken          string
-	LastKnownAccountID pgtype.UUID
-	AiSynonyms         []byte
-	Industry           pgtype.Text
-	IndustryIcon       pgtype.Text
-	VendorDescription  pgtype.Text
-	VendorUrl          pgtype.Text
-	EventSource        string
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	DeletedAt          pgtype.Timestamptz
+	ID                        pgtype.UUID
+	ErpID                     string
+	RealmID                   string
+	DisplayName               string
+	SyncToken                 string
+	LastKnownAccountID        pgtype.UUID
+	AiSynonyms                []byte
+	Industry                  pgtype.Text
+	IndustryIcon              pgtype.Text
+	VendorDescription         pgtype.Text
+	VendorUrl                 pgtype.Text
+	EventSource               string
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	DeletedAt                 pgtype.Timestamptz
+	VendorCode                pgtype.Text
+	IceNumber                 pgtype.Text
+	PayableAccountCode        pgtype.Text
+	DefaultExpenseAccountCode pgtype.Text
+	DefaultVatRuleCode        pgtype.Text
 }
 
 type ToroCoreAgentConfiguration struct {

@@ -69,6 +69,12 @@ VALUES (
     sqlc.narg('erp_transaction_id'), sqlc.narg('error_message'), sqlc.narg('transaction_id'), sqlc.narg('pending_transaction_id'),
     sqlc.narg('merchant_name'), sqlc.narg('logo_url'), sqlc.narg('category'), COALESCE(sqlc.narg('is_pending'), FALSE)
 )
+ON CONFLICT (session_id, row_index) WHERE session_id IS NOT NULL AND row_index IS NOT NULL
+DO UPDATE SET
+    raw_description = EXCLUDED.raw_description,
+    raw_amount = EXCLUDED.raw_amount,
+    raw_date = EXCLUDED.raw_date,
+    updated_at = NOW()
 RETURNING id;
 
 -- name: GetPendingSessionRows :many

@@ -16,7 +16,7 @@ INSERT INTO fignode.canonical_vendors (
     entity_id, realm_id, display_name, ice_number, default_account
 ) VALUES (
     $1, $2, $3, $4, $5
-) RETURNING id, entity_id, realm_id, display_name, ice_number, default_account, created_at
+) RETURNING id, entity_id, realm_id, display_name, ice_number, default_account, created_at, vendor_code, payable_account_code, default_expense_account_code, default_vat_rule_code
 `
 
 type CreateCanonicalVendorParams struct {
@@ -44,6 +44,49 @@ func (q *Queries) CreateCanonicalVendor(ctx context.Context, arg CreateCanonical
 		&i.IceNumber,
 		&i.DefaultAccount,
 		&i.CreatedAt,
+		&i.VendorCode,
+		&i.PayableAccountCode,
+		&i.DefaultExpenseAccountCode,
+		&i.DefaultVatRuleCode,
+	)
+	return i, err
+}
+
+const createReconciliationTask = `-- name: CreateReconciliationTask :one
+INSERT INTO shadow_erp.reconciliation_tasks (
+    realm_id, period_label, status, email_thread_id
+) VALUES (
+    $1, $2, $3, $4
+) RETURNING id, realm_id, period_label, status, email_thread_id, missing_docs_summary, discrepancies, event_source, created_at, updated_at, deleted_at
+`
+
+type CreateReconciliationTaskParams struct {
+	RealmID       string
+	PeriodLabel   string
+	Status        string
+	EmailThreadID pgtype.Text
+}
+
+func (q *Queries) CreateReconciliationTask(ctx context.Context, arg CreateReconciliationTaskParams) (ShadowErpReconciliationTask, error) {
+	row := q.db.QueryRow(ctx, createReconciliationTask,
+		arg.RealmID,
+		arg.PeriodLabel,
+		arg.Status,
+		arg.EmailThreadID,
+	)
+	var i ShadowErpReconciliationTask
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.PeriodLabel,
+		&i.Status,
+		&i.EmailThreadID,
+		&i.MissingDocsSummary,
+		&i.Discrepancies,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -85,6 +128,210 @@ func (q *Queries) CreateVendorAlias(ctx context.Context, arg CreateVendorAliasPa
 		&i.ConfidenceScore,
 	)
 	return i, err
+}
+
+const getBankAccountsByRealm = `-- name: GetBankAccountsByRealm :many
+SELECT id, realm_id, bank_name, account_number, rib, iban, ledger_account_code, currency, created_at, updated_at FROM shadow_erp.bank_accounts WHERE realm_id = $1
+`
+
+func (q *Queries) GetBankAccountsByRealm(ctx context.Context, realmID string) ([]ShadowErpBankAccount, error) {
+	rows, err := q.db.Query(ctx, getBankAccountsByRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ShadowErpBankAccount
+	for rows.Next() {
+		var i ShadowErpBankAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.BankName,
+			&i.AccountNumber,
+			&i.Rib,
+			&i.Iban,
+			&i.LedgerAccountCode,
+			&i.Currency,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getCanonicalVendorsByRealm = `-- name: GetCanonicalVendorsByRealm :many
+SELECT id, entity_id, realm_id, display_name, ice_number, default_account, created_at, vendor_code, payable_account_code, default_expense_account_code, default_vat_rule_code FROM fignode.canonical_vendors WHERE realm_id = $1
+`
+
+func (q *Queries) GetCanonicalVendorsByRealm(ctx context.Context, realmID pgtype.Text) ([]FignodeCanonicalVendor, error) {
+	rows, err := q.db.Query(ctx, getCanonicalVendorsByRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FignodeCanonicalVendor
+	for rows.Next() {
+		var i FignodeCanonicalVendor
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.RealmID,
+			&i.DisplayName,
+			&i.IceNumber,
+			&i.DefaultAccount,
+			&i.CreatedAt,
+			&i.VendorCode,
+			&i.PayableAccountCode,
+			&i.DefaultExpenseAccountCode,
+			&i.DefaultVatRuleCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getClientDossierByRealm = `-- name: GetClientDossierByRealm :one
+SELECT id, realm_id, fiduciaire_id, dossier_code, company_name, ice_number, sage_template_profile_id, event_source, created_at, updated_at FROM shadow_erp.client_dossiers WHERE realm_id = $1 LIMIT 1
+`
+
+func (q *Queries) GetClientDossierByRealm(ctx context.Context, realmID string) (ShadowErpClientDossier, error) {
+	row := q.db.QueryRow(ctx, getClientDossierByRealm, realmID)
+	var i ShadowErpClientDossier
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.FiduciaireID,
+		&i.DossierCode,
+		&i.CompanyName,
+		&i.IceNumber,
+		&i.SageTemplateProfileID,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getJournalsByRealm = `-- name: GetJournalsByRealm :many
+SELECT id, realm_id, journal_code, journal_name, journal_type, default_account_code, created_at, updated_at FROM shadow_erp.journals WHERE realm_id = $1
+`
+
+func (q *Queries) GetJournalsByRealm(ctx context.Context, realmID string) ([]ShadowErpJournal, error) {
+	rows, err := q.db.Query(ctx, getJournalsByRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ShadowErpJournal
+	for rows.Next() {
+		var i ShadowErpJournal
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.JournalCode,
+			&i.JournalName,
+			&i.JournalType,
+			&i.DefaultAccountCode,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getReconciliationTaskByEmailThreadID = `-- name: GetReconciliationTaskByEmailThreadID :one
+SELECT id, realm_id, period_label, status, email_thread_id, missing_docs_summary, discrepancies, event_source, created_at, updated_at, deleted_at FROM shadow_erp.reconciliation_tasks WHERE email_thread_id = $1 LIMIT 1
+`
+
+func (q *Queries) GetReconciliationTaskByEmailThreadID(ctx context.Context, emailThreadID pgtype.Text) (ShadowErpReconciliationTask, error) {
+	row := q.db.QueryRow(ctx, getReconciliationTaskByEmailThreadID, emailThreadID)
+	var i ShadowErpReconciliationTask
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.PeriodLabel,
+		&i.Status,
+		&i.EmailThreadID,
+		&i.MissingDocsSummary,
+		&i.Discrepancies,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getSageImportTemplate = `-- name: GetSageImportTemplate :one
+SELECT id, realm_id, template_name, delimiter, date_format, column_mapping, event_source, created_at, updated_at FROM shadow_erp.sage_import_templates WHERE id = $1 LIMIT 1
+`
+
+func (q *Queries) GetSageImportTemplate(ctx context.Context, id pgtype.UUID) (ShadowErpSageImportTemplate, error) {
+	row := q.db.QueryRow(ctx, getSageImportTemplate, id)
+	var i ShadowErpSageImportTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.TemplateName,
+		&i.Delimiter,
+		&i.DateFormat,
+		&i.ColumnMapping,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getVatRulesByRealm = `-- name: GetVatRulesByRealm :many
+SELECT id, realm_id, vat_code, description, rate, input_account_code, output_account_code, created_at, updated_at FROM shadow_erp.vat_rules WHERE realm_id = $1
+`
+
+func (q *Queries) GetVatRulesByRealm(ctx context.Context, realmID string) ([]ShadowErpVatRule, error) {
+	rows, err := q.db.Query(ctx, getVatRulesByRealm, realmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ShadowErpVatRule
+	for rows.Next() {
+		var i ShadowErpVatRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.VatCode,
+			&i.Description,
+			&i.Rate,
+			&i.InputAccountCode,
+			&i.OutputAccountCode,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getVendorAlias = `-- name: GetVendorAlias :one
@@ -181,6 +428,36 @@ func (q *Queries) UpdateOrderReconciliationStatus(ctx context.Context, arg Updat
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateReconciliationTaskStatus = `-- name: UpdateReconciliationTaskStatus :one
+UPDATE shadow_erp.reconciliation_tasks
+SET status = $2, updated_at = NOW()
+WHERE email_thread_id = $1 RETURNING id, realm_id, period_label, status, email_thread_id, missing_docs_summary, discrepancies, event_source, created_at, updated_at, deleted_at
+`
+
+type UpdateReconciliationTaskStatusParams struct {
+	EmailThreadID pgtype.Text
+	Status        string
+}
+
+func (q *Queries) UpdateReconciliationTaskStatus(ctx context.Context, arg UpdateReconciliationTaskStatusParams) (ShadowErpReconciliationTask, error) {
+	row := q.db.QueryRow(ctx, updateReconciliationTaskStatus, arg.EmailThreadID, arg.Status)
+	var i ShadowErpReconciliationTask
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.PeriodLabel,
+		&i.Status,
+		&i.EmailThreadID,
+		&i.MissingDocsSummary,
+		&i.Discrepancies,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }

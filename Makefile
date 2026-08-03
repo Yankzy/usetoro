@@ -11,7 +11,7 @@ PROJECT_NAME := usetoro
 ifeq ($(ENVIRONMENT),prod)
 	DOCKER_COMPOSE := docker compose -f container/docker-compose.prod.yml
 else
-	DOCKER_COMPOSE := docker-compose -f container/docker-compose.yml
+	DOCKER_COMPOSE := docker compose -f container/docker-compose.yml
 endif
 
 DEPLOY_CONTEXT ?= droplet
@@ -22,7 +22,7 @@ SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cd
 OUR_SERVICES := gate migrator nginx ws graphql sync cdc-worker fignode protocol python-worker
 
 # Allow passing service names as arguments, e.g., "make rebuild nginx" or "make restart nginx"
-ifneq ($(filter rebuild restart build_prod docker_context_prod_push deploy_second_mac,$(firstword $(MAKECMDGOALS))),)
+ifneq ($(filter rebuild restart build_prod docker_context_prod_push deploy_second_mac build_run build_up two_stage,$(firstword $(MAKECMDGOALS))),)
   RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
   $(eval $(RUN_ARGS):;@:)
 endif
@@ -101,6 +101,13 @@ upd: create_networks
 	$(MAKE) vndr && $(DOCKER_COMPOSE) up -d --build --remove-orphans $(SERVICES) && $(MAKE) logs
 
 
+build_run: create_networks
+	$(MAKE) vndr
+	$(DOCKER_COMPOSE) build $(if $(RUN_ARGS),$(RUN_ARGS),$(SERVICES))
+	$(DOCKER_COMPOSE) up -d --remove-orphans $(if $(RUN_ARGS),$(RUN_ARGS),$(SERVICES))
+	$(MAKE) logs
+
+
 getlogs:
 	@echo "Enter the service name: "; \
 	read SER_NAME; \
@@ -108,7 +115,7 @@ getlogs:
 
 
 ssl:
-	docker-compose -f container/docker-compose.ssl.yml up -d
+	docker compose -f container/docker-compose.ssl.yml up -d
 
 fix-permissions:
 	@if [ "$(ENVIRONMENT)" = "prod" ]; then \
@@ -255,3 +262,25 @@ ssh_mac:
 
 copy_clipboard_to_mac:
 	scp clipboard.txt yankz@yankz.local:~/
+
+# Deploy everything to second Mac AND stop protocol there so local dev takes over
+deploy_infra_second_mac: deploy_second_mac
+	@echo "Stopping remote protocol container on second Mac..."
+	ssh yankz@yankz.local 'docker compose -f ~/docker-compose.prod.yml stop protocol'
+
+# Run protocol locally connected to second Mac infrastructure (native Go)
+dev_protocol_local:
+	NATS_URL="nats://yankz.local:4222" \
+	DATABASE_URL="postgres://toro:toro_password@yankz.local:5435/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,fignode,public" \
+	REDIS_URL="redis://yankz.local:6380" \
+	go run ./go/cmd/protocol/main.go
+
+# Run protocol in local Docker container with Docker Compose logs connected to second Mac infrastructure
+dev_protocol_docker: create_networks
+	$(DOCKER_COMPOSE) down
+	NATS_URL="nats://yankz.local:4222" \
+	DATABASE_URL="postgres://toro:toro_password@yankz.local:5435/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,fignode,public" \
+	REDIS_URL="redis://yankz.local:6380" \
+	docker compose -f container/docker-compose.yml up --build --no-deps protocol
+
+

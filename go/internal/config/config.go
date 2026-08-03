@@ -67,9 +67,9 @@ type Config struct {
 	CDCSyncInterval time.Duration `mapstructure:"cdc_sync_interval"`
 
 	// Stripe Config
-	StripeSecretKey       string `mapstructure:"stripe_secret_key"`
-	StripeWebhookSecret   string `mapstructure:"stripe_webhook_secret"`
-	StripePublishableKey  string `mapstructure:"stripe_publishable_key"`
+	StripeSecretKey      string `mapstructure:"stripe_secret_key"`
+	StripeWebhookSecret  string `mapstructure:"stripe_webhook_secret"`
+	StripePublishableKey string `mapstructure:"stripe_publishable_key"`
 
 	// AI/Vector Config
 	PineconeIndex       string  `mapstructure:"pinecone_index"`
@@ -99,18 +99,18 @@ type Config struct {
 	PostmarkSenderSignature string `mapstructure:"postmark_sender_signature"` // verified root, e.g. mark@usetoro.io
 
 	// Mailpool Config
-	MailpoolAPIKey        string `mapstructure:"mailpool_api_key"`
-	MailpoolEndpoint      string `mapstructure:"mailpool_endpoint"`
+	MailpoolAPIKey          string   `mapstructure:"mailpool_api_key"`
+	MailpoolEndpoint        string   `mapstructure:"mailpool_endpoint"`
 	MailpoolAESKey          string   `mapstructure:"mailpool_aes_key"`
 	MailpoolWebhookSecret   string   `mapstructure:"mailpool_webhook_secret"`
 	MailpoolWarmupSenders   []string `mapstructure:"mailpool_warmup_senders"`
 	WarmupLoopIntervalHours int      `mapstructure:"warmup_loop_interval_hours"`
 
 	// Twilio Config (SMS + WhatsApp)
-	TwilioAccountSID  string `mapstructure:"twilio_account_sid"`
-	TwilioAuthToken   string `mapstructure:"twilio_auth_token"`
-	TwilioSMSNumber   string `mapstructure:"twilio_sms_number"`
-	TwilioWANumber    string `mapstructure:"twilio_wa_number"`
+	TwilioAccountSID string `mapstructure:"twilio_account_sid"`
+	TwilioAuthToken  string `mapstructure:"twilio_auth_token"`
+	TwilioSMSNumber  string `mapstructure:"twilio_sms_number"`
+	TwilioWANumber   string `mapstructure:"twilio_wa_number"`
 
 	// Telegram Config
 	TelegramBotToken string `mapstructure:"telegram_bot_token"`
@@ -122,7 +122,7 @@ type Config struct {
 	SlackSigningSecret string `mapstructure:"slack_signing_secret"`
 
 	// Virtual AP/AR/COO Config
-	VCOOFounderEmail   string `mapstructure:"vcoo_founder_email"`
+	VCOOFounderEmail string `mapstructure:"vcoo_founder_email"`
 
 	// Virtual Employees Config (Stateless email/system prompt aliases)
 	VirtualEmployees map[string]AgentAlias `mapstructure:"virtual_employees"`
@@ -278,7 +278,7 @@ func Load() (*Config, *viper.Viper, error) {
 	v.AddConfigPath("/etc/toro")
 	v.AddConfigPath("/app/config")
 	v.AddConfigPath(".")
-	
+
 	// Optional override merge
 	_ = v.MergeInConfig()
 
@@ -381,10 +381,12 @@ func Unmarshal(v *viper.Viper) (*Config, error) {
 		inDocker = true
 	}
 
-	// Automatically map internal Docker DSNs to localhost equivalents if running on host Mac
+	// Automatically map internal Docker DSNs to external host equivalents if running on host Mac
 	if !inDocker {
 		c.DatabaseURL = strings.Replace(c.DatabaseURL, "@db:5432", "@localhost:5435", 1)
-		c.NATS.URL = strings.Replace(c.NATS.URL, "nats://nats-1:4222", "nats://localhost:4222", 1)
+		if strings.Contains(c.NATS.URL, "nats-1") || strings.Contains(c.NATS.URL, "localhost") {
+			c.NATS.URL = "nats://localhost:4222"
+		}
 	}
 
 	if c.NATS.URL == "" {

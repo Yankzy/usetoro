@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"syscall"
 
@@ -277,7 +278,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("failed to init ASE config: %w", err)
 	}
 
-	aseDagDir := "internal/erp/ase/dags"
+	aseDagDir := resolveDir("internal/erp/ase/dags")
 	if err := ase.LoadFromDir(ctx, aseDagDir); err != nil {
 		return fmt.Errorf("failed to init ASE DAG configs: %w", err)
 	}
@@ -377,3 +378,17 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	logger.Info("🚀 Protocol Hive + Background Workers Active")
 	return g.Wait()
 }
+
+func resolveDir(path string) string {
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	if _, err := os.Stat(filepath.Join("go", path)); err == nil {
+		return filepath.Join("go", path)
+	}
+	if _, err := os.Stat(filepath.Join("..", path)); err == nil {
+		return filepath.Join("..", path)
+	}
+	return path
+}
+

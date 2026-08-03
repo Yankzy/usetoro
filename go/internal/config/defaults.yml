@@ -218,17 +218,17 @@ agents:
       db_queries: false
       entity_resolver: false
 
-  - did: did:toro:agent:ocr_agent
-    name: OCR_Agent
-    model: gpt-5.4-mini
-    engine: internal
-    internal_module: ocr_agent
-    activity_type: agents.perception.ocr
-    task_queue: tasks.perception.1.ocr
-    dependencies:
-      database: false
-      db_queries: true
-      entity_resolver: false
+#   - did: did:toro:agent:ocr_agent
+#     name: OCR_Agent
+#     model: gpt-5.4-mini
+#     engine: internal
+#     internal_module: ocr_agent
+#     activity_type: agents.perception.ocr
+#     task_queue: tasks.perception.1.ocr
+#     dependencies:
+#       database: false
+#       db_queries: true
+#       entity_resolver: false
 
   - did: did:toro:agent:batch_categorization
     name: Batch Categorization Agent
@@ -248,17 +248,6 @@ agents:
     internal_module: dynamic-agent
     activity_type: agents.dynamic.purpose
     task_queue: tasks.dynamic.1.purpose
-    dependencies:
-      database: false
-      db_queries: true
-      entity_resolver: false
-  - did: did:toro:agent:cee_cognitive_1
-    name: cee-cognitive-agent
-    model: gpt-5.4-mini
-    engine: internal
-    internal_module: dynamic-agent
-    activity_type: agents.cee.cognitive_enrichment
-    task_queue: tasks.cee.1.cognitive_enrichment
     dependencies:
       database: false
       db_queries: true
@@ -388,6 +377,10 @@ workers:
     activity_type: workers.general_agent_ingress
     subject: ""
     group: ""
+  pcm:
+    activity_type: workers.pcm
+    subject: worker.inbox.pcm
+    group: worker-inbox-pcm-group
 
   twilio_sms_inbound:
     activity_type: workers.twilio_sms_inbound
@@ -436,8 +429,8 @@ workers:
 
   ase_bridge:
     activity_type: workers.ase_bridge
-    subject: ""
-    group: ""
+    subject: worker.inbox.ase_bridge
+    group: ase-orchestrator-group
 
   ase_resolution:
     activity_type: workers.ase_resolution

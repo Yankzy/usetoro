@@ -1,0 +1,93 @@
+name: PCM Bookkeeping Workflow
+version: "2.0"
+trigger_topic: events.accounting.1.pcm_bookkeeping
+steps:
+  - id: pcm_worker
+    activity_type: workers.pcm
+    negotiate: false
+    timeout: "300s"
+    description: "Ingests pre-extracted OCR documents from email/PDF attachments into staging transactions once all extractions complete."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "from_handle": { "type": "string" },
+          "to_handle": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "external_id": { "type": "string" },
+          "reply_to": { "type": "string" },
+          "subject": { "type": "string" },
+          "body_text": { "type": "string" },
+          "agent_alias": { "type": "string" },
+          "document_url": { "type": "string" },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "document_url": { "type": "string" },
+                "content_type": { "type": "string" }
+              }
+            }
+          },
+          "total_attachments": { "type": "integer" },
+          "ocr_extraction": { "type": "object" },
+          "ocr_extractions": { "type": "array" }
+        }
+      }
+
+  - id: run_enrichment
+    activity_type: workers.database.enrich_rows
+    negotiate: false
+    timeout: "120s"
+    description: "Legacy enrichment step that maps strings to DB entities, outputs ENRICHED events."
+    depends_on:
+      - pcm_worker
+
+  - id: ase_bridge
+    activity_type: workers.ase_bridge
+    depends_on:
+      - run_enrichment
+    timeout: "600s"
+    description: "Fans out Autonomous Semantic Engine micro-agents for PCM bank reconciliation."
+    config:
+      dag_name: "pcm_bank_reconciliation"
+      domain_tool: "bookkeeping"
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "realm_id": { "type": "string" },
+          "from_handle": { "type": "string" },
+          "to_handle": { "type": "string" }
+        },
+        "required": ["session_id"]
+      }
+
+  - id: human_review
+    activity_type: hitl.review
+    depends_on:
+      - ase_bridge
+    timeout: "86400s"
+    config:
+      scope: "session"
+      prompt: "Review categorizations before posting to Ledger."
+      allow_edits: true
+      reject_action: "abort"
+      message_type: "bookkeeping_review"
+
+  # - id: sync_to_qbo
+  #   activity_type: workers.qbo_sync
+  #   depends_on:
+  #     - ase_bridge
+  #   workflow_schema: |
+  #     {
+  #       "type": "object",
+  #       "properties": {
+  #         "session_id": { "type": "string" }
+  #       }
+  #     }

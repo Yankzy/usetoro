@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/tap/pkg/core"
@@ -206,6 +208,136 @@ func (r *Runtime) Exec(ctx context.Context, prompt string, systemPrompt string) 
 	default:
 		return "", fmt.Errorf("paradigm %q not yet implemented", pc.Paradigm)
 	}
+}
+
+func extractTextFromPDF(fileBytes []byte) string {
+	var sb strings.Builder
+	inText := false
+	var buf []byte
+
+	for i := 0; i < len(fileBytes); i++ {
+		b := fileBytes[i]
+		if b == '(' && !inText {
+			inText = true
+			buf = buf[:0]
+		} else if b == ')' && inText {
+			inText = false
+			str := string(buf)
+			if len(strings.TrimSpace(str)) > 0 {
+				sb.WriteString(str)
+				sb.WriteString(" ")
+			}
+		} else if inText {
+			buf = append(buf, b)
+		}
+	}
+
+	result := strings.TrimSpace(sb.String())
+	if len(result) > 20 {
+		return result
+	}
+	return string(fileBytes)
+}
+
+// ExecWithFile uploads a file directly to OpenAI and executes the prompt with visual image/document data.
+func (r *Runtime) ExecWithFile(ctx context.Context, prompt string, systemPrompt string, fileName string, fileData []byte) (string, error) {
+	pc, client, err := r.resolveClient(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	lowerName := strings.ToLower(fileName)
+	isImage := strings.HasSuffix(lowerName, ".png") || strings.HasSuffix(lowerName, ".jpg") ||
+		strings.HasSuffix(lowerName, ".jpeg") || strings.HasSuffix(lowerName, ".webp") || strings.HasSuffix(lowerName, ".gif")
+
+	var parts []openai.ChatCompletionContentPartUnionParam
+
+	if isImage {
+		mimeType := "image/jpeg"
+		if strings.HasSuffix(lowerName, ".png") {
+			mimeType = "image/png"
+		} else if strings.HasSuffix(lowerName, ".webp") {
+			mimeType = "image/webp"
+		} else if strings.HasSuffix(lowerName, ".gif") {
+			mimeType = "image/gif"
+		}
+
+		base64Str := base64.StdEncoding.EncodeToString(fileData)
+		dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64Str)
+
+		parts = append(parts,
+			openai.ChatCompletionContentPartUnionParam{
+				OfText: &openai.ChatCompletionContentPartTextParam{
+					Text: prompt,
+					Type: constant.Text("text"),
+				},
+			},
+			openai.ChatCompletionContentPartUnionParam{
+				OfImageURL: &openai.ChatCompletionContentPartImageParam{
+					Type: constant.ImageURL("image_url"),
+					ImageURL: openai.ChatCompletionContentPartImageImageURLParam{
+						URL: dataURL,
+					},
+				},
+			},
+		)
+	} else {
+		// Document file (PDF, TXT, CSV, etc.)
+		docText := string(fileData)
+		if strings.HasSuffix(lowerName, ".pdf") || strings.HasPrefix(string(fileData), "%PDF") {
+			docText = extractTextFromPDF(fileData)
+		}
+
+		fullPrompt := fmt.Sprintf("%s\n\n--- DOCUMENT CONTENT (%s) ---\n%s\n--- END DOCUMENT CONTENT ---", prompt, fileName, docText)
+
+		parts = append(parts, openai.ChatCompletionContentPartUnionParam{
+			OfText: &openai.ChatCompletionContentPartTextParam{
+				Text: fullPrompt,
+				Type: constant.Text("text"),
+			},
+		})
+	}
+
+	userMsg := openai.ChatCompletionUserMessageParam{
+		Role: constant.User("user"),
+		Content: openai.ChatCompletionUserMessageParamContentUnion{
+			OfArrayOfContentParts: parts,
+		},
+	}
+
+	messages := []openai.ChatCompletionMessageParamUnion{
+		{
+			OfUser: &userMsg,
+		},
+	}
+	if systemPrompt != "" {
+		messages = append([]openai.ChatCompletionMessageParamUnion{
+			openai.SystemMessage(systemPrompt),
+		}, messages...)
+	}
+
+	modelToCall := r.effectiveModel(ctx)
+	r.Logger.Info("Executing visual LLM document extraction", "model", modelToCall, "file_name", fileName, "size_bytes", len(fileData), "is_image", isImage)
+
+	resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+		Model:               shared.ChatModel(modelToCall),
+		Messages:            messages,
+		MaxCompletionTokens: openai.Int(16384),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed visual document extraction: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("visual document extraction: no choices returned")
+	}
+
+	r.emitTelemetry(ctx, pc, modelToCall, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.TotalTokens)
+	return resp.Choices[0].Message.Content, nil
+}
+
+// ExecDocument is an alias for ExecWithFile to perform LLM OCR document analysis.
+func (r *Runtime) ExecDocument(ctx context.Context, prompt string, systemPrompt string, fileData []byte, fileName string) (string, error) {
+	return r.ExecWithFile(ctx, prompt, systemPrompt, fileName, fileData)
 }
 
 // execChatCompletion uses the Chat Completions API for providers that do not support the Responses API.

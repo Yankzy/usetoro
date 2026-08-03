@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -15,10 +16,10 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/agents"
+	csvmapping "github.com/Yankzy/usetoro/tap/agents/csv_mapping"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/redux"
-	"github.com/Yankzy/usetoro/tap/workflows"
 	"github.com/nats-io/nats.go"
 )
 
@@ -27,21 +28,30 @@ import (
 // - Package Name: ocr_agent (directory: tap/agents/ocr_agent/)
 // - internal_module key: "ocr_agent"
 // - activity_type: "agents.ocr"
-// - Purpose / Business Logic: Analyzes incoming MMS images, receipts, and other documents to extract structured context.
-// - Input Envelope Shape: TaskDefinition with Payload containing OCRTaskPayload (Document URL/URI).
-// - Output Proof Shape: Publish extracted structured data in core.Proof.Data to workflows.OrchestratorInbox.
-// - Uses Redux (ExecuteGlobalWorkflow): YES
-// - Allowed state paths: ["/status", "/extracted_data"]
+// - Purpose / Business Logic: Standalone general OCR document agent. Analyzes incoming document images, PDFs, bank statements, receipts, and invoices using OpenAI visual upload.
+// - Input Envelope Shape: TaskDefinition with Payload containing OCRTaskPayload (DocumentURL, S3Key, AttachmentName, SHA256).
+// - Output Proof Shape: Standard TAP core.Proof containing OCRExtraction sent to caller.
 
 type OCRTaskPayload struct {
-	SessionID   string `json:"session_id"`
-	DocumentURL string `json:"document_url"`
+	SessionID               string `json:"session_id,omitempty"`
+	DocumentURL             string `json:"document_url,omitempty"`
+	S3Key                   string `json:"s3_key,omitempty"`
+	SHA256                  string `json:"sha256,omitempty"`
+	AttachmentName          string `json:"attachment_name,omitempty"`
+	AttachmentIndex         int    `json:"attachment_index,omitempty"`
+	TotalAttachments        int    `json:"total_attachments,omitempty"`
+	FinalDestinationSubject string `json:"final_destination_subject,omitempty"`
+	DocTypeHint             string `json:"doc_type_hint,omitempty"`
 }
 
 type OCRExtraction struct {
-	Text       string            `json:"text"`
-	Entities   map[string]string `json:"entities"`
-	Confidence float64           `json:"confidence"`
+	DocType       string                       `json:"doc_type"`
+	SHA256        string                       `json:"sha256,omitempty"`
+	S3Key         string                       `json:"s3_key,omitempty"`
+	FileName      string                       `json:"file_name,omitempty"`
+	Data          map[string]interface{}       `json:"data"`
+	ColumnMapping *csvmapping.LLMColumnMapping `json:"column_mapping,omitempty"`
+	Confidence    float64                      `json:"confidence"`
 }
 
 type OCRAgent struct {
@@ -73,8 +83,7 @@ func NewAgent(env core.Environment) core.Runnable {
 
 		if err := a.handleCFP(msg); err != nil {
 			a.Logger.Error("Transient error processing message, replying with FAILURE", "error", err)
-			
-			// Parse original envelope again to reply gracefully
+
 			var origEnv core.Envelope
 			if envErr := json.Unmarshal(msg.Data, &origEnv); envErr == nil {
 				a.ReplyFailure(msg, origEnv, err)
@@ -98,13 +107,13 @@ func (a *OCRAgent) handleCFP(msg *nats.Msg) error {
 		return nil
 	}
 
-	if env.Performative != core.CFP && env.Performative != core.ACCEPT_PROPOSAL {
+	if env.Performative != core.CFP && env.Performative != core.ACCEPT_PROPOSAL && env.Performative != core.REQUEST {
 		// Ignore unsupported performatives
 		return nil
 	}
 
 	if env.Performative == core.CFP {
-		a.Logger.Info("📨 Received CFP", "sender", env.SenderDID, "cid", env.ConversationID)
+		a.Logger.Info("📨 Received CFP for OCR job", "sender", env.SenderDID, "cid", env.ConversationID)
 
 		proposal := map[string]interface{}{
 			"price": 1,
@@ -128,8 +137,46 @@ func (a *OCRAgent) handleCFP(msg *nats.Msg) error {
 		}
 	}
 
-	// Auto execute immediately from CFP, or on ACCEPT_PROPOSAL for forward compatibility
+	// Auto execute task on CFP, ACCEPT_PROPOSAL, or REQUEST
 	return a.executeTask(env)
+}
+
+func (a *OCRAgent) fetchDocumentBytes(ctx context.Context, payload OCRTaskPayload) ([]byte, error) {
+	docURL := payload.DocumentURL
+	if docURL == "" {
+		docURL = payload.S3Key
+	}
+
+	if strings.HasPrefix(docURL, "http://") || strings.HasPrefix(docURL, "https://") {
+		req, err := http.NewRequestWithContext(ctx, "GET", docURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch document: %w", err)
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read document body: %w", err)
+		}
+		return body, nil
+	}
+
+	if docURL != "" {
+		if fileBytes, err := os.ReadFile(docURL); err == nil {
+			return fileBytes, nil
+		}
+	}
+	if payload.AttachmentName != "" {
+		if fileBytes, err := os.ReadFile(payload.AttachmentName); err == nil {
+			return fileBytes, nil
+		}
+	}
+
+	return []byte(fmt.Sprintf("DOCUMENT_CONTENT_FOR: %s (%s)", payload.AttachmentName, docURL)), nil
 }
 
 func (a *OCRAgent) executeTask(env core.Envelope) error {
@@ -143,21 +190,25 @@ func (a *OCRAgent) executeTask(env core.Envelope) error {
 		return fmt.Errorf("failed to parse task payload: %w", err)
 	}
 
-	a.Logger.Info("🧠 Processing OCR via Redux global wrapper",
-		"workflow_id", task.ID,
-		"session_id", payload.SessionID,
+	a.Logger.Info("🧠 General OCR Agent executing task",
+		"task_id", task.ID,
+		"attachment_name", payload.AttachmentName,
 	)
 
-	var workflowID pgtype.UUID
-	if err := workflowID.Scan(task.ID); err != nil {
-		return fmt.Errorf("invalid workflow UUID: %w", err)
+	fileBytes, fetchErr := a.fetchDocumentBytes(context.Background(), payload)
+	if fetchErr != nil {
+		return fmt.Errorf("failed to fetch document bytes: %w", fetchErr)
 	}
+
+	var extraction *OCRExtraction
+
+	var workflowID pgtype.UUID
+	_ = workflowID.Scan(task.ID)
 
 	schema := task.WorkflowSchema
 	if strings.TrimSpace(schema) == "" {
 		schema = a.Cfg.WorkflowSchema
 	}
-	// If still empty, allow empty schema (previous default) — Redux wrapper tolerates it.
 
 	wfCfg := agent.WorkflowConfig{
 		SchemaString: schema,
@@ -182,12 +233,13 @@ func (a *OCRAgent) executeTask(env core.Envelope) error {
 			patches = append(patches, []byte(fmt.Sprintf(`{"op": "test", "path": "/status", "value": %s}`, string(b))))
 		}
 
-		extraction, err := a.extractDocumentUsingLLM(context.Background(), task, payload)
+		ext, err := a.extractDocumentUsingLLM(context.Background(), task, payload, fileBytes)
 		if err != nil {
 			return nil, err
 		}
+		extraction = ext
 
-		extJSON, _ := json.Marshal(extraction)
+		extJSON, _ := json.Marshal(ext)
 
 		patch1 := `{"op": "add", "path": "/status", "value": "OCR_COMPLETED"}`
 		patch2 := fmt.Sprintf(`{"op": "add", "path": "/extracted_data", "value": %s}`, string(extJSON))
@@ -197,85 +249,132 @@ func (a *OCRAgent) executeTask(env core.Envelope) error {
 	}
 
 	onComplete := func(nextState []byte) error {
-		a.Logger.Info("✅ Redux-validated state received, publishing proof")
-
-		var validatedState map[string]json.RawMessage
-		if err := json.Unmarshal(nextState, &validatedState); err != nil {
-			return fmt.Errorf("failed to parse validated state: %w", err)
-		}
-
-		proof := core.Proof{
-			TaskID:    task.ID,
-			Type:      core.ProofAPI,
-			Data:      validatedState["extracted_data"],
-			Timestamp: time.Now().Unix(),
-		}
-		proof.Signature = a.KP.Sign(proof.Data)
-
-		proofEnv, _ := core.NewEnvelope(uuid.New().String(), a.Cfg.DID, "did:toro:hive", env.ConversationID, core.INFORM, proof)
-		proofEnv.Signature = a.KP.Sign(proofEnv.Body)
-
-		finalBytes, _ := json.Marshal(proofEnv)
-		targetTopic := workflows.OrchestratorInbox
-		a.Logger.Info("🚀 Publishing validated proof to Orchestrator", "topic", targetTopic)
-
-		if pubErr := a.Bus.Publish(targetTopic, finalBytes); pubErr != nil {
-			a.Logger.Error("Failed to publish proof", "error", pubErr)
-			return pubErr
-		}
+		a.Logger.Info("✅ Redux-validated state received for OCR task")
 		return nil
 	}
 
-	return a.ExecuteLocalWorkflow(
-		context.Background(),
-		task.ID,
-		wfCfg,
-		llmCallback,
-		onComplete,
-	)
+	if a.queries != nil && workflowID.Valid {
+		if wfErr := a.ExecuteGlobalWorkflow(
+			context.Background(),
+			a.queries,
+			workflowID,
+			wfCfg,
+			llmCallback,
+			onComplete,
+		); wfErr != nil {
+			a.Logger.Warn("ExecuteGlobalWorkflow non-fatal error", "error", wfErr)
+		}
+	}
+
+	if extraction == nil {
+		ext, err := a.extractDocumentUsingLLM(context.Background(), task, payload, fileBytes)
+		if err != nil {
+			return err
+		}
+		extraction = ext
+	}
+
+	// Publish TAP Proof / Inform envelope back to sender
+	extJSON, _ := json.Marshal(extraction)
+	proof := core.Proof{
+		TaskID:    task.ID,
+		Type:      core.ProofAPI,
+		Data:      extJSON,
+		Timestamp: time.Now().Unix(),
+	}
+	proof.Signature = a.KP.Sign(proof.Data)
+
+	replyTarget := core.BuildAgentInbox(env.SenderDID)
+
+	if replyTarget != "" && a.Bus != nil {
+		informEnv, _ := core.NewEnvelope(
+			uuid.New().String(),
+			a.Cfg.DID,
+			env.SenderDID,
+			env.ConversationID,
+			core.INFORM,
+			proof,
+		)
+		informEnv.Signature = a.KP.Sign(informEnv.Body)
+		informBytes, _ := json.Marshal(informEnv)
+
+		a.Logger.Info("🚀 Sending structured OCR extraction proof", "target", replyTarget)
+		if pubErr := a.Bus.Publish(replyTarget, informBytes); pubErr != nil {
+			a.Logger.Error("Failed to publish OCR proof", "target", replyTarget, "error", pubErr)
+		}
+	}
+
+	// Forward caller context + OCR extraction to final destination subject if requested
+	if payload.FinalDestinationSubject != "" && a.Bus != nil {
+		var rawMap map[string]interface{}
+		_ = json.Unmarshal(task.Payload, &rawMap)
+		if rawMap == nil {
+			rawMap = make(map[string]interface{})
+		}
+		rawMap["ocr_extraction"] = extraction
+
+		forwardBytes, _ := json.Marshal(rawMap)
+		a.Logger.Info("🚀 Forwarding OCR extraction to destination subject", "subject", payload.FinalDestinationSubject)
+		if pubErr := a.Bus.Publish(payload.FinalDestinationSubject, forwardBytes); pubErr != nil {
+			a.Logger.Error("Failed to publish OCR output to destination subject", "subject", payload.FinalDestinationSubject, "error", pubErr)
+			return pubErr
+		}
+	}
+
+	return nil
 }
 
-func (a *OCRAgent) extractDocumentUsingLLM(ctx context.Context, task core.TaskDefinition, payload OCRTaskPayload) (*OCRExtraction, error) {
-	pages := []agent.PageContext{
-		{
-			Type:    "document",
-			Summary: "The primary document requiring OCR extraction.",
-			UUID:    payload.DocumentURL,
-		},
-	}
+func (a *OCRAgent) extractDocumentUsingLLM(ctx context.Context, task core.TaskDefinition, payload OCRTaskPayload, fileBytes []byte) (*OCRExtraction, error) {
+	systemPrompt := `You are an expert OCR document parser. Analyze the document and extract structured JSON matching one of these exact types:
 
-	fetcher := func(fetchCtx context.Context, uuidStr string) (string, error) {
-		a.Logger.Info("Fetching document content via Page Tool", "url", uuidStr)
-		if strings.HasPrefix(uuidStr, "http://") || strings.HasPrefix(uuidStr, "https://") {
-			req, err := http.NewRequestWithContext(fetchCtx, "GET", uuidStr, nil)
-			if err != nil {
-				return "", fmt.Errorf("failed to create request: %w", err)
-			}
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				return "", fmt.Errorf("failed to fetch document: %w", err)
-			}
-			defer resp.Body.Close()
-			
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return "", fmt.Errorf("failed to read document body: %w", err)
-			}
-			// Note: If the payload is a binary image, we would pass 'body' to an external OCR API 
-			// like AWS Textract or OpenAI Vision here. For text payloads, we return it directly.
-			return string(body), nil
-		}
-		
-		// Fallback for internal identifiers
-		return fmt.Sprintf("MOCK_TEXT_FOR_LOCAL_UUID: %s", uuidStr), nil
-	}
+1. Bank Statement (doc_type: "bank_statement"):
+   Extract 'bank_name', 'account_number', 'statement_date', 'period', 'starting_balance', 'ending_balance', and 'transactions' list containing items with 'date', 'description', 'amount', 'type' ('debit'/'credit').
+   CRITICAL FOR BANK STATEMENTS:
+   - Do NOT drop debit/credit, withdrawal/deposit, or polarity sign indicators ('minus', 'brackets', 'none').
+   - Also return a 'column_mapping' object conforming to:
+     {
+       "date_col_idx": 0,
+       "description_col_idx": 1,
+       "amount_col_idx": 2,
+       "is_split_amount": true/false,
+       "debit_col_idx": null,
+       "credit_col_idx": null,
+       "vendor_col_idx": null,
+       "customer_col_idx": null,
+       "confidence_score": 0.95,
+       "is_ambiguous": true/false,
+       "ambiguity_reason": null,
+       "polarity_sign": "minus" | "brackets" | "none",
+       "source_account": "bank name"
+     }
 
-	prompt := "Extract the structured contents from the available document.\n\nUse the PAGE_IN tool to read the raw contents of the document before answering.\n\nReturn ONLY a JSON object with 'text' (full raw text), 'entities' (key-value pairs of found fields), and 'confidence' (float 0-1)."
+2. Invoice (doc_type: "invoice"):
+   Extract 'vendor_name', 'invoice_number', 'date', 'total_mad', 'ht_mad', 'tva_mad', and 'line_items'.
+
+3. Receipt (doc_type: "receipt"):
+   Extract 'vendor_name', 'date', 'total_mad', and 'payment_method'.
+
+4. Other (doc_type: "other"):
+   Extract general key-value metadata.
+
+Return ONLY a valid JSON object matching this structure:
+{
+  "doc_type": "bank_statement" | "invoice" | "receipt" | "other",
+  "confidence": 0.95,
+  "data": { ... extracted fields ... },
+  "column_mapping": { ... optional column mapping for bank statements ... }
+}`
+
+	userPrompt := fmt.Sprintf("Document Name: %s\nPlease perform visual OCR inspection on the attached document and extract structured JSON matching the system instructions.",
+		payload.AttachmentName,
+	)
 
 	ctx = agent.WithModel(ctx, task.Model)
-	respText, err := a.rt.ExecWithPaging(ctx, prompt, task.SystemPrompt, pages, fetcher)
+	a.Logger.Info("Processing OCR document via ExecDocument", "name", payload.AttachmentName, "size_bytes", len(fileBytes))
+
+	respText, err := a.rt.ExecDocument(ctx, userPrompt, systemPrompt, fileBytes, payload.AttachmentName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("LLM document OCR extraction failed: %w", err)
 	}
 
 	firstIdx := strings.Index(respText, "{")
@@ -284,10 +383,26 @@ func (a *OCRAgent) extractDocumentUsingLLM(ctx context.Context, task core.TaskDe
 		respText = respText[firstIdx : lastIdx+1]
 	}
 
-	var extraction OCRExtraction
-	if err := json.Unmarshal([]byte(respText), &extraction); err != nil {
-		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
+	var parsed struct {
+		DocType       string                       `json:"doc_type"`
+		Confidence    float64                      `json:"confidence"`
+		Data          map[string]interface{}       `json:"data"`
+		ColumnMapping *csvmapping.LLMColumnMapping `json:"column_mapping"`
 	}
 
-	return &extraction, nil
+	if err := json.Unmarshal([]byte(respText), &parsed); err != nil {
+		a.Logger.Warn("failed to parse structured JSON from LLM OCR, using fallback", "raw", respText, "error", err)
+		parsed.DocType = "other"
+		parsed.Data = map[string]interface{}{"raw_response": respText}
+	}
+
+	return &OCRExtraction{
+		DocType:       parsed.DocType,
+		SHA256:        payload.SHA256,
+		S3Key:         payload.S3Key,
+		FileName:      payload.AttachmentName,
+		Data:          parsed.Data,
+		ColumnMapping: parsed.ColumnMapping,
+		Confidence:    parsed.Confidence,
+	}, nil
 }

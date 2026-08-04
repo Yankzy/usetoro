@@ -64,10 +64,11 @@ type AutonomousSemanticEngineNode struct {
 
 	// State management
 	CurrentState      NodeState          `json:"current_state"`
-	CurrentEntropy    float64            `json:"current_entropy"`    // Sum of H(k)
-	UnifiedConfidence float64            `json:"unified_confidence"` // C = 1 - (Sum / Total)
-	HoldReason        string             `json:"hold_reason,omitempty"`
-	PropertyEntropies map[string]float64 `json:"property_entropies"`
+	CurrentEntropy       float64            `json:"current_entropy"`    // Sum of H(k)
+	UnifiedConfidence    float64            `json:"unified_confidence"` // C = 1 - (Sum / Total)
+	HoldReason           string             `json:"hold_reason,omitempty"`
+	Layer3SelectedAction string             `json:"layer3_selected_action,omitempty"`
+	PropertyEntropies    map[string]float64 `json:"property_entropies"`
 
 	// Candidates maps property keys directly to their isolated array of choices.
 	Candidates map[string][]ProbabilityCandidate `json:"candidates"`

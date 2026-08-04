@@ -39,10 +39,14 @@ type DAGNode struct {
 	thinkFn ThinkFunc
 
 	// ExecutionParams holds node-level execution configuration (e.g. close_status for terminals).
+	// ExecutionParams allows DAG nodes to define arbitrary flags that influence Think phase logic
 	ExecutionParams map[string]string `json:"execution_params"`
 
-	// ContextConfig holds node-level context provider definitions.
+	// ContextConfig provides instructions for how to hydrate vector memory
 	ContextConfig map[string]any `json:"context"`
+
+	// RecoveryPolicy defines the sub-tree used by Layer 3 to optimize HOLD recovery
+	RecoveryPolicy *DecisionNode `json:"recovery_policy"`
 
 	// Children are downstream DAG nodes keyed by classification result value.
 	// e.g., a MacroClassifierNode may have children keyed by "ASSET", "EXPENSE", etc.
@@ -122,6 +126,7 @@ func NewDAGNode(id string, kind DAGNodeKind, name string, batchSize int, batchFl
 		Email:               cfg.Email,
 		ExecutionParams:     cfg.ExecutionParams,
 		ContextConfig:       cfg.Context,
+		RecoveryPolicy:      cfg.RecoveryPolicy,
 		queue:               make([]*AutonomousSemanticEngineNode, 0),
 		batchSize:           batchSize,
 		batchFlush:          batchFlush,
@@ -400,7 +405,7 @@ func (dn *DAGNode) flush() {
 			node.Mu.Lock()
 			node.HoldReason = "think phase failed: " + err.Error()
 			node.Mu.Unlock()
-			node.transition(StateHoldMissingCtx)
+			dn.applyHoldPolicyOrTransition(node, StateHoldMissingCtx)
 		}
 		return
 	}
@@ -412,7 +417,7 @@ func (dn *DAGNode) flush() {
 			node.Mu.Lock()
 			node.HoldReason = "no classification candidates returned from think phase"
 			node.Mu.Unlock()
-			node.transition(StateHoldMissingCtx)
+			dn.applyHoldPolicyOrTransition(node, StateHoldMissingCtx)
 			continue
 		}
 
@@ -436,7 +441,7 @@ func (dn *DAGNode) flush() {
 func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey string) {
 	top := node.TopCandidate(propertyKey)
 	if top == nil {
-		node.transition(StateHoldMissingCtx)
+		dn.applyHoldPolicyOrTransition(node, StateHoldMissingCtx)
 		return
 	}
 
@@ -482,7 +487,7 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 			// so the UI clearly shows the drop in confidence.
 			node.UnifiedConfidence = top.Confidence
 			node.Mu.Unlock()
-			node.transition(StateHoldAmbiguous)
+			dn.applyHoldPolicyOrTransition(node, StateHoldAmbiguous)
 			return
 		}
 	}
@@ -514,13 +519,13 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 					node.HoldReason = "Unified Confidence Score below 0.98 structural threshold."
 				}
 				node.Mu.Unlock()
-				node.transition(StateHoldMissingCtx)
+				dn.applyHoldPolicyOrTransition(node, StateHoldMissingCtx)
 			}
 		} else {
 			node.Mu.Lock()
 			node.HoldReason = "no downstream DAG node for routing key: " + routeKey
 			node.Mu.Unlock()
-			node.transition(StateHoldMissingCtx)
+			dn.applyHoldPolicyOrTransition(node, StateHoldMissingCtx)
 		}
 		return
 	}
@@ -877,4 +882,44 @@ func printDebugTerminalState(dn *DAGNode, batch []*AutonomousSemanticEngineNode)
 			"batch_size", len(batch),
 		)
 	}
+}
+
+// applyHoldPolicyOrTransition evaluates the RecoveryPolicy decision sub-tree if present.
+// If a native action resolves the HOLD, it is executed and the node is re-queued.
+// If it fails or is non-native, the ActionID is injected into the HoldReason and the node transitions to the fallback state.
+func (dn *DAGNode) applyHoldPolicyOrTransition(node *AutonomousSemanticEngineNode, fallbackState NodeState) {
+	if dn.RecoveryPolicy != nil && DefaultRecoveryPolicyEngine != nil {
+		selectedAction, err := DefaultRecoveryPolicyEngine.EvaluateTree(dn.RecoveryPolicy, node)
+		if err == nil && selectedAction != nil {
+			if dn.logger != nil {
+				dn.logger.Info("ase_dag: Layer 3 Recovery Policy selected action", "node_id", node.NodeID, "action", selectedAction.Action.ActionID, "ev", selectedAction.ExpectedValue)
+			}
+
+			if DefaultRecoveryExecutor != nil {
+				recovered, execErr := DefaultRecoveryExecutor.ExecuteAction(dn.ctx, selectedAction.Action.ActionID, node)
+				if execErr != nil {
+					node.Mu.Lock()
+					node.HoldReason += fmt.Sprintf(" | Layer 3 execution failed: %v", execErr)
+					node.Mu.Unlock()
+				} else if recovered {
+					if dn.logger != nil {
+						dn.logger.Info("ase_dag: node rescued by Layer 3, re-queueing", "node_id", node.NodeID)
+					}
+					// Rethink with the new context!
+					dn.Accept(node)
+					return
+				}
+			}
+
+			// Not natively recovered. Annotate the HoldReason.
+			node.Mu.Lock()
+			node.HoldReason = fmt.Sprintf("[Layer 3 Action: %s] ", selectedAction.Action.ActionID) + node.HoldReason
+			node.Layer3SelectedAction = selectedAction.Action.ActionID
+			node.Mu.Unlock()
+		} else if err != nil && dn.logger != nil {
+			dn.logger.Warn("ase_dag: Layer 3 Recovery Policy evaluation failed", "error", err)
+		}
+	}
+
+	node.transition(fallbackState)
 }

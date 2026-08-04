@@ -92,3 +92,8 @@ func CalculateUnifiedConfidence(propertyEntropies map[string]float64, candidates
 
 	return sumEntropy, unifiedConfidence
 }
+
+// CalculateExpectedValue computes EV = (P(S|a) * ExpectedIG(a)) - C(a)
+func CalculateExpectedValue(probSuccess, expectedIG, cost float64) float64 {
+	return (probSuccess * expectedIG) - cost
+}

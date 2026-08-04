@@ -230,11 +230,11 @@ func (t *BookkeepingTool) GenerateAlertPayload(ctx context.Context, a *ase.Auton
 
 	alertPrompt := fmt.Sprintf(
 		"SYSTEM ALERT: A transaction (ID: %s) for Client '%s' (Realm ID: %s) under Tenant ID '%s' is stuck in %s.\n\nReason: %s\nDetails: %s\nAmount: %s\nCash Direction: %s\n\n"+
-			"Please contact the business owner to ask for clarification to properly categorize this transaction. You can use the LookupClient tool if needed to find their contact details, and use the SendEmail tool as the default communication channel.\n\n"+
-			"CRITICAL INSTRUCTION: You are receiving this message through an internal system channel. Do NOT reply directly to this message with the email text you want to send. A direct conversational reply will only be logged internally and will NEVER be seen by the client. To contact the client, you MUST explicitly invoke the SendEmail tool. Use the SendEmail tool to send the actual email, and then provide a brief internal summary (e.g., 'I have emailed the client.') as your conversational response.\n\n"+
-			"IMPORTANT: Before sending an email, you MUST use the FetchCommunicationHistory tool to check if we have already sent an email to this client about this exact transaction (same amount, customer, and description) within the last 24 hours. If an email has already been sent about this specific transaction recently, DO NOT send a duplicate email.\n\n"+
+			"Please contact the business owner to ask for clarification to properly categorize this transaction. You can use the LookupClient tool if needed to find their contact details.\n\n"+
+			"CRITICAL INSTRUCTION: You MUST first use the CheckExistingDocuments tool to check if the client already sent the receipt or document. If it is not found, you MUST use the QueueClientRequest tool to queue an outreach email. Do NOT use the SendEmail tool directly for this, as QueueClientRequest aggregates requests into a single daily digest for the client. After queuing, provide a brief internal summary (e.g., 'I have queued a request to the client.') as your conversational response.\n\n"+
+			"IMPORTANT: Before queuing a request, you MUST use the FetchCommunicationHistory tool to check if we have already contacted this client about this exact transaction (same amount, customer, and description) within the last 24 hours. If we have already reached out recently, DO NOT queue a duplicate request.\n\n"+
 			"When the user replies back with the requested information or clarification, you MUST use the UpdateTransactionClassification tool. This tool will pass the user's answer back to the DAG and unblock it so it can proceed. Use this tool only when you have gathered enough context from the user to confidently resolve the hold reason. \n\n"+
-			"CRITICAL RULE: NEVER use the UpdateTransactionClassification tool just to report that you have contacted the user. Only use it when the user has ACTUALLY replied with the answer. If you are just sending an email to ask for clarification, DO NOT use UpdateTransactionClassification. Just use SendEmail and finish your turn.\n\n"+
+			"CRITICAL RULE: NEVER use the UpdateTransactionClassification tool just to report that you have contacted the user. Only use it when the user has ACTUALLY replied with the answer. If you are just queuing a request for clarification, DO NOT use UpdateTransactionClassification. Just use QueueClientRequest and finish your turn.\n\n"+
 			"SUPER CRITICAL: You MUST NEVER use the UpdateTransactionClassification tool in the exact same turn that you receive this SYSTEM ALERT. The SYSTEM ALERT means you must ask for information. You cannot possibly have the answer yet. DO NOT hallucinate an answer. DO NOT run the UpdateTransactionClassification tool right now.\n\n"+
 			"CRITICAL LOOP PREVENTION: If you already used the UpdateTransactionClassification tool with the user's latest reply and the transaction generated ANOTHER system alert because it is STILL stuck, you MUST ask the user for more clarification. Do NOT repeatedly submit the same user reply using the tool over and over again.\n\n"+
 			"CRITICAL: When using the UpdateTransactionClassification tool, you MUST provide '%s' as the start_node_id. Do NOT invent or guess the start_node_id.",
@@ -302,6 +302,73 @@ func (t *BookkeepingTool) GetClassifier(deps ToolDependencies) ase.Classifier {
 	c.SetDB(deps.DB)
 	c.SetVectorStore(deps.VectorStore)
 	return c
+}
+
+func (t *BookkeepingTool) GenerateExportPayload(ctx context.Context, sessionID string, agents []*ase.AutonomousSemanticEngineNode, deps ToolDependencies) (map[string]interface{}, string, error) {
+	var sessionUUID pgtype.UUID
+	if err := sessionUUID.Scan(sessionID); err != nil {
+		return nil, "", fmt.Errorf("invalid session id format: %w", err)
+	}
+
+	requests, err := deps.DB.GetQueuedRequestsBySession(ctx, sessionUUID)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to fetch queued requests: %w", err)
+	}
+
+	if len(requests) == 0 {
+		return nil, "", nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("System Alert: A bank reconciliation session has just completed. ")
+	sb.WriteString(fmt.Sprintf("We have %d transactions that require client clarification or missing documents.\n\n", len(requests)))
+	sb.WriteString("Please send a SINGLE digest email to the client detailing the following requests. ")
+	sb.WriteString("Be polite and concise. Do NOT send separate emails for each transaction.\n\n")
+
+	for i, req := range requests {
+		sb.WriteString(fmt.Sprintf("Request %d:\n", i+1))
+		sb.WriteString(fmt.Sprintf("- Transaction ID: %s\n", uuid.UUID(req.TransactionID.Bytes).String()))
+		desc := "Unknown"
+		if req.RawDescription.Valid {
+			desc = req.RawDescription.String
+		}
+		sb.WriteString(fmt.Sprintf("- Description: %s\n", desc))
+		sb.WriteString(fmt.Sprintf("- Amount: %s\n", req.RawAmount))
+		dateStr := "Unknown"
+		if req.RawDate.Valid {
+			dateStr = req.RawDate.String
+		}
+		sb.WriteString(fmt.Sprintf("- Date: %s\n", dateStr))
+		
+		contextStr := ""
+		if req.Context.Valid {
+			contextStr = req.Context.String
+		}
+		sb.WriteString(fmt.Sprintf("- What we need (%s): %s\n\n", req.RequestType, contextStr))
+	}
+
+	// Try to get Entity ID and client name
+	entityID := ""
+	if len(agents) > 0 {
+		entityID = agents[0].TenantID
+	}
+	
+	// Mark requests as sent
+	if err := deps.DB.MarkOutboxRequestsSent(ctx, sessionUUID); err != nil {
+		deps.Logger.Error("bookkeeping_tool: failed to mark requests as sent", "error", err)
+	}
+
+	payload := map[string]interface{}{
+		"prompt":      sb.String(),
+		"body_text":   sb.String(),
+		"entity_id":   entityID,
+		"source":      "system",
+		"from_handle": fmt.Sprintf("ase_session:%s", sessionID),
+		"to_handle":   "general-agent",
+	}
+
+	// Route this to the general agent ingress which handles dispatching the LLM
+	return payload, "workers.general_agent_ingress", nil
 }
 
 func (t *BookkeepingTool) GetStatePersister(deps ToolDependencies) ase.StatePersister {

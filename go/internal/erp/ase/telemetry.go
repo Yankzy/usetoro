@@ -35,11 +35,12 @@ type TelemetryPayload struct {
 	HoldReason  string             `json:"hold_reason,omitempty"`
 	Entropy     float64            `json:"entropy"`
 	Confidence    float64            `json:"confidence,omitempty"`
-	Description   string             `json:"description,omitempty"`
-	Amount        string             `json:"amount,omitempty"`
-	CashDirection string             `json:"cash_direction,omitempty"`
-	Probes        int                `json:"lifetime_probes"`
-	Timestamp     time.Time          `json:"timestamp"`
+	Description          string             `json:"description,omitempty"`
+	Amount               string             `json:"amount,omitempty"`
+	CashDirection        string             `json:"cash_direction,omitempty"`
+	Probes               int                `json:"lifetime_probes"`
+	Layer3SelectedAction string             `json:"layer3_selected_action,omitempty"`
+	Timestamp            time.Time          `json:"timestamp"`
 }
 
 // TelemetryPublisher emits ASE lifecycle events to NATS for observability
@@ -103,14 +104,15 @@ func (tp *TelemetryPublisher) PublishHold(node *AutonomousSemanticEngineNode) {
 		EventType:   EventHoldTriggered,
 		NodeID:      node.NodeID,
 		TenantID:    node.TenantID,
-		ToState:     string(node.GetState()),
-		HoldReason:  node.GetHoldReason(),
-		Entropy:       node.GetEntropy(),
-		Probes:        node.GetProbes(),
-		Description:   desc,
-		Amount:        node.Payload["raw_amount"].(string),
-		CashDirection: node.Payload["cash_direction"].(string),
-		Timestamp:     time.Now().UTC(),
+		ToState:              string(node.GetState()),
+		HoldReason:           node.GetHoldReason(),
+		Entropy:              node.GetEntropy(),
+		Probes:               node.GetProbes(),
+		Description:          desc,
+		Amount:               node.Payload["raw_amount"].(string),
+		CashDirection:        node.Payload["cash_direction"].(string),
+		Layer3SelectedAction: node.Layer3SelectedAction,
+		Timestamp:            time.Now().UTC(),
 	}
 
 	data, _ := json.Marshal(payload)

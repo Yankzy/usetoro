@@ -78,6 +78,7 @@ type DAGNodeConfig struct {
 	DefaultChild        string            `json:"default_child"`
 	ExecutionParams     map[string]string `json:"execution_parameters"`
 	Context             map[string]any    `json:"context"`
+	RecoveryPolicy      *DecisionNode     `json:"recovery_policy,omitempty"`
 }
 
 var (
@@ -102,6 +103,8 @@ func InitConfig(db *database.Queries, rc *redis.Client, l *slog.Logger) error {
 	redisClient = rc
 	logger = l
 	configCache = expirable.NewLRU[string, *ASEConfig](1000, nil, time.Minute*60)
+
+	DefaultRecoveryExecutor = NewNativeRecoveryExecutor(db)
 
 	if rc != nil {
 		go listenForConfigUpdates()

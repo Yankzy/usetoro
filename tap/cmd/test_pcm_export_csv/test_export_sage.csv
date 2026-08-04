@@ -1,0 +1,27 @@
+Journal;Date;CompteG;CompteA;Piece;Libelle;Debit;Credit
+BQ;02/07/2026;514100;;BNK;Loyer Juil. - Soc. Immobiliere Anfa;12000.00;0.00
+BQ;02/07/2026;;;BNK;Loyer Juil. - Soc. Immobiliere Anfa;0.00;12000.00
+BQ;05/07/2026;514100;;BNK;Virement Client ABC Construction SARL;25000.00;0.00
+BQ;05/07/2026;;;BNK;Virement Client ABC Construction SARL;0.00;25000.00
+BQ;08/07/2026;514100;;BNK;Paiement CB Station Afriquia Oasis;850.00;0.00
+BQ;08/07/2026;;;BNK;Paiement CB Station Afriquia Oasis;0.00;850.00
+BQ;10/07/2026;514100;;BNK;Achats Fournitures Marjane Business HQ;2400.00;0.00
+BQ;10/07/2026;;;BNK;Achats Fournitures Marjane Business HQ;0.00;2400.00
+BQ;12/07/2026;514100;;BNK;Virement Client XYZ Industrie SA;42000.00;0.00
+BQ;12/07/2026;;;BNK;Virement Client XYZ Industrie SA;0.00;42000.00
+BQ;15/07/2026;514100;;BNK;Prelevement Facture Orange Maroc SA;1200.00;0.00
+BQ;15/07/2026;;;BNK;Prelevement Facture Orange Maroc SA;0.00;1200.00
+BQ;18/07/2026;514100;;BNK;Prelevement Mensuel CNSS;6800.00;0.00
+BQ;18/07/2026;;;BNK;Prelevement Mensuel CNSS;0.00;6800.00
+BQ;20/07/2026;514100;;BNK;Prelevement Facture Lydec Casablanca;1450.00;0.00
+BQ;20/07/2026;;;BNK;Prelevement Facture Lydec Casablanca;0.00;1450.00
+BQ;22/07/2026;514100;;BNK;Honoraires Cabinet Comptable El Fassi;3500.00;0.00
+BQ;22/07/2026;;;BNK;Honoraires Cabinet Comptable El Fassi;0.00;3500.00
+BQ;25/07/2026;514100;;BNK;Virement Recu Technopark IT Solutions;18500.00;0.00
+BQ;25/07/2026;;;BNK;Virement Recu Technopark IT Solutions;0.00;18500.00
+BQ;27/07/2026;514100;;BNK;Prelevement Maroc Telecom (IAM);950.00;0.00
+BQ;27/07/2026;;;BNK;Prelevement Maroc Telecom (IAM);0.00;950.00
+BQ;28/07/2026;514100;;BNK;Paiement Imprimerie Moderne SARL;1800.00;0.00
+BQ;28/07/2026;;;BNK;Paiement Imprimerie Moderne SARL;0.00;1800.00
+BQ;30/07/2026;514100;;BNK;Frais Tenue de Compte Attijariwafa Bank;165.00;0.00
+BQ;30/07/2026;;;BNK;Frais Tenue de Compte Attijariwafa Bank;0.00;165.00

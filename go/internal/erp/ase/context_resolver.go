@@ -124,20 +124,17 @@ func extractDeduplicationKey(item any) string {
 	}
 
 	// Fallback to gjson or string representation
-	if bytes, err := fmt.Sprintf("%v", item), error(nil); err == nil {
-		if gjson.Valid(bytes) {
-			if code := gjson.Get(bytes, "code"); code.Exists() && code.String() != "" {
-				return "code:" + code.String()
-			}
-			if name := gjson.Get(bytes, "display_name"); name.Exists() && name.String() != "" {
-				return "name:" + name.String()
-			}
-			if name := gjson.Get(bytes, "name"); name.Exists() && name.String() != "" {
-				return "name:" + name.String()
-			}
+	bytes := fmt.Sprintf("%v", item)
+	if gjson.Valid(bytes) {
+		if code := gjson.Get(bytes, "code"); code.Exists() && code.String() != "" {
+			return "code:" + code.String()
 		}
-		return bytes
+		if name := gjson.Get(bytes, "display_name"); name.Exists() && name.String() != "" {
+			return "name:" + name.String()
+		}
+		if name := gjson.Get(bytes, "name"); name.Exists() && name.String() != "" {
+			return "name:" + name.String()
+		}
 	}
-
-	return ""
+	return bytes
 }

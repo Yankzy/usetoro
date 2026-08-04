@@ -458,7 +458,10 @@
                 const newEdgesMap = new Map();
                 const levelYTracker = {};
 
+                const visited = new Set();
                 const traverse = (nodeId, level = 0) => {
+                    if (visited.has(nodeId)) return;
+                    visited.add(nodeId);
                     const node = dagNodes[nodeId];
                     if (!node) return;
 

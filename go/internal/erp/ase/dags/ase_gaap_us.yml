@@ -1007,7 +1007,7 @@ dag:
       batch_flush_seconds: *flush
       kind: terminal
       execution_parameters:
-        action_provider: "qbo_inter_bank_transfer_collapse"
+        action_provider: "inter_bank_transfer_collapse"
         close_status: "CLASSIFIED"
 
     fixed_assets:
@@ -1146,7 +1146,7 @@ dag:
       batch_flush_seconds: *flush
       kind: terminal
       execution_parameters:
-        action_provider: "qbo_credit_card_payment_transfer_collapse"
+        action_provider: "credit_card_payment_transfer_collapse"
         close_status: "CLASSIFIED"
 
     long_term_liability:
@@ -1478,7 +1478,7 @@ dag:
 
           Thank you.
       execution_parameters:
-        action_provider: "qbo_w9_lookup"
+        action_provider: "w9_lookup"
       resume_child: universal_outflow_compliance_gate
 
     account_selection:
@@ -1491,3 +1491,9 @@ dag:
       batch_flush_seconds: *flush
       execution_parameters:
         close_status: "CLASSIFIED"
+
+    debug_terminal:
+      name: debug_terminal
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: terminal

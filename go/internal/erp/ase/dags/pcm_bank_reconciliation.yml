@@ -57,34 +57,34 @@ prompts:
     - CRITICAL: "Confidence" does NOT mean "how sure are you of your answer". It means "should this transaction automatically progress to the next node of the DAG?". 
     - The system has a strict guardrail: if your top candidate's confidence is < 0.98, the transaction will be placed on HOLD and will NOT progress.
     - If the transaction is fully compliant and should progress, you MUST set the highest score to >= 0.98.
-    - If you determine the transaction is NON-COMPLIANT (e.g. missing receipt, IRS rules, W9, missing context) and MUST be placed on HOLD, you MUST intentionally set the highest score to < 0.98 (e.g. 0.96 or 0.97).
+    - If you determine the transaction is NON-COMPLIANT (e.g. missing facture conforme, CGI rules, missing ICE, missing context) and MUST be placed on HOLD, you MUST intentionally set the highest score to < 0.98 (e.g. 0.96 or 0.82).
     - Because confidence is probability distribution, candidates map MUST contain at least 2 candidates.
     - EXTREMELY IMPORTANT: When you intentionally set the confidence to < 0.98 to trigger a hold, you MUST write your `reasoning` as a highly detailed DIRECT INSTRUCTION to the email agent.
   
   _accounting_rules: &accounting_rules |
-    - Your `reasoning` MUST explicitly cite the EXACT accounting or IRS rule that triggered the hold (e.g., "IRS $250 charitable contribution rule", "IRS $75 receipt threshold", "IRS 1099-NEC W-9 requirement"). 
+    - Your `reasoning` MUST explicitly cite the EXACT Moroccan accounting or CGI (Code Général des Impôts) rule that triggered the hold (e.g., "CGI Article 10 for charitable contributions", "CGI 5,000 MAD cash payment limit", "CGI requirement for Identifiant Commun de l'Entreprise (ICE)"). 
     - Your `reasoning` MUST explain EXACTLY why the transaction failed this rule based on the available data, and explicitly state what documents or information the email agent must ask the business owner to provide.
-      - Example Reasoning for < 0.98: "This transaction is a $300 donation to the Red Cross. According to the IRS $250 charitable contribution rule, we require a contemporaneous written acknowledgment from the charity. Please ask the owner to provide the official donation receipt or acknowledgment letter."
-      - Example Reasoning for < 0.98: "This is a meal expense. According to IRS Meals & Entertainment documentation rules, we must record the business purpose and attendee names. Please ask the owner to confirm who attended the dinner and the specific business purpose."
+      - Example Reasoning for < 0.98: "This transaction is a 3,000 MAD donation. According to CGI Article 10 rules for charitable contributions, we require verification of public utility status and a written acknowledgment. Please ask the owner to provide the official donation receipt."
+      - Example Reasoning for < 0.98: "This is a meal expense. According to standard CGI deductibility rules, we must record the business purpose and attendee names. Please ask the owner to confirm who attended the dinner and the specific business purpose."
     - RESOLUTION OVERRIDE: If the `context` array contains a message indicating that the user has provided the required receipt, answered the question, or provided the missing documentation, you MUST consider the issue RESOLVED. In this case, select the appropriate compliant category (e.g., "COMPLIANT_EXPENSE") and set confidence >= 0.98. Do NOT place it on hold again.
-  macro_classifier_inflow_specialist:
+
+  macro_classifier_inflow_pcge_specialist:
     - |
-      You are an expert CPA acting as a macro-classification router inside a QuickBooks Online automated ledger engine. 
-      Your job is to assign EACH transaction to one of the following accounting classes: ASSET, LIABILITY, EQUITY, REVENUE, or EXPENSE.
+      You are an expert accountant acting as a macro-classification router inside a Moroccan (PCM) automated ledger engine. 
+      Your job is to assign EACH INFLOW transaction to one of the active PCGE Classes:
+      CLASS_1_FINANCEMENT_PERMANENT, CLASS_2_ACTIF_IMMOBILISE, CLASS_3_ACTIF_CIRCULANT, CLASS_4_PASSIF_CIRCULANT, CLASS_5_TRESORERIE, CLASS_6_CHARGES, CLASS_7_PRODUITS.
 
       ### CONTEXT
       * Cash Direction for ALL items: INFLOW
       * Contra-Accounting Awareness: Bank direction alone does not determine macro class. Apply these structural rules:
-        - INFLOW transactions that are refunds from merchants (vendors) are NOT revenue — they are contra-EXPENSE (money back from a prior purchase).
-          - Common examples of contra-expense are: Purchase discounts, Purchase Returns, rebates, cash-back rewards, Insurance proceeds for damaged equipment or inventory, employee payroll deductions for shared health insurance costs, payroll tax refunds, refunds for returned inventory, vendor credits, and other similar transactions.
-          - If a contra-expense is detected or probable, you MUST set the highest score below 0.90 for human-review.
-        - Otherwise, INFLOWs are generally REVENUE, LIABILITY (taking a loan) or EQUITY (owner investment).
+        - INFLOW transactions that are refunds from vendors are NOT revenue (Class 7) — they are contra-EXPENSE (Class 6).
+        - If a contra-expense is detected or probable, you MUST set the highest score below 0.90 for human-review.
+        - Otherwise, INFLOWs are generally CLASS_7_PRODUITS (Revenue), CLASS_1_FINANCEMENT_PERMANENT (Loan/Equity), or CLASS_5_TRESORERIE (Bank Transfer).
 
       ### COMPANY RULES (CRITICAL)
-      - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
+      - If a "company_rules" array is provided, you MUST strictly adhere to these rules over your default accounting assumptions.
 
     - *guardrails
-
 
     - |
 
@@ -97,29 +97,29 @@ prompts:
               "row_id_1": {
               "property": "macro_class",
               "candidates": {
-              "1": { "value": "REVENUE", "confidence": 0.98, "reasoning": "Standard operating cash receipt." },
-              "2": { "value": "LIABILITY", "confidence": 0.02, "reasoning": "Could potentially be a short-term loan advance." }
+              "1": { "value": "CLASS_7_PRODUITS", "confidence": 0.98, "reasoning": "Standard operating cash receipt." },
+              "2": { "value": "CLASS_1_FINANCEMENT_PERMANENT", "confidence": 0.02, "reasoning": "Could potentially be a short-term loan advance." }
                 }
               }
             }
           }
         ]
 
-  macro_classifier_outflow_specialist:
+  macro_classifier_outflow_pcge_specialist:
     - |
-      You are an expert CPA acting as a macro-classification router inside a QuickBooks Online automated ledger engine. 
-      Your job is to assign EACH transaction to one of the following accounting classes: ASSET, LIABILITY, EQUITY, REVENUE, or EXPENSE.
+      You are an expert accountant acting as a macro-classification router inside a Moroccan (PCM) automated ledger engine. 
+      Your job is to assign EACH OUTFLOW transaction to one of the active PCGE Classes:
+      CLASS_1_FINANCEMENT_PERMANENT, CLASS_2_ACTIF_IMMOBILISE, CLASS_3_ACTIF_CIRCULANT, CLASS_4_PASSIF_CIRCULANT, CLASS_5_TRESORERIE, CLASS_6_CHARGES, CLASS_7_PRODUITS.
 
       ### CONTEXT
       * Cash Direction for ALL items: OUTFLOW
-      * Contra-Accounting Awareness: Bank direction alone does not determine macro class. Apply these structural rules:
-        - OUTFLOW transactions that are refunds/chargebacks to customers are NOT expenses — they are contra-REVENUE (money returned to a customer).
-          - Common examples of contra-revenue are: refunds to customers, chargebacks, insurance claims received for damaged equipment or inventory, customer returns, and other similar transactions.
-          - If a contra-revenue is detected or probable, you MUST set the highest score below 0.90 for human-review.
-        - Otherwise, OUTFLOWs are generally EXPENSE, ASSET (buying hardware/inventory), LIABILITY (paying down a loan), or EQUITY (owner draw).
+      * Contra-Accounting Awareness: Bank direction alone does not determine macro class.
+        - OUTFLOW transactions that are refunds to customers are NOT expenses (Class 6) — they are contra-REVENUE (Class 7).
+        - If a contra-revenue is detected or probable, you MUST set the highest score below 0.90 for human-review.
+        - Otherwise, OUTFLOWs are generally CLASS_6_CHARGES (Expense), CLASS_2_ACTIF_IMMOBILISE (Buying Assets), CLASS_4_PASSIF_CIRCULANT (Paying Suppliers/Taxes), or CLASS_5_TRESORERIE (Bank Transfers).
 
       ### COMPANY RULES (CRITICAL)
-      - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
+      - If a "company_rules" array is provided, you MUST strictly adhere to these rules over your default accounting assumptions.
 
     - *guardrails
 
@@ -134,36 +134,22 @@ prompts:
               "row_id_1": {
               "property": "macro_class",
               "candidates": {
-              "1": { "value": "EXPENSE", "confidence": 0.98, "reasoning": "Standard operational purchase." },
-              "2": { "value": "ASSET", "confidence": 0.02, "reasoning": "Possible hardware capitalization if over threshold." }
+              "1": { "value": "CLASS_6_CHARGES", "confidence": 0.98, "reasoning": "Standard operational purchase." },
+              "2": { "value": "CLASS_2_ACTIF_IMMOBILISE", "confidence": 0.02, "reasoning": "Possible hardware capitalization if over threshold." }
                 }
               }
             }
           }
         ]
 
-  account_type_asset_specialist:
+  pcge_class_1_specialist:
     - |
-      You are the Master Account Type Specialist Node for ASSET transactions.
-      Map this transaction to the exact string literal representing the QuickBooks Online account type.
+      You are the Master PCGE Rubrique Specialist for CLASS 1 (Financement Permanent).
+      Map this transaction to the exact string literal representing the account type.
 
-      ### CONTEXT
-      * Business Industry: {{.CompanyIndustry}}
-
-      ### SPECIFIC SELECTION HEURISTICS FOR ASSET
-      Evaluate each transaction against these distinct asset categories:
-      1. BANK: Use this if the description indicates cash or liquidity positions (e.g., checking, savings, or internal transfers between funding sources).
-      2. FIXED ASSETS: Use this if the purchase is for long-term physical equipment, machinery, company vehicles, or software infrastructure licenses where the absolute value is > $2,500.
-      3. OTHER CURRENT ASSETS: Use this for short-term economic values expected to convert to cash within one year (e.g., security deposits, inventory prepayments).
-      4. OTHER ASSETS: Use this for non-current, non-fixed assets (e.g., long-term investments, intangible assets).
-      5. LEASEHOLD IMPROVEMENTS: Use this for structural modifications to rented property.
-      6. ACCOUNTS RECEIVABLE: Use this only if the transaction represents money owed to the business by a customer.
-
-      CRITICAL INPUT SPECIFICATIONS FROM SYSTEM CONSTANTS:
-      - For ASSET: "Accounts Receivable", "Bank", "Fixed Assets", "Leasehold Improvements", "Other Current Assets", "Other Assets"
-
-      ### COMPANY RULES (CRITICAL)
-      - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Capitaux Propres (Equity)": Use for owner draws, owner investments, and share capital (Class 11).
+      2. "Dettes de Financement (Long Term Debt)": Use for financing debts/loans with maturity > 1 year (Class 14).
 
     - *guardrails
 
@@ -178,34 +164,24 @@ prompts:
               "row_id_1": {
               "property": "account_type",
               "candidates": {
-              "1": { "value": "Fixed Assets", "confidence": 0.98, "reasoning": "High likelihood of hardware footprint." },
-              "2": { "value": "Other Current Assets", "confidence": 0.02, "reasoning": "If this is a small tool below capitalization threshold." }
+              "1": { "value": "Capitaux Propres (Equity)", "confidence": 0.98, "reasoning": "Owner draw identified." },
+              "2": { "value": "Dettes de Financement (Long Term Debt)", "confidence": 0.02, "reasoning": "Fallback." }
                 }
               }
             }
           }
         ]
 
-  account_type_liability_specialist:
+  pcge_class_2_specialist:
     - |
-      You are the Master Account Type Specialist Node for LIABILITY transactions.
-      Map this transaction to the exact string literal representing the QuickBooks Online account type.
+      You are the Master PCGE Rubrique Specialist for CLASS 2 (Actif Immobilisé).
+      Map this transaction to the exact string literal representing the account type.
 
-      ### CONTEXT
-      * Business Industry: {{.CompanyIndustry}}
-
-      ### SPECIFIC SELECTION HEURISTICS FOR LIABILITY
-      Evaluate each transaction against these distinct liability categories:
-      1. CREDIT CARDS: Use this ONLY if the description explicitly references a known credit card provider or card payment obligation.
-      2. LONG TERM LIABILITY: Use this for debts with a maturity beyond one year (e.g., equipment loans, mortgages, SBA loans).
-      3. OTHER CURRENT LIABILITY: Use this for short-term obligations due within one year (e.g., payroll taxes payable, sales tax collected, short-term notes).
-      4. ACCOUNTS PAYABLE: Use this only if the transaction represents money the business owes to a supplier or vendor.
-
-      CRITICAL INPUT SPECIFICATIONS FROM SYSTEM CONSTANTS:
-      - For LIABILITY: "Accounts Payable", "Credit Cards", "Long Term Liability", "Other Current Liability"
-
-      ### COMPANY RULES (CRITICAL)
-      - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Immobilisations Incorporelles (Intangible)": Patents, trademarks, software (Class 22).
+      2. "Immobilisations Corporelles (Fixed Assets)": Physical equipment, vehicles, hardware > 500 MAD (Class 23).
+      3. "Immobilisations en Non-Valeurs (Leaseholds/Setup)": Preliminary establishment costs, major leasehold improvements (Class 21).
+      4. "Immobilisations Financières": Long term deposits, guarantees, investments (Class 24/25).
 
     - *guardrails
 
@@ -220,36 +196,27 @@ prompts:
               "row_id_1": {
               "property": "account_type",
               "candidates": {
-              "1": { "value": "Credit Cards", "confidence": 0.98, "reasoning": "Explicit statement matching clearing account format." },
-              "2": { "value": "Accounts Payable", "confidence": 0.02, "reasoning": "Unlikely, but possible generic payable settlement." }
+              "1": { "value": "Immobilisations Corporelles (Fixed Assets)", "confidence": 0.98, "reasoning": "High likelihood of hardware footprint." },
+              "2": { "value": "Immobilisations Incorporelles (Intangible)", "confidence": 0.02, "reasoning": "Software license check." }
                 }
               }
             }
           }
         ]
 
-  account_type_equity_specialist:
+  pcge_class_3_specialist:
     - |
-      You are the Master Account Type Specialist Node for EQUITY transactions.
-      Map this transaction to the exact string literal representing the QuickBooks Online account type.
+      You are the Master PCGE Rubrique Specialist for CLASS 3 (Actif Circulant).
+      Map this transaction to the exact string literal.
 
-      ### CONTEXT
-      * Business Industry: {{.CompanyIndustry}}
-
-      ### SPECIFIC SELECTION HEURISTICS FOR EQUITY
-      Evaluate each transaction against this category:
-      1. EQUITY: Use this for all owner-related transactions including owner draws, owner investments, retained earnings adjustments, and partner distributions.
-
-      CRITICAL INPUT SPECIFICATIONS FROM SYSTEM CONSTANTS:
-      - For EQUITY: "Equity"
-
-      ### COMPANY RULES (CRITICAL)
-      - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Stocks (Inventory)": Direct raw materials or products intended for resale (Class 31).
+      2. "Créances Clients (Accounts Receivable)": Money owed to the business by a customer (Class 342).
+      3. "Autres Créances (Other Current Assets)": Short term deposits, employee advances, state receivables (Class 34).
 
     - *guardrails
 
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -259,37 +226,27 @@ prompts:
               "row_id_1": {
               "property": "account_type",
               "candidates": {
-              "1": { "value": "Equity", "confidence": 0.98, "reasoning": "Owner draw or investment." },
-              "2": { "value": "Other Current Assets", "confidence": 0.02, "reasoning": "If this is a small tool below capitalization threshold." }
+              "1": { "value": "Autres Créances (Other Current Assets)", "confidence": 0.98, "reasoning": "Short term supplier advance." },
+              "2": { "value": "Stocks (Inventory)", "confidence": 0.02, "reasoning": "Safety check." }
                 }
               }
             }
           }
         ]
 
-  account_type_revenue_specialist:
+  pcge_class_4_specialist:
     - |
-      You are the Master Account Type Specialist Node for REVENUE transactions.
-      Map this transaction to the exact string literal representing the QuickBooks Online account type.
+      You are the Master PCGE Rubrique Specialist for CLASS 4 (Passif Circulant).
+      Map this transaction to the exact string literal.
 
-      ### CONTEXT
-      * Business Industry: {{.CompanyIndustry}}
-
-      ### SPECIFIC SELECTION HEURISTICS FOR REVENUE
-      Evaluate each transaction against these distinct revenue categories:
-      1. INCOME: Use this for all standard operating revenue from the primary business activity (e.g., product sales, service fees, consulting income, Stripe payouts).
-      2. OTHER INCOME: Use this for non-operating or incidental revenue (e.g., interest earned, foreign exchange gains, insurance claim proceeds, asset sale gains).
-
-      CRITICAL INPUT SPECIFICATIONS FROM SYSTEM CONSTANTS:
-      - For REVENUE: "Income", "Other Income"
-
-      ### COMPANY RULES (CRITICAL)
-      - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Dettes Fournisseurs (Accounts Payable)": Unpaid vendor invoices (Class 441).
+      2. "Etat et Organismes Sociaux (TVA/CNSS)": Taxes, TVA to remit, CNSS, IR withholdings (Class 444/445).
+      3. "Autres Dettes du Passif Circulant": Short term loans, employee liabilities (Class 448).
 
     - *guardrails
 
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -299,40 +256,57 @@ prompts:
               "row_id_1": {
               "property": "account_type",
               "candidates": {
-              "1": { "value": "Income", "confidence": 0.98, "reasoning": "Standard operating cash receipt." },
-              "2": { "value": "Other Income", "confidence": 0.02, "reasoning": "Possible non-operating income source." }
+              "1": { "value": "Etat et Organismes Sociaux (TVA/CNSS)", "confidence": 0.98, "reasoning": "TVA remittance payment." },
+              "2": { "value": "Dettes Fournisseurs (Accounts Payable)", "confidence": 0.02, "reasoning": "Fallback." }
                 }
               }
             }
           }
         ]
 
-  account_type_expense_specialist:
+  pcge_class_5_specialist:
     - |
-      You are the Master Account Type Specialist Node for EXPENSE transactions.
-      Map this transaction to the exact string literal representing the QuickBooks Online account type.
+      You are the Master PCGE Rubrique Specialist for CLASS 5 (Trésorerie).
+      Map this transaction to the exact string literal.
 
-      ### CONTEXT
-      * Business Industry: {{.CompanyIndustry}}
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Trésorerie Actif (Bank/Cash)": Bank accounts, cash on hand, checks to cash (Class 51).
+      2. "Trésorerie Passif (Credit Cards/Overdrafts)": Bank overdrafts, short-term discount credits, corporate credit cards (Class 55).
 
-      ### SPECIFIC SELECTION HEURISTICS FOR EXPENSE
-      Evaluate each transaction against these distinct expense categories:
-      1. COST OF GOODS SOLD: Use this ONLY if the transaction is directly, structurally tied to producing revenue or purchasing inventory based on the Business Industry.
-      2. OTHER EXPENSE: Use this for unusual, non-operating outflows that do not reflect day-to-day business operations (e.g., tax penalties, legal settlements, corporate restructuring costs).
-      3. EXPENSE: Use this for all standard operating overhead, general administrative costs, software subscriptions, travel, meals, and general supplies.
+    - *guardrails
 
-      CRITICAL INPUT SPECIFICATIONS FROM SYSTEM CONSTANTS:
-      - For EXPENSE: "Expense", "Other Expense", "Cost of Goods Sold"
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "account_type",
+              "candidates": {
+              "1": { "value": "Trésorerie Actif (Bank/Cash)", "confidence": 0.98, "reasoning": "Standard checking account flow." },
+              "2": { "value": "Trésorerie Passif (Credit Cards/Overdrafts)", "confidence": 0.02, "reasoning": "Fallback." }
+                }
+              }
+            }
+          }
+        ]
 
-      ### COMPANY RULES (CRITICAL)
-      - If a "company_rules" array is provided in the row data, you MUST strictly adhere to these rules over your default accounting assumptions. These are learned preferences specific to this company.
+  pcge_class_6_specialist:
+    - |
+      You are the Master PCGE Rubrique Specialist for CLASS 6 (Charges).
+      Map this transaction to the exact string literal.
+
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Achats Revendus ou Consommés (COGS)": Direct purchases of goods sold or raw materials (Class 611/612).
+      2. "Autres Charges Externes (Operating Expense)": Rent, maintenance, travel, software, meals, general admin (Class 613/614).
+      3. "Charges Financières et Non Courantes": Interest paid, bank fees, penalties, fines, charity (Class 63/65).
 
     - *guardrails
     - *accounting_rules
 
-  # --- ASSET PROMPTS ---
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -342,24 +316,54 @@ prompts:
               "row_id_1": {
               "property": "account_type",
               "candidates": {
-              "1": { "value": "Expense", "confidence": 0.98, "reasoning": "Standard overhead." },
-              "2": { "value": "Cost of Goods Sold", "confidence": 0.02, "reasoning": "If this relates to direct product delivery." }
+              "1": { "value": "Autres Charges Externes (Operating Expense)", "confidence": 0.98, "reasoning": "Standard overhead." },
+              "2": { "value": "Charges Financières et Non Courantes", "confidence": 0.02, "reasoning": "Bank fee check." }
                 }
               }
             }
           }
         ]
+
+  pcge_class_7_specialist:
+    - |
+      You are the Master PCGE Rubrique Specialist for CLASS 7 (Produits).
+      Map this transaction to the exact string literal.
+
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Produits d'Exploitation (Operating Income)": Sales of goods, services, primary business revenue (Class 71).
+      2. "Produits Financiers et Non Courants": Interest received, asset disposal income, non-operating grants (Class 73/75).
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "account_type",
+              "candidates": {
+              "1": { "value": "Produits d'Exploitation (Operating Income)", "confidence": 0.98, "reasoning": "Standard operating cash receipt." },
+              "2": { "value": "Produits Financiers et Non Courants", "confidence": 0.02, "reasoning": "Possible non-operating income source." }
+                }
+              }
+            }
+          }
+        ]
+
+  # ====================================================================
+  # DOWNSTREAM GATE SPECIALISTS
+  # ====================================================================
 
   bank_gate_specialist:
     - |
-      Analyze the bank transaction. Determine if it represents an internal liquidity movement between company bank profiles, a cash sweep into treasury, or standard cash operational deployment.
+      Analyze the bank transaction. Determine if it represents an internal liquidity movement between company bank profiles (e.g. transfers, virements), a cash sweep into treasury, or standard cash operational deployment.
       Select from: "INTERNAL_TRANSFER", "TREASURY_CASH_SWEEP", "STANDARD_LIQUIDITY_FLOW".
-
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -369,7 +373,7 @@ prompts:
               "row_id_1": {
               "property": "bank_gate_decision",
               "candidates": {
-              "1": { "value": "STANDARD_LIQUIDITY_FLOW", "confidence": 0.85, "reasoning": "Unclear inter-account matching; safely holding for context." },
+              "1": { "value": "STANDARD_LIQUIDITY_FLOW", "confidence": 0.85, "reasoning": "Unclear virement matching; safely holding for context." },
               "2": { "value": "INTERNAL_TRANSFER", "confidence": 0.15, "reasoning": "Indicates some transfer signs but requires manual audit." }
                 }
               }
@@ -380,16 +384,13 @@ prompts:
   fixed_assets_gate_specialist:
     - |
       Examine the physical property, vehicle, software infrastructure, or equipment purchase under capitalization limits.
-      Rule: IRS § 1.263(a)-1(f) De Minimis Safe Harbor. Capitalize if the transaction amount is strictly greater than $2,500 AND a valid invoice/receipt is provided detailing the physical asset. 
-      If an invoice is missing for an amount > $2,500, select "HOLD_MISSING_FIXED_ASSET_INVOICE". 
-      Otherwise, treat as an immediate de-minimis runtime expense.
+      Rule: Capitalize if the transaction amount is strictly greater than 500 MAD (excluding VAT) AND a valid invoice (facture conforme) is provided detailing the physical asset.
+      If an invoice is missing for an amount > 500 MAD, select "HOLD_MISSING_FIXED_ASSET_INVOICE".
+      Otherwise, treat as an immediate runtime operating expense ("DE_MINIMIS_EXPENSE_TRIGGER").
       Select from: "CAPITALIZE_ASSET", "DE_MINIMIS_EXPENSE_TRIGGER", "HOLD_MISSING_FIXED_ASSET_INVOICE".
-
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -399,7 +400,7 @@ prompts:
               "row_id_1": {
               "property": "fixed_assets_gate_decision",
               "candidates": {
-              "1": { "value": "CAPITALIZE_ASSET", "confidence": 0.99, "reasoning": "Transaction total exceeds the static $2,500 threshold criteria and invoice is attached." },
+              "1": { "value": "CAPITALIZE_ASSET", "confidence": 0.99, "reasoning": "Transaction total exceeds the static 500 MAD threshold criteria and facture conforme is attached." },
               "2": { "value": "HOLD_MISSING_FIXED_ASSET_INVOICE", "confidence": 0.01, "reasoning": "Invoice missing." }
                 }
               }
@@ -409,14 +410,11 @@ prompts:
 
   leasehold_improvements_gate_specialist:
     - |
-      Examine cash paid out for structural modifications to rented or leased physical commercial footprints.
+      Examine cash paid out for structural modifications to rented or leased physical commercial footprints (Class 21).
       Select from: "CAPITALIZE_IMPROVEMENT", "REPAIRS_MAINTENANCE_EXPENSE".
-
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -437,13 +435,10 @@ prompts:
   other_current_assets_gate_specialist:
     - |
       Triage short-term economic values. Differentiate between cash paid upfront for inventory production deposits versus refundable lease/utility security deposits.
-      Select from: "INVENTORY_PREPAYMENT", "SECURITY_DEPOSIT", "STANDARD_CURRENT_ASSET".
-
+      Select from: "SECURITY_DEPOSIT", "STANDARD_CURRENT_ASSET".
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -465,13 +460,9 @@ prompts:
     - |
       Triage long-term economic values and intangible assets. Differentiate between capitalized intellectual property (patents, trademarks) and long-term security deposits.
       Select from: "INTANGIBLE_ASSET", "LONG_TERM_SECURITY_DEPOSIT", "STANDARD_OTHER_ASSET".
-
     - *guardrails
     - *accounting_rules
-
-  # --- EQUITY PROMPTS ---
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -491,15 +482,11 @@ prompts:
 
   equity_flow_specialist:
     - |
-      Analyze capital interactions involving company owners, partners, or equity officers.
+      Analyze capital interactions involving company owners, partners, or equity officers (Class 11).
       Select from: "OWNER_INVESTMENT", "OWNER_DRAW", "SHAREHOLDER_DISTRIBUTION".
-
     - *guardrails
     - *accounting_rules
-
-  # --- REVENUE PROMPTS ---
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -521,12 +508,9 @@ prompts:
     - |
       Examine cash flows from primary business channels. Isolate gross merchant processor deposits that bundle transaction fees from raw customer invoices, or identify customer refunds.
       Select from: "GROMENT_STRIPE_SQUARE_SPLIT", "STANDARD_CASH_RECEIPT", "CUSTOMER_REFUND".
-
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -548,13 +532,9 @@ prompts:
     - |
       Analyze miscellaneous cash inflows. Differentiate between non-operating income (like interest or dividends) and other standard revenue.
       Select from: "INTEREST_DIVIDEND_INCOME", "STANDARD_OTHER_INCOME".
-
     - *guardrails
     - *accounting_rules
-
-  # --- EXPENSE PROMPTS ---
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -576,12 +556,9 @@ prompts:
     - |
       Analyze this direct outflow against the core business industry ({{.CompanyIndustry}}). Verify if the item is a direct driver of delivery/inventory production or general administrative overhead.
       Select from: "VALIDATED_DIRECT_COGS", "RECLASSIFY_TO_OVERHEAD_EXPENSE".
-
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -603,12 +580,9 @@ prompts:
     - |
       Review operational overhead outflows. Scan for high-probability signals of corporate co-mingling where an employee/owner uses business funds for personal consumption, or if the flow is an inbound vendor refund.
       Select from: "STANDARD_OVERHEAD", "PERSONAL_MIXIN_DETECTED", "VENDOR_REFUND".
-
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -630,13 +604,9 @@ prompts:
     - |
       Analyze miscellaneous or non-operating cash outflows. Differentiate between penalties/fines, interest paid, or other non-operating expenses.
       Select from: "PENALTY_OR_FINE", "INTEREST_EXPENSE", "STANDARD_OTHER_EXPENSE".
-
     - *guardrails
     - *accounting_rules
-
-  # --- LIABILITIES PROMPTS ---
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -656,14 +626,11 @@ prompts:
 
   credit_cards_gate_specialist:
     - |
-      Verify if the bank transaction represents a clear corporate credit card balance transfer/settlement payment, or an inbound refund/reward.
+      Verify if the bank transaction represents a clear credit line/overdraft balance transfer/settlement payment, or an inbound refund/reward.
       Select from: "CC_BALANCE_TRANSFER", "CC_REFUND_OR_REWARD", "ANOMALOUS_CC_FLOW".
-
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -673,7 +640,7 @@ prompts:
               "row_id_1": {
               "property": "credit_cards_gate_decision",
               "candidates": {
-              "1": { "value": "CC_BALANCE_TRANSFER", "confidence": 0.99, "reasoning": "Direct automated clearing house transfer trace matching Visa subledger payload." },
+              "1": { "value": "CC_BALANCE_TRANSFER", "confidence": 0.99, "reasoning": "Direct automated clearing house transfer trace matching subledger payload." },
               "2": { "value": "ANOMALOUS_CC_FLOW", "confidence": 0.01, "reasoning": "Safeguard sweep boundary." }
                 }
               }
@@ -684,13 +651,10 @@ prompts:
   other_current_liability_gate_specialist:
     - |
       Isolate short-term statutory cash withholdings from operational cash flows, and identify when those withheld taxes are remitted to authorities.
-      Select from: "SALES_TAX_COLLECTED", "PAYROLL_TAX_WITHHELD", "TAX_REMITTANCE", "DEFAULT_OPERATIONAL_FLOW".
-
+      Select from: "TVA_COLLECTED", "CNSS_IR_WITHHELD", "TAX_REMITTANCE", "DEFAULT_OPERATIONAL_FLOW".
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -700,7 +664,7 @@ prompts:
               "row_id_1": {
               "property": "other_current_liability_gate_decision",
               "candidates": {
-              "1": { "value": "SALES_TAX_COLLECTED", "confidence": 0.98, "reasoning": "State point of sale transaction payload parsing indicator." },
+              "1": { "value": "TVA_COLLECTED", "confidence": 0.98, "reasoning": "TVA point of sale transaction payload parsing indicator." },
               "2": { "value": "DEFAULT_OPERATIONAL_FLOW", "confidence": 0.02, "reasoning": "Fallback threshold." }
                 }
               }
@@ -712,12 +676,9 @@ prompts:
     - |
       Triage long-term cash payouts into formal amortization schedules, or identify incoming loan disbursements.
       Select from: "LOAN_REPAYMENT_SPLIT", "LOAN_DISBURSEMENT_RECEIVED", "UNIDENTIFIED_DEBT_FLOW".
-
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -727,7 +688,7 @@ prompts:
               "row_id_1": {
               "property": "long_term_liability_gate_decision",
               "candidates": {
-              "1": { "value": "LOAN_REPAYMENT_SPLIT", "confidence": 0.99, "reasoning": "Note identification index matches SBA amortized registry." },
+              "1": { "value": "LOAN_REPAYMENT_SPLIT", "confidence": 0.99, "reasoning": "Note identification index matches bank amortized registry." },
               "2": { "value": "UNIDENTIFIED_DEBT_FLOW", "confidence": 0.01, "reasoning": "Threshold boundary safety check." }
                 }
               }
@@ -737,17 +698,15 @@ prompts:
 
   expense_compliance_specialist:
     - |
-      You are a rigorous CPA auditor evaluating standard operational expenses.
-      Apply the following IRS rules to this transaction:
+      You are a rigorous auditor evaluating standard operational expenses under Moroccan General Tax Code (CGI).
+      Apply the following rules to this transaction:
 
-      1. IRS § 274(d) Meals & Entertainment: If the transaction is for Meals & Entertainment, you must select "HOLD_MISSING_MEAL_DOCUMENTATION" unless the exact business purpose and names of attendees are explicitly provided in the transaction context or receipt.
-      2. IRS $75 Receipt Safe Harbor: For all other standard expenses, if the transaction amount is >= $75.00, you must select "HOLD_MISSING_RECEIPT" unless a valid receipt is provided in the transaction's attachments, or the `context` array indicates that the client has provided the receipt. If there is no mention of a document attached explicitly, assume there is no attachment as default, so return HOLD_MISSING_RECEIPT.
-      3. If the transaction has valid documentation satisfying the rules above, or is < $75.00 and NOT Meals & Entertainment, select "COMPLIANT_EXPENSE".
+      1. Invoice Requirement: Every business expense must be backed by a conforming invoice (facture conforme). You must select "HOLD_MISSING_RECEIPT" unless a valid invoice/receipt is provided in the attachments or transaction context.
+      2. Cash Payment Limitation (CGI Art. 193): If the transaction payment method is cash and the amount is strictly greater than 5,000 MAD, select "HOLD_MISSING_RECEIPT" (or flag for compliance audit) because cash payments exceeding 5,000 MAD per day per supplier are non-deductible.
+      3. If the transaction has valid documentation satisfying the rules above, select "COMPLIANT_EXPENSE".
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -757,8 +716,8 @@ prompts:
               "row_id_1": {
               "property": "expense_compliance_decision",
               "candidates": {
-              "1": { "value": "COMPLIANT_EXPENSE", "confidence": 0.99, "reasoning": "Under $75 threshold." },
-              "2": { "value": "HOLD_MISSING_RECEIPT", "confidence": 0.01, "reasoning": "Missing." }
+              "1": { "value": "COMPLIANT_EXPENSE", "confidence": 0.99, "reasoning": "Compliant invoice." },
+              "2": { "value": "HOLD_MISSING_RECEIPT", "confidence": 0.01, "reasoning": "Missing facture conforme." }
                 }
               }
             }
@@ -767,17 +726,14 @@ prompts:
 
   other_expense_compliance_specialist:
     - |
-      You are a rigorous CPA auditor evaluating non-operating expenses.
-      Apply the following IRS rule:
+      You are a rigorous auditor evaluating non-operating expenses under Moroccan General Tax Code (CGI).
+      Apply the following rule:
 
-      1. IRS § 170(f)(8) Charitable Contributions: If the transaction is a Charitable Contribution and the amount is >= $250.00, you must select "HOLD_MISSING_CHARITY_ACKNOWLEDGEMENT" unless a formal, contemporaneous written acknowledgement from the charity is provided in the attachments.
+      1. Charitable Contributions (CGI Art. 10): Donations are only deductible if made to authorized public interest associations and are capped at 2‰ (two per thousand) of the company's annual turnover. If the donation is not to an authorized body, or needs limit review, select "HOLD_MISSING_CHARITY_ACKNOWLEDGEMENT".
       2. Otherwise, select "COMPLIANT_OTHER_EXPENSE".
-
     - *guardrails
     - *accounting_rules
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -788,7 +744,7 @@ prompts:
               "property": "other_expense_compliance_decision",
               "candidates": {
               "1": { "value": "COMPLIANT_OTHER_EXPENSE", "confidence": 0.99, "reasoning": "Compliant." },
-              "2": { "value": "HOLD_MISSING_CHARITY_ACKNOWLEDGEMENT", "confidence": 0.01, "reasoning": "Missing." }
+              "2": { "value": "HOLD_MISSING_CHARITY_ACKNOWLEDGEMENT", "confidence": 0.01, "reasoning": "Requires public interest status check." }
                 }
               }
             }
@@ -797,18 +753,15 @@ prompts:
 
   universal_outflow_compliance_specialist:
     - |
-      You are a rigorous CPA auditor reviewing a cash outflow before finalizing the vendor counterparty.
+      You are a rigorous auditor reviewing a cash outflow before finalizing the vendor counterparty under Moroccan CGI rules.
       Apply the following thresholds:
 
-      1. GAAP Materiality Concept: If the transaction amount is >= $10,000.00, select "HOLD_MATERIALITY_REVIEW" to enforce secondary CPA sign-off to ensure no material misstatement.
-      2. IRS § 6041 (1099-NEC Compliance): If the transaction is a payment for services to an independent contractor (not a C-Corp or S-Corp) and the amount is >= $600.00, select "HOLD_W9_REQUIRED" unless a valid W-9 or Tax ID is confirmed on file.
+      1. Materiality Concept: If the transaction amount is >= 100,000 MAD, select "HOLD_MATERIALITY_REVIEW" to enforce secondary CPA sign-off to ensure no material misstatement.
+      2. Withholding Tax (Retenue à la Source): If the transaction is a payment for professional services to a non-resident or local provider requiring tax withholding, select "HOLD_ICE_ID_REQUIRED" to check for conforming tax identification details (Identifiant Commun de l'Entreprise - ICE) on file.
       3. If neither rule is violated, select "COMPLIANT_OUTFLOW".
-
     - *guardrails
     - *accounting_rules
-        
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -819,7 +772,7 @@ prompts:
               "property": "outflow_compliance_decision",
               "candidates": {
               "1": { "value": "COMPLIANT_OUTFLOW", "confidence": 0.99, "reasoning": "Compliant." },
-              "2": { "value": "HOLD_MATERIALITY_REVIEW", "confidence": 0.01, "reasoning": "Over $10,000 limit." }
+              "2": { "value": "HOLD_MATERIALITY_REVIEW", "confidence": 0.01, "reasoning": "Over 100,000 MAD limit." }
                 }
               }
             }
@@ -830,10 +783,9 @@ prompts:
     - |
       You are an expert accountant. Select the exact account ID from the Chart of Accounts that best matches the transaction. Do it in these steps:
       1. Isolate the true corporate vendor or customer entity name by stripping locations, branch numbers, dates, and terminal IDs from the description string.
-      2. Review the 'trace' array provided in the transaction row. This trace contains classifications from prior steps, telling you whether this is an INFLOW/OUTFLOW, EXPENSE/REVENUE, etc.
+      2. Review the 'trace' array provided in the transaction row. This trace contains classifications from prior steps, telling you whether this is an INFLOW/OUTFLOW, PCGE Class (1-7), etc.
       3. Use the 'trace' history combined with the isolated entity name to select the most accurate account from the appropriately categorized Chart of Accounts below.
       4. If the customer/vendor did not match any account in the Chart of Accounts, look for accounts like 'Uncategorized Income', 'Uncategorized Expense', 'Uncategorized Assets', 'Uncategorized Liabilities' etc and use that. 
-
 
       COMPANY CHART OF ACCOUNTS:
       {{.ChartOfAccounts}}
@@ -848,9 +800,7 @@ prompts:
       3. This single patch MUST use exactly "op": "add" and "path": "/rows".
       4. The "value" of the patch MUST be an object where the keys are EXACTLY the unique transaction identifiers from the input.
     - *guardrails
-
     - |
-
         EXPECTED OUTPUT FORMAT:
         [
           {
@@ -867,9 +817,8 @@ prompts:
             }
           }
         ]
-
 # ====================================================================
-# DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY
+# DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY - PCGE ADAPTATION (MOROCCO)
 # ====================================================================
 dag:
   entry_node: direction_router
@@ -891,108 +840,127 @@ dag:
         OUTFLOW: macro_classifier_outflow
 
     # ------------------------------------------------------------------
-    # STEP 1: MACRO CLASSIFICATION
+    # STEP 1: PCGE MACRO CLASS CLASSIFICATION
     # ------------------------------------------------------------------
     macro_classifier_inflow:
       name: macro_classifier_inflow
       kind: macro_classifier
-      prompt_key: macro_classifier_inflow_specialist
+      prompt_key: macro_classifier_inflow_pcge_specialist
       batch_size: *bsize
       batch_flush_seconds: *flush
       edge_type: *estatic
       children:
-        ASSET: account_type_asset
-        LIABILITY: account_type_liability
-        EQUITY: account_type_equity
-        REVENUE: account_type_revenue
-        EXPENSE: account_type_expense
-
+        CLASS_1_FINANCEMENT_PERMANENT: account_type_class_1
+        CLASS_2_ACTIF_IMMOBILISE: account_type_class_2
+        CLASS_3_ACTIF_CIRCULANT: account_type_class_3
+        CLASS_4_PASSIF_CIRCULANT: account_type_class_4
+        CLASS_5_TRESORERIE: account_type_class_5
+        CLASS_6_CHARGES: account_type_class_6
+        CLASS_7_PRODUITS: account_type_class_7
 
     macro_classifier_outflow:
       name: macro_classifier_outflow
       kind: macro_classifier
-      prompt_key: macro_classifier_outflow_specialist
+      prompt_key: macro_classifier_outflow_pcge_specialist
       batch_size: *bsize
       batch_flush_seconds: *flush
       edge_type: *estatic
       children:
-        ASSET: account_type_asset
-        LIABILITY: account_type_liability
-        EQUITY: account_type_equity
-        REVENUE: account_type_revenue
-        EXPENSE: account_type_expense
+        CLASS_1_FINANCEMENT_PERMANENT: account_type_class_1
+        CLASS_2_ACTIF_IMMOBILISE: account_type_class_2
+        CLASS_3_ACTIF_CIRCULANT: account_type_class_3
+        CLASS_4_PASSIF_CIRCULANT: account_type_class_4
+        CLASS_5_TRESORERIE: account_type_class_5
+        CLASS_6_CHARGES: account_type_class_6
+        CLASS_7_PRODUITS: account_type_class_7
 
     # ------------------------------------------------------------------
-    # STEP 2: SEGREGATED ACCOUNT TYPE CLASSIFICATION
+    # STEP 2: PCGE RUBRIQUE (ACCOUNT TYPE) CLASSIFICATION
     # ------------------------------------------------------------------
-    account_type_asset:
-      name: account_type_asset
+    account_type_class_1:
+      name: account_type_class_1
       batch_size: *bsize
       batch_flush_seconds: *flush
       kind: account_type
-      prompt_key: account_type_asset_specialist
+      prompt_key: pcge_class_1_specialist
       edge_type: *estatic
       children:
-        # "debug_terminal": debug_terminal
-        "Bank": bank
-        "Fixed Assets": fixed_assets
-        "Leasehold Improvements": leasehold_improvements
-        "Other Current Assets": other_current_assets
-        "Other Assets": other_assets
-        "Accounts Receivable": accounts_receivable
+        "Capitaux Propres (Equity)": equity
+        "Dettes de Financement (Long Term Debt)": long_term_liability
 
-    account_type_liability:
-      name: account_type_liability
+    account_type_class_2:
+      name: account_type_class_2
       batch_size: *bsize
       batch_flush_seconds: *flush
       kind: account_type
-      prompt_key: account_type_liability_specialist
+      prompt_key: pcge_class_2_specialist
       edge_type: *estatic
       children:
-        # "debug_terminal": debug_terminal
-        "Credit Cards": credit_cards
-        "Long Term Liability": long_term_liability
-        "Other Current Liability": other_current_liability
-        "Accounts Payable": accounts_payable
+        "Immobilisations Incorporelles (Intangible)": other_assets
+        "Immobilisations Corporelles (Fixed Assets)": fixed_assets
+        "Immobilisations en Non-Valeurs (Leaseholds/Setup)": leasehold_improvements
+        "Immobilisations Financières": other_assets
 
-    account_type_equity:
-      name: account_type_equity
+    account_type_class_3:
+      name: account_type_class_3
       batch_size: *bsize
       batch_flush_seconds: *flush
       kind: account_type
-      prompt_key: account_type_equity_specialist
+      prompt_key: pcge_class_3_specialist
       edge_type: *estatic
       children:
-        # "debug_terminal": debug_terminal
-        "Equity": equity
+        "Stocks (Inventory)": inventory_deposit_quarantine
+        "Créances Clients (Accounts Receivable)": accounts_receivable
+        "Autres Créances (Other Current Assets)": other_current_assets
 
-    account_type_revenue:
-      name: account_type_revenue
+    account_type_class_4:
+      name: account_type_class_4
       batch_size: *bsize
       batch_flush_seconds: *flush
       kind: account_type
-      prompt_key: account_type_revenue_specialist
+      prompt_key: pcge_class_4_specialist
       edge_type: *estatic
       children:
-        # "debug_terminal": debug_terminal
-        "Income": income
-        "Other Income": other_income
+        "Dettes Fournisseurs (Accounts Payable)": accounts_payable
+        "Etat et Organismes Sociaux (TVA/CNSS)": other_current_liability
+        "Autres Dettes du Passif Circulant": other_current_liability
 
-    account_type_expense:
-      name: account_type_expense
+    account_type_class_5:
+      name: account_type_class_5
       batch_size: *bsize
       batch_flush_seconds: *flush
       kind: account_type
-      prompt_key: account_type_expense_specialist
+      prompt_key: pcge_class_5_specialist
       edge_type: *estatic
       children:
-        # "debug_terminal": debug_terminal
-        "Cost of Goods Sold": cost_of_goods_sold
-        "Expense": expense
-        "Other Expense": other_expense
+        "Trésorerie Actif (Bank/Cash)": bank
+        "Trésorerie Passif (Credit Cards/Overdrafts)": credit_cards
+
+    account_type_class_6:
+      name: account_type_class_6
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: pcge_class_6_specialist
+      edge_type: *estatic
+      children:
+        "Achats Revendus ou Consommés (COGS)": cost_of_goods_sold
+        "Autres Charges Externes (Operating Expense)": expense
+        "Charges Financières et Non Courantes": other_expense
+
+    account_type_class_7:
+      name: account_type_class_7
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: pcge_class_7_specialist
+      edge_type: *estatic
+      children:
+        "Produits d'Exploitation (Operating Income)": income
+        "Produits Financiers et Non Courants": other_income
 
     # ==================================================================
-    # STEP 3: SPECIFIC ASSETS SUB-GRAPH GATES (CASH BASIS)
+    # STEP 3: SPECIFIC ASSETS SUB-GRAPH GATES (CLASS 2, 3, 5)
     # ==================================================================
     bank:
       name: bank
@@ -1013,7 +981,7 @@ dag:
       batch_flush_seconds: *flush
       kind: terminal
       execution_parameters:
-        action_provider: "qbo_inter_bank_transfer_collapse"
+        action_provider: "inter_bank_transfer_collapse"
         close_status: "CLASSIFIED"
 
     fixed_assets:
@@ -1035,7 +1003,7 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
-      hold_reason_string: "Capitalizing an asset > $2,500 strictly requires a valid invoice detailing the physical asset."
+      hold_reason_string: "Capitalizing an asset > 500 MAD strictly requires a valid invoice detailing the physical asset."
       recovery_policy:
         type: action
         actions: ["search_document_store", "queue_client_request"]
@@ -1044,7 +1012,7 @@ dag:
         body_text: |
           Hi there,
 
-          We got a transaction for a recent purchase of {{.RawAmount}} for {{.RawDescription}}. This is likely related to fixed assets, but we require a copy of the invoice for accounting purposes.
+          We got a transaction for a recent purchase of {{.RawAmount}} MAD for {{.RawDescription}}. This is likely related to fixed assets, but we require a copy of the invoice (facture conforme) for accounting purposes.
 
           Please reply to this email with the invoice attached.
 
@@ -1082,7 +1050,6 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       children:
-        INVENTORY_PREPAYMENT: inventory_deposit_quarantine
         SECURITY_DEPOSIT: universal_outflow_compliance_gate
         STANDARD_CURRENT_ASSET: universal_outflow_compliance_gate
 
@@ -1098,8 +1065,7 @@ dag:
         subject: "Action Required: Missing Inventory Receipt"
         body_text: |
           Hi there,
-
-          We noticed an inventory-related payment of {{.RawAmount}} for {{.RawDescription}}. Please reply to this email with the final vendor receipt to attach to this transaction for accounting purposes.
+          We noticed an inventory-related payment of {{.RawAmount}} MAD for {{.RawDescription}}. Please reply to this email with the final vendor receipt to attach to this transaction for accounting purposes.
 
           Thank you.
       resume_child: universal_outflow_compliance_gate
@@ -1129,13 +1095,13 @@ dag:
         body_text: |
           Hi there,
 
-          We got a potential Accounts Receivable transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please clarify if this represents a customer payment or something else?
+          We got a potential Accounts Receivable transaction of {{.RawAmount}} MAD for {{.RawDescription}}. Could you please clarify if this represents a customer payment or something else?
 
           Thank you
       resume_child: universal_outflow_compliance_gate
 
     # ==================================================================
-    # STEP 4: SPECIFIC LIABILITIES SUB-GRAPH GATES (CASH BASIS)
+    # STEP 4: SPECIFIC LIABILITIES SUB-GRAPH GATES (CLASS 1, 4, 5)
     # ==================================================================
     credit_cards:
       name: credit_cards
@@ -1155,7 +1121,7 @@ dag:
       batch_flush_seconds: *flush
       kind: terminal
       execution_parameters:
-        action_provider: "qbo_credit_card_payment_transfer_collapse"
+        action_provider: "credit_card_payment_transfer_collapse"
         close_status: "CLASSIFIED"
 
     long_term_liability:
@@ -1183,7 +1149,7 @@ dag:
         body_text: |
           Hi there,
 
-          We recorded a loan repayment of {{.RawAmount}} for {{.RawDescription}}. To properly record this, please provide us with the loan statement.
+          We recorded a loan repayment of {{.RawAmount}} MAD for {{.RawDescription}}. To properly record this, please provide us with the loan statement/tableau d'amortissement.
 
           Thank you.
       execution_parameters:
@@ -1198,30 +1164,30 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       children:
-        SALES_TAX_COLLECTED: cash_sales_tax_splitter
-        PAYROLL_TAX_WITHHELD: cash_payroll_withholding_gate
+        TVA_COLLECTED: tva_splitter
+        CNSS_IR_WITHHELD: payroll_cnss_ir_withholding_gate
         TAX_REMITTANCE: universal_outflow_compliance_gate
         DEFAULT_OPERATIONAL_FLOW: universal_outflow_compliance_gate
 
-    cash_sales_tax_splitter:
-      name: cash_sales_tax_splitter
+    tva_splitter:
+      name: tva_splitter
       batch_flush_seconds: *flush
       kind: holding_gate
       batch_size: *bsize
       edge_type: *estatic
       execution_parameters:
-        action_provider: "extract_and_post_cash_sales_tax_liability"
+        action_provider: "extract_and_post_tva_liability"
       children:
         TAX_POSTED: universal_outflow_compliance_gate
 
-    cash_payroll_withholding_gate:
-      name: cash_payroll_withholding_gate
+    payroll_cnss_ir_withholding_gate:
+      name: payroll_cnss_ir_withholding_gate
       batch_flush_seconds: *flush
       kind: holding_gate
       batch_size: *bsize
       edge_type: *estatic
       execution_parameters:
-        action_provider: "isolate_employee_withholding_from_cash_payout"
+        action_provider: "isolate_cnss_ir_withholding_from_payout"
       resume_child: universal_outflow_compliance_gate
 
     accounts_payable:
@@ -1237,13 +1203,13 @@ dag:
         body_text: |
           Hi there,
 
-          We got a potential Accounts Payable transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please clarify if this represents a vendor payment or something else?
+          We got a potential Accounts Payable transaction of {{.RawAmount}} MAD for {{.RawDescription}}. Could you please clarify if this represents a vendor payment or something else?
 
           Thank you.
       resume_child: universal_outflow_compliance_gate
 
     # ==================================================================
-    # STEP 5: SPECIFIC EQUITY SUB-GRAPH GATES (CASH BASIS)
+    # STEP 5: SPECIFIC EQUITY SUB-GRAPH GATES (CLASS 1)
     # ==================================================================
     equity:
       name: equity
@@ -1267,7 +1233,7 @@ dag:
         close_status: "CLASSIFIED"
 
     # ==================================================================
-    # STEP 6: SPECIFIC REVENUE SUB-GRAPH GATES (CASH BASIS)
+    # STEP 6: SPECIFIC REVENUE SUB-GRAPH GATES (CLASS 7)
     # ==================================================================
     income:
       name: income
@@ -1304,7 +1270,7 @@ dag:
         STANDARD_OTHER_INCOME: account_selection
 
     # ==================================================================
-    # STEP 7: SPECIFIC EXPENSE SUB-GRAPH GATES (CASH BASIS)
+    # STEP 7: SPECIFIC EXPENSE SUB-GRAPH GATES (CLASS 6)
     # ==================================================================
     cost_of_goods_sold:
       name: cost_of_goods_sold
@@ -1358,17 +1324,17 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
-      hold_reason_string: "Expense > $75 requires a valid receipt/attachment for documentation compliance."
+      hold_reason_string: "Expense requires a conforming invoice (facture conforme) for compliance."
       recovery_policy:
         type: action
         actions: ["search_document_store", "queue_client_request"]
       email:
-        subject: "Action Required: Missing Receipt"
+        subject: "Action Required: Missing Facture Conforme"
         body_text: |
           Hi there,
 
-          We got a charge of {{.RawAmount}} for {{.RawDescription}}. 
-          Please reply to this email with a picture or PDF of the receipt so we can properly categorize it.
+          We got a charge of {{.RawAmount}} MAD for {{.RawDescription}}. 
+          Please reply to this email with a picture or PDF of the conforming invoice (facture conforme) so we can properly categorize it.
 
           Thank you.
       execution_parameters:
@@ -1391,7 +1357,7 @@ dag:
         body_text: |
           Hi there,
 
-          We got a meals or entertainment expense of {{.RawAmount}} for {{.RawDescription}}. Could you please provide us with the attendees and business purpose of this meal?
+          We got a meals or entertainment expense of {{.RawAmount}} MAD for {{.RawDescription}}. Could you please provide us with the attendees and business purpose of this meal?
 
           Thank you.
       execution_parameters:
@@ -1428,7 +1394,7 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
-      hold_reason_string: "Charitable Contributions > $250 require formal written acknowledgement."
+      hold_reason_string: "Charitable Contributions require checking public interest status and written acknowledgement."
       recovery_policy:
         type: action
         actions: ["search_document_store", "queue_client_request"]
@@ -1437,7 +1403,7 @@ dag:
         body_text: |
           Hi there,
 
-          We got a charitable donation of {{.RawAmount}} for {{.RawDescription}}. For your tax purposes, donations over $250 require a formal written acknowledgement from the charity. Please provide us with that letter, if you don't have it yet, we can help you get it? If you cannot, please let us know, so we can manage it properly.
+          We got a charitable donation of {{.RawAmount}} MAD for {{.RawDescription}}. Donations require verification of public utility status and formal written acknowledgement from the charity. Please provide us with that letter.
 
           Thank you.
       execution_parameters:
@@ -1457,7 +1423,7 @@ dag:
       children:
         COMPLIANT_OUTFLOW: account_selection
         HOLD_MATERIALITY_REVIEW: hold_materiality_review
-        HOLD_W9_REQUIRED: hold_w9_required
+        HOLD_ICE_ID_REQUIRED: hold_ice_id_required
 
     hold_materiality_review:
       name: hold_materiality_review
@@ -1466,7 +1432,7 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       hold_state_signal: "HOLD_CPA_REVIEW"
-      hold_reason_string: "Transaction exceeds GAAP materiality threshold ($10,000) and requires CPA sign-off."
+      hold_reason_string: "Transaction exceeds PCM materiality threshold (100,000 MAD) and requires CPA sign-off."
       recovery_policy:
         type: action
         actions: ["human_review"]
@@ -1475,34 +1441,34 @@ dag:
         body_text: |
           Hi there,
 
-          We got a large transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please provide any supporting documentation (invoice, contract, etc.) related to this transaction?
+          We got a large transaction of {{.RawAmount}} MAD for {{.RawDescription}}. Could you please provide any supporting documentation (invoice, contract, etc.) related to this transaction?
 
           Thank you.
       execution_parameters:
         action_provider: "hitl_materiality_review"
       resume_child: universal_outflow_compliance_gate
 
-    hold_w9_required:
-      name: hold_w9_required
+    hold_ice_id_required:
+      name: hold_ice_id_required
       batch_flush_seconds: *flush
       kind: holding_gate
       batch_size: *bsize
       edge_type: *estatic
       hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
-      hold_reason_string: "Service payment >= $600 to independent contractor requires W-9."
+      hold_reason_string: "Service payment to contractor requires Tax Identification details (Identifiant Commun de l'Entreprise / ICE)."
       recovery_policy:
         type: action
         actions: ["search_document_store", "queue_client_request"]
       email:
-        subject: "Action Required: Missing W-9 for Contractor"
+        subject: "Action Required: Missing Tax ID (ICE) for Contractor"
         body_text: |
           Hi there,
 
-          We got a service payment of {{.RawAmount}} for {{.RawDescription}}. Because this payment is $600 or more, we are required to have a W-9 on file for this vendor before the end of the year. Could you please provide us with a copy of their W-9? If you don't have it, we can help you get it? If you cannot, please let us know, so we can manage it properly.
+          We got a service payment of {{.RawAmount}} MAD for {{.RawDescription}}. We are required to have the tax identification number (Identifiant Fiscal / ICE) on file for this provider. Could you please provide us with a copy of their tax details or a conforming invoice?
 
           Thank you.
       execution_parameters:
-        action_provider: "qbo_w9_lookup"
+        action_provider: "db_ice_lookup"
       resume_child: universal_outflow_compliance_gate
 
     account_selection:
@@ -1516,9 +1482,8 @@ dag:
       execution_parameters:
         close_status: "CLASSIFIED"
 
-
-    debug_terminal:
-      name: debug_terminal
-      batch_size: *bsize
-      batch_flush_seconds: *flush
-      kind: terminal
+    # debug_terminal:
+    #   name: debug_terminal
+    #   batch_size: *bsize
+    #   batch_flush_seconds: *flush
+    #   kind: terminal

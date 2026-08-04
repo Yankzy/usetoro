@@ -39,6 +39,75 @@ The generic orchestrator (`ase_bridge_worker.go`) dynamically looks up these imp
 
 ---
 
+## Action Providers (Decentralized Execution)
+Toro's DAG allows nodes to configure an `action_provider` under `execution_parameters`. Rather than hardcoding LLM execution or native code directly in the engine, these nodes delegate work to **Decentralized Action Provider Workers** over NATS.
+
+This provides two primary benefits:
+1. **Decoupled execution:** The core engine remains lightweight, only orchestrating workflows.
+2. **Enterprise deployment:** Clients can self-host specific action workers behind their firewall (e.g. database lookups, local CRM integrations) while subscribing to decentralized NATS topics.
+
+### NATS Protocol
+When a node with an `action_provider` is processed:
+1. The ASE Bridge Worker publishes a NATS request to `worker.inbox.action.<action_provider_name>`.
+2. The request payload contains the node's state, payload context, and execution parameters.
+3. The request respects the configured `llm_timeout_seconds` in the DAG parameters.
+4. The worker processes the request and responds with a JSON object containing:
+   - `candidates`: The probability candidates determining the next DAG edge.
+   - `property`: The classification slot/dimension.
+   - `payload_updates` (optional): Updates to inject back into the transaction payload.
+   - `context_updates` (optional): Text updates to append to the transaction's context logs.
+
+### Currently Implemented Action Providers
+The following action providers are implemented as NATS background workers in [action_provider_workers.go](file:///Users/Yankz/programming/usetoro/go/internal/workers/action_provider_workers.go):
+
+*   **`db_receipt_lookup`**: Performs naive database matches to associate missing receipts automatically.
+*   **`w9_lookup`**: Performs contractor W-9 search on file.
+*   **`db_loan_matrix_lookup`**: Searches and loads loan amortization schedules.
+*   **`db_ice_lookup`**: Searches and retrieves company ICE identifiers.
+*   **`inter_bank_transfer_collapse`**: Collapses inter-bank transfers (terminal node).
+*   **`credit_card_payment_transfer_collapse`**: Collapses credit card payment transfers (terminal node).
+*   **`equity_draw_balance_sheet_collapse`**: Collapses owner draws/shareholder distributions (terminal node).
+*   **`reclassify_to_de_minimis_expense_account`**: Reclassifies assets < $2500 to de minimis expense accounts.
+*   **`reclassify_to_operating_overhead_expense`**: Reclassifies COGS to operating overhead expenses.
+*   **`extract_and_post_cash_sales_tax_liability`**: Posts sales tax liability from raw flows.
+*   **`extract_and_post_tva_liability`**: Posts TVA (VAT) liability from raw flows.
+*   **`isolate_employee_withholding_from_cash_payout`**: Isolates payroll withholdings.
+*   **`isolate_cnss_ir_withholding_from_payout`**: Isolates Moroccan CNSS and IR payroll withholdings.
+*   **`gross_up_merchant_processing_fees_split`**: Isolates Stripe/Square merchant processing fees.
+*   **`hitl_materiality_review`**: Triggers Materiality reviews.
+
+---
+
+## Decision Theory (Layer 3) Recovery for Hold & Ambiguous Nodes
+When a DAG node's classification result returns high entropy (meaning the confidence score is too low or the state is ambiguous), the node normally transitions to a human-in-the-loop fallback state (such as `HOLD_AMBIGUOUS` or `HOLD_MISSING_DOCUMENTATION`).
+
+However, the ASE intercepts these transitions using **Layer 3: Decision Theory Recovery**.
+
+### Relationship Between Decision Theory (Layer 3) and Action Providers
+It is important to note that **Action Providers** and **Layer 3 Recovery Actions** share the same underlying execution capability, but they serve different roles in a node's lifecycle:
+
+*   **Identical Execution Layer**: Both systems execute actions by sending NATS request-reply messages to the decentralized Action Workers (subscribed to `worker.inbox.action.<action_name>`).
+*   **Active Nodes vs. Passive Recovery**:
+    *   **Action Providers** are invoked directly as the primary execution logic of active nodes during the normal flow of the DAG (configured via `execution_parameters.action_provider`).
+    *   **Decision Theory (Layer 3)** is a meta-orchestrator. It only evaluates when a node enters a `HOLD` state. It uses a decision tree and cost matrix calculations to dynamically determine *which* action provider is best suited to resolve the ambiguity and rescue the node.
+
+### Lifecycle and Execution Flow
+1. **Ambiguity Interception**: The node evaluates its classification confidence. If the Shannon entropy exceeds the defined threshold, `applyHoldPolicyOrTransition` is triggered.
+2. **Decision Tree Evaluation**: If a `RecoveryPolicy` is configured on the node (defining a decision tree with registered Go predicates), the `RecoveryPolicyEngine` traverses the tree:
+   - Evaluates boolean predicate functions (e.g. checking values in the transaction payload or database).
+   - Resolves the branch to a list of permitted `ActionIDs` (e.g. `["search_document_store", "w9_lookup"]`).
+3. **Expected Value (EV) Calculation**: For all permitted actions, the engine evaluates the Expected Value equation:
+   $$EV = (P(S|a) \times ExpectedIG(a)) - Cost(a)$$
+   - $P(S|a)$: Historical probability of success for action $a$.
+   - $ExpectedIG(a)$: Expected Information Gain (entropy reduction) for action $a$.
+   - $Cost(a)$: Composite runtime/computational cost of executing action $a$.
+4. **Execution**: The action with the highest Expected Value is selected and dispatched to `DefaultRecoveryExecutor.ExecuteAction`.
+5. **Dynamic Rescue vs. Fallback**:
+   - **Rescued**: If the recovery action executes successfully and returns a resolving candidate (e.g., `COMPLIANT_OUTFLOW`, `SUCCESS`, etc.), the node is immediately rescued and re-queued back into the DAG (`dn.Accept(node)`) to resume the automated workflow without human intervention.
+   - **Fallback**: If the action fails or is unable to resolve the ambiguity, the selected Action ID is annotated in the node's `HoldReason` metadata, and the node falls back to the original human review queue (e.g., `HOLD_AMBIGUOUS`).
+
+---
+
 ## Developer Guide: How to Add a New Domain
 
 Adding a new domain to ASE requires creating a custom `DomainTool` and a custom `StatePersister`. Follow these step-by-step instructions.

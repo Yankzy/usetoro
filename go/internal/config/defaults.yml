@@ -386,6 +386,81 @@ workers:
     subject: worker.inbox.pcm
     group: worker-inbox-pcm-group
 
+  db_receipt_lookup:
+    activity_type: workers.action.db_receipt_lookup
+    subject: worker.inbox.action.db_receipt_lookup
+    group: action_provider_db_receipt_lookup
+
+  w9_lookup:
+    activity_type: workers.action.w9_lookup
+    subject: worker.inbox.action.w9_lookup
+    group: action_provider_w9_lookup
+
+  db_loan_matrix_lookup:
+    activity_type: workers.action.db_loan_matrix_lookup
+    subject: worker.inbox.action.db_loan_matrix_lookup
+    group: action_provider_db_loan_matrix_lookup
+
+  inter_bank_transfer_collapse:
+    activity_type: workers.action.inter_bank_transfer_collapse
+    subject: worker.inbox.action.inter_bank_transfer_collapse
+    group: action_provider_inter_bank_transfer_collapse
+
+  credit_card_payment_transfer_collapse:
+    activity_type: workers.action.credit_card_payment_transfer_collapse
+    subject: worker.inbox.action.credit_card_payment_transfer_collapse
+    group: action_provider_credit_card_payment_transfer_collapse
+
+  reclassify_to_de_minimis_expense_account:
+    activity_type: workers.action.reclassify_to_de_minimis_expense_account
+    subject: worker.inbox.action.reclassify_to_de_minimis_expense_account
+    group: action_provider_reclassify_to_de_minimis_expense_account
+
+  extract_and_post_cash_sales_tax_liability:
+    activity_type: workers.action.extract_and_post_cash_sales_tax_liability
+    subject: worker.inbox.action.extract_and_post_cash_sales_tax_liability
+    group: action_provider_extract_and_post_cash_sales_tax_liability
+
+  isolate_employee_withholding_from_cash_payout:
+    activity_type: workers.action.isolate_employee_withholding_from_cash_payout
+    subject: worker.inbox.action.isolate_employee_withholding_from_cash_payout
+    group: action_provider_isolate_employee_withholding_from_cash_payout
+
+  equity_draw_balance_sheet_collapse:
+    activity_type: workers.action.equity_draw_balance_sheet_collapse
+    subject: worker.inbox.action.equity_draw_balance_sheet_collapse
+    group: action_provider_equity_draw_balance_sheet_collapse
+
+  gross_up_merchant_processing_fees_split:
+    activity_type: workers.action.gross_up_merchant_processing_fees_split
+    subject: worker.inbox.action.gross_up_merchant_processing_fees_split
+    group: action_provider_gross_up_merchant_processing_fees_split
+
+  reclassify_to_operating_overhead_expense:
+    activity_type: workers.action.reclassify_to_operating_overhead_expense
+    subject: worker.inbox.action.reclassify_to_operating_overhead_expense
+    group: action_provider_reclassify_to_operating_overhead_expense
+
+  hitl_materiality_review:
+    activity_type: workers.action.hitl_materiality_review
+    subject: worker.inbox.action.hitl_materiality_review
+    group: action_provider_hitl_materiality_review
+
+  db_ice_lookup:
+    activity_type: workers.action.db_ice_lookup
+    subject: worker.inbox.action.db_ice_lookup
+    group: action_provider_db_ice_lookup
+
+  extract_and_post_tva_liability:
+    activity_type: workers.action.extract_and_post_tva_liability
+    subject: worker.inbox.action.extract_and_post_tva_liability
+    group: action_provider_extract_and_post_tva_liability
+
+  isolate_cnss_ir_withholding_from_payout:
+    activity_type: workers.action.isolate_cnss_ir_withholding_from_payout
+    subject: worker.inbox.action.isolate_cnss_ir_withholding_from_payout
+    group: action_provider_isolate_cnss_ir_withholding_from_payout
+
   twilio_sms_inbound:
     activity_type: workers.twilio_sms_inbound
     subject: ""

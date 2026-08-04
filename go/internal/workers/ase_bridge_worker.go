@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
@@ -78,6 +79,13 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 		v.StopAll()
 	}, time.Minute*30)
 
+	// Override default recovery executor to use NATS-powered recovery executor
+	ase.DefaultRecoveryExecutor = &NatsRecoveryExecutor{
+		queries: w.db,
+		nc:      w.nc,
+		logger:  w.logger,
+	}
+
 	// Helper to instantiate, wire, and start a DAG
 	wireAndStartDAG := func(key string, cfg *ase.ASEConfig) {
 		domain := cfg.HyperParameters.DomainTool
@@ -113,6 +121,8 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 					node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
 				} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
 					node.SetThinkFunc(w.buildEmitResumeSignalFunc())
+				} else if actionProvider, ok := node.ExecutionParams["action_provider"]; ok && actionProvider != "" {
+					node.SetThinkFunc(w.buildActionProviderThinkFunc(actionProvider))
 				} else if node.EdgeType == "dynamic" {
 					node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 				} else if node.PromptKey != "" {
@@ -142,6 +152,8 @@ func (w *AseBridgeWorker) Init(ctx context.Context) error {
 				node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
 			} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
 				node.SetThinkFunc(w.buildEmitResumeSignalFunc())
+			} else if actionProvider, ok := node.ExecutionParams["action_provider"]; ok && actionProvider != "" {
+				node.SetThinkFunc(w.buildActionProviderThinkFunc(actionProvider))
 			} else if node.EdgeType == "dynamic" {
 				node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 			} else if node.PromptKey != "" {
@@ -792,3 +804,222 @@ func (w *AseBridgeWorker) buildEmitResumeSignalFunc() ase.ThinkFunc {
 		return results, nil
 	}
 }
+
+func (w *AseBridgeWorker) buildActionProviderThinkFunc(actionProvider string) ase.ThinkFunc {
+	return func(ctx context.Context, batch []*ase.AutonomousSemanticEngineNode) (map[string]ase.NodeClassification, error) {
+		results := make(map[string]ase.NodeClassification)
+		for _, node := range batch {
+			node.Mu.RLock()
+			payload := node.Payload
+			tenantID := node.TenantID
+			realmID := node.RealmID
+			dagName := node.DagName
+			nodeID := node.NodeID
+			ctxUpdates := node.ContextUpdates
+			node.Mu.RUnlock()
+
+			req := map[string]interface{}{
+				"node_id":          nodeID,
+				"tenant_id":        tenantID,
+				"realm_id":         realmID,
+				"dag_name":         dagName,
+				"payload":          payload,
+				"context_updates":  ctxUpdates,
+				"action_provider":  actionProvider,
+			}
+			reqBytes, err := json.Marshal(req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal request for action %s: %w", actionProvider, err)
+			}
+
+			// Respect configured llm_timeout_seconds from DAG configs
+			timeoutDuration := 120 * time.Second
+			if cfg := ase.GetConfig(tenantID, realmID, dagName); cfg != nil && cfg.HyperParameters.LLMTimeoutSeconds > 0 {
+				timeoutDuration = time.Duration(cfg.HyperParameters.LLMTimeoutSeconds) * time.Second
+			}
+
+			ctxWithTimeout, cancel := context.WithTimeout(ctx, timeoutDuration)
+			defer cancel()
+
+			subject := "worker.inbox.action." + actionProvider
+			msg, err := w.nc.RequestWithContext(ctxWithTimeout, subject, reqBytes)
+			if err != nil {
+				w.logger.Error("failed NATS request to action provider", "action_provider", actionProvider, "error", err)
+				return nil, fmt.Errorf("failed NATS request to action provider %s: %w", actionProvider, err)
+			}
+
+			var resp struct {
+				Candidates     []ase.ProbabilityCandidate `json:"candidates"`
+				Property       string                     `json:"property"`
+				PayloadUpdates map[string]interface{}     `json:"payload_updates"`
+				ContextUpdates []string                   `json:"context_updates"`
+			}
+			if err := json.Unmarshal(msg.Data, &resp); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal action provider response: %w", err)
+			}
+
+			// Apply updates to the node if any
+			node.Mu.Lock()
+			if len(resp.PayloadUpdates) > 0 {
+				if node.Payload == nil {
+					node.Payload = make(map[string]interface{})
+				}
+				for k, v := range resp.PayloadUpdates {
+					node.Payload[k] = v
+				}
+			}
+			if len(resp.ContextUpdates) > 0 {
+				node.ContextUpdates = append(node.ContextUpdates, resp.ContextUpdates...)
+			}
+			node.Mu.Unlock()
+
+			results[nodeID] = ase.NodeClassification{
+				Candidates: resp.Candidates,
+				Property:   resp.Property,
+			}
+		}
+		return results, nil
+	}
+}
+
+// NatsRecoveryExecutor handles execution of both native and NATS-based recovery actions (Layer 3).
+type NatsRecoveryExecutor struct {
+	queries *database.Queries
+	nc      *nats.Conn
+	logger  *slog.Logger
+}
+
+func (e *NatsRecoveryExecutor) ExecuteAction(ctx context.Context, actionID string, node *ase.AutonomousSemanticEngineNode) (bool, error) {
+	if actionID == "search_document_store" {
+		return e.actionSearchDocumentStore(ctx, node)
+	}
+
+	e.logger.Info("recovery engine: executing recovery action via NATS request", "action_id", actionID, "node_id", node.NodeID)
+
+	node.Mu.RLock()
+	payload := node.Payload
+	tenantID := node.TenantID
+	realmID := node.RealmID
+	dagName := node.DagName
+	nodeID := node.NodeID
+	ctxUpdates := node.ContextUpdates
+	node.Mu.RUnlock()
+
+	req := map[string]interface{}{
+		"node_id":         nodeID,
+		"tenant_id":       tenantID,
+		"realm_id":        realmID,
+		"dag_name":        dagName,
+		"payload":         payload,
+		"context_updates": ctxUpdates,
+		"action_provider": actionID,
+	}
+	reqBytes, err := json.Marshal(req)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal recovery request: %w", err)
+	}
+
+	// Use configured timeout or fallback to 120s
+	timeoutDuration := 120 * time.Second
+	if cfg := ase.GetConfig(tenantID, realmID, dagName); cfg != nil && cfg.HyperParameters.LLMTimeoutSeconds > 0 {
+		timeoutDuration = time.Duration(cfg.HyperParameters.LLMTimeoutSeconds) * time.Second
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, timeoutDuration)
+	defer cancel()
+
+	subject := "worker.inbox.action." + actionID
+	msg, err := e.nc.RequestWithContext(ctxWithTimeout, subject, reqBytes)
+	if err != nil {
+		e.logger.Error("recovery engine: NATS recovery request failed", "action_id", actionID, "error", err)
+		return false, err
+	}
+
+	var resp struct {
+		Candidates     []ase.ProbabilityCandidate `json:"candidates"`
+		Property       string                     `json:"property"`
+		PayloadUpdates map[string]interface{}     `json:"payload_updates"`
+		ContextUpdates []string                   `json:"context_updates"`
+	}
+	if err := json.Unmarshal(msg.Data, &resp); err != nil {
+		return false, fmt.Errorf("failed to unmarshal recovery response: %w", err)
+	}
+
+	node.Mu.Lock()
+	if len(resp.PayloadUpdates) > 0 {
+		if node.Payload == nil {
+			node.Payload = make(map[string]interface{})
+		}
+		for k, v := range resp.PayloadUpdates {
+			node.Payload[k] = v
+		}
+	}
+	if len(resp.ContextUpdates) > 0 {
+		node.ContextUpdates = append(node.ContextUpdates, resp.ContextUpdates...)
+	}
+	node.Mu.Unlock()
+
+	property := resp.Property
+	if property == "" {
+		property = "compliance_decision"
+	}
+	node.SetPropertyCandidates(property, resp.Candidates)
+
+	bestCand := node.TopCandidate(property)
+	if bestCand != nil && (strings.Contains(bestCand.Value, "COMPLIANT") || strings.Contains(bestCand.Value, "SUCCESS") || strings.Contains(bestCand.Value, "TAX_POSTED") || strings.Contains(bestCand.Value, "WITHHOLDING_ISOLATED")) {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// actionSearchDocumentStore performs native search using the node's RawAmount or RawDescription.
+func (e *NatsRecoveryExecutor) actionSearchDocumentStore(ctx context.Context, node *ase.AutonomousSemanticEngineNode) (bool, error) {
+	if e.queries == nil {
+		return false, fmt.Errorf("queries not configured in NatsRecoveryExecutor")
+	}
+	if node.RealmID == "" {
+		return false, fmt.Errorf("missing RealmID on node")
+	}
+
+	searchTerm := ""
+	node.Mu.RLock()
+	if amt, ok := node.Payload["raw_amount"].(string); ok && amt != "" {
+		searchTerm = amt
+	} else if desc, ok := node.Payload["raw_description"].(string); ok && desc != "" {
+		if len(desc) > 10 {
+			searchTerm = desc[:10]
+		} else {
+			searchTerm = desc
+		}
+	}
+	node.Mu.RUnlock()
+
+	if searchTerm == "" {
+		return false, nil
+	}
+
+	results, err := e.queries.SearchAttachables(ctx, database.SearchAttachablesParams{
+		RealmID: node.RealmID,
+		Column2: pgtype.Text{String: searchTerm, Valid: true},
+	})
+	if err != nil {
+		return false, err
+	}
+
+	if len(results) > 0 {
+		if e.logger != nil {
+			e.logger.Info("recovery engine: successfully rescued node via document search", "node_id", node.NodeID, "found_count", len(results))
+		}
+
+		docStr := fmt.Sprintf("System found matching document in storage automatically: File '%s'. Use this context to proceed.", results[0].FileName.String)
+		node.Mu.Lock()
+		node.ContextUpdates = append(node.ContextUpdates, docStr)
+		node.Mu.Unlock()
+
+		return true, nil
+	}
+
+	return false, nil
+}
+

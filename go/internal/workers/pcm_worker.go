@@ -416,11 +416,25 @@ func (w *PcmWorker) ingestStagingSession(ctx context.Context, inbound *PcmInboun
 				for idx, txItem := range txList {
 					if txMap, ok := txItem.(map[string]interface{}); ok {
 						desc, _ := txMap["description"].(string)
+						txType, _ := txMap["type"].(string)
+						
 						amtVal := ""
 						if amtFloat, ok := txMap["amount"].(float64); ok {
-							amtVal = fmt.Sprintf("%.2f", amtFloat)
+							if amtFloat < 0 {
+								amtFloat = -amtFloat
+							}
+							if txType == "debit" {
+								amtVal = fmt.Sprintf("-%.2f", amtFloat)
+							} else {
+								amtVal = fmt.Sprintf("%.2f", amtFloat)
+							}
 						} else if amtStr, ok := txMap["amount"].(string); ok {
-							amtVal = amtStr
+							amtStr = strings.TrimPrefix(amtStr, "-")
+							if txType == "debit" {
+								amtVal = "-" + amtStr
+							} else {
+								amtVal = amtStr
+							}
 						}
 						dt, _ := txMap["date"].(string)
 						rowIdx := int32(idx)

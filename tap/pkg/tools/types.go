@@ -49,6 +49,8 @@ type ConversationIDKey struct{}
 type EntityIDKey struct{}
 type SessionIDKey struct{}
 type MessageIDKey struct{}
+type RealmIDKey struct{}
+type NodeIDKey struct{}
 
 type Message struct {
 	Role       string     // "user", "assistant", "tool"

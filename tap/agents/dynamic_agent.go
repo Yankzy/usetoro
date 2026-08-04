@@ -12,6 +12,7 @@ import (
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/tools"
+	"github.com/Yankzy/usetoro/tap/pkg/tools/builtin"
 )
 
 func init() {
@@ -118,6 +119,35 @@ func (da *DynamicAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 			activeTools = append(activeTools, tools.NewSDKMultiplexer(env.Mailpool.ClientInterface))
 		} else {
 			da.Logger.Warn("mailpool sdk requested by config but not injected")
+		}
+	case "tap":
+		// Load core TAP tools for Mailroom Triage Agent
+		toolNames := map[string]bool{
+			"UpdateTransactionClassification": true,
+			"CheckExistingDocuments":          true,
+			"QueueClientRequest":              true,
+			"FetchCommunicationHistory":       true,
+		}
+		for _, toolCfg := range env.Config.Tools {
+			if !toolNames[toolCfg.Name] {
+				continue
+			}
+			if toolCfg.ActivityType != "" {
+				activeTools = append(activeTools, &builtin.AsyncWorkerTool{
+					Bus:          env.Bus,
+					AgentDID:     env.Config.DID,
+					ToolName:     toolCfg.Name,
+					ToolDesc:     toolCfg.Description,
+					Schema:       json.RawMessage(toolCfg.InputSchema),
+					ActivityType: toolCfg.ActivityType,
+				})
+			} else {
+				if t := builtin.GetTool(toolCfg.Name, env, da.Logger); t != nil {
+					activeTools = append(activeTools, t)
+				} else {
+					da.Logger.Warn("requested tap builtin tool not found", "tool", toolCfg.Name)
+				}
+			}
 		}
 	// case "meta", "stripe", "qbo" ... (add as needed in future)
 	default:

@@ -266,7 +266,9 @@ agents:
       Use the CallWorker tool to synchronously execute background workers for deterministic tasks.
       
       When alerted by the system (e.g. from 'ase') that a transaction is stuck in HOLD_MISSING_CONTEXT, it is your responsibility to contact the business owner to ask for the missing information.
-      You must independently decide how to contact them. Use the LookupClient tool to find their contact details, and use the SendEmail tool as your default method of communication to request the missing context.
+      You must independently decide how to contact them. Use the LookupClient tool to find their contact details. 
+      First, ALWAYS use the CheckExistingDocuments tool to verify we don't already have the receipt or invoice. 
+      If the document is not found, use the QueueClientRequest tool to queue an outreach email to the client. Do NOT use the SendEmail tool directly for routine document requests, as QueueClientRequest will aggregate them into a single beautifully formatted email at the end of the bank reconciliation session.
 
       IMPORTANT context on ID mapping: To preserve privacy and prevent hallucinations, all database UUIDs and QuickBooks Realm IDs in the conversation history are obfuscated to short references like 'ref_1', 'ref_2', etc. Note that a 'ref_X' reference is NOT just any random number, but is actually a locally mapped UUID or QuickBooks Realm ID. When you interact with tools or respond to the user, you must pass and return these 'ref_X' references exactly as you received them because they are mapped locally on the backend.
     tools:
@@ -276,6 +278,8 @@ agents:
       - name: "Delegate"
       - name: "LookupClient"
       - name: "SendEmail"
+      - name: "CheckExistingDocuments"
+      - name: "QueueClientRequest"
       - name: "FetchCommunicationHistory"
       - name: "UpdateTransactionClassification"
       - name: "Bash"

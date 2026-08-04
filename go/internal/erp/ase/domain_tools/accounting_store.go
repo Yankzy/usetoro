@@ -33,19 +33,19 @@ func (s *StateStore) prepareUpdateArgs(ctx context.Context, node *ase.Autonomous
 	vendorID *string, customerID *string, accountID *string, accountName string,
 	reasoning string,
 ) {
-	if topMacro := node.TopCandidate(ase.PropMacroClass); topMacro != nil {
+	if topMacro := node.TopCandidate(PropMacroClass); topMacro != nil {
 		macroClass = topMacro.Value
 		if topMacro.Reasoning != "" {
 			reasoning += "[Macro Class]: " + topMacro.Reasoning + "\n"
 		}
 	}
-	if topAccType := node.TopCandidate(ase.PropAccountType); topAccType != nil {
+	if topAccType := node.TopCandidate(PropAccountType); topAccType != nil {
 		accountType = topAccType.Value
 		if topAccType.Reasoning != "" {
 			reasoning += "[Account Type]: " + topAccType.Reasoning + "\n"
 		}
 	}
-	if topEntity := node.TopCandidate(ase.PropCounterparty); topEntity != nil {
+	if topEntity := node.TopCandidate(PropCounterparty); topEntity != nil {
 		entityName = topEntity.Value
 		if topEntity.Reasoning != "" {
 			reasoning += "[Counterparty]: " + topEntity.Reasoning + "\n"
@@ -69,7 +69,7 @@ func (s *StateStore) prepareUpdateArgs(ctx context.Context, node *ase.Autonomous
 		}
 	}
 
-	if topAccountRef := node.TopCandidate(ase.PropAccountRef); topAccountRef != nil {
+	if topAccountRef := node.TopCandidate(PropAccountRef); topAccountRef != nil {
 		if topAccountRef.Reasoning != "" {
 			reasoning += "[Account Ref]: " + topAccountRef.Reasoning + "\n"
 		}

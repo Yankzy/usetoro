@@ -256,7 +256,7 @@ func (cs *BookkeepingClassifier) dynamicChartOfAccounts(ctx context.Context, bat
 				})
 			}
 			results[node.NodeID] = ase.NodeClassification{
-				Property:   ase.PropAccountRef,
+				Property:   PropAccountRef,
 				Candidates: candidates,
 			}
 		}

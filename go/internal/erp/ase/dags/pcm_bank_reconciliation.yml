@@ -890,7 +890,7 @@ dag:
         INFLOW: macro_classifier_inflow
         OUTFLOW: macro_classifier_outflow
 
-    # # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # STEP 1: MACRO CLASSIFICATION
     # ------------------------------------------------------------------
     macro_classifier_inflow:
@@ -922,9 +922,9 @@ dag:
         REVENUE: account_type_revenue
         EXPENSE: account_type_expense
 
-    # # ------------------------------------------------------------------
-    # # STEP 2: SEGREGATED ACCOUNT TYPE CLASSIFICATION
-    # # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # STEP 2: SEGREGATED ACCOUNT TYPE CLASSIFICATION
+    # ------------------------------------------------------------------
     account_type_asset:
       name: account_type_asset
       batch_size: *bsize
@@ -933,13 +933,13 @@ dag:
       prompt_key: account_type_asset_specialist
       edge_type: *estatic
       children:
-        "debug_terminal": debug_terminal
-        # "Bank": bank
-        # "Fixed Assets": fixed_assets
-        # "Leasehold Improvements": leasehold_improvements
-        # "Other Current Assets": other_current_assets
-        # "Other Assets": other_assets
-        # "Accounts Receivable": accounts_receivable
+        # "debug_terminal": debug_terminal
+        "Bank": bank
+        "Fixed Assets": fixed_assets
+        "Leasehold Improvements": leasehold_improvements
+        "Other Current Assets": other_current_assets
+        "Other Assets": other_assets
+        "Accounts Receivable": accounts_receivable
 
     account_type_liability:
       name: account_type_liability
@@ -949,11 +949,11 @@ dag:
       prompt_key: account_type_liability_specialist
       edge_type: *estatic
       children:
-        "debug_terminal": debug_terminal
-        # "Credit Cards": credit_cards
-        # "Long Term Liability": long_term_liability
-        # "Other Current Liability": other_current_liability
-        # "Accounts Payable": accounts_payable
+        # "debug_terminal": debug_terminal
+        "Credit Cards": credit_cards
+        "Long Term Liability": long_term_liability
+        "Other Current Liability": other_current_liability
+        "Accounts Payable": accounts_payable
 
     account_type_equity:
       name: account_type_equity
@@ -963,8 +963,8 @@ dag:
       prompt_key: account_type_equity_specialist
       edge_type: *estatic
       children:
-        "debug_terminal": debug_terminal
-        # "Equity": equity
+        # "debug_terminal": debug_terminal
+        "Equity": equity
 
     account_type_revenue:
       name: account_type_revenue
@@ -974,9 +974,9 @@ dag:
       prompt_key: account_type_revenue_specialist
       edge_type: *estatic
       children:
-        "debug_terminal": debug_terminal
-        # "Income": income
-        # "Other Income": other_income
+        # "debug_terminal": debug_terminal
+        "Income": income
+        "Other Income": other_income
 
     account_type_expense:
       name: account_type_expense
@@ -986,535 +986,535 @@ dag:
       prompt_key: account_type_expense_specialist
       edge_type: *estatic
       children:
-        "debug_terminal": debug_terminal
-        # "Cost of Goods Sold": cost_of_goods_sold
-        # "Expense": expense
-        # "Other Expense": other_expense
+        # "debug_terminal": debug_terminal
+        "Cost of Goods Sold": cost_of_goods_sold
+        "Expense": expense
+        "Other Expense": other_expense
 
-    # # # ==================================================================
-    # # # STEP 3: SPECIFIC ASSETS SUB-GRAPH GATES (CASH BASIS)
-    # # # ==================================================================
-    # bank:
-    #   name: bank
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: bank_gate_specialist
-    #   batch_size: *bsize
-    #   auto_advance: false
-    #   edge_type: *estatic
-    #   children:
-    #     INTERNAL_TRANSFER: terminal_bank_transfer_collapse
-    #     TREASURY_CASH_SWEEP: terminal_bank_transfer_collapse
-    #     STANDARD_LIQUIDITY_FLOW: universal_outflow_compliance_gate
+    # ==================================================================
+    # STEP 3: SPECIFIC ASSETS SUB-GRAPH GATES (CASH BASIS)
+    # ==================================================================
+    bank:
+      name: bank
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: bank_gate_specialist
+      batch_size: *bsize
+      auto_advance: false
+      edge_type: *estatic
+      children:
+        INTERNAL_TRANSFER: terminal_bank_transfer_collapse
+        TREASURY_CASH_SWEEP: terminal_bank_transfer_collapse
+        STANDARD_LIQUIDITY_FLOW: universal_outflow_compliance_gate
 
-    # terminal_bank_transfer_collapse:
-    #   name: terminal_bank_transfer_collapse
-    #   batch_size: *bsize
-    #   batch_flush_seconds: *flush
-    #   kind: terminal
-    #   execution_parameters:
-    #     action_provider: "qbo_inter_bank_transfer_collapse"
-    #     close_status: "CLASSIFIED"
+    terminal_bank_transfer_collapse:
+      name: terminal_bank_transfer_collapse
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: terminal
+      execution_parameters:
+        action_provider: "qbo_inter_bank_transfer_collapse"
+        close_status: "CLASSIFIED"
 
-    # fixed_assets:
-    #   name: fixed_assets
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: fixed_assets_gate_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     CAPITALIZE_ASSET: universal_outflow_compliance_gate
-    #     DE_MINIMIS_EXPENSE_TRIGGER: forced_expense_reclassification
-    #     HOLD_MISSING_FIXED_ASSET_INVOICE: hold_missing_fixed_asset_invoice
+    fixed_assets:
+      name: fixed_assets
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: fixed_assets_gate_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        CAPITALIZE_ASSET: universal_outflow_compliance_gate
+        DE_MINIMIS_EXPENSE_TRIGGER: forced_expense_reclassification
+        HOLD_MISSING_FIXED_ASSET_INVOICE: hold_missing_fixed_asset_invoice
 
-    # hold_missing_fixed_asset_invoice:
-    #   name: hold_missing_fixed_asset_invoice
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
-    #   hold_reason_string: "Capitalizing an asset > $2,500 strictly requires a valid invoice detailing the physical asset."
-    #   recovery_policy:
-    #     type: action
-    #     actions: ["search_document_store", "queue_client_request"]
-    #   email:
-    #     subject: "Action Required: Missing Fixed Asset Invoice"
-    #     body_text: |
-    #       Hi there,
+    hold_missing_fixed_asset_invoice:
+      name: hold_missing_fixed_asset_invoice
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
+      hold_reason_string: "Capitalizing an asset > $2,500 strictly requires a valid invoice detailing the physical asset."
+      recovery_policy:
+        type: action
+        actions: ["search_document_store", "queue_client_request"]
+      email:
+        subject: "Action Required: Missing Fixed Asset Invoice"
+        body_text: |
+          Hi there,
 
-    #       We got a transaction for a recent purchase of {{.RawAmount}} for {{.RawDescription}}. This is likely related to fixed assets, but we require a copy of the invoice for accounting purposes.
+          We got a transaction for a recent purchase of {{.RawAmount}} for {{.RawDescription}}. This is likely related to fixed assets, but we require a copy of the invoice for accounting purposes.
 
-    #       Please reply to this email with the invoice attached.
+          Please reply to this email with the invoice attached.
 
-    #       Thank you.
-    #   execution_parameters:
-    #     action_provider: "db_receipt_lookup"
-    #   resume_child: universal_outflow_compliance_gate
+          Thank you.
+      execution_parameters:
+        action_provider: "db_receipt_lookup"
+      resume_child: universal_outflow_compliance_gate
 
-    # forced_expense_reclassification:
-    #   name: forced_expense_reclassification
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: "reclassify_to_de_minimis_expense_account"
-    #   resume_child: universal_outflow_compliance_gate
+    forced_expense_reclassification:
+      name: forced_expense_reclassification
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: "reclassify_to_de_minimis_expense_account"
+      resume_child: universal_outflow_compliance_gate
 
-    # leasehold_improvements:
-    #   name: leasehold_improvements
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: leasehold_improvements_gate_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     CAPITALIZE_IMPROVEMENT: account_selection
-    #     REPAIRS_MAINTENANCE_EXPENSE: forced_expense_reclassification
+    leasehold_improvements:
+      name: leasehold_improvements
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: leasehold_improvements_gate_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        CAPITALIZE_IMPROVEMENT: account_selection
+        REPAIRS_MAINTENANCE_EXPENSE: forced_expense_reclassification
 
-    # other_current_assets:
-    #   name: other_current_assets
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: other_current_assets_gate_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     INVENTORY_PREPAYMENT: inventory_deposit_quarantine
-    #     SECURITY_DEPOSIT: universal_outflow_compliance_gate
-    #     STANDARD_CURRENT_ASSET: universal_outflow_compliance_gate
+    other_current_assets:
+      name: other_current_assets
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: other_current_assets_gate_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        INVENTORY_PREPAYMENT: inventory_deposit_quarantine
+        SECURITY_DEPOSIT: universal_outflow_compliance_gate
+        STANDARD_CURRENT_ASSET: universal_outflow_compliance_gate
 
-    # inventory_deposit_quarantine:
-    #   name: inventory_deposit_quarantine
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   hold_state_signal: "HOLD_MISSING_CONTEXT"
-    #   hold_reason_string: "Cash paid for inventory stock deployment. Awaiting ultimate vendor receipt verification."
-    #   email:
-    #     subject: "Action Required: Missing Inventory Receipt"
-    #     body_text: |
-    #       Hi there,
+    inventory_deposit_quarantine:
+      name: inventory_deposit_quarantine
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_MISSING_CONTEXT"
+      hold_reason_string: "Cash paid for inventory stock deployment. Awaiting ultimate vendor receipt verification."
+      email:
+        subject: "Action Required: Missing Inventory Receipt"
+        body_text: |
+          Hi there,
 
-    #       We noticed an inventory-related payment of {{.RawAmount}} for {{.RawDescription}}. Please reply to this email with the final vendor receipt to attach to this transaction for accounting purposes.
+          We noticed an inventory-related payment of {{.RawAmount}} for {{.RawDescription}}. Please reply to this email with the final vendor receipt to attach to this transaction for accounting purposes.
 
-    #       Thank you.
-    #   resume_child: universal_outflow_compliance_gate
+          Thank you.
+      resume_child: universal_outflow_compliance_gate
 
-    # other_assets:
-    #   name: other_assets
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: other_assets_gate_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     INTANGIBLE_ASSET: universal_outflow_compliance_gate
-    #     LONG_TERM_SECURITY_DEPOSIT: universal_outflow_compliance_gate
-    #     STANDARD_OTHER_ASSET: universal_outflow_compliance_gate
+    other_assets:
+      name: other_assets
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: other_assets_gate_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        INTANGIBLE_ASSET: universal_outflow_compliance_gate
+        LONG_TERM_SECURITY_DEPOSIT: universal_outflow_compliance_gate
+        STANDARD_OTHER_ASSET: universal_outflow_compliance_gate
 
-    # accounts_receivable:
-    #   name: accounts_receivable
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   hold_state_signal: "HOLD_AMBIGUOUS"
-    #   hold_reason_string: "CRITICAL: Accounts Receivable option triggered under active Cash-Basis execution pipeline. Halted for manual reconciliation compliance."
-    #   email:
-    #     subject: "Clarification Needed: Accounts Receivable Transaction"
-    #     body_text: |
-    #       Hi there,
+    accounts_receivable:
+      name: accounts_receivable
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_AMBIGUOUS"
+      hold_reason_string: "CRITICAL: Accounts Receivable option triggered under active Cash-Basis execution pipeline. Halted for manual reconciliation compliance."
+      email:
+        subject: "Clarification Needed: Accounts Receivable Transaction"
+        body_text: |
+          Hi there,
 
-    #       We got a potential Accounts Receivable transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please clarify if this represents a customer payment or something else?
+          We got a potential Accounts Receivable transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please clarify if this represents a customer payment or something else?
 
-    #       Thank you
-    #   resume_child: universal_outflow_compliance_gate
+          Thank you
+      resume_child: universal_outflow_compliance_gate
 
-    # # ==================================================================
-    # # STEP 4: SPECIFIC LIABILITIES SUB-GRAPH GATES (CASH BASIS)
-    # # ==================================================================
-    # credit_cards:
-    #   name: credit_cards
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: credit_cards_gate_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     CC_BALANCE_TRANSFER: terminal_credit_card_transfer
-    #     CC_REFUND_OR_REWARD: account_selection
-    #     ANOMALOUS_CC_FLOW: universal_outflow_compliance_gate
+    # ==================================================================
+    # STEP 4: SPECIFIC LIABILITIES SUB-GRAPH GATES (CASH BASIS)
+    # ==================================================================
+    credit_cards:
+      name: credit_cards
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: credit_cards_gate_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        CC_BALANCE_TRANSFER: terminal_credit_card_transfer
+        CC_REFUND_OR_REWARD: account_selection
+        ANOMALOUS_CC_FLOW: universal_outflow_compliance_gate
 
-    # terminal_credit_card_transfer:
-    #   name: terminal_credit_card_transfer
-    #   batch_size: *bsize
-    #   batch_flush_seconds: *flush
-    #   kind: terminal
-    #   execution_parameters:
-    #     action_provider: "qbo_credit_card_payment_transfer_collapse"
-    #     close_status: "CLASSIFIED"
+    terminal_credit_card_transfer:
+      name: terminal_credit_card_transfer
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: terminal
+      execution_parameters:
+        action_provider: "qbo_credit_card_payment_transfer_collapse"
+        close_status: "CLASSIFIED"
 
-    # long_term_liability:
-    #   name: long_term_liability
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: long_term_liability_gate_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     LOAN_REPAYMENT_SPLIT: loan_amortization
-    #     LOAN_DISBURSEMENT_RECEIVED: account_selection
-    #     UNIDENTIFIED_DEBT_FLOW: universal_outflow_compliance_gate
+    long_term_liability:
+      name: long_term_liability
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: long_term_liability_gate_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        LOAN_REPAYMENT_SPLIT: loan_amortization
+        LOAN_DISBURSEMENT_RECEIVED: account_selection
+        UNIDENTIFIED_DEBT_FLOW: universal_outflow_compliance_gate
 
-    # loan_amortization:
-    #   name: loan_amortization
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   hold_state_signal: "HOLD_AMORTIZATION_LOOKUP"
-    #   hold_reason_string: "Cash loan repayment demands real-time split amortization lookup to isolate principal from interest expense lines."
-    #   email:
-    #     subject: "Action Required: Loan Repayment Schedule"
-    #     body_text: |
-    #       Hi there,
+    loan_amortization:
+      name: loan_amortization
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_AMORTIZATION_LOOKUP"
+      hold_reason_string: "Cash loan repayment demands real-time split amortization lookup to isolate principal from interest expense lines."
+      email:
+        subject: "Action Required: Loan Repayment Schedule"
+        body_text: |
+          Hi there,
 
-    #       We recorded a loan repayment of {{.RawAmount}} for {{.RawDescription}}. To properly record this, please provide us with the loan statement.
+          We recorded a loan repayment of {{.RawAmount}} for {{.RawDescription}}. To properly record this, please provide us with the loan statement.
 
-    #       Thank you.
-    #   execution_parameters:
-    #     action_provider: "db_loan_matrix_lookup"
-    #   resume_child: universal_outflow_compliance_gate
+          Thank you.
+      execution_parameters:
+        action_provider: "db_loan_matrix_lookup"
+      resume_child: universal_outflow_compliance_gate
 
-    # other_current_liability:
-    #   name: other_current_liability
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: other_current_liability_gate_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     SALES_TAX_COLLECTED: cash_sales_tax_splitter
-    #     PAYROLL_TAX_WITHHELD: cash_payroll_withholding_gate
-    #     TAX_REMITTANCE: universal_outflow_compliance_gate
-    #     DEFAULT_OPERATIONAL_FLOW: universal_outflow_compliance_gate
+    other_current_liability:
+      name: other_current_liability
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: other_current_liability_gate_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        SALES_TAX_COLLECTED: cash_sales_tax_splitter
+        PAYROLL_TAX_WITHHELD: cash_payroll_withholding_gate
+        TAX_REMITTANCE: universal_outflow_compliance_gate
+        DEFAULT_OPERATIONAL_FLOW: universal_outflow_compliance_gate
 
-    # cash_sales_tax_splitter:
-    #   name: cash_sales_tax_splitter
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: "extract_and_post_cash_sales_tax_liability"
-    #   children:
-    #     TAX_POSTED: universal_outflow_compliance_gate
+    cash_sales_tax_splitter:
+      name: cash_sales_tax_splitter
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: "extract_and_post_cash_sales_tax_liability"
+      children:
+        TAX_POSTED: universal_outflow_compliance_gate
 
-    # cash_payroll_withholding_gate:
-    #   name: cash_payroll_withholding_gate
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: "isolate_employee_withholding_from_cash_payout"
-    #   resume_child: universal_outflow_compliance_gate
+    cash_payroll_withholding_gate:
+      name: cash_payroll_withholding_gate
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: "isolate_employee_withholding_from_cash_payout"
+      resume_child: universal_outflow_compliance_gate
 
-    # accounts_payable:
-    #   name: accounts_payable
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   hold_state_signal: "HOLD_AMBIGUOUS"
-    #   hold_reason_string: "CRITICAL: Accounts Payable option triggered under active Cash-Basis execution pipeline. Halted for manual reconciliation compliance."
-    #   email:
-    #     subject: "Clarification Needed: Accounts Payable Transaction"
-    #     body_text: |
-    #       Hi there,
+    accounts_payable:
+      name: accounts_payable
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_AMBIGUOUS"
+      hold_reason_string: "CRITICAL: Accounts Payable option triggered under active Cash-Basis execution pipeline. Halted for manual reconciliation compliance."
+      email:
+        subject: "Clarification Needed: Accounts Payable Transaction"
+        body_text: |
+          Hi there,
 
-    #       We got a potential Accounts Payable transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please clarify if this represents a vendor payment or something else?
+          We got a potential Accounts Payable transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please clarify if this represents a vendor payment or something else?
 
-    #       Thank you.
-    #   resume_child: universal_outflow_compliance_gate
+          Thank you.
+      resume_child: universal_outflow_compliance_gate
 
-    # # ==================================================================
-    # # STEP 5: SPECIFIC EQUITY SUB-GRAPH GATES (CASH BASIS)
-    # # ==================================================================
-    # equity:
-    #   name: equity
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: equity_flow_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     OWNER_INVESTMENT: account_selection
-    #     OWNER_DRAW: terminal_shareholder_draw_mitigation
-    #     SHAREHOLDER_DISTRIBUTION: terminal_shareholder_draw_mitigation
+    # ==================================================================
+    # STEP 5: SPECIFIC EQUITY SUB-GRAPH GATES (CASH BASIS)
+    # ==================================================================
+    equity:
+      name: equity
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: equity_flow_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        OWNER_INVESTMENT: account_selection
+        OWNER_DRAW: terminal_shareholder_draw_mitigation
+        SHAREHOLDER_DISTRIBUTION: terminal_shareholder_draw_mitigation
 
-    # terminal_shareholder_draw_mitigation:
-    #   name: terminal_shareholder_draw_mitigation
-    #   batch_size: *bsize
-    #   batch_flush_seconds: *flush
-    #   kind: terminal
-    #   execution_parameters:
-    #     action_provider: "equity_draw_balance_sheet_collapse"
-    #     close_status: "CLASSIFIED"
+    terminal_shareholder_draw_mitigation:
+      name: terminal_shareholder_draw_mitigation
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: terminal
+      execution_parameters:
+        action_provider: "equity_draw_balance_sheet_collapse"
+        close_status: "CLASSIFIED"
 
-    # # ==================================================================
-    # # STEP 6: SPECIFIC REVENUE SUB-GRAPH GATES (CASH BASIS)
-    # # ==================================================================
-    # income:
-    #   name: income
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: operating_income_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     GROMENT_STRIPE_SQUARE_SPLIT: merchant_payout_splitter
-    #     CUSTOMER_REFUND: universal_outflow_compliance_gate
-    #     STANDARD_CASH_RECEIPT: account_selection
+    # ==================================================================
+    # STEP 6: SPECIFIC REVENUE SUB-GRAPH GATES (CASH BASIS)
+    # ==================================================================
+    income:
+      name: income
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: operating_income_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        GROMENT_STRIPE_SQUARE_SPLIT: merchant_payout_splitter
+        CUSTOMER_REFUND: universal_outflow_compliance_gate
+        STANDARD_CASH_RECEIPT: account_selection
 
-    # merchant_payout_splitter:
-    #   name: merchant_payout_splitter
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: "gross_up_merchant_processing_fees_split"
-    #   children:
-    #     MERCHANT_FEES_ISOLATED: account_selection
+    merchant_payout_splitter:
+      name: merchant_payout_splitter
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: "gross_up_merchant_processing_fees_split"
+      children:
+        MERCHANT_FEES_ISOLATED: account_selection
 
-    # other_income:
-    #   name: other_income
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: other_income_gate_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     INTEREST_DIVIDEND_INCOME: account_selection
-    #     STANDARD_OTHER_INCOME: account_selection
+    other_income:
+      name: other_income
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: other_income_gate_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        INTEREST_DIVIDEND_INCOME: account_selection
+        STANDARD_OTHER_INCOME: account_selection
 
-    # # ==================================================================
-    # # STEP 7: SPECIFIC EXPENSE SUB-GRAPH GATES (CASH BASIS)
-    # # ==================================================================
-    # cost_of_goods_sold:
-    #   name: cost_of_goods_sold
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: cogs_validation_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     VALIDATED_DIRECT_COGS: universal_outflow_compliance_gate
-    #     RECLASSIFY_TO_OVERHEAD_EXPENSE: forced_overhead_reclassification
+    # ==================================================================
+    # STEP 7: SPECIFIC EXPENSE SUB-GRAPH GATES (CASH BASIS)
+    # ==================================================================
+    cost_of_goods_sold:
+      name: cost_of_goods_sold
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: cogs_validation_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        VALIDATED_DIRECT_COGS: universal_outflow_compliance_gate
+        RECLASSIFY_TO_OVERHEAD_EXPENSE: forced_overhead_reclassification
 
-    # forced_overhead_reclassification:
-    #   name: forced_overhead_reclassification
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: "reclassify_to_operating_overhead_expense"
-    #   resume_child: universal_outflow_compliance_gate
+    forced_overhead_reclassification:
+      name: forced_overhead_reclassification
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: "reclassify_to_operating_overhead_expense"
+      resume_child: universal_outflow_compliance_gate
 
-    # expense:
-    #   name: expense
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: operating_expense_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     STANDARD_OVERHEAD: expense_compliance_router
-    #     VENDOR_REFUND: account_selection
-    #     PERSONAL_MIXIN_DETECTED: terminal_shareholder_draw_mitigation
+    expense:
+      name: expense
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: operating_expense_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        STANDARD_OVERHEAD: expense_compliance_router
+        VENDOR_REFUND: account_selection
+        PERSONAL_MIXIN_DETECTED: terminal_shareholder_draw_mitigation
 
-    # expense_compliance_router:
-    #   name: expense_compliance_router
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: expense_compliance_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     COMPLIANT_EXPENSE: universal_outflow_compliance_gate
-    #     HOLD_MISSING_RECEIPT: hold_missing_receipt
-    #     HOLD_MISSING_MEAL_DOCUMENTATION: hold_missing_meal_documentation
+    expense_compliance_router:
+      name: expense_compliance_router
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: expense_compliance_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        COMPLIANT_EXPENSE: universal_outflow_compliance_gate
+        HOLD_MISSING_RECEIPT: hold_missing_receipt
+        HOLD_MISSING_MEAL_DOCUMENTATION: hold_missing_meal_documentation
 
-    # hold_missing_receipt:
-    #   name: hold_missing_receipt
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
-    #   hold_reason_string: "Expense > $75 requires a valid receipt/attachment for documentation compliance."
-    #   recovery_policy:
-    #     type: action
-    #     actions: ["search_document_store", "queue_client_request"]
-    #   email:
-    #     subject: "Action Required: Missing Receipt"
-    #     body_text: |
-    #       Hi there,
+    hold_missing_receipt:
+      name: hold_missing_receipt
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
+      hold_reason_string: "Expense > $75 requires a valid receipt/attachment for documentation compliance."
+      recovery_policy:
+        type: action
+        actions: ["search_document_store", "queue_client_request"]
+      email:
+        subject: "Action Required: Missing Receipt"
+        body_text: |
+          Hi there,
 
-    #       We got a charge of {{.RawAmount}} for {{.RawDescription}}. 
-    #       Please reply to this email with a picture or PDF of the receipt so we can properly categorize it.
+          We got a charge of {{.RawAmount}} for {{.RawDescription}}. 
+          Please reply to this email with a picture or PDF of the receipt so we can properly categorize it.
 
-    #       Thank you.
-    #   execution_parameters:
-    #     action_provider: "db_receipt_lookup"
-    #   resume_child: universal_outflow_compliance_gate
+          Thank you.
+      execution_parameters:
+        action_provider: "db_receipt_lookup"
+      resume_child: universal_outflow_compliance_gate
 
-    # hold_missing_meal_documentation:
-    #   name: hold_missing_meal_documentation
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
-    #   hold_reason_string: "Meals & Entertainment expenses require business purpose and attendees."
-    #   recovery_policy:
-    #     type: action
-    #     actions: ["queue_client_request"]
-    #   email:
-    #     subject: "Action Required: Missing Meal Attendees and Business Purpose"
-    #     body_text: |
-    #       Hi there,
+    hold_missing_meal_documentation:
+      name: hold_missing_meal_documentation
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
+      hold_reason_string: "Meals & Entertainment expenses require business purpose and attendees."
+      recovery_policy:
+        type: action
+        actions: ["queue_client_request"]
+      email:
+        subject: "Action Required: Missing Meal Attendees and Business Purpose"
+        body_text: |
+          Hi there,
 
-    #       We got a meals or entertainment expense of {{.RawAmount}} for {{.RawDescription}}. Could you please provide us with the attendees and business purpose of this meal?
+          We got a meals or entertainment expense of {{.RawAmount}} for {{.RawDescription}}. Could you please provide us with the attendees and business purpose of this meal?
 
-    #       Thank you.
-    #   execution_parameters:
-    #     action_provider: "db_receipt_lookup"
-    #   resume_child: universal_outflow_compliance_gate
+          Thank you.
+      execution_parameters:
+        action_provider: "db_receipt_lookup"
+      resume_child: universal_outflow_compliance_gate
 
-    # other_expense:
-    #   name: other_expense
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: other_expense_gate_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     PENALTY_OR_FINE: universal_outflow_compliance_gate
-    #     INTEREST_EXPENSE: universal_outflow_compliance_gate
-    #     STANDARD_OTHER_EXPENSE: other_expense_compliance_router
+    other_expense:
+      name: other_expense
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: other_expense_gate_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        PENALTY_OR_FINE: universal_outflow_compliance_gate
+        INTEREST_EXPENSE: universal_outflow_compliance_gate
+        STANDARD_OTHER_EXPENSE: other_expense_compliance_router
 
-    # other_expense_compliance_router:
-    #   name: other_expense_compliance_router
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: other_expense_compliance_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     COMPLIANT_OTHER_EXPENSE: universal_outflow_compliance_gate
-    #     HOLD_MISSING_CHARITY_ACKNOWLEDGEMENT: hold_missing_charity_acknowledgement
+    other_expense_compliance_router:
+      name: other_expense_compliance_router
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: other_expense_compliance_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        COMPLIANT_OTHER_EXPENSE: universal_outflow_compliance_gate
+        HOLD_MISSING_CHARITY_ACKNOWLEDGEMENT: hold_missing_charity_acknowledgement
 
-    # hold_missing_charity_acknowledgement:
-    #   name: hold_missing_charity_acknowledgement
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
-    #   hold_reason_string: "Charitable Contributions > $250 require formal written acknowledgement."
-    #   recovery_policy:
-    #     type: action
-    #     actions: ["search_document_store", "queue_client_request"]
-    #   email:
-    #     subject: "Action Required: Missing Charitable Donation Acknowledgement"
-    #     body_text: |
-    #       Hi there,
+    hold_missing_charity_acknowledgement:
+      name: hold_missing_charity_acknowledgement
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
+      hold_reason_string: "Charitable Contributions > $250 require formal written acknowledgement."
+      recovery_policy:
+        type: action
+        actions: ["search_document_store", "queue_client_request"]
+      email:
+        subject: "Action Required: Missing Charitable Donation Acknowledgement"
+        body_text: |
+          Hi there,
 
-    #       We got a charitable donation of {{.RawAmount}} for {{.RawDescription}}. For your tax purposes, donations over $250 require a formal written acknowledgement from the charity. Please provide us with that letter, if you don't have it yet, we can help you get it? If you cannot, please let us know, so we can manage it properly.
+          We got a charitable donation of {{.RawAmount}} for {{.RawDescription}}. For your tax purposes, donations over $250 require a formal written acknowledgement from the charity. Please provide us with that letter, if you don't have it yet, we can help you get it? If you cannot, please let us know, so we can manage it properly.
 
-    #       Thank you.
-    #   execution_parameters:
-    #     action_provider: "db_receipt_lookup"
-    #   resume_child: universal_outflow_compliance_gate
+          Thank you.
+      execution_parameters:
+        action_provider: "db_receipt_lookup"
+      resume_child: universal_outflow_compliance_gate
 
-    # # ==================================================================
-    # # STEP 8: UNIVERSAL DATA CLOSING PIPELINE
-    # # ==================================================================
-    # universal_outflow_compliance_gate:
-    #   name: universal_outflow_compliance_gate
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   prompt_key: universal_outflow_compliance_specialist
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   children:
-    #     COMPLIANT_OUTFLOW: account_selection
-    #     HOLD_MATERIALITY_REVIEW: hold_materiality_review
-    #     HOLD_W9_REQUIRED: hold_w9_required
+    # ==================================================================
+    # STEP 8: UNIVERSAL DATA CLOSING PIPELINE
+    # ==================================================================
+    universal_outflow_compliance_gate:
+      name: universal_outflow_compliance_gate
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      prompt_key: universal_outflow_compliance_specialist
+      batch_size: *bsize
+      edge_type: *estatic
+      children:
+        COMPLIANT_OUTFLOW: account_selection
+        HOLD_MATERIALITY_REVIEW: hold_materiality_review
+        HOLD_W9_REQUIRED: hold_w9_required
 
-    # hold_materiality_review:
-    #   name: hold_materiality_review
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   hold_state_signal: "HOLD_CPA_REVIEW"
-    #   hold_reason_string: "Transaction exceeds GAAP materiality threshold ($10,000) and requires CPA sign-off."
-    #   recovery_policy:
-    #     type: action
-    #     actions: ["human_review"]
-    #   email:
-    #     subject: "Action Required: Material Transaction Review"
-    #     body_text: |
-    #       Hi there,
+    hold_materiality_review:
+      name: hold_materiality_review
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_CPA_REVIEW"
+      hold_reason_string: "Transaction exceeds GAAP materiality threshold ($10,000) and requires CPA sign-off."
+      recovery_policy:
+        type: action
+        actions: ["human_review"]
+      email:
+        subject: "Action Required: Material Transaction Review"
+        body_text: |
+          Hi there,
 
-    #       We got a large transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please provide any supporting documentation (invoice, contract, etc.) related to this transaction?
+          We got a large transaction of {{.RawAmount}} for {{.RawDescription}}. Could you please provide any supporting documentation (invoice, contract, etc.) related to this transaction?
 
-    #       Thank you.
-    #   execution_parameters:
-    #     action_provider: "hitl_materiality_review"
-    #   resume_child: universal_outflow_compliance_gate
+          Thank you.
+      execution_parameters:
+        action_provider: "hitl_materiality_review"
+      resume_child: universal_outflow_compliance_gate
 
-    # hold_w9_required:
-    #   name: hold_w9_required
-    #   batch_flush_seconds: *flush
-    #   kind: holding_gate
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
-    #   hold_reason_string: "Service payment >= $600 to independent contractor requires W-9."
-    #   recovery_policy:
-    #     type: action
-    #     actions: ["search_document_store", "queue_client_request"]
-    #   email:
-    #     subject: "Action Required: Missing W-9 for Contractor"
-    #     body_text: |
-    #       Hi there,
+    hold_w9_required:
+      name: hold_w9_required
+      batch_flush_seconds: *flush
+      kind: holding_gate
+      batch_size: *bsize
+      edge_type: *estatic
+      hold_state_signal: "HOLD_MISSING_DOCUMENTATION"
+      hold_reason_string: "Service payment >= $600 to independent contractor requires W-9."
+      recovery_policy:
+        type: action
+        actions: ["search_document_store", "queue_client_request"]
+      email:
+        subject: "Action Required: Missing W-9 for Contractor"
+        body_text: |
+          Hi there,
 
-    #       We got a service payment of {{.RawAmount}} for {{.RawDescription}}. Because this payment is $600 or more, we are required to have a W-9 on file for this vendor before the end of the year. Could you please provide us with a copy of their W-9? If you don't have it, we can help you get it? If you cannot, please let us know, so we can manage it properly.
+          We got a service payment of {{.RawAmount}} for {{.RawDescription}}. Because this payment is $600 or more, we are required to have a W-9 on file for this vendor before the end of the year. Could you please provide us with a copy of their W-9? If you don't have it, we can help you get it? If you cannot, please let us know, so we can manage it properly.
 
-    #       Thank you.
-    #   execution_parameters:
-    #     action_provider: "qbo_w9_lookup"
-    #   resume_child: universal_outflow_compliance_gate
+          Thank you.
+      execution_parameters:
+        action_provider: "qbo_w9_lookup"
+      resume_child: universal_outflow_compliance_gate
 
-    # account_selection:
-    #   name: account_selection
-    #   kind: terminal
-    #   prompt_key: account_selection_prompt
-    #   edge_type: dynamic
-    #   dynamic_edge_provider: "db_chart_of_accounts"
-    #   batch_size: *bsize
-    #   batch_flush_seconds: *flush
-    #   execution_parameters:
-    #     close_status: "CLASSIFIED"
+    account_selection:
+      name: account_selection
+      kind: terminal
+      prompt_key: account_selection_prompt
+      edge_type: dynamic
+      dynamic_edge_provider: "db_chart_of_accounts"
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      execution_parameters:
+        close_status: "CLASSIFIED"
 
 
     debug_terminal:

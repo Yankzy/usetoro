@@ -45,6 +45,7 @@ streams.json
 .claude
 **/env
 **/__pycache__/
+python-worker/__pycache__/
 .logs
 .go_cache
 **/go_cache

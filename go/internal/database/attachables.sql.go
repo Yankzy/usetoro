@@ -43,6 +43,54 @@ func (q *Queries) GetAttachableByERPID(ctx context.Context, arg GetAttachableByE
 	return i, err
 }
 
+const searchAttachables = `-- name: SearchAttachables :many
+SELECT id, realm_id, erp_id, file_name, content_type, size, note, attachable_refs, sync_token, erp_created_time, erp_updated_time, deleted_at, created_at, updated_at FROM shadow_erp.attachables
+WHERE realm_id = $1 AND deleted_at IS NULL
+AND (file_name ILIKE '%' || $2 || '%' OR note ILIKE '%' || $2 || '%')
+ORDER BY erp_created_time DESC
+LIMIT 10
+`
+
+type SearchAttachablesParams struct {
+	RealmID string
+	Column2 pgtype.Text
+}
+
+func (q *Queries) SearchAttachables(ctx context.Context, arg SearchAttachablesParams) ([]ShadowErpAttachable, error) {
+	rows, err := q.db.Query(ctx, searchAttachables, arg.RealmID, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ShadowErpAttachable
+	for rows.Next() {
+		var i ShadowErpAttachable
+		if err := rows.Scan(
+			&i.ID,
+			&i.RealmID,
+			&i.ErpID,
+			&i.FileName,
+			&i.ContentType,
+			&i.Size,
+			&i.Note,
+			&i.AttachableRefs,
+			&i.SyncToken,
+			&i.ErpCreatedTime,
+			&i.ErpUpdatedTime,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const softDeleteAttachable = `-- name: SoftDeleteAttachable :exec
 
 UPDATE shadow_erp.attachables

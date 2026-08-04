@@ -33,3 +33,10 @@ WHERE realm_id = $2 AND erp_id = $3;
 -- name: GetAttachableByERPID :one
 SELECT * FROM shadow_erp.attachables
 WHERE realm_id = $1 AND erp_id = $2 AND deleted_at IS NULL;
+
+-- name: SearchAttachables :many
+SELECT * FROM shadow_erp.attachables
+WHERE realm_id = $1 AND deleted_at IS NULL
+AND (file_name ILIKE '%' || $2 || '%' OR note ILIKE '%' || $2 || '%')
+ORDER BY erp_created_time DESC
+LIMIT 10;

@@ -120,6 +120,7 @@ type Querier interface {
 	GetCleanupSession(ctx context.Context, id pgtype.UUID) (GetCleanupSessionRow, error)
 	GetClientDossierByRealm(ctx context.Context, realmID string) (ShadowErpClientDossier, error)
 	GetCompanyInfo(ctx context.Context, realmID string) (ShadowErpCompanyInfo, error)
+	GetCompletedPcmSessions(ctx context.Context) ([]GetCompletedPcmSessionsRow, error)
 	GetConditionsByRuleGroups(ctx context.Context, ruleGroupIds []int32) ([]ShadowErpRuleCondition, error)
 	GetConnectionWithWebhookTimes(ctx context.Context, arg GetConnectionWithWebhookTimesParams) (GetConnectionWithWebhookTimesRow, error)
 	GetConversationByExternalID(ctx context.Context, externalID string) (pgtype.UUID, error)
@@ -218,6 +219,7 @@ type Querier interface {
 	GetOrCreateSystemSession(ctx context.Context, realmID pgtype.Text) (pgtype.UUID, error)
 	GetOrphanedDeposits(ctx context.Context, realmID string) ([]GetOrphanedDepositsRow, error)
 	GetOrphanedPurchases(ctx context.Context, realmID string) ([]GetOrphanedPurchasesRow, error)
+	GetPcmSessionTransactions(ctx context.Context, sessionID pgtype.UUID) ([]GetPcmSessionTransactionsRow, error)
 	// =========================================================================
 	// Transactions Batch
 	// =========================================================================
@@ -238,6 +240,7 @@ type Querier interface {
 	GetProspectByID(ctx context.Context, id pgtype.UUID) (GetProspectByIDRow, error)
 	GetProspectIDByEmail(ctx context.Context, arg GetProspectIDByEmailParams) (pgtype.UUID, error)
 	GetPurchaseByERPID(ctx context.Context, arg GetPurchaseByERPIDParams) (ShadowErpPurchase, error)
+	GetQueuedRequestsBySession(ctx context.Context, sessionID pgtype.UUID) ([]GetQueuedRequestsBySessionRow, error)
 	GetRandomEnterpriseAgentAlias(ctx context.Context) (GetRandomEnterpriseAgentAliasRow, error)
 	GetRealmIDByEntityID(ctx context.Context, entityID pgtype.UUID) (string, error)
 	GetRealmIDFromEntity(ctx context.Context, id pgtype.UUID) (pgtype.Text, error)
@@ -321,6 +324,7 @@ type Querier interface {
 	IncrementEmailAccountSendCount(ctx context.Context, id pgtype.UUID) error
 	IncrementEmployeeCleared(ctx context.Context, userID pgtype.UUID) error
 	InsertCleanupRow(ctx context.Context, arg InsertCleanupRowParams) (pgtype.UUID, error)
+	InsertClientRequestOutbox(ctx context.Context, arg InsertClientRequestOutboxParams) error
 	InsertConversationSession(ctx context.Context, arg InsertConversationSessionParams) (ToroCoreConversationSession, error)
 	InsertLLMTurnMetric(ctx context.Context, arg InsertLLMTurnMetricParams) (ToroCoreLlmTurnMetric, error)
 	InsertLeaderboardSnapshot(ctx context.Context, arg InsertLeaderboardSnapshotParams) error
@@ -351,6 +355,8 @@ type Querier interface {
 	LogWorkflowHistory(ctx context.Context, arg LogWorkflowHistoryParams) (ToroCoreWorkflowHistory, error)
 	MarkCleanupSessionAmbiguous(ctx context.Context, arg MarkCleanupSessionAmbiguousParams) error
 	MarkJobFired(ctx context.Context, id pgtype.UUID) error
+	MarkOutboxRequestsSent(ctx context.Context, sessionID pgtype.UUID) error
+	MarkPcmSessionExported(ctx context.Context, id pgtype.UUID) error
 	MarkRowPosted(ctx context.Context, arg MarkRowPostedParams) error
 	MarkStagingTransactionFailed(ctx context.Context, arg MarkStagingTransactionFailedParams) error
 	MarkStagingTransactionSynced(ctx context.Context, arg MarkStagingTransactionSyncedParams) error
@@ -366,6 +372,7 @@ type Querier interface {
 	ResolveAgentByAliasAndDomain(ctx context.Context, arg ResolveAgentByAliasAndDomainParams) (ResolveAgentByAliasAndDomainRow, error)
 	SaveConversationSessionMessage(ctx context.Context, arg SaveConversationSessionMessageParams) error
 	SaveInboundConversation(ctx context.Context, arg SaveInboundConversationParams) error
+	SearchAttachables(ctx context.Context, arg SearchAttachablesParams) ([]ShadowErpAttachable, error)
 	SearchClientsByEntityID(ctx context.Context, arg SearchClientsByEntityIDParams) ([]SearchClientsByEntityIDRow, error)
 	SetTransactionInReview(ctx context.Context, id pgtype.UUID) error
 	SoftDeleteAccount(ctx context.Context, arg SoftDeleteAccountParams) error

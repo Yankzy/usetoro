@@ -28,6 +28,19 @@ type FignodeCanonicalVendor struct {
 	DefaultVatRuleCode        pgtype.Text
 }
 
+type FignodeClientRequestOutbox struct {
+	ID            pgtype.UUID
+	TransactionID pgtype.UUID
+	SessionID     pgtype.UUID
+	ClientID      pgtype.UUID
+	RequestType   string
+	Context       pgtype.Text
+	DagNodeID     string
+	Status        string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type FignodeEmployeeProfile struct {
 	UserID           pgtype.UUID
 	FirstName        pgtype.Text

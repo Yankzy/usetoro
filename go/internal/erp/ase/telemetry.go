@@ -165,7 +165,7 @@ func (tp *TelemetryPublisher) requestContextViaOmniChat(node *AutonomousSemantic
 		"source":      "email",
 		"from_handle": "Toro Virtual Employee",
 		"to_handle":   toEmail,
-		"subject":     "Missing Context for Transaction",
+		"subject":     "Missing Context for Node",
 		"entity_id":   node.TenantID,
 	}
 
@@ -254,21 +254,20 @@ func formatContextRequest(node *AutonomousSemanticEngineNode) string {
 	switch node.GetState() {
 	case StateHoldAmbiguous:
 		return fmt.Sprintf(
-			"Transaction '%s' cannot be classified with confidence above %v. "+
+			"Node '%s' cannot be classified with confidence above %v. "+
 				"Current entropy: %.4f. Top candidate confidence below threshold. "+
-				"Human accountant review required. Raw description: '%s', Amount: '%s', Direction: '%s'.",
-			node.NodeID, threshold, node.GetEntropy(), node.Payload["raw_description"].(string), node.Payload["raw_amount"].(string), node.Payload["cash_direction"].(string),
+				"Human review required.",
+			node.NodeID, threshold, node.GetEntropy(),
 		)
 	case StateHoldMissingCtx:
 		return fmt.Sprintf(
-			"Transaction '%s' is missing context for classification. "+
-				"Reason: %s. Raw description: '%s', Amount: '%s', Direction: '%s'. "+
-				"Requesting additional context from the virtual workforce.",
-			node.NodeID, node.GetHoldReason(), node.Payload["raw_description"].(string), node.Payload["raw_amount"].(string), node.Payload["cash_direction"].(string),
+			"Node '%s' is missing context for classification. "+
+				"Reason: %s. Requesting additional context from the virtual workforce.",
+			node.NodeID, node.GetHoldReason(),
 		)
 	default:
 		return fmt.Sprintf(
-			"Transaction '%s' entered HOLD state: %s. Reason: %s.",
+			"Node '%s' entered HOLD state: %s. Reason: %s.",
 			node.NodeID, string(node.GetState()), node.GetHoldReason(),
 		)
 	}

@@ -112,15 +112,15 @@ func TestNewASENode_InitialState(t *testing.T) {
 
 func TestASENode_TopCandidate(t *testing.T) {
 	node := NewASENode("t1", "", "default", map[string]any{"raw_description": "desc", "cash_direction": "OUTFLOW", "raw_amount": "-10"})
-	if top := node.TopCandidate("macro_class"); top != nil {
+	if top := node.TopCandidate("test_property_1"); top != nil {
 		t.Error("expected nil top candidate for new node")
 	}
 
-	node.SetPropertyCandidates(PropMacroClass, []ProbabilityCandidate{
+	node.SetPropertyCandidates("test_property_1", []ProbabilityCandidate{
 		{Value: "EXPENSE", Confidence: 0.6},
 		{Value: "ASSET", Confidence: 0.95},
 	})
-	top := node.TopCandidate(PropMacroClass)
+	top := node.TopCandidate("test_property_1")
 	if top == nil || top.Value != "ASSET" {
 		t.Errorf("expected top candidate to be ASSET with 0.95, got %v", top)
 	}
@@ -135,25 +135,25 @@ func TestASENode_IsConfident(t *testing.T) {
 	}
 
 	// Below threshold.
-	node.SetPropertyCandidates("macro", []ProbabilityCandidate{{Value: "EXPENSE", Confidence: 1.0}})
-	node.SetPropertyCandidates("account_type", []ProbabilityCandidate{{Value: "Expense", Confidence: 1.0}})
-	node.SetPropertyCandidates("entity", []ProbabilityCandidate{{Value: "Staples", Confidence: 1.0}})
-	node.SetPropertyCandidates("account", []ProbabilityCandidate{
-		{Value: "123", Confidence: 0.7},
-		{Value: "456", Confidence: 0.3},
+	node.SetPropertyCandidates("prop_1", []ProbabilityCandidate{{Value: "val_a", Confidence: 1.0}})
+	node.SetPropertyCandidates("prop_2", []ProbabilityCandidate{{Value: "val_b", Confidence: 1.0}})
+	node.SetPropertyCandidates("prop_3", []ProbabilityCandidate{{Value: "val_c", Confidence: 1.0}})
+	node.SetPropertyCandidates("prop_4", []ProbabilityCandidate{
+		{Value: "val_d1", Confidence: 0.7},
+		{Value: "val_d2", Confidence: 0.3},
 	})
 	if node.IsConfident() {
 		t.Errorf("expected not confident at final score (unified: %f)", node.UnifiedConfidence)
 	}
 
 	// At threshold (perfect confidence).
-	node.SetPropertyCandidates("account", []ProbabilityCandidate{{Value: "123", Confidence: 1.0}})
+	node.SetPropertyCandidates("prop_4", []ProbabilityCandidate{{Value: "val_d1", Confidence: 1.0}})
 	if !node.IsConfident() {
 		t.Errorf("expected confident at 0.98 final score (unified: %f)", node.UnifiedConfidence)
 	}
 
 	// Above threshold.
-	node.SetPropertyCandidates("account", []ProbabilityCandidate{{Value: "123", Confidence: 0.99}})
+	node.SetPropertyCandidates("prop_4", []ProbabilityCandidate{{Value: "val_d1", Confidence: 0.99}})
 	if !node.IsConfident() {
 		t.Errorf("expected confident at 0.99 final score (unified: %f)", node.UnifiedConfidence)
 	}
@@ -165,15 +165,15 @@ func TestASENode_SetCandidates_IncrementsProbes(t *testing.T) {
 		t.Errorf("expected 0 probes, got %d", node.LifetimeProbes)
 	}
 
-	node.SetPropertyCandidates("macro", []ProbabilityCandidate{
-		{Value: "EXPENSE", Confidence: 0.9},
+	node.SetPropertyCandidates("prop_1", []ProbabilityCandidate{
+		{Value: "val_a", Confidence: 0.9},
 	})
 	if node.LifetimeProbes != 1 {
 		t.Errorf("expected 1 probe after first set, got %d", node.LifetimeProbes)
 	}
 
-	node.SetPropertyCandidates("account_type", []ProbabilityCandidate{
-		{Value: "REVENUE", Confidence: 0.8},
+	node.SetPropertyCandidates("prop_2", []ProbabilityCandidate{
+		{Value: "val_b", Confidence: 0.8},
 	})
 	if node.LifetimeProbes != 2 {
 		t.Errorf("expected 2 probes after second set, got %d", node.LifetimeProbes)

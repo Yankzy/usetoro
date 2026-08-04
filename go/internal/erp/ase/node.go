@@ -1,5 +1,5 @@
 // Package ase implements the Autonomous Semantic Engine — an event-driven,
-// concurrent agentic architecture where individual transactions are micro-agents
+// concurrent agentic architecture where individual payloads are autonomous micro-agents
 // that manage their own classification state and entropy.
 package ase
 
@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// NodeState represents the lifecycle phase of a transaction micro-agent.
+// NodeState represents the lifecycle phase of an autonomous micro-agent.
 type NodeState string
 
 const (
@@ -27,13 +27,7 @@ const (
 	StateCollapsed      NodeState = "COLLAPSED"
 )
 
-// Property Keys for the multi-dimensional Candidates Map
-const (
-	PropMacroClass   = "macro_class"
-	PropAccountType  = "account_type"
-	PropCounterparty = "counterparty"
-	PropAccountRef   = "resolved_account_id"
-)
+
 
 // ProbabilityCandidate represents a single isolated guess for a specific slot.
 type ProbabilityCandidate struct {
@@ -53,7 +47,7 @@ type NodeExecutionStep struct {
 	Timestamp    time.Time              `json:"timestamp"`
 }
 
-// AutonomousSemanticEngineNode represents an individual transaction micro-agent.
+// AutonomousSemanticEngineNode represents an individual autonomous micro-agent.
 // Each node manages its own classification lifecycle, entropy state, and routing
 // through the DAG topology.
 type AutonomousSemanticEngineNode struct {
@@ -95,7 +89,7 @@ type AutonomousSemanticEngineNode struct {
 	Persister     StatePersister
 }
 
-// NewASENode creates a new transaction micro-agent from a staging transaction.
+// NewASENode creates a new autonomous micro-agent from a staging payload.
 func NewASENode(tenantID, realmID, dagName string, payload map[string]any) *AutonomousSemanticEngineNode {
 	now := time.Now().UTC()
 	nodeID := uuid.New().String()

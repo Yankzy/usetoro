@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/Yankzy/usetoro/internal/agents"
 	"github.com/Yankzy/usetoro/internal/config"
@@ -42,7 +43,7 @@ type GeneralAgentIngressWorker struct {
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
 		interceptors := []conversation.IngressInterceptor{
-			ase.NewAseIngressInterceptor(deps.DBPool, deps.Queue, deps.Logger, func(domain string) ase.StatePersister {
+			domain_tools.NewAseIngressInterceptor(deps.DBPool, deps.Queue, deps.Logger, func(domain string) ase.StatePersister {
 				dt := domain_tools.Get(domain)
 				if dt == nil {
 					return nil
@@ -200,6 +201,13 @@ func (w *GeneralAgentIngressWorker) Handle(ctx context.Context, msg *nats.Msg) e
 	// Resolve agent config from the alias registry.
 	// The caller (e.g. email worker) passes agent_alias; we map it to the
 	// correct system prompt here so channel workers stay dumb pipes.
+	
+	// If the alias is an ase_session (from a daily digest reply), route to mailroom triage
+	if strings.HasPrefix(req.AgentAlias, "ase_session:") {
+		req.SessionID = strings.TrimPrefix(req.AgentAlias, "ase_session:")
+		req.AgentAlias = "mailroom-triage-agent"
+	}
+
 	if req.AgentAlias != "" && req.SystemPrompt == "" {
 		if cfg := agents.Lookup(req.AgentAlias); cfg != nil {
 			req.SystemPrompt = cfg.SystemPrompt

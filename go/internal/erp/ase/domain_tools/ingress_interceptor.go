@@ -1,4 +1,4 @@
-package ase
+package domain_tools
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Yankzy/usetoro/internal/conversation"
+	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 )
@@ -17,10 +18,10 @@ type AseIngressInterceptor struct {
 	pool        *pgxpool.Pool
 	nc          *nats.Conn
 	logger      *slog.Logger
-	storeGetter func(domainTool string) StatePersister
+	storeGetter func(domainTool string) ase.StatePersister
 }
 
-func NewAseIngressInterceptor(pool *pgxpool.Pool, nc *nats.Conn, logger *slog.Logger, storeGetter func(string) StatePersister) *AseIngressInterceptor {
+func NewAseIngressInterceptor(pool *pgxpool.Pool, nc *nats.Conn, logger *slog.Logger, storeGetter func(string) ase.StatePersister) *AseIngressInterceptor {
 	return &AseIngressInterceptor{
 		pool:        pool,
 		nc:          nc,
@@ -62,7 +63,7 @@ func (i *AseIngressInterceptor) Intercept(ctx context.Context, req *conversation
 		dagName := aseDagName
 		startNodeID := "default"
 		
-		var store StatePersister
+		var store ase.StatePersister
 		if i.storeGetter != nil {
 			store = i.storeGetter(domainTool)
 		}
@@ -95,7 +96,7 @@ func (i *AseIngressInterceptor) Intercept(ctx context.Context, req *conversation
 			i.logger.Info("ingress(general): deterministic intercept - inbound email has attachments", "node_id", nodeID, "dag_name", dagName, "domain_tool", domainTool, "start_node_id", startNodeID)
 
 			if store != nil {
-				if execErr := store.UpdateNodeState(ctx, nodeID, NodeState("RESUME_PENDING")); execErr != nil {
+				if execErr := store.UpdateNodeState(ctx, nodeID, ase.NodeState("RESUME_PENDING")); execErr != nil {
 					i.logger.Error("ingress(general): failed to update transaction for deterministic intercept", "error", execErr)
 				}
 			} else {

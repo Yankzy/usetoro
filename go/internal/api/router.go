@@ -103,7 +103,7 @@ func NewRouter(h *Handler, wm *micrion.WalletManager, mailpoolHandler *mailpool.
 	mux.HandleFunc("POST /test/redux", h.HandleTestRedux)
 
 	// Simple Ingress Worker Endpoint
-	mux.HandleFunc("POST /ingress", h.HandleIngressWorker)
+	mux.HandleFunc("/ingress", h.HandleIngressWorker)
 
 	// System & Actor Discovery
 	mux.HandleFunc("GET /v1/system/actors", h.HandleListActors)

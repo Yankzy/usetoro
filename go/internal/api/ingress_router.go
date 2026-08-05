@@ -48,6 +48,23 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	// Meta / WhatsApp webhook verification challenge (hub.mode=subscribe)
+	hubMode := r.URL.Query().Get("hub.mode")
+	if hubMode == "" {
+		hubMode = r.URL.Query().Get("hub_mode")
+	}
+	hubChallenge := r.URL.Query().Get("hub.challenge")
+	if hubChallenge == "" {
+		hubChallenge = r.URL.Query().Get("hub_challenge")
+	}
+	if hubMode == "subscribe" && hubChallenge != "" {
+		h.Logger.Info("ingress: handling meta verification challenge", "activity_type", activityType, "challenge", hubChallenge)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(hubChallenge))
+		return
+	}
+
 	// Slack URL verification challenge must be handled synchronously
 	// (Slack imposes a 3-second deadline), so we intercept it here
 	// before the NATS publish path.

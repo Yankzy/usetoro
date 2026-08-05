@@ -100,18 +100,19 @@ func (w *PcmExportCronWorker) exportSession(ctx context.Context, session databas
 		return fmt.Errorf("no transactions found for session %s", session.ID.String())
 	}
 
-	// Fetch Accounts to map to account codes
-	accounts, err := w.db.GetAccountsByRealm(ctx, session.RealmID.String)
-	if err != nil {
-		return fmt.Errorf("fetch accounts: %w", err)
-	}
 	accMap := make(map[string]string)
-	for _, acc := range accounts {
-		accCode := acc.ID.String() // fallback
-		if acc.AccountCode.Valid {
-			accCode = acc.AccountCode.String
+	if w.db != nil && session.RealmID.Valid && session.RealmID.String != "" {
+		if accounts, err := w.db.GetAccountsByRealm(ctx, session.RealmID.String); err == nil {
+			for _, acc := range accounts {
+				accCode := acc.ID.String() // fallback
+				if acc.AccountCode.Valid {
+					accCode = acc.AccountCode.String
+				}
+				accMap[acc.ID.String()] = accCode
+			}
+		} else {
+			w.logger.Debug("No DB accounts table lookup, falling back to direct JSON/code lookup", "error", err)
 		}
-		accMap[acc.ID.String()] = accCode
 	}
 
 	bankAccountCode := "514100" // Fallback standard Moroccan bank account code
@@ -304,13 +305,15 @@ func extractAuxAccount(desc string, counterparty string, direction string, accou
 				break
 			}
 		}
-		for _, suffix := range []string{" SA", " SARL", " IT Solutions", " Casablanca", " Business", " Construction SA", " Industrie SA"} {
-			if idx := strings.Index(strings.ToLower(cleaned), strings.ToLower(suffix)); idx > 0 {
-				cleaned = cleaned[:idx]
-			}
-		}
 		rawEntity = strings.TrimSpace(cleaned)
 	}
+
+	for _, suffix := range []string{" SA", " SARL", " IT Solutions", " Casablanca", " Business", " Construction SA", " Industrie SA"} {
+		if idx := strings.Index(strings.ToLower(rawEntity), strings.ToLower(suffix)); idx > 0 {
+			rawEntity = rawEntity[:idx]
+		}
+	}
+	rawEntity = strings.TrimSpace(rawEntity)
 
 	if rawEntity == "" {
 		return ""

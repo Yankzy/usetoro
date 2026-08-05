@@ -604,9 +604,7 @@ func extractAuxAccount(desc string, counterparty string, direction string, accou
 		prefix = "C_"
 	}
 
-	if strings.HasPrefix(code, "CLIENT") {
-		code = strings.TrimPrefix(code, "CLIENT")
-	}
+	code = strings.TrimPrefix(code, "CLIENT")
 
 	if len(code) > 8 {
 		code = code[:8]

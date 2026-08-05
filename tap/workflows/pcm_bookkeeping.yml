@@ -53,7 +53,7 @@ steps:
     timeout: "600s"
     description: "Fans out Autonomous Semantic Engine micro-agents for PCM bank reconciliation."
     config:
-      dag_name: "pcm_bank_reconciliation"
+      dag_name: "pcm_demo"
       domain_tool: "bookkeeping"
     workflow_schema: |
       {

@@ -701,9 +701,10 @@ prompts:
       You are a rigorous auditor evaluating standard operational expenses under Moroccan General Tax Code (CGI).
       Apply the following rules to this transaction:
 
-      1. Invoice Requirement: Every business expense must be backed by a conforming invoice (facture conforme). You must select "HOLD_MISSING_RECEIPT" unless a valid invoice/receipt is provided in the attachments or transaction context.
-      2. Cash Payment Limitation (CGI Art. 193): If the transaction payment method is cash and the amount is strictly greater than 5,000 MAD, select "HOLD_MISSING_RECEIPT" (or flag for compliance audit) because cash payments exceeding 5,000 MAD per day per supplier are non-deductible.
-      3. If the transaction has valid documentation satisfying the rules above, select "COMPLIANT_EXPENSE".
+      1. Meals & Entertainment: If the transaction is for Meals & Entertainment, you must select "HOLD_MISSING_MEAL_DOCUMENTATION" unless the exact business purpose and names of attendees are explicitly provided in the transaction context or receipt.
+      2. Invoice Requirement: Every business expense must be backed by a conforming invoice (facture conforme). You must select "HOLD_MISSING_RECEIPT" unless a valid invoice/receipt is provided in the attachments or transaction context.
+      3. Cash Payment Limitation (CGI Art. 193): If the transaction payment method is cash and the amount is strictly greater than 5,000 MAD, select "HOLD_MISSING_RECEIPT" (or flag for compliance audit) because cash payments exceeding 5,000 MAD per day per supplier are non-deductible.
+      4. If the transaction has valid documentation satisfying the rules above, and is NOT Meals & Entertainment, select "COMPLIANT_EXPENSE".
     - *guardrails
     - *accounting_rules
     - |
@@ -717,7 +718,8 @@ prompts:
               "property": "expense_compliance_decision",
               "candidates": {
               "1": { "value": "COMPLIANT_EXPENSE", "confidence": 0.99, "reasoning": "Compliant invoice." },
-              "2": { "value": "HOLD_MISSING_RECEIPT", "confidence": 0.01, "reasoning": "Missing facture conforme." }
+              "2": { "value": "HOLD_MISSING_RECEIPT", "confidence": 0.01, "reasoning": "Missing facture conforme." },
+              "3": { "value": "HOLD_MISSING_MEAL_DOCUMENTATION", "confidence": 0.00, "reasoning": "Missing business purpose and attendees." }
                 }
               }
             }
@@ -971,9 +973,10 @@ dag:
       auto_advance: false
       edge_type: *estatic
       children:
-        INTERNAL_TRANSFER: terminal_bank_transfer_collapse
-        TREASURY_CASH_SWEEP: terminal_bank_transfer_collapse
-        STANDARD_LIQUIDITY_FLOW: universal_outflow_compliance_gate
+        debug_terminal: debug_terminal
+        # INTERNAL_TRANSFER: terminal_bank_transfer_collapse
+        # TREASURY_CASH_SWEEP: terminal_bank_transfer_collapse
+        # STANDARD_LIQUIDITY_FLOW: universal_outflow_compliance_gate
 
     terminal_bank_transfer_collapse:
       name: terminal_bank_transfer_collapse
@@ -992,9 +995,10 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       children:
-        CAPITALIZE_ASSET: universal_outflow_compliance_gate
-        DE_MINIMIS_EXPENSE_TRIGGER: forced_expense_reclassification
-        HOLD_MISSING_FIXED_ASSET_INVOICE: hold_missing_fixed_asset_invoice
+        debug_terminal: debug_terminal
+        # CAPITALIZE_ASSET: universal_outflow_compliance_gate
+        # DE_MINIMIS_EXPENSE_TRIGGER: forced_expense_reclassification
+        # HOLD_MISSING_FIXED_ASSET_INVOICE: hold_missing_fixed_asset_invoice
 
     hold_missing_fixed_asset_invoice:
       name: hold_missing_fixed_asset_invoice
@@ -1039,8 +1043,9 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       children:
-        CAPITALIZE_IMPROVEMENT: account_selection
-        REPAIRS_MAINTENANCE_EXPENSE: forced_expense_reclassification
+        debug_terminal: debug_terminal
+        # CAPITALIZE_IMPROVEMENT: account_selection
+        # REPAIRS_MAINTENANCE_EXPENSE: forced_expense_reclassification
 
     other_current_assets:
       name: other_current_assets
@@ -1050,8 +1055,9 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       children:
-        SECURITY_DEPOSIT: universal_outflow_compliance_gate
-        STANDARD_CURRENT_ASSET: universal_outflow_compliance_gate
+        debug_terminal: debug_terminal
+        # SECURITY_DEPOSIT: universal_outflow_compliance_gate
+        # STANDARD_CURRENT_ASSET: universal_outflow_compliance_gate
 
     inventory_deposit_quarantine:
       name: inventory_deposit_quarantine
@@ -1078,9 +1084,10 @@ dag:
       batch_size: *bsize
       edge_type: *estatic
       children:
-        INTANGIBLE_ASSET: universal_outflow_compliance_gate
-        LONG_TERM_SECURITY_DEPOSIT: universal_outflow_compliance_gate
-        STANDARD_OTHER_ASSET: universal_outflow_compliance_gate
+        debug_terminal: debug_terminal
+        # INTANGIBLE_ASSET: universal_outflow_compliance_gate
+        # LONG_TERM_SECURITY_DEPOSIT: universal_outflow_compliance_gate
+        # STANDARD_OTHER_ASSET: universal_outflow_compliance_gate
 
     accounts_receivable:
       name: accounts_receivable
@@ -1482,8 +1489,8 @@ dag:
       execution_parameters:
         close_status: "CLASSIFIED"
 
-    # debug_terminal:
-    #   name: debug_terminal
-    #   batch_size: *bsize
-    #   batch_flush_seconds: *flush
-    #   kind: terminal
+    debug_terminal:
+      name: debug_terminal
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: terminal

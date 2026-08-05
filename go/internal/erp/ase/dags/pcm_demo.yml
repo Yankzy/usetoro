@@ -1,0 +1,504 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  max_llm_retries: 3
+  llm_timeout_seconds: 120
+  batch_flush_seconds: 5
+  active_agent_ttl_minutes: 10
+  lock_ttl_seconds: 30
+  domain_tool: "bookkeeping"
+
+  vector_memory:
+    enabled: false
+    embedding_provider: "openai"
+    openai_embedding_model: "text-embedding-3-small"
+    embedding_dimensions: 1536
+    scann_num_leaves: 10
+    retrieval_top_k: 5
+    hydrator_interval_seconds: 30
+    hydrator_min_confidence: 0.98
+    hydrator_batch_size: 50
+
+prompts:
+  _shared_guardrails: &guardrails |
+    ### CONFIDENCE GUARDRAILS
+    - Because confidence is probability distribution, candidates map MUST contain at least 2 candidates.
+    - Set the highest score confidence to >= 0.98 for the most appropriate category to allow automatic progression.
+
+  macro_classifier_inflow_pcge_specialist:
+    - |
+      You are an expert accountant acting as a macro-classification router inside a Moroccan (PCM) automated ledger engine. 
+      Your job is to assign EACH INFLOW transaction to one of the active PCGE Classes:
+      CLASS_1_FINANCEMENT_PERMANENT, CLASS_2_ACTIF_IMMOBILISE, CLASS_3_ACTIF_CIRCULANT, CLASS_4_PASSIF_CIRCULANT, CLASS_5_TRESORERIE, CLASS_6_CHARGES, CLASS_7_PRODUITS.
+
+      ### CONTEXT
+      * Cash Direction for ALL items: INFLOW
+      * Contra-Accounting Awareness: Bank direction alone does not determine macro class. Apply these structural rules:
+        - INFLOW transactions that are refunds from vendors are NOT revenue (Class 7) — they are contra-EXPENSE (Class 6).
+        - Otherwise, INFLOWs are generally CLASS_7_PRODUITS (Revenue), CLASS_1_FINANCEMENT_PERMANENT (Loan/Equity), or CLASS_5_TRESORERIE (Bank Transfer).
+
+      ### COMPANY RULES (CRITICAL)
+      - If a "company_rules" array is provided, you MUST strictly adhere to these rules over your default accounting assumptions.
+
+    - *guardrails
+
+    - |
+
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "macro_class",
+              "candidates": {
+              "1": { "value": "CLASS_7_PRODUITS", "confidence": 0.98, "reasoning": "Standard operating cash receipt." },
+              "2": { "value": "CLASS_1_FINANCEMENT_PERMANENT", "confidence": 0.02, "reasoning": "Could potentially be a short-term loan advance." }
+                }
+              }
+            }
+          }
+        ]
+
+  macro_classifier_outflow_pcge_specialist:
+    - |
+      You are an expert accountant acting as a macro-classification router inside a Moroccan (PCM) automated ledger engine. 
+      Your job is to assign EACH OUTFLOW transaction to one of the active PCGE Classes:
+      CLASS_1_FINANCEMENT_PERMANENT, CLASS_2_ACTIF_IMMOBILISE, CLASS_3_ACTIF_CIRCULANT, CLASS_4_PASSIF_CIRCULANT, CLASS_5_TRESORERIE, CLASS_6_CHARGES, CLASS_7_PRODUITS.
+
+      ### CONTEXT
+      * Cash Direction for ALL items: OUTFLOW
+      * Contra-Accounting Awareness: Bank direction alone does not determine macro class.
+        - OUTFLOW transactions that are refunds to customers are NOT expenses (Class 6) — they are contra-REVENUE (Class 7).
+        - Otherwise, OUTFLOWs are generally CLASS_6_CHARGES (Expense), CLASS_2_ACTIF_IMMOBILISE (Buying Assets), CLASS_4_PASSIF_CIRCULANT (Paying Suppliers/Taxes), or CLASS_5_TRESORERIE (Bank Transfers).
+
+      ### COMPANY RULES (CRITICAL)
+      - If a "company_rules" array is provided, you MUST strictly adhere to these rules over your default accounting assumptions.
+
+    - *guardrails
+
+    - |
+
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "macro_class",
+              "candidates": {
+              "1": { "value": "CLASS_6_CHARGES", "confidence": 0.98, "reasoning": "Standard operational purchase." },
+              "2": { "value": "CLASS_2_ACTIF_IMMOBILISE", "confidence": 0.02, "reasoning": "Possible hardware capitalization if over threshold." }
+                }
+              }
+            }
+          }
+        ]
+
+  pcge_class_1_specialist:
+    - |
+      You are the Master PCGE Rubrique Specialist for CLASS 1 (Financement Permanent).
+      Map this transaction to the exact string literal representing the account type.
+
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Capitaux Propres (Equity)": Use for owner draws, owner investments, and share capital (Class 11).
+      2. "Dettes de Financement (Long Term Debt)": Use for financing debts/loans with maturity > 1 year (Class 14).
+
+    - *guardrails
+
+    - |
+
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "account_type",
+              "candidates": {
+              "1": { "value": "Capitaux Propres (Equity)", "confidence": 0.98, "reasoning": "Owner draw identified." },
+              "2": { "value": "Dettes de Financement (Long Term Debt)", "confidence": 0.02, "reasoning": "Fallback." }
+                }
+              }
+            }
+          }
+        ]
+
+  pcge_class_2_specialist:
+    - |
+      You are the Master PCGE Rubrique Specialist for CLASS 2 (Actif Immobilisé).
+      Map this transaction to the exact string literal representing the account type.
+
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Immobilisations Incorporelles (Intangible)": Patents, trademarks, software (Class 22).
+      2. "Immobilisations Corporelles (Fixed Assets)": Physical equipment, vehicles, hardware > 500 MAD (Class 23).
+      3. "Immobilisations en Non-Valeurs (Leaseholds/Setup)": Preliminary establishment costs, major leasehold improvements (Class 21).
+      4. "Immobilisations Financières": Long term deposits, guarantees, investments (Class 24/25).
+
+    - *guardrails
+
+    - |
+
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "account_type",
+              "candidates": {
+              "1": { "value": "Immobilisations Corporelles (Fixed Assets)", "confidence": 0.98, "reasoning": "High likelihood of hardware footprint." },
+              "2": { "value": "Immobilisations Incorporelles (Intangible)", "confidence": 0.02, "reasoning": "Software license check." }
+                }
+              }
+            }
+          }
+        ]
+
+  pcge_class_3_specialist:
+    - |
+      You are the Master PCGE Rubrique Specialist for CLASS 3 (Actif Circulant).
+      Map this transaction to the exact string literal.
+
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Stocks (Inventory)": Direct raw materials or products intended for resale (Class 31).
+      2. "Créances Clients (Accounts Receivable)": Money owed to the business by a customer (Class 342).
+      3. "Autres Créances (Other Current Assets)": Short term deposits, employee advances, state receivables (Class 34).
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "account_type",
+              "candidates": {
+              "1": { "value": "Autres Créances (Other Current Assets)", "confidence": 0.98, "reasoning": "Short term supplier advance." },
+              "2": { "value": "Stocks (Inventory)", "confidence": 0.02, "reasoning": "Safety check." }
+                }
+              }
+            }
+          }
+        ]
+
+  pcge_class_4_specialist:
+    - |
+      You are the Master PCGE Rubrique Specialist for CLASS 4 (Passif Circulant).
+      Map this transaction to the exact string literal.
+
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Dettes Fournisseurs (Accounts Payable)": Unpaid vendor invoices (Class 441).
+      2. "Etat et Organismes Sociaux (TVA/CNSS)": Taxes, TVA to remit, CNSS, IR withholdings (Class 444/445).
+      3. "Autres Dettes du Passif Circulant": Short term loans, employee liabilities (Class 448).
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "account_type",
+              "candidates": {
+              "1": { "value": "Etat et Organismes Sociaux (TVA/CNSS)", "confidence": 0.98, "reasoning": "TVA remittance payment." },
+              "2": { "value": "Dettes Fournisseurs (Accounts Payable)", "confidence": 0.02, "reasoning": "Fallback." }
+                }
+              }
+            }
+          }
+        ]
+
+  pcge_class_5_specialist:
+    - |
+      You are the Master PCGE Rubrique Specialist for CLASS 5 (Trésorerie).
+      Map this transaction to the exact string literal.
+
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Trésorerie Actif (Bank/Cash)": Bank accounts, cash on hand, checks to cash (Class 51).
+      2. "Trésorerie Passif (Credit Cards/Overdrafts)": Bank overdrafts, short-term discount credits, corporate credit cards (Class 55).
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "account_type",
+              "candidates": {
+              "1": { "value": "Trésorerie Actif (Bank/Cash)", "confidence": 0.98, "reasoning": "Standard checking account flow." },
+              "2": { "value": "Trésorerie Passif (Credit Cards/Overdrafts)", "confidence": 0.02, "reasoning": "Fallback." }
+                }
+              }
+            }
+          }
+        ]
+
+  pcge_class_6_specialist:
+    - |
+      You are the Master PCGE Rubrique Specialist for CLASS 6 (Charges).
+      Map this transaction to the exact string literal.
+
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Achats Revendus ou Consommés (COGS)": Direct purchases of goods sold or raw materials (Class 611/612).
+      2. "Autres Charges Externes (Operating Expense)": Rent, maintenance, travel, software, meals, general admin (Class 613/614).
+      3. "Charges Financières et Non Courantes": Interest paid, bank fees, penalties, fines, charity (Class 63/65).
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "account_type",
+              "candidates": {
+              "1": { "value": "Autres Charges Externes (Operating Expense)", "confidence": 0.98, "reasoning": "Standard overhead." },
+              "2": { "value": "Charges Financières et Non Courantes", "confidence": 0.02, "reasoning": "Bank fee check." }
+                }
+              }
+            }
+          }
+        ]
+
+  pcge_class_7_specialist:
+    - |
+      You are the Master PCGE Rubrique Specialist for CLASS 7 (Produits).
+      Map this transaction to the exact string literal.
+
+      ### SPECIFIC SELECTION HEURISTICS:
+      1. "Produits d'Exploitation (Operating Income)": Sales of goods, services, primary business revenue (Class 71).
+      2. "Produits Financiers et Non Courants": Interest received, asset disposal income, non-operating grants (Class 73/75).
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "account_type",
+              "candidates": {
+              "1": { "value": "Produits d'Exploitation (Operating Income)", "confidence": 0.98, "reasoning": "Standard operating cash receipt." },
+              "2": { "value": "Produits Financiers et Non Courants", "confidence": 0.02, "reasoning": "Possible non-operating income source." }
+                }
+              }
+            }
+          }
+        ]
+
+  account_selection_prompt:
+    - |
+      You are an expert accountant. Select the exact account ID from the Chart of Accounts that best matches the transaction. Do it in these steps:
+      1. Isolate the true corporate vendor or customer entity name by stripping locations, branch numbers, dates, and terminal IDs from the description string.
+      2. Review the 'trace' array provided in the transaction row. This trace contains classifications from prior steps, telling you whether this is an INFLOW/OUTFLOW, PCGE Class (1-7), etc.
+      3. Use the 'trace' history combined with the isolated entity name to select the most accurate account from the appropriately categorized Chart of Accounts below.
+      4. If the customer/vendor did not match any account in the Chart of Accounts, look for accounts like 'Uncategorized Income', 'Uncategorized Expense', 'Uncategorized Assets', 'Uncategorized Liabilities' etc and use that. 
+
+      COMPANY CHART OF ACCOUNTS:
+      {{.ChartOfAccounts}}
+
+      You MUST select the SINGLE BEST account ID (the ID field) that matches. Do not make up an ID.
+      If no account fits perfectly, select the closest general category.
+      CRITICAL: Do NOT output just the ID. You MUST format your entire response exactly as a JSON Patch array as described below.
+
+      CRITICAL RULES FOR BATCH PROCESSING:
+      1. The USER REQUEST provides a map of transactions under the 'rows' key. The keys in this map are unique identifiers for each transaction.
+      2. Your output MUST be a valid JSON array containing exactly ONE RFC 6902 JSON patch operation.
+      3. This single patch MUST use exactly "op": "add" and "path": "/rows".
+      4. The "value" of the patch MUST be an object where the keys are EXACTLY the unique transaction identifiers from the input.
+    - *guardrails
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+              "property": "account_selection",
+              "candidates": {
+              "1": { "value": "account_id_1", "confidence": 0.99, "reasoning": "Account description matches transaction." },
+              "2": { "value": "account_id_2", "confidence": 0.01, "reasoning": "Account description does not match transaction." }
+                }
+              }
+            }
+          }
+        ]
+
+# ====================================================================
+# DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY - PCM HAPPY PATH DEMO
+# ====================================================================
+dag:
+  entry_node: direction_router
+  nodes:
+
+    # ------------------------------------------------------------------
+    # STEP 0: CASH DIRECTION ROUTING
+    # ------------------------------------------------------------------
+    direction_router:
+      name: direction_router
+      batch_flush_seconds: &flush 5
+      kind: initial_router
+      execution_parameters:
+        payload_key: cash_direction
+      batch_size: &bsize 50
+      edge_type: &estatic static
+      children:
+        INFLOW: macro_classifier_inflow
+        OUTFLOW: macro_classifier_outflow
+
+    # ------------------------------------------------------------------
+    # STEP 1: PCGE MACRO CLASS CLASSIFICATION
+    # ------------------------------------------------------------------
+    macro_classifier_inflow:
+      name: macro_classifier_inflow
+      kind: macro_classifier
+      prompt_key: macro_classifier_inflow_pcge_specialist
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      edge_type: *estatic
+      children:
+        CLASS_1_FINANCEMENT_PERMANENT: account_type_class_1
+        CLASS_2_ACTIF_IMMOBILISE: account_type_class_2
+        CLASS_3_ACTIF_CIRCULANT: account_type_class_3
+        CLASS_4_PASSIF_CIRCULANT: account_type_class_4
+        CLASS_5_TRESORERIE: account_type_class_5
+        CLASS_6_CHARGES: account_type_class_6
+        CLASS_7_PRODUITS: account_type_class_7
+
+    macro_classifier_outflow:
+      name: macro_classifier_outflow
+      kind: macro_classifier
+      prompt_key: macro_classifier_outflow_pcge_specialist
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      edge_type: *estatic
+      children:
+        CLASS_1_FINANCEMENT_PERMANENT: account_type_class_1
+        CLASS_2_ACTIF_IMMOBILISE: account_type_class_2
+        CLASS_3_ACTIF_CIRCULANT: account_type_class_3
+        CLASS_4_PASSIF_CIRCULANT: account_type_class_4
+        CLASS_5_TRESORERIE: account_type_class_5
+        CLASS_6_CHARGES: account_type_class_6
+        CLASS_7_PRODUITS: account_type_class_7
+
+    # ------------------------------------------------------------------
+    # STEP 2: PCGE RUBRIQUE (ACCOUNT TYPE) CLASSIFICATION
+    # ------------------------------------------------------------------
+    account_type_class_1:
+      name: account_type_class_1
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: pcge_class_1_specialist
+      edge_type: *estatic
+      children:
+        "Capitaux Propres (Equity)": account_selection
+        "Dettes de Financement (Long Term Debt)": account_selection
+
+    account_type_class_2:
+      name: account_type_class_2
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: pcge_class_2_specialist
+      edge_type: *estatic
+      children:
+        "Immobilisations Incorporelles (Intangible)": account_selection
+        "Immobilisations Corporelles (Fixed Assets)": account_selection
+        "Immobilisations en Non-Valeurs (Leaseholds/Setup)": account_selection
+        "Immobilisations Financières": account_selection
+
+    account_type_class_3:
+      name: account_type_class_3
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: pcge_class_3_specialist
+      edge_type: *estatic
+      children:
+        "Stocks (Inventory)": account_selection
+        "Créances Clients (Accounts Receivable)": account_selection
+        "Autres Créances (Other Current Assets)": account_selection
+
+    account_type_class_4:
+      name: account_type_class_4
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: pcge_class_4_specialist
+      edge_type: *estatic
+      children:
+        "Dettes Fournisseurs (Accounts Payable)": account_selection
+        "Etat et Organismes Sociaux (TVA/CNSS)": account_selection
+        "Autres Dettes du Passif Circulant": account_selection
+
+    account_type_class_5:
+      name: account_type_class_5
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: pcge_class_5_specialist
+      edge_type: *estatic
+      children:
+        "Trésorerie Actif (Bank/Cash)": account_selection
+        "Trésorerie Passif (Credit Cards/Overdrafts)": account_selection
+
+    account_type_class_6:
+      name: account_type_class_6
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: pcge_class_6_specialist
+      edge_type: *estatic
+      children:
+        "Achats Revendus ou Consommés (COGS)": account_selection
+        "Autres Charges Externes (Operating Expense)": account_selection
+        "Charges Financières et Non Courantes": account_selection
+
+    account_type_class_7:
+      name: account_type_class_7
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: account_type
+      prompt_key: pcge_class_7_specialist
+      edge_type: *estatic
+      children:
+        "Produits d'Exploitation (Operating Income)": account_selection
+        "Produits Financiers et Non Courants": account_selection
+
+    # ==================================================================
+    # STEP 3: CONCRETE ACCOUNT SELECTION
+    # ==================================================================
+    account_selection:
+      name: account_selection
+      kind: terminal
+      prompt_key: account_selection_prompt
+      edge_type: dynamic
+      dynamic_edge_provider: "db_chart_of_accounts"
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      execution_parameters:
+        close_status: "CLASSIFIED"
+        

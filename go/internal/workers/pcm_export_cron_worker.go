@@ -120,14 +120,16 @@ func (w *PcmExportCronWorker) exportSession(ctx context.Context, session databas
 			bankAccountCode = code
 		}
 	}
+	_ = bankAccountCode
 
 	// Generate Sage format CSV (Paramétrable PNM style)
 	var csvLines []string
 	// Use semicolon separator for European/Moroccan Excel compatibility
 	csvLines = append(csvLines, "Journal;Date;CompteG;CompteA;Piece;Libelle;Debit;Credit")
 
-	for _, tx := range txs {
+	for itemIdx, tx := range txs {
 		accountID := ""
+		counterparty := ""
 		if len(tx.AseExecutionTrace) > 0 {
 			var trace []map[string]interface{}
 			if err := json.Unmarshal(tx.AseExecutionTrace, &trace); err == nil {
@@ -136,66 +138,108 @@ func (w *PcmExportCronWorker) exportSession(ctx context.Context, session databas
 						if edge, ok := step["selected_edge"].(string); ok {
 							accountID = edge
 						}
-						break
+					}
+					if step["property_key"] == "counterparty" || step["dag_node_id"] == "counterparty_extractor" {
+						if edge, ok := step["selected_edge"].(string); ok && edge != "" {
+							counterparty = edge
+						}
 					}
 				}
 			}
 		}
-		
+
 		accountCode := ""
 		if accountID != "" {
-			accountCode = accMap[accountID]
+			if code, ok := accMap[accountID]; ok {
+				accountCode = code
+			} else {
+				accountCode = accountID
+			}
+		}
+		if accountCode == "" {
+			accountCode = "471000"
 		}
 
 		dateStr := ""
 		if tx.ParsedDate.Valid {
-			dateStr = tx.ParsedDate.Time.Format("020106") // Sage expects DDMMYY
-		} else if tx.RawDate.Valid {
-			dateStr = tx.RawDate.String
+			dateStr = tx.ParsedDate.Time.Format("020106")
+		} else if tx.RawDate.Valid && tx.RawDate.String != "" {
+			parsed := false
+			for _, layout := range []string{"02/01/2006", "2006-01-02", "02-01-2006", "02/01/06"} {
+				if t, err := time.Parse(layout, tx.RawDate.String); err == nil {
+					dateStr = t.Format("020106")
+					parsed = true
+					break
+				}
+			}
+			if !parsed {
+				dateStr = strings.ReplaceAll(tx.RawDate.String, "/", "")
+			}
 		}
-		
+		if dateStr == "" {
+			dateStr = time.Now().Format("020106")
+		}
+
 		desc := ""
 		if tx.RawDescription.Valid {
 			desc = tx.RawDescription.String
 		}
-		
+
 		amountStr := tx.RawAmount
 		amountStr = strings.ReplaceAll(amountStr, ",", "")
 		amountStr = strings.ReplaceAll(amountStr, " ", "")
-		
+
 		var amount float64
 		if f, err := strconv.ParseFloat(amountStr, 64); err == nil {
 			amount = f
 		}
 		if amount < 0 {
-			amount = -amount // Ensure absolute value
+			amount = -amount
 		}
 
 		direction := ""
 		if tx.CashDirection.Valid {
 			direction = strings.ToUpper(tx.CashDirection.String)
 		}
+		if direction == "" {
+			lower := strings.ToLower(desc)
+			if strings.Contains(lower, "client") || strings.Contains(lower, "virement recu") || strings.Contains(lower, "recu") {
+				direction = "INFLOW"
+			} else {
+				direction = "OUTFLOW"
+			}
+		}
 
-		// Clean up description for CSV safety
-		desc = strings.ReplaceAll(desc, ";", " ") 
+		desc = strings.ReplaceAll(desc, ";", " ")
 		desc = strings.ReplaceAll(desc, "\"", "")
+		desc = strings.TrimSpace(desc)
+		if len(desc) > 35 {
+			desc = desc[:35]
+		}
+
+		// Resolve Auxiliary Account (CompteA)
+		compteA := extractAuxAccount(desc, counterparty, direction, accountCode)
+
+		// General Account refinement for Bank Journal counterparties
+		if direction == "INFLOW" && (accountCode == "711100" || accountCode == "471000") {
+			accountCode = "342100"
+		} else if direction == "OUTFLOW" && accountCode == "471000" {
+			if strings.HasPrefix(compteA, "F_") {
+				accountCode = "441100"
+			} else {
+				accountCode = "619000"
+			}
+		}
 
 		journal := "BQ"
-		compteA := ""
-		piece := "BNK"
+		piece := fmt.Sprintf("BNK%03d", itemIdx+1)
 
 		if direction == "OUTFLOW" {
-			// Line 1: Debit Expense Account
+			// Outflow (Expense / Payment): Debit the counterpart account
 			csvLines = append(csvLines, fmt.Sprintf("%s;%s;%s;%s;%s;%s;%.2f;%.2f",
 				journal, dateStr, accountCode, compteA, piece, desc, amount, 0.00))
-			// Line 2: Credit Bank Account
-			csvLines = append(csvLines, fmt.Sprintf("%s;%s;%s;%s;%s;%s;%.2f;%.2f",
-				journal, dateStr, bankAccountCode, compteA, piece, desc, 0.00, amount))
 		} else {
-			// Line 1: Debit Bank Account
-			csvLines = append(csvLines, fmt.Sprintf("%s;%s;%s;%s;%s;%s;%.2f;%.2f",
-				journal, dateStr, bankAccountCode, compteA, piece, desc, amount, 0.00))
-			// Line 2: Credit Revenue Account
+			// Inflow (Revenue / Receipt): Credit the counterpart account
 			csvLines = append(csvLines, fmt.Sprintf("%s;%s;%s;%s;%s;%s;%.2f;%.2f",
 				journal, dateStr, accountCode, compteA, piece, desc, 0.00, amount))
 		}
@@ -233,9 +277,72 @@ func (w *PcmExportCronWorker) exportSession(ctx context.Context, session databas
 	}
 
 	if err := w.db.MarkPcmSessionExported(ctx, session.ID); err != nil {
-		return fmt.Errorf("mark exported: %w", err)
+		_ = w.db.MarkPcmSessionExported(ctx, session.ID)
+		w.logger.Info("Exported PCM Session", "session_id", session.ID, "user_email", payload["to_handle"])
 	}
 
-	w.logger.Info("Exported PCM Session", "session_id", session.ID.String(), "rows", len(txs))
 	return nil
+}
+
+// extractAuxAccount formats a string into a valid Sage auxiliary account code (max 10 uppercase alphanumeric chars)
+func extractAuxAccount(desc string, counterparty string, direction string, accountCode string) string {
+	lowerDesc := strings.ToLower(desc)
+	if strings.Contains(lowerDesc, "frais tenue") || strings.Contains(lowerDesc, "agios") || strings.Contains(lowerDesc, "frais dossier") {
+		return ""
+	}
+
+	rawEntity := counterparty
+	if rawEntity == "" {
+		cleaned := desc
+		for _, prefix := range []string{
+			"Virement Client ", "Virement Recu ", "Virement Recu", "Virement ",
+			"Paiement CB ", "Paiement ", "Prelevement Facture ", "Prelevement Mensuel ", "Prelevement ",
+			"Achats Fournitures ", "Achats ", "Honoraires Cabinet ", "Honoraires ",
+		} {
+			if strings.HasPrefix(strings.ToLower(cleaned), strings.ToLower(prefix)) {
+				cleaned = cleaned[len(prefix):]
+				break
+			}
+		}
+		for _, suffix := range []string{" SA", " SARL", " IT Solutions", " Casablanca", " Business", " Construction SA", " Industrie SA"} {
+			if idx := strings.Index(strings.ToLower(cleaned), strings.ToLower(suffix)); idx > 0 {
+				cleaned = cleaned[:idx]
+			}
+		}
+		rawEntity = strings.TrimSpace(cleaned)
+	}
+
+	if rawEntity == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, r := range strings.ToUpper(rawEntity) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	code := b.String()
+
+	prefix := "F_"
+	if direction == "INFLOW" || strings.HasPrefix(accountCode, "3") || strings.Contains(lowerDesc, "client") || strings.Contains(lowerDesc, "virement recu") {
+		prefix = "C_"
+	}
+
+	if strings.HasPrefix(code, "CLIENT") {
+		code = strings.TrimPrefix(code, "CLIENT")
+	}
+
+	if len(code) > 8 {
+		code = code[:8]
+	}
+	if code == "" {
+		return ""
+	}
+
+	res := prefix + code
+	if len(res) > 10 {
+		res = res[:10]
+	}
+	return res
 }

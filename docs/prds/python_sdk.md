@@ -12,7 +12,7 @@ The Toro Autonomous AI Architecture separates **High-Velocity Graph Orchestratio
 * **Go Core Engine (`go/internal/erp/ase`)**: Manages high-throughput Directed Acyclic Graph (DAG) routing, in-memory channel batching, state machine transitions, Shannon entropy mathematical validation ($C \ge 0.98$), and Redis lock coordination.
 * **Python SDK (`toro-sdk`)**: Enables enterprise developers and third-party AI builders to author specialized domain agents, proprietary ML models, local SQL database persistence, and node action handlers in native Python.
 
-The **`toro-sdk`** is an open-source, enterprise-grade Python library built on `asyncio`, `nats-py`, and `pydantic` v2. It seamlessly bridges Python services to the Toro NATS mesh using the **`NatsDomainProxy`** protocol, **TAP Envelopes**, **Harness Agent Runtimes**, and **Almanac Agent Discovery**.
+The **`toro-sdk`** is an open-source, enterprise-grade Python library built on `asyncio`, `nats-py`, and `pydantic` v2. It seamlessly bridges Python services to the Toro NATS mesh using the **`NatsDomainProxy`** protocol, **TAP Envelopes**, **Agent Runtimes in `toro.core`**, and **Almanac Agent Discovery**.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -29,7 +29,7 @@ The **`toro-sdk`** is an open-source, enterprise-grade Python library built on `
 │                    Python SDK Subsystem (toro-sdk)                          │
 │                                                                             │
 │  ┌───────────────────────────┐           ┌──────────────────────────────┐   │
-│  │   toro.ase.DomainDriver   │           │   toro.ase.ActionProvider   │   │
+│  │  toro.domain.DomainDriver │           │ toro.domain.ActionProvider   │   │
 │  │   - Agents Build          │           │   - Deterministic Node Calls │   │
 │  │   - Classifiers / Think   │           │   - DB / API Lookups         │   │
 │  │   - Domain SQL Persistence│           │   - Action Candidates        │   │
@@ -38,7 +38,7 @@ The **`toro-sdk`** is an open-source, enterprise-grade Python library built on `
 │  ┌─────────────▼─────────────┐           ┌──────────────▼───────────────┐   │
 │  │   toro.core.Envelope      │           │   toro.almanac.Client        │   │
 │  │   - TAP FIPA Verbs        │           │   - DID Registration         │   │
-│  │   - ConversationID        │           │   - Capability Schema        │   │
+│  │   - AgentRuntime/Harness  │           │   - Capability Schema        │   │
 │  └───────────────────────────┘           └──────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -52,10 +52,10 @@ The `toro-sdk` maps directly to Toro's Go core architecture components:
 | Go Core Component | Go Location | Python SDK Module | Functional Responsibility in Python |
 | :--- | :--- | :--- | :--- |
 | **TAP Envelope & Protocol** | [tap/pkg/core](file:///Users/Yankz/programming/usetoro/tap/pkg/core) | `toro.core.Envelope` | Type-safe FIPA message parsing (`INFORM`, `REQUEST`, `CFP`, `PROPOSE`). |
-| **Harness & Agent Runtime** | [tap/pkg/agent](file:///Users/Yankz/programming/usetoro/tap/pkg/agent) | `toro.harness` | LLM patch verification (RFC 6902), Redux engine validation, prompt construction. |
+| **Harness & Agent Runtime** | [tap/pkg/agent](file:///Users/Yankz/programming/usetoro/tap/pkg/agent) | `toro.core.Runtime` | LLM patch verification (RFC 6902), Redux engine validation, prompt construction. |
 | **Almanac Registry** | `internal/almanac` | `toro.almanac` | Agent registration, heartbeats, DID identity publishing (`did:toro:...`). |
-| **ASE NatsDomainProxy** | [nats_domain_proxy.go](file:///Users/Yankz/programming/usetoro/go/internal/erp/ase/domain_tools/nats_domain_proxy.go) | `toro.ase.DomainDriver` | Handling domain agent building, prompt evaluation, and domain SQL state persistence. |
-| **Action Provider Workers** | [action_provider_workers.go](file:///Users/Yankz/programming/usetoro/go/internal/workers/action_provider_workers.go) | `toro.ase.ActionProvider` | Decorator for deterministic node-level function calls (`worker.inbox.action.*`). |
+| **ASE NatsDomainProxy** | [nats_domain_proxy.go](file:///Users/Yankz/programming/usetoro/go/internal/erp/ase/domain_tools/nats_domain_proxy.go) | `toro.domain.DomainDriver` | Handling domain agent building, prompt evaluation, and domain SQL state persistence. |
+| **Action Provider Workers** | [action_provider_workers.go](file:///Users/Yankz/programming/usetoro/go/internal/workers/action_provider_workers.go) | `toro.domain.ActionProvider` | Decorator for deterministic node-level function calls (`worker.inbox.action.*`). |
 
 ---
 
@@ -63,7 +63,7 @@ The `toro-sdk` maps directly to Toro's Go core architecture components:
 
 ### 3.1 TAP Envelope & Protocol Layer (`toro.core`)
 
-The SDK must implement the full TAP Envelope contract in Pydantic v2:
+The SDK implements the full TAP Envelope contract, Agent Runtime harness, and Redux patch validation inside `toro.core`:
 
 ```python
 # toro/core/envelope.py
@@ -90,17 +90,17 @@ class Envelope(BaseModel):
     body: Dict[str, Any]
 ```
 
-### 3.2 ASE Domain Driver (`toro.ase.DomainDriver`)
+### 3.2 Domain Driver (`toro.domain.DomainDriver`)
 
-The `DomainDriver` class allows Python microservices to handle complete domain lifecycles. It subscribes to `domain.<domain_name>.*` subjects and handles NATS Request-Reply operations sent from Go's `NatsDomainProxy`.
+The `DomainDriver` class in `toro.domain` allows Python microservices to handle complete domain lifecycles. It subscribes to `domain.<domain_name>.*` subjects and handles NATS Request-Reply operations sent from Go's `NatsDomainProxy`.
 
 When classifying batch tasks or initiating LLM evaluation requests:
 1. **Almanac Registration**: The driver first registers its agent DID (`did:toro:<domain>-agent`) and target capability topic with the Almanac service (`almanac.register`).
-2. **TAP Envelope Packaging**: The driver wraps the prompt definition, schema guardrails, and transaction batch inside a type-safe TAP `Envelope` with performative `CFP` (Call For Proposal).
+2. **TAP Envelope Packaging**: The driver wraps the prompt definition, schema guardrails, and transaction batch inside a type-safe TAP `Envelope` from `toro.core` with performative `CFP` (Call For Proposal).
 3. **NATS Publishing**: It publishes the Envelope to the designated NATS topic (such as `agents.accounting.batch_categorization` or custom `agents.<domain>.<capability>`).
 
 ```python
-# toro/ase/domain_driver.py
+# toro/domain/domain_driver.py
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
 from toro.core import Envelope, Performative
@@ -144,12 +144,12 @@ class DomainDriver(ABC):
         pass
 ```
 
-### 3.3 Node Action Provider Decorator (`@action_provider`)
+### 3.3 Node Action Provider Decorator (`toro.domain.action_provider`)
 
-Action Providers execute node-level function calls. The SDK must provide a clean decorator syntax:
+Action Providers execute node-level function calls. The `toro.domain` module provides a clean decorator syntax:
 
 ```python
-# toro/ase/action_provider.py
+# toro/domain/action_provider.py
 import functools
 from typing import Callable, Dict, Any, List
 from pydantic import BaseModel
@@ -211,7 +211,7 @@ class AlmanacClient:
 ```mermaid
 sequenceDiagram
     autonumber
-    participant PyDriver as Python SDK (ToroDomainDriver)
+    participant PyDriver as Python SDK (toro.domain.DomainDriver)
     participant Almanac as Almanac Registry
     participant NATS as NATS Core Mesh
     participant GoASE as Go ASE Engine (NatsDomainProxy)
@@ -251,7 +251,7 @@ sequenceDiagram
     autonumber
     participant GoASE as Go ASE Engine (DAG Node)
     participant NATS as NATS Core Mesh
-    participant PyWorker as Python Worker (@action_provider)
+    participant PyWorker as Python Worker (toro.domain.action_provider)
 
     GoASE->>NATS: Request worker.inbox.action.insurance_policy_lookup {node_id, payload}
     NATS->>PyWorker: Deliver Request
@@ -269,13 +269,13 @@ sequenceDiagram
 ```python
 # app/insurance_service.py
 import asyncio
-from toro.ase import DomainDriver, action_provider, ActionResponse
+from toro.domain import DomainDriver, action_provider, ActionResponse
 from toro.core import Envelope
 from toro.client import ToroClient
 
 class InsuranceDomainService(DomainDriver):
     def __init__(self):
-        super().__init__(domain_name="insurance")
+        super().__init__(domain_name="insurance", agent_did="did:toro:insurance-agent-01")
 
     async def build_agents(self, envelope: Envelope, dag_name: str):
         # Extract payload from TAP envelope

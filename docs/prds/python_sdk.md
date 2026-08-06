@@ -92,23 +92,41 @@ class Envelope(BaseModel):
 
 ### 3.2 ASE Domain Driver (`toro.ase.DomainDriver`)
 
-The `DomainDriver` class allows Python microservices to handle complete domain lifecycles. It subscribes to `domain.<domain_name>.*` subjects and handles NATS Request-Reply operations sent from Go's `NatsDomainProxy`:
+The `DomainDriver` class allows Python microservices to handle complete domain lifecycles. It subscribes to `domain.<domain_name>.*` subjects and handles NATS Request-Reply operations sent from Go's `NatsDomainProxy`.
+
+When classifying batch tasks or initiating LLM evaluation requests:
+1. **Almanac Registration**: The driver first registers its agent DID (`did:toro:<domain>-agent`) and target capability topic with the Almanac service (`almanac.register`).
+2. **TAP Envelope Packaging**: The driver wraps the prompt definition, schema guardrails, and transaction batch inside a type-safe TAP `Envelope` with performative `CFP` (Call For Proposal).
+3. **NATS Publishing**: It publishes the Envelope to the designated NATS topic (such as `agents.accounting.batch_categorization` or custom `agents.<domain>.<capability>`).
 
 ```python
 # toro/ase/domain_driver.py
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
-from toro.core import Envelope
+from toro.core import Envelope, Performative
 
 class DomainDriver(ABC):
-    def __init__(self, domain_name: str, nats_url: str = "nats://localhost:4222"):
+    def __init__(self, domain_name: str, agent_did: str, nats_url: str = "nats://localhost:4222"):
         self.domain_name = domain_name
+        self.agent_did = agent_did
         self.nats_url = nats_url
 
     @abstractmethod
     async def build_agents(self, envelope: Envelope, dag_name: str) -> List[Dict[str, Any]]:
         """Extract domain data and return initial ASE node payloads."""
         pass
+
+    async def publish_cfp_task(self, nc, topic: str, conversation_id: str, task_def: Dict[str, Any]) -> Envelope:
+        """Wraps task definition inside a TAP Envelope and publishes to NATS topic."""
+        env = Envelope(
+            sender_did=self.agent_did,
+            receiver_did="did:toro:general-agent-fleet",
+            performative=Performative.CFP,
+            conversation_id=conversation_id,
+            body=task_def
+        )
+        await nc.publish(topic, env.model_dump_json().encode())
+        return env
 
     @abstractmethod
     async def classify_batch(self, mode: str, key: str, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -134,6 +152,7 @@ Action Providers execute node-level function calls. The SDK must provide a clean
 # toro/ase/action_provider.py
 import functools
 from typing import Callable, Dict, Any, List
+from pydantic import BaseModel
 
 class ActionResponse(BaseModel):
     candidates: List[Dict[str, Any]] # e.g. [{"value": "APPROVED", "probability": 0.99}]
@@ -153,21 +172,26 @@ def action_provider(name: str):
 
 ### 3.4 Almanac Agent Discovery Client (`toro.almanac`)
 
-Agents register their identity, capability schemas, and NATS inbox endpoints with Almanac:
+Agents **must** register their identity (DID), capability schemas, and target NATS inbox topics with Almanac prior to publishing CFP tasks:
 
 ```python
 # toro/almanac/client.py
+import datetime, json
+from typing import Dict, Any
+
 class AlmanacClient:
     def __init__(self, nc, agent_did: str, domain_name: str):
         self.nc = nc
         self.agent_did = agent_did
         self.domain_name = domain_name
 
-    async def register_capability(self, name: str, schema: Dict[str, Any]):
+    async def register_agent_capability(self, capability_name: str, topic: str, schema: Dict[str, Any]):
+        """Registers agent DID and capability topic (e.g. agents.accounting.batch_categorization) with Almanac."""
         payload = {
             "did": self.agent_did,
             "domain": self.domain_name,
-            "capability": name,
+            "capability": capability_name,
+            "nats_topic": topic,
             "schema": schema,
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
@@ -187,30 +211,35 @@ class AlmanacClient:
 ```mermaid
 sequenceDiagram
     autonumber
-    participant GoASE as Go ASE Engine (NatsDomainProxy)
-    participant NATS as NATS Core Mesh
     participant PyDriver as Python SDK (ToroDomainDriver)
-    participant PyDB as Local Domain DB (Postgres/Mongo)
+    participant Almanac as Almanac Registry
+    participant NATS as NATS Core Mesh
+    participant GoASE as Go ASE Engine (NatsDomainProxy)
+    participant GoFleet as Go Agent Fleet (LLM Runtime)
+
+    Note over PyDriver, Almanac: 0. Registration Phase
+    PyDriver->>Almanac: Register Agent DID & Topic (agents.accounting.batch_categorization)
 
     Note over GoASE, PyDriver: 1. Agent Building Phase
     GoASE->>NATS: Request domain.insurance.agents.build {envelope, dag_name}
-    NATS->>PyDriver: Deliver Request
-    PyDriver->>PyDB: Query insurance policy records
-    PyDB-->>PyDriver: Return raw records
+    NATS->>PyDriver: Deliver Agent Build Request
     PyDriver-->>NATS: Respond {agents: [node_1, node_2]}
     NATS-->>GoASE: Deliver Response
 
-    Note over GoASE, PyDriver: 2. Think / Classification Phase
+    Note over GoASE, GoFleet: 2. Think / CFP Classification Phase
     GoASE->>NATS: Request domain.insurance.classify.generic {mode, key, batch}
-    NATS->>PyDriver: Deliver Batch Request
-    PyDriver->>PyDriver: Run Python ML / Prompt Evaluation
+    NATS->>PyDriver: Deliver Batch Context Request
+    PyDriver->>PyDriver: Wrap prompt & schema inside TAP Envelope (Performative=CFP)
+    PyDriver->>NATS: Publish Envelope to topic (e.g. agents.accounting.batch_categorization)
+    NATS->>GoFleet: Consume CFP Envelope & Run LLM + Redux Engine
+    GoFleet-->>NATS: Return Validated Candidates & RFC 6902 Patches
+    NATS-->>PyDriver: Deliver Proposal
     PyDriver-->>NATS: Respond {results: {node_1: {Property, Candidates}}}
     NATS-->>GoASE: Deliver Classification Candidates
 
     Note over GoASE, PyDriver: 3. Domain State Persistence Phase
     GoASE->>NATS: Request domain.insurance.state.persist_node {node}
     NATS->>PyDriver: Deliver State Persist Request
-    PyDriver->>PyDB: INSERT/UPDATE insurance_staging_table
     PyDriver-->>NATS: Respond {success: true}
     NATS-->>GoASE: Deliver Ack
 ```

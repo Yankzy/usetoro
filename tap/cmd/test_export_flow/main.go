@@ -1,17 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,8 +15,6 @@ import (
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/erp/ase"
-	"github.com/Yankzy/usetoro/internal/erp/ase/domain_tools"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
@@ -43,17 +36,6 @@ func main() {
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
 		os.Exit(1)
-	}
-
-	postmarkToken := os.Getenv("POSTMARK_TRANSACTIONAL_SERVER_TOKEN")
-	if postmarkToken == "" {
-		postmarkToken = os.Getenv("POSTMARK_SERVER_TOKEN")
-	}
-	if postmarkToken == "" {
-		postmarkToken = cfg.PostmarkServerToken
-	}
-	if postmarkToken == "" {
-		postmarkToken = "d0c8fee1-4f40-43eb-9ab2-a07d74a9b444"
 	}
 
 	ctx := context.Background()
@@ -125,78 +107,23 @@ func main() {
 	}
 	logger.Info("Fetched staging transactions", "count", len(txs))
 
-	// 6. Build ASENode slice representing the session's micro-agents
-	toolDeps := domain_tools.ToolDependencies{
-		Logger: logger,
-		DB:     queries,
-		DBPool: dbPool,
-	}
-	bookkeepingTool := domain_tools.Get("bookkeeping")
-
-	var agents []*ase.AutonomousSemanticEngineNode
-	for _, tx := range txs {
-		desc := ""
-		if tx.RawDescription.Valid {
-			desc = tx.RawDescription.String
-		}
-		direction := ""
-		if tx.CashDirection.Valid {
-			direction = tx.CashDirection.String
-		}
-		agent := ase.NewASENode(user.ID.String(), realmID, "pcm_demo", map[string]any{
-			"raw_description": desc,
-			"cash_direction":  direction,
-			"raw_amount":      tx.RawAmount,
-			"domain_tool":     "bookkeeping",
-			"session_id":      sessionUUIDStr,
-			"from_handle":     targetEmail,
-		})
-		agent.NodeID = uuid.UUID(tx.ID.Bytes).String()
-		if len(tx.AseExecutionTrace) > 0 {
-			_ = json.Unmarshal(tx.AseExecutionTrace, &agent.ExecutionTrace)
-		}
-		agents = append(agents, agent)
-	}
-
-	// 7. Run GenerateExportPayload flow
-	expTool, ok := bookkeepingTool.(domain_tools.ExportableDomainTool)
-	if !ok {
-		logger.Error("bookkeeping tool does not implement ExportableDomainTool")
-		os.Exit(1)
-	}
-
-	exportPayload, activityTarget, err := expTool.GenerateExportPayload(ctx, sessionUUIDStr, agents, toolDeps)
-	if err != nil {
-		logger.Error("failed to generate export payload", "error", err)
-		os.Exit(1)
-	}
-
-	logger.Info("Generated export payload!", "activity_target", activityTarget)
-
-	// Explicitly set handles
-	exportPayload["to_handle"] = targetEmail
 	fromAddr := "rap_atlas_sarl@usetoro.io"
 	if realmID != "" {
 		fromAddr = fmt.Sprintf("%s@usetoro.io", realmID)
 	}
-	exportPayload["from_handle"] = fromAddr
 
-	// Print CSV contents to terminal for verification
-	var base64CSV string
-	if atts, ok := exportPayload["attachments"].([]map[string]interface{}); ok && len(atts) > 0 {
-		if contentB64, ok := atts[0]["Content"].(string); ok {
-			base64CSV = contentB64
-			if decoded, dErr := base64.StdEncoding.DecodeString(contentB64); dErr == nil {
-				fmt.Println("\n=======================================================")
-				fmt.Println("       GENERATED SAGE 100 PNM (.CSV) EXPORT           ")
-				fmt.Println("=======================================================")
-				fmt.Println(string(decoded))
-				fmt.Println("=======================================================")
-			}
-		}
+	// 6. Build PcmExportPayload for workers.pcm_export
+	exportPayload := map[string]interface{}{
+		"session_id":          sessionUUIDStr,
+		"accounting_standard": "PCM",
+		"from_handle":         fromAddr,
+		"to_handle":           targetEmail,
+		"export_to_email":     true,
+		"export_to_csv":       true,
+		"export_to_pnm":       true,
 	}
 
-	// 8. Publish correctly formatted core.Envelope to NATS for worker processing
+	// 7. Publish correctly formatted core.Envelope to NATS for PcmExportWorker processing
 	payloadBytes, _ := json.Marshal(exportPayload)
 	reqEnvelope := core.Envelope{
 		ID:           uuid.New().String(),
@@ -207,62 +134,10 @@ func main() {
 
 	if err := nc.Publish("worker.inbox.pcm_export", reqEnvBytes); err != nil {
 		logger.Error("failed to publish envelope to worker.inbox.pcm_export", "error", err)
-	} else {
-		logger.Info("Published envelope to NATS subject worker.inbox.pcm_export")
-	}
-
-	// 9. Dispatch directly to Postmark HTTP API to ensure email delivery guarantees
-	logger.Info("Dispatching email via Postmark API...", "to", targetEmail)
-
-	postmarkBody := map[string]interface{}{
-		"From":          fmt.Sprintf(`"Toro Accounting" <%s>`, fromAddr),
-		"To":            targetEmail,
-		"Subject":       "Sage 100 PNM Export - Bank Reconciliation",
-		"TextBody":      "Hello,\n\nPlease find attached your generated Sage 100 (.PNM) Moroccan Bank Reconciliation CSV export.\n\nBest regards,\nToro AI Engine",
-		"MessageStream": "outbound",
-		"Attachments": []map[string]interface{}{
-			{
-				"Name":        "Bank_Reconciliation_Export.csv",
-				"ContentType": "text/csv",
-				"Content":     base64CSV,
-			},
-		},
-	}
-
-	pmBytes, _ := json.Marshal(postmarkBody)
-	pmReq, err := http.NewRequestWithContext(ctx, "POST", "https://api.postmarkapp.com/email", bytes.NewBuffer(pmBytes))
-	if err != nil {
-		logger.Error("failed to create postmark request", "error", err)
 		os.Exit(1)
 	}
-
-	pmReq.Header.Set("Accept", "application/json")
-	pmReq.Header.Set("Content-Type", "application/json")
-	pmReq.Header.Set("X-Postmark-Server-Token", postmarkToken)
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	pmResp, err := client.Do(pmReq)
-	if err != nil {
-		logger.Error("Postmark API request failed", "error", err)
-		os.Exit(1)
-	}
-	defer pmResp.Body.Close()
-
-	respBody, _ := io.ReadAll(pmResp.Body)
-	if pmResp.StatusCode != http.StatusOK {
-		logger.Error("Postmark API error", "status", pmResp.StatusCode, "response", string(respBody))
-		fmt.Printf("\n❌ Postmark API Error (Status %d): %s\n", pmResp.StatusCode, string(respBody))
-		os.Exit(1)
-	}
-
-	var pmResult map[string]interface{}
-	_ = json.Unmarshal(respBody, &pmResult)
 
 	fmt.Println("\n=======================================================")
-	fmt.Printf("  ✅ EMAIL DISPATCH SUCCESSFUL TO %s!\n", targetEmail)
-	fmt.Println("=======================================================")
-	fmt.Printf("  Message ID : %v\n", pmResult["MessageID"])
-	fmt.Printf("  Submitted  : %v\n", pmResult["SubmittedAt"])
-	fmt.Printf("  Status     : %v\n", pmResult["Message"])
+	fmt.Printf("  ✅ PCM EXPORT REQUEST PUBLISHED FOR SESSION %s!\n", sessionUUIDStr)
 	fmt.Println("=======================================================")
 }

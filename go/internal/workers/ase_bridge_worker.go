@@ -584,53 +584,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	if sessionID != "" {
-		var exportPayload map[string]interface{}
-		var activityTarget string
-		var err error
-
-		if expTool, ok := tool.(domain_tools.ExportableDomainTool); ok {
-			exportPayload, activityTarget, err = expTool.GenerateExportPayload(ctx, sessionID, agents, deps)
-		} else {
-			exportPayload = map[string]interface{}{
-				"session_id": sessionID,
-			}
-			if len(agents) > 0 {
-				if att, ok := agents[0].Payload["attachments"]; ok {
-					exportPayload["attachments"] = att
-				}
-			}
-			activityTarget = "workers.batch_email_generation"
-		}
-
-		if err != nil || exportPayload == nil {
-			w.logger.Error("ase_bridge: failed to generate export payload", "session_id", sessionID, "error", err)
-			return nil
-		}
-
-		// Verify that non-empty attachments exist before triggering outbound email
-		atts, hasAtts := exportPayload["attachments"].([]map[string]interface{})
-		if !hasAtts || len(atts) == 0 {
-			w.logger.Error("ase_bridge: no data/attachments generated after DAG completion, skipping email dispatch", "session_id", sessionID)
-			return nil
-		}
-
-		if activityTarget == "" {
-			activityTarget = "workers.batch_email_generation"
-		}
-		emailSubject, sErr := core.BuildWorkerInboxFromActivity(activityTarget)
-		if sErr == nil {
-			emailPayloadBytes, _ := json.Marshal(exportPayload)
-			envEmail := core.Envelope{
-				ID:           uuid.New().String(),
-				Performative: core.REQUEST,
-				Body:         emailPayloadBytes,
-			}
-			envEmailBytes, _ := json.Marshal(envEmail)
-			if w.nc != nil {
-				_ = w.nc.Publish(emailSubject, envEmailBytes)
-				w.logger.Info("ase_bridge: triggered "+activityTarget+" directly", "session_id", sessionID)
-			}
-		}
+		w.logger.Info("ase_bridge: DAG classification completed for session", "session_id", sessionID)
 	}
 
 	cid := env.ConversationID

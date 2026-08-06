@@ -46,12 +46,6 @@ type DomainTool interface {
 	GetStatePersister(deps ToolDependencies) ase.StatePersister
 }
 
-// ExportableDomainTool is an optional interface for domain tools that produce custom
-// post-completion export payloads and activity targets.
-type ExportableDomainTool interface {
-	DomainTool
-	GenerateExportPayload(ctx context.Context, sessionID string, agents []*ase.AutonomousSemanticEngineNode, deps ToolDependencies) (payload map[string]interface{}, activityTarget string, err error)
-}
 
 var registry = make(map[string]DomainTool)
 

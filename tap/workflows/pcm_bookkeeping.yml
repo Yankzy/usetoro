@@ -68,10 +68,36 @@ steps:
         "required": ["session_id"]
       }
 
+  - id: pcm_export
+    activity_type: workers.pcm_export
+    depends_on:
+      - ase_bridge
+    timeout: "120s"
+    description: "Generates bank reconciliation export file (Sage 100 PCM or US GAAP) and dispatches via email."
+    config:
+      accounting_standard: "PCM"
+      export_to_email: true
+      export_to_csv: true
+      export_to_pnm: true
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "from_handle": { "type": "string" },
+          "to_handle": { "type": "string" },
+          "accounting_standard": { "type": "string" },
+          "export_to_email": { "type": "boolean" },
+          "export_to_csv": { "type": "boolean" },
+          "export_to_pnm": { "type": "boolean" }
+        },
+        "required": ["session_id"]
+      }
+
   - id: human_review
     activity_type: hitl.review
     depends_on:
-      - ase_bridge
+      - pcm_export
     timeout: "86400s"
     config:
       scope: "session"

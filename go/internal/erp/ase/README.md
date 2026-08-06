@@ -257,3 +257,229 @@ As the agent traverses the DAG, it accumulates candidate probabilities. An agent
 When a human provides context that contradicts a decision made earlier in the DAG:
 1. **State Rewinding:** The LLM identifies the exact `DAGNodeID` where the erroneous decision was made. The agent then automatically deletes all classifications from that point onward, rewinds its state, and resumes processing from the corrected node.
 2. **The Compounding Layer:** Simultaneously, the LLM extracts a generalized rule and a specific `rule_keyword` from the human's feedback. On all future transactions, the DAG node batches perform a fast keyword match. If matched, that instruction is dynamically injected into the LLM's prompt.
+
+---
+
+## Adding New Domains
+
+ASE workflows are organized around **Domains** (e.g., `bookkeeping`, `marketing`, `email`, `onboarding`, `insurance`). When adding a new domain, you can choose between two primary architectural patterns:
+
+1. **In-Process Native Go Domain**: Best when domain tools, database schemas, and classifiers can be compiled directly into the Go binary.
+2. **External Microservice (e.g., Python)**: Best when business logic, actuarial models, or existing services live in external microservices written in Python or another language, communicating with ASE over **NATS**.
+
+---
+
+### Pattern 1: Adding a Native Go Domain
+
+To add a domain directly in Go, implement the `DomainTool` and `StatePersister` interfaces and register the tool in `init()`.
+
+#### Step 1: Implement `DomainTool` ([domain_tool.go](file:///Users/Yankz/programming/usetoro/go/internal/erp/ase/domain_tools/domain_tool.go))
+```go
+package domain_tools
+
+import (
+	"context"
+	"github.com/Yankzy/usetoro/internal/erp/ase"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
+)
+
+func init() {
+	Register("insurance", &InsuranceDomainTool{})
+}
+
+type InsuranceDomainTool struct{}
+
+func (t *InsuranceDomainTool) BuildAgents(ctx context.Context, env core.Envelope, dagName string, deps ToolDependencies) ([]*ase.AutonomousSemanticEngineNode, error) {
+	// Parse payload and return slice of ASE nodes
+	return []*ase.AutonomousSemanticEngineNode{}, nil
+}
+
+func (t *InsuranceDomainTool) GetClassifier(deps ToolDependencies) ase.Classifier {
+	return NewInsuranceClassifier()
+}
+
+func (t *InsuranceDomainTool) GetStatePersister(deps ToolDependencies) ase.StatePersister {
+	return NewInsuranceStateStore(deps.DBPool, deps.Redis)
+}
+
+func (t *InsuranceDomainTool) GenerateAlertPayload(ctx context.Context, a *ase.AutonomousSemanticEngineNode, deps ToolDependencies) (map[string]interface{}, error) {
+	return map[string]interface{}{"prompt": "Insurance review required", "entity_id": a.TenantID}, nil
+}
+
+func (t *InsuranceDomainTool) ResumeAgent(ctx context.Context, nodeID string, dagName string, deps ToolDependencies) (*ase.AutonomousSemanticEngineNode, error) {
+	return deps.Store.GetCachedAgent(ctx, nodeID, nil)
+}
+
+func (t *InsuranceDomainTool) GetBacktrackingInstructions(a *ase.AutonomousSemanticEngineNode, newContext string, traceBytes []byte) (string, string) {
+	return "System prompt for backtracking", "User prompt for backtracking"
+}
+```
+
+#### Step 2: Reference in DAG Configuration
+In your `.yml` DAG configuration (e.g., `insurance_claims.yml`), set the domain tool name:
+```yaml
+hyper_parameters:
+  domain_tool: "insurance"
+
+dag:
+  entry_node: claims_ingestion
+  nodes: ...
+```
+
+---
+
+### Pattern 2: Adding a Domain in an External Microservice (Python Example)
+
+When building a domain microservice in **Python** (or Node.js, Rust, etc.), the **ASE Go Engine continues to run high-throughput DAG orchestration** (in-memory graph routing, channel batching, Shannon entropy verification, state rewinding).
+
+It is important to distinguish between **Domain Tooling** (the driver that manages the domain lifecycle) and **Action Providers** (node-level function calls):
+
+* **Domain Tooling (`DomainTool`)**: High-level domain plugin responsible for converting raw data into agents (`BuildAgents`), domain prompts/classifiers (`GetClassifier`), state persistence (`StatePersister`), and human review alert payload generation (`GenerateAlertPayload`).
+* **Action Providers (`action_provider`)**: Deterministic node-level function calls executed during node processing (e.g. database lookups, W-9 checks, tax calculations) rather than LLM reasoning.
+
+---
+
+#### 1. NATS Domain Tool Proxy (`NatsDomainProxy`)
+
+> [!NOTE]
+> **Implementation Status**: Existing domain tools (`bookkeeping`, `marketing`, `email`, `onboarding`) are currently implemented natively in Go in [`domain_tools/`](file:///Users/Yankz/programming/usetoro/go/internal/erp/ase/domain_tools/). `NatsDomainProxy` is the target architectural pattern for connecting external language microservices (like Python) to ASE. When adding a Python domain, a generic `NatsDomainProxy` Go wrapper is registered in `domain_tools` to route `DomainTool` calls to the Python NATS handlers.
+
+Domain tools in the codebase (`bookkeeping`, `marketing`, `email`, `onboarding`) in [`go/internal/erp/ase/domain_tools/`](file:///Users/Yankz/programming/usetoro/go/internal/erp/ase/domain_tools/) are **native Go implementations** compiled directly into the binary. 
+
+`NatsDomainProxy` is the specified **pattern and target architecture** for extending `DomainTool` out-of-process over NATS to external microservices (like Python). It will be a small generic Go proxy struct implementing `DomainTool` that dispatches those 6 interface calls over NATS subjects (`domain.<name>.*`) to the external Python service.
+
+To implement a complete domain (e.g. `insurance`) in Python, register a generic `NatsDomainProxy` in Go. The proxy forwards all `DomainTool` operations to your Python microservice over **NATS Request-Reply**:
+
+##### NATS Protocol for Domain Operations
+* **Build Agents**: `domain.insurance.agents.build` — Python extracts entities from database/payload and returns serialized `AutonomousSemanticEngineNode` objects.
+* **Classify / Think**: `domain.insurance.classify` — Python handles domain-specific evaluation / LLM reasoning and returns probability candidates.
+* **State Persistence**: `domain.insurance.state.persist` — Python saves state/trace to domain-specific database tables.
+* **Alert Generation**: `domain.insurance.alert.generate` — Python formats alert prompts when a node enters a `HOLD_` state.
+
+##### Python NATS Domain Service Example (`insurance_domain_service.py`)
+```python
+import asyncio
+import json
+from nats.aio.client import Client as NATS
+
+async def run_insurance_domain_service():
+    nc = NATS()
+    await nc.connect("nats://localhost:4222")
+
+    # 1. Build Agents Handler
+    async def handle_build_agents(msg):
+        data = json.loads(msg.data.decode())
+        print(f"[Python Domain Service] Ingesting insurance policy claims for session: {data.get('session_id')}")
+
+        # Construct ASE Node agents
+        agents = [
+            {
+                "node_id": "claim_1001",
+                "tenant_id": data.get("tenant_id"),
+                "dag_name": "insurance_claims",
+                "payload": {"claim_id": "CLM-1001", "amount": 4500.0, "policy_no": "POL-9921"}
+            }
+        ]
+        await nc.publish(msg.reply, json.dumps({"agents": agents}).encode())
+
+    # 2. Domain State Persistence Handler
+    async def handle_persist_state(msg):
+        data = json.loads(msg.data.decode())
+        print(f"[Python Domain Service] Persisting state for agent {data.get('node_id')} to insurance DB")
+        await nc.publish(msg.reply, json.dumps({"status": "SUCCESS"}).encode())
+
+    # Subscribe to NATS Domain topics
+    await nc.subscribe("domain.insurance.agents.build", cb=handle_build_agents)
+    await nc.subscribe("domain.insurance.state.persist", cb=handle_persist_state)
+
+    print("🚀 Insurance Python Domain Service listening on domain.insurance.*")
+    while True:
+        await asyncio.sleep(1)
+
+if __name__ == "__main__":
+    asyncio.run(run_insurance_domain_service())
+```
+
+---
+
+#### 2. Node-Level Function Calls (Action Providers)
+
+Within your domain DAG (`insurance_claims.yml`), individual nodes can execute deterministic function calls instead of LLM calls by specifying an `action_provider`.
+
+ASE dispatches NATS request-reply messages to `worker.inbox.action.<action_provider_name>` when the node executes:
+
+##### DAG YAML Configuration (`insurance_claims.yml`)
+```yaml
+hyper_parameters:
+  confidence_threshold: 0.98
+  domain_tool: "insurance" # Uses NatsDomainProxy targeting domain.insurance.*
+
+dag:
+  entry_node: check_coverage
+  nodes:
+    check_coverage:
+      name: check_coverage
+      kind: action
+      execution_parameters:
+        action_provider: "insurance_policy_lookup"  # Deterministic node function call
+      children:
+        ACTIVE: evaluate_claim_risk
+        EXPIRED: terminal_denied
+
+    evaluate_claim_risk:
+      name: evaluate_claim_risk
+      prompt_key: "insurance/risk_evaluation"       # LLM-based classification node
+      children:
+        LOW_RISK: auto_approve
+        HIGH_RISK: hold_underwriter_review
+```
+
+##### Python Action Worker Example (`policy_lookup_worker.py`)
+```python
+import asyncio
+import json
+from nats.aio.client import Client as NATS
+
+async def run_action_worker():
+    nc = NATS()
+    await nc.connect("nats://localhost:4222")
+
+    async def handle_policy_lookup(msg):
+        req = json.loads(msg.data.decode())
+        payload = req.get("payload", {})
+        policy_no = payload.get("policy_no")
+
+        # Perform deterministic DB query / function call
+        is_active = True if policy_no.startswith("POL-") else False
+
+        res = {
+            "candidates": [
+                {"value": "ACTIVE" if is_active else "EXPIRED", "probability": 1.0}
+            ],
+            "property": "coverage_status",
+            "payload_updates": {"coverage_verified": is_active}
+        }
+        await nc.publish(msg.reply, json.dumps(res).encode())
+
+    # Listen on node-level action topic
+    await nc.subscribe("worker.inbox.action.insurance_policy_lookup", cb=handle_policy_lookup)
+    print("🚀 Action Worker listening on worker.inbox.action.insurance_policy_lookup")
+
+    while True:
+        await asyncio.sleep(1)
+
+if __name__ == "__main__":
+    asyncio.run(run_action_worker())
+```
+
+---
+
+### Architectural Summary: Domain Tools vs. Action Providers
+
+| Concept | Scope | Responsibility | NATS Subject Pattern |
+| :--- | :--- | :--- | :--- |
+| **Domain Tool (`DomainTool`)** | **Domain-Wide (Driver)** | Ingesting raw payloads, creating agents, managing domain DB persistence, generating alerts. | `domain.<domain_name>.<action>` |
+| **Action Provider (`action_provider`)** | **Node-Level (Function Call)** | Executing a single deterministic function call at a specific DAG node (e.g. database lookups, tax calculations). | `worker.inbox.action.<action_name>` |
+
+
+

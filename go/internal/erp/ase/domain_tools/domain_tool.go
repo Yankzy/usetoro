@@ -54,7 +54,14 @@ func Register(name string, t DomainTool) {
 	registry[name] = t
 }
 
-// Get retrieves a tool by name from the registry.
+// Get retrieves a tool by name from the registry. If not statically registered,
+// it returns a NatsDomainProxy for communicating with an external NATS-backed domain microservice.
 func Get(name string) DomainTool {
-	return registry[name]
+	if t, ok := registry[name]; ok {
+		return t
+	}
+	if name != "" {
+		return NewNatsDomainProxy(name)
+	}
+	return nil
 }

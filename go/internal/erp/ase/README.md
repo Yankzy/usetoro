@@ -342,19 +342,15 @@ It is important to distinguish between **Domain Tooling** (the driver that manag
 #### 1. NATS Domain Tool Proxy (`NatsDomainProxy`)
 
 > [!NOTE]
-> **Implementation Status**: Existing domain tools (`bookkeeping`, `marketing`, `email`, `onboarding`) are currently implemented natively in Go in [`domain_tools/`](file:///Users/Yankz/programming/usetoro/go/internal/erp/ase/domain_tools/). `NatsDomainProxy` is the target architectural pattern for connecting external language microservices (like Python) to ASE. When adding a Python domain, a generic `NatsDomainProxy` Go wrapper is registered in `domain_tools` to route `DomainTool` calls to the Python NATS handlers.
+> **Implementation**: `NatsDomainProxy` is fully implemented in [`domain_tools/nats_domain_proxy.go`](file:///Users/Yankz/programming/usetoro/go/internal/erp/ase/domain_tools/nats_domain_proxy.go). When `domain_tools.Get(name)` is called for any domain name that is not statically compiled in Go, it dynamically instantiates `NewNatsDomainProxy(name)`.
 
-Domain tools in the codebase (`bookkeeping`, `marketing`, `email`, `onboarding`) in [`go/internal/erp/ase/domain_tools/`](file:///Users/Yankz/programming/usetoro/go/internal/erp/ase/domain_tools/) are **native Go implementations** compiled directly into the binary. 
-
-`NatsDomainProxy` is the specified **pattern and target architecture** for extending `DomainTool` out-of-process over NATS to external microservices (like Python). It will be a small generic Go proxy struct implementing `DomainTool` that dispatches those 6 interface calls over NATS subjects (`domain.<name>.*`) to the external Python service.
-
-To implement a complete domain (e.g. `insurance`) in Python, register a generic `NatsDomainProxy` in Go. The proxy forwards all `DomainTool` operations to your Python microservice over **NATS Request-Reply**:
+`NatsDomainProxy` allows external microservices written in **Python**, Node.js, or Rust to operate as full ASE Domain Drivers. It forwards domain operations over **NATS Request-Reply**, while core infrastructure tasks (such as Redis locking and active agent caching) remain managed by ASE core in Go.
 
 ##### NATS Protocol for Domain Operations
-* **Build Agents**: `domain.insurance.agents.build` — Python extracts entities from database/payload and returns serialized `AutonomousSemanticEngineNode` objects.
-* **Classify / Think**: `domain.insurance.classify` — Python handles domain-specific evaluation / LLM reasoning and returns probability candidates.
-* **State Persistence**: `domain.insurance.state.persist` — Python saves state/trace to domain-specific database tables.
-* **Alert Generation**: `domain.insurance.alert.generate` — Python formats alert prompts when a node enters a `HOLD_` state.
+* **Build Agents**: `domain.<domain_name>.agents.build` — Python extracts entities from database/payload and returns serialized `AutonomousSemanticEngineNode` objects.
+* **Classify / Think**: `domain.<domain_name>.classify.<mode>` (`generic`, `dynamic`, `router`) — Python handles domain-specific prompt evaluation / LLM reasoning and returns probability candidates (`map[string]NodeClassification`).
+* **State Persistence**: `domain.<domain_name>.state.<action>` (`persist_node`, `persist_hold`, `persist_ready`, `update_state`, `get_trace`) — Python saves state/trace to domain-specific database tables.
+* **Alert Generation**: `domain.<domain_name>.alert.generate` — Python formats alert prompts when a node enters a `HOLD_` state.
 
 ##### Python NATS Domain Service Example (`insurance_domain_service.py`)
 ```python

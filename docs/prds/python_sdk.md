@@ -12,7 +12,10 @@ The Toro Autonomous AI Architecture separates **High-Velocity Graph Orchestratio
 * **Go Core Engine (`go/internal/erp/ase`)**: Manages high-throughput Directed Acyclic Graph (DAG) routing, in-memory channel batching, state machine transitions, Shannon entropy mathematical validation ($C \ge 0.98$), and Redis lock coordination.
 * **Python SDK (`toro-sdk`)**: Enables enterprise developers and third-party AI builders to author specialized domain agents, proprietary ML models, local SQL database persistence, and node action handlers in native Python.
 
-The **`toro-sdk`** is an open-source, enterprise-grade Python library built on `asyncio`, `nats-py`, and `pydantic` v2. It seamlessly bridges Python services to the Toro NATS mesh using the **`NatsDomainProxy`** protocol, **TAP Envelopes**, **Agent Runtimes in `toro.core`**, and **Almanac Agent Discovery**.
+The **`toro-sdk`** is an open-source, enterprise-grade Python library built on `asyncio` and `pydantic` v2. It seamlessly bridges Python services to the Toro Event Mesh using an abstract **`EventBus`**, **`NatsDomainProxy`** protocol, **TAP Envelopes**, **Agent Runtimes in `toro.core`**, and **Almanac Agent Discovery**.
+
+> [!IMPORTANT]
+> **Mandatory Transport Encapsulation**: The SDK **MUST NOT** expose vendor-specific NATS classes, imports, or subject syntax (`nats-py`, `nats://`, `nc.publish`) in its public developer-facing API surface. The transport mesh is completely encapsulated behind the **`toro.core.EventBus`** abstraction. Under the hood, `toro-sdk` uses a high-performance `NatsEventBusAdapter` (or WebSocket/HTTP gateway adapter) that connects to Toro's transport infrastructure without leaking vendor implementation details to third-party developers.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -23,7 +26,7 @@ The **`toro-sdk`** is an open-source, enterprise-grade Python library built on `
 │  - Almanac Discovery Registry (internal/almanac)                            │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
-                                       │ NATS Mesh (Request-Reply & JetStream)
+                                       │ Toro Event Mesh (EventBus Protocol)
                                        │
 ┌──────────────────────────────────────▼──────────────────────────────────────┐
 │                    Python SDK Subsystem (toro-sdk)                          │
@@ -36,9 +39,9 @@ The **`toro-sdk`** is an open-source, enterprise-grade Python library built on `
 │  └─────────────┬─────────────┘           └──────────────┬───────────────┘   │
 │                │                                        │                   │
 │  ┌─────────────▼─────────────┐           ┌──────────────▼───────────────┐   │
-│  │   toro.core.Envelope      │           │   toro.almanac.Client        │   │
-│  │   - TAP FIPA Verbs        │           │   - DID Registration         │   │
-│  │   - AgentRuntime/Harness  │           │   - Capability Schema        │   │
+│  │   toro.core.EventBus      │           │   toro.almanac.Client        │   │
+│  │   - TAP Envelope (FIPA)   │           │   - DID Registration         │   │
+│  │   - Transport Abstraction │           │   - Capability Schema        │   │
 │  └───────────────────────────┘           └──────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -52,6 +55,7 @@ The `toro-sdk` maps directly to Toro's Go core architecture components:
 | Go Core Component | Go Location | Python SDK Module | Functional Responsibility in Python |
 | :--- | :--- | :--- | :--- |
 | **TAP Envelope & Protocol** | [tap/pkg/core](file:///Users/Yankz/programming/usetoro/tap/pkg/core) | `toro.core.Envelope` | Type-safe FIPA message parsing (`INFORM`, `REQUEST`, `CFP`, `PROPOSE`). |
+| **Transport Mesh Abstraction** | [nats_names.go](file:///Users/Yankz/programming/usetoro/go/internal/workers/nats_names.go) | `toro.core.EventBus` | Vendor-agnostic event bus interface (`publish`, `subscribe`, `request`). |
 | **Harness & Agent Runtime** | [tap/pkg/agent](file:///Users/Yankz/programming/usetoro/tap/pkg/agent) | `toro.core.Runtime` | LLM patch verification (RFC 6902), Redux engine validation, prompt construction. |
 | **Almanac Registry** | `internal/almanac` | `toro.almanac` | Agent registration, heartbeats, DID identity publishing (`did:toro:...`). |
 | **ASE NatsDomainProxy** | [nats_domain_proxy.go](file:///Users/Yankz/programming/usetoro/go/internal/erp/ase/domain_tools/nats_domain_proxy.go) | `toro.domain.DomainDriver` | Handling domain agent building, prompt evaluation, and domain SQL state persistence. |
@@ -63,7 +67,7 @@ The `toro-sdk` maps directly to Toro's Go core architecture components:
 
 ### 3.1 TAP Envelope & Protocol Layer (`toro.core`)
 
-The SDK implements the full TAP Envelope contract, Agent Runtime harness, and Redux patch validation inside `toro.core`:
+The SDK implements the full TAP Envelope contract, EventBus transport abstraction, and Redux patch validation inside `toro.core`:
 
 ```python
 # toro/core/envelope.py
@@ -90,34 +94,55 @@ class Envelope(BaseModel):
     body: Dict[str, Any]
 ```
 
+```python
+# toro/core/event_bus.py
+from abc import ABC, abstractmethod
+from typing import Callable, Dict, Any, Optional
+
+class EventBus(ABC):
+    """Abstract EventBus interface encapsulating transport details from SDK users."""
+    
+    @abstractmethod
+    async def publish(self, topic: str, payload: bytes) -> None:
+        pass
+
+    @abstractmethod
+    async def request(self, topic: str, payload: bytes, timeout: float = 30.0) -> bytes:
+        pass
+
+    @abstractmethod
+    async def subscribe(self, topic: str, handler: Callable[[bytes], Any]) -> None:
+        pass
+```
+
 ### 3.2 Domain Driver (`toro.domain.DomainDriver`)
 
-The `DomainDriver` class in `toro.domain` allows Python microservices to handle complete domain lifecycles. It subscribes to `domain.<domain_name>.*` subjects and handles NATS Request-Reply operations sent from Go's `NatsDomainProxy`.
+The `DomainDriver` class in `toro.domain` allows Python microservices to handle complete domain lifecycles over the abstract `EventBus`.
 
 When classifying batch tasks or initiating LLM evaluation requests:
 1. **Almanac Registration**: The driver first registers its agent DID (`did:toro:<domain>-agent`) and target capability topic with the Almanac service (`almanac.register`).
 2. **TAP Envelope Packaging**: The driver wraps the prompt definition, schema guardrails, and transaction batch inside a type-safe TAP `Envelope` from `toro.core` with performative `CFP` (Call For Proposal).
-3. **NATS Publishing**: It publishes the Envelope to the designated NATS topic (such as `agents.accounting.batch_categorization` or custom `agents.<domain>.<capability>`).
+3. **EventBus Publishing**: It publishes the Envelope to the designated EventBus topic (such as `agents.accounting.batch_categorization` or custom `agents.<domain>.<capability>`).
 
 ```python
 # toro/domain/domain_driver.py
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
-from toro.core import Envelope, Performative
+from toro.core import Envelope, Performative, EventBus
 
 class DomainDriver(ABC):
-    def __init__(self, domain_name: str, agent_did: str, nats_url: str = "nats://localhost:4222"):
+    def __init__(self, domain_name: str, agent_did: str, event_bus: Optional[EventBus] = None):
         self.domain_name = domain_name
         self.agent_did = agent_did
-        self.nats_url = nats_url
+        self.event_bus = event_bus
 
     @abstractmethod
     async def build_agents(self, envelope: Envelope, dag_name: str) -> List[Dict[str, Any]]:
         """Extract domain data and return initial ASE node payloads."""
         pass
 
-    async def publish_cfp_task(self, nc, topic: str, conversation_id: str, task_def: Dict[str, Any]) -> Envelope:
-        """Wraps task definition inside a TAP Envelope and publishes to NATS topic."""
+    async def publish_cfp_task(self, topic: str, conversation_id: str, task_def: Dict[str, Any]) -> Envelope:
+        """Wraps task definition inside a TAP Envelope and publishes to EventBus topic."""
         env = Envelope(
             sender_did=self.agent_did,
             receiver_did="did:toro:general-agent-fleet",
@@ -125,8 +150,10 @@ class DomainDriver(ABC):
             conversation_id=conversation_id,
             body=task_def
         )
-        await nc.publish(topic, env.model_dump_json().encode())
+        if self.event_bus:
+            await self.event_bus.publish(topic, env.model_dump_json().encode())
         return env
+```
 
     @abstractmethod
     async def classify_batch(self, mode: str, key: str, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -230,7 +257,7 @@ class DIDManager:
 
 Enterprise customers can verify ownership of their custom domain (e.g. `acme.com`) to brand their agent DIDs and send authenticated outbound emails via Toro's Postmark integration:
 
-1. **DNS Verification Initiation**: Enterprise admins run `toro.domain.dns.initiate_verification("acme.com")` via SDK or CLI.
+1. **DNS Verification Initiation**: Enterprise admins run `toro.domain.dns.initiate_verification("acme.com")` via SDK or CLI. This is for anti-spoofing
 2. **DNS Challenge Generation**: Toro generates:
    - **TXT Record**: `_toro-challenge.acme.com` -> `toro-verification-token-88192`
    - **CNAME / DKIM Records**: `pm._domainkey.acme.com` -> Postmark DKIM key for custom domain outbound mail.
@@ -252,6 +279,31 @@ class EnterpriseDomainManager:
 
     async def verify_domain_dns(self, domain: str) -> bool:
         """Triggers backend DNS check to confirm TXT/DKIM records."""
+        pass
+```
+
+### 3.7 The HTTP/WebSocket Gateway Endpoint (`/api/v1/bus`)
+
+To support third-party environments operating behind strict enterprise firewalls (where raw TCP ports like `4222` are blocked), Toro Core provides a unified Gateway Endpoint at **`/api/v1/bus`** (modeled after `/ingress`):
+
+1. **`POST /api/v1/bus/publish`**: Accepts a JSON-encoded TAP `Envelope` and publishes it directly onto the internal Event Mesh.
+2. **`POST /api/v1/bus/request`**: Executes an HTTP-based Request-Reply cycle, returning the response Envelope once the target worker responds.
+3. **`GET /api/v1/bus/stream`**: Establishes a bidirectional WebSocket or Server-Sent Events (SSE) connection over standard HTTPS (Port `443`), allowing external Python agents to subscribe to domain topics dynamically.
+4. **SDK Transport Selection**: `toro-sdk` seamlessly switches between `HttpEventBusAdapter` (`https://api.usetoro.com/bus`) and direct socket adapters without any code changes required in third-party agent definitions:
+
+```python
+# toro/core/adapters.py
+class HttpEventBusAdapter(EventBus):
+    def __init__(self, endpoint: str = "https://api.usetoro.com/bus", api_key: Optional[str] = None):
+        self.endpoint = endpoint
+        self.api_key = api_key
+
+    async def publish(self, topic: str, payload: bytes) -> None:
+        # Executes POST /api/v1/bus/publish?topic=<topic>
+        pass
+
+    async def request(self, topic: str, payload: bytes, timeout: float = 30.0) -> bytes:
+        # Executes POST /api/v1/bus/request?topic=<topic>
         pass
 ```
 
@@ -376,13 +428,14 @@ async def handle_policy_lookup(req: dict) -> ActionResponse:
     )
 
 async def main():
-    client = ToroClient(nats_url="nats://localhost:4222")
+    # ToroClient abstracts underlying event bus transport from third-party developers
+    client = ToroClient(event_bus_url="toro://event-mesh:4222")
     
     # Register Domain Driver & Action Providers
     client.register_domain_driver(InsuranceDomainService())
     client.register_action_provider(handle_policy_lookup)
     
-    print("🚀 Toro Python SDK Service Started. Listening on NATS...")
+    print("🚀 Toro Python SDK Service Started. Listening on EventBus...")
     await client.start()
 
 if __name__ == "__main__":
@@ -394,13 +447,13 @@ if __name__ == "__main__":
 ## 6. Enterprise Non-Functional Requirements (NFRs)
 
 ### 6.1 Performance & Latency Targets
-* **NATS Request-Reply Overhead**: Sub-5ms serialization/deserialization overhead in Python using `ujson` / `orjson` and `pydantic` v2 compiled rust core.
-* **Concurrency Model**: Native `asyncio.TaskGroup` handling up to 10,000 concurrent NATS subscriptions per worker process.
+* **EventBus Request-Reply Overhead**: Sub-5ms serialization/deserialization overhead in Python using `ujson` / `orjson` and `pydantic` v2 compiled rust core.
+* **Concurrency Model**: Native `asyncio.TaskGroup` handling up to 10,000 concurrent EventBus subscriptions per worker process.
 
 ### 6.2 Data Security & Privacy
-* **Zero Database Contamination**: Domain database credentials and raw SQL rows remain entirely within the enterprise developer's private Python environment. Only structured `Envelope` data, probability candidates, and patch deltas transit NATS.
+* **Zero Database Contamination**: Domain database credentials and raw SQL rows remain entirely within the enterprise developer's private Python environment. Only structured `Envelope` data, probability candidates, and patch deltas transit EventBus.
 
 ### 6.3 Packaging & Open-Source Distribution
 * **PyPI Package**: `pip install toro-sdk`
 * **Type Stubs**: Fully typed codebase with `py.typed` marker (PEP 561 compliant).
-* **Dependencies**: `nats-py>=2.8.0`, `pydantic>=2.7.0`, `opentelemetry-api>=1.24.0`.
+* **Dependencies**: `pydantic>=2.7.0`, `opentelemetry-api>=1.24.0`. Internal transport adapter dynamically loads underlying event mesh dependencies (e.g. `nats-py`) encapsulated from SDK callers.

@@ -333,7 +333,7 @@ func (cs *BookkeepingClassifier) batchToRows(ctx context.Context, batch []*ase.A
 						"error", err,
 					)
 				} else {
-					similar, err := cs.vectorStore.Search(ctx, tenantID, realmID, vec)
+					similar, err := cs.vectorStore.Search(ctx, tenantID, realmID, "", vec)
 					if err != nil {
 						cs.logger.Warn("ase: vector search failed, skipping semantic retrieval",
 							"node_id", node.NodeID,

@@ -12,7 +12,7 @@ import (
 )
 
 const getPendingHydrationRows = `-- name: GetPendingHydrationRows :many
-SELECT id, realm_id, source_type, raw_text, source_row_id
+SELECT id, realm_id, namespace, source_type, raw_text, source_row_id
 FROM toro_core.ase_vector_memory
 WHERE embedding IS NULL
 ORDER BY created_at ASC
@@ -22,6 +22,7 @@ LIMIT $1
 type GetPendingHydrationRowsRow struct {
 	ID          pgtype.UUID
 	RealmID     string
+	Namespace   string
 	SourceType  string
 	RawText     string
 	SourceRowID pgtype.UUID
@@ -41,6 +42,7 @@ func (q *Queries) GetPendingHydrationRows(ctx context.Context, limit int32) ([]G
 		if err := rows.Scan(
 			&i.ID,
 			&i.RealmID,
+			&i.Namespace,
 			&i.SourceType,
 			&i.RawText,
 			&i.SourceRowID,
@@ -56,13 +58,14 @@ func (q *Queries) GetPendingHydrationRows(ctx context.Context, limit int32) ([]G
 }
 
 const insertPendingVectorRow = `-- name: InsertPendingVectorRow :exec
-INSERT INTO toro_core.ase_vector_memory (realm_id, source_type, raw_text, source_row_id, metadata)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (realm_id, source_type, source_row_id) DO NOTHING
+INSERT INTO toro_core.ase_vector_memory (realm_id, namespace, source_type, raw_text, source_row_id, metadata)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (realm_id, namespace, source_type, source_row_id) DO NOTHING
 `
 
 type InsertPendingVectorRowParams struct {
 	RealmID     string
+	Namespace   string
 	SourceType  string
 	RawText     string
 	SourceRowID pgtype.UUID
@@ -74,6 +77,7 @@ type InsertPendingVectorRowParams struct {
 func (q *Queries) InsertPendingVectorRow(ctx context.Context, arg InsertPendingVectorRowParams) error {
 	_, err := q.db.Exec(ctx, insertPendingVectorRow,
 		arg.RealmID,
+		arg.Namespace,
 		arg.SourceType,
 		arg.RawText,
 		arg.SourceRowID,

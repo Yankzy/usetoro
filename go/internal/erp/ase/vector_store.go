@@ -24,6 +24,7 @@ const (
 
 // VectorMemoryRow is a retrieved result from the toro_core.ase_vector_memory table.
 type VectorMemoryRow struct {
+	Namespace  string          `json:"namespace"`
 	RawText    string          `json:"raw_text"`
 	Metadata   json.RawMessage `json:"metadata"`
 	Similarity float64         `json:"similarity"`
@@ -62,16 +63,21 @@ func (vs *VectorStore) GenerateEmbedding(ctx context.Context, tenantID, realmID,
 }
 
 // Upsert inserts or updates a vector memory row.
+// If namespace is empty, it defaults to "general".
 // If embedding is nil the row is registered as pending hydration.
 func (vs *VectorStore) Upsert(
 	ctx context.Context,
 	realmID string,
+	namespace string,
 	sourceType VectorSourceType,
 	rawText string,
 	sourceRowID uuid.UUID,
 	embedding []float32,
 	metadata map[string]any,
 ) error {
+	if namespace == "" {
+		namespace = "general"
+	}
 	metaBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("vector store upsert: marshal metadata: %w", err)
@@ -81,26 +87,26 @@ func (vs *VectorStore) Upsert(
 		// Full upsert with embedding.
 		_, err = vs.pool.Exec(ctx, `
 			INSERT INTO toro_core.ase_vector_memory
-				(realm_id, source_type, raw_text, embedding, source_row_id, metadata, embedded_at)
-			VALUES ($1, $2, $3, $4, $5, $6, NOW())
-			ON CONFLICT (realm_id, source_type, source_row_id)
+				(realm_id, namespace, source_type, raw_text, embedding, source_row_id, metadata, embedded_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+			ON CONFLICT (realm_id, namespace, source_type, source_row_id)
 			DO UPDATE SET
 				raw_text    = EXCLUDED.raw_text,
 				embedding   = EXCLUDED.embedding,
 				metadata    = EXCLUDED.metadata,
 				embedded_at = NOW(),
 				updated_at  = NOW()`,
-			realmID, string(sourceType), rawText,
+			realmID, namespace, string(sourceType), rawText,
 			floatsToVectorLiteral(embedding),
 			sourceRowID, metaBytes,
 		)
 	} else {
 		// Register as pending (hydrator will fill embedding later).
 		_, err = vs.pool.Exec(ctx, `
-			INSERT INTO toro_core.ase_vector_memory (realm_id, source_type, raw_text, source_row_id, metadata)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (realm_id, source_type, source_row_id) DO NOTHING`,
-			realmID, string(sourceType), rawText, sourceRowID, metaBytes,
+			INSERT INTO toro_core.ase_vector_memory (realm_id, namespace, source_type, raw_text, source_row_id, metadata)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (realm_id, namespace, source_type, source_row_id) DO NOTHING`,
+			realmID, namespace, string(sourceType), rawText, sourceRowID, metaBytes,
 		)
 	}
 	if err != nil {
@@ -125,15 +131,16 @@ func (vs *VectorStore) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedd
 }
 
 // Search executes a Bitmap-Assisted ScaNN ANN query:
-//  1. The planner uses the B-Tree index on (realm_id) to pre-filter rows,
-//     building a tight in-memory bitmap for only that tenant's vectors.
+//  1. The planner uses the B-Tree index on (realm_id, namespace) to pre-filter rows,
+//     building a tight in-memory bitmap for only that tenant/namespace vectors.
 //  2. The ScaNN index then performs ANN cosine search over the bitmap.
 //
+// If namespace is empty or "*", it searches across all namespaces for the tenant.
 // topK and the embedding model are read from the dynamically loaded config for the
 // given tenant / realm pair, making retrieval fully hot-reloadable.
 func (vs *VectorStore) Search(
 	ctx context.Context,
-	tenantID, realmID string,
+	tenantID, realmID, namespace string,
 	queryEmbedding []float32,
 ) ([]VectorMemoryRow, error) {
 	cfg := vs.VectorCfg()
@@ -142,15 +149,31 @@ func (vs *VectorStore) Search(
 		topK = 5
 	}
 
-	rows, err := vs.pool.Query(ctx, `
-		SELECT raw_text, metadata, 1 - (embedding <=> $2) AS similarity
-		FROM toro_core.ase_vector_memory
-		WHERE realm_id = $1
-		  AND embedding IS NOT NULL
-		ORDER BY embedding <=> $2
-		LIMIT $3`,
-		realmID, floatsToVectorLiteral(queryEmbedding), topK,
-	)
+	var rowsExec string
+	var args []any
+
+	if namespace != "" && namespace != "*" {
+		rowsExec = `
+			SELECT namespace, raw_text, metadata, 1 - (embedding <=> $2::vector) AS similarity
+			FROM toro_core.ase_vector_memory
+			WHERE realm_id = $1
+			  AND namespace = $4
+			  AND embedding IS NOT NULL
+			ORDER BY embedding <=> $2::vector
+			LIMIT $3`
+		args = []any{realmID, floatsToVectorLiteral(queryEmbedding), topK, namespace}
+	} else {
+		rowsExec = `
+			SELECT namespace, raw_text, metadata, 1 - (embedding <=> $2::vector) AS similarity
+			FROM toro_core.ase_vector_memory
+			WHERE realm_id = $1
+			  AND embedding IS NOT NULL
+			ORDER BY embedding <=> $2::vector
+			LIMIT $3`
+		args = []any{realmID, floatsToVectorLiteral(queryEmbedding), topK}
+	}
+
+	rows, err := vs.pool.Query(ctx, rowsExec, args...)
 	if err != nil {
 		return nil, fmt.Errorf("vector store search: %w", err)
 	}
@@ -159,7 +182,7 @@ func (vs *VectorStore) Search(
 	var results []VectorMemoryRow
 	for rows.Next() {
 		var r VectorMemoryRow
-		if err := rows.Scan(&r.RawText, &r.Metadata, &r.Similarity); err != nil {
+		if err := rows.Scan(&r.Namespace, &r.RawText, &r.Metadata, &r.Similarity); err != nil {
 			return nil, fmt.Errorf("vector store search scan: %w", err)
 		}
 		results = append(results, r)
@@ -172,6 +195,7 @@ func (vs *VectorStore) Search(
 type PendingVectorRow struct {
 	ID          uuid.UUID
 	RealmID     string
+	Namespace   string
 	SourceType  VectorSourceType
 	RawText     string
 	SourceRowID uuid.UUID
@@ -179,7 +203,7 @@ type PendingVectorRow struct {
 
 func (vs *VectorStore) PendingRows(ctx context.Context, limit int) ([]PendingVectorRow, error) {
 	rows, err := vs.pool.Query(ctx, `
-		SELECT id, realm_id, source_type, raw_text, source_row_id
+		SELECT id, realm_id, namespace, source_type, raw_text, source_row_id
 		FROM toro_core.ase_vector_memory
 		WHERE embedding IS NULL
 		ORDER BY created_at ASC
@@ -193,7 +217,7 @@ func (vs *VectorStore) PendingRows(ctx context.Context, limit int) ([]PendingVec
 	for rows.Next() {
 		var r PendingVectorRow
 		var sourceType string
-		if err := rows.Scan(&r.ID, &r.RealmID, &sourceType, &r.RawText, &r.SourceRowID); err != nil {
+		if err := rows.Scan(&r.ID, &r.RealmID, &r.Namespace, &sourceType, &r.RawText, &r.SourceRowID); err != nil {
 			return nil, fmt.Errorf("vector store pending rows scan: %w", err)
 		}
 		r.SourceType = VectorSourceType(sourceType)
@@ -208,7 +232,7 @@ func (vs *VectorStore) VectorCfg() VectorMemoryConfig {
 }
 
 // EnsureScaNNIndex creates the ScaNN ANN index if:
-//   - The table has at least one embedded row (AlloyDB Omni requirement)
+//   - The table has more embedded rows than num_leaves (AlloyDB Omni requirement)
 //   - The index does not already exist
 //
 // This is called by the VectorHydrator after each successful embed batch.
@@ -220,8 +244,8 @@ func (vs *VectorStore) EnsureScaNNIndex(ctx context.Context, tenantID, realmID s
 	err := vs.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM pg_indexes
-			WHERE schemaname = 'ase'
-			  AND tablename  = 'vector_memory'
+			WHERE schemaname = 'toro_core'
+			  AND tablename  = 'ase_vector_memory'
 			  AND indexname  = 'idx_ase_vector_memory_scann'
 		)`).Scan(&exists)
 	if err != nil {
@@ -231,7 +255,14 @@ func (vs *VectorStore) EnsureScaNNIndex(ctx context.Context, tenantID, realmID s
 		return nil
 	}
 
-	// 2. Confirm the table is non-empty (AlloyDB Omni requirement).
+	// 2. Read num_leaves from the hot-reloadable config.
+	cfg := vs.VectorCfg()
+	numLeaves := cfg.ScaNNNumLeaves
+	if numLeaves <= 0 {
+		numLeaves = 10
+	}
+
+	// 3. Confirm table has > num_leaves embedded rows (AlloyDB Omni requirement).
 	var count int64
 	err = vs.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM toro_core.ase_vector_memory WHERE embedding IS NOT NULL
@@ -239,16 +270,9 @@ func (vs *VectorStore) EnsureScaNNIndex(ctx context.Context, tenantID, realmID s
 	if err != nil {
 		return fmt.Errorf("ensure scann index: count check: %w", err)
 	}
-	if count == 0 {
-		// Nothing to index yet — the hydrator will retry next tick.
+	if count <= int64(numLeaves) {
+		// Not enough rows to build ScaNN index yet — hydrator will retry when more rows arrive.
 		return nil
-	}
-
-	// 3. Read num_leaves from the hot-reloadable config.
-	cfg := vs.VectorCfg()
-	numLeaves := cfg.ScaNNNumLeaves
-	if numLeaves <= 0 {
-		numLeaves = 10
 	}
 
 	// 4. Create the index. This is a DDL statement, so it cannot be run inside

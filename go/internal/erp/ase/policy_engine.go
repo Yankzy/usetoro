@@ -15,21 +15,21 @@ const (
 // DecisionNode represents a node in the recovery policy decision tree.
 // It is designed to be easily unmarshaled from JSON/YAML configurations.
 type DecisionNode struct {
-	Type             NodeType        `yaml:"type" json:"type"`
-	PredicateName    string          `yaml:"predicate,omitempty" json:"predicate,omitempty"`
-	TrueBranch       *DecisionNode   `yaml:"true_branch,omitempty" json:"true_branch,omitempty"`
-	FalseBranch      *DecisionNode   `yaml:"false_branch,omitempty" json:"false_branch,omitempty"`
-	PermittedActions []string        `yaml:"actions,omitempty" json:"actions,omitempty"`
+	Type             NodeType      `yaml:"type" json:"type"`
+	PredicateName    string        `yaml:"predicate,omitempty" json:"predicate,omitempty"`
+	TrueBranch       *DecisionNode `yaml:"true_branch,omitempty" json:"true_branch,omitempty"`
+	FalseBranch      *DecisionNode `yaml:"false_branch,omitempty" json:"false_branch,omitempty"`
+	PermittedActions []string      `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 
 // RecoveryAction defines the cost and probability characteristics of a specific recovery action.
 type RecoveryAction struct {
 	ActionID        string
 	Description     string
-	BaseCost        float64       // Normalized composite cost (compute + human)
+	BaseCost        float64 // Normalized composite cost (compute + human)
 	ExpectedLatency time.Duration
-	ProbOfSuccess   float64       // Historical success rate P(S|a)
-	BaseExpectedIG  float64       // Baseline Expected Information Gain
+	ProbOfSuccess   float64 // Historical success rate P(S|a)
+	BaseExpectedIG  float64 // Baseline Expected Information Gain
 }
 
 // RecoveryPolicyEngine interprets decision trees and selects the best recovery action based on cost matrix.

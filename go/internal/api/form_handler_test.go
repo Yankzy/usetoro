@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -28,9 +30,39 @@ func (m *MockQuerier) CreateLeadForm(ctx context.Context, arg database.CreateLea
 	return database.MarketingLeadForm{}, nil
 }
 
+// MockEventPublisher captures events published during testing.
+type MockEventPublisher struct {
+	PublishedRaw []struct {
+		Subject string
+		Data    []byte
+	}
+}
+
+func (m *MockEventPublisher) PublishWebhookEvent(ctx context.Context, provider, connID, toroEventID, providerEventID, providerEventType string, body []byte) error {
+	return nil
+}
+
+func (m *MockEventPublisher) PublishQBOEvent(ctx context.Context, eventType, realmID string, data []byte) error {
+	return nil
+}
+
+func (m *MockEventPublisher) PublishRaw(ctx context.Context, subject string, data []byte) error {
+	m.PublishedRaw = append(m.PublishedRaw, struct {
+		Subject string
+		Data    []byte
+	}{Subject: subject, Data: data})
+	return nil
+}
+
+func (m *MockEventPublisher) Ping(ctx context.Context) error {
+	return nil
+}
+
 func TestHandleCaptureForm(t *testing.T) {
+	mockPub := &MockEventPublisher{}
 	handler := &Handler{
 		Logger: testLogger(),
+		Pub:    mockPub,
 	}
 
 	tests := []struct {
@@ -49,7 +81,7 @@ func TestHandleCaptureForm(t *testing.T) {
 					return database.MarketingLeadForm{}, errors.New("wrong website")
 				}
 				return database.MarketingLeadForm{
-					ID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+					ID: pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, Valid: true},
 				}, nil
 			},
 			expectedStatus: http.StatusCreated,
@@ -63,7 +95,7 @@ func TestHandleCaptureForm(t *testing.T) {
 		{
 			name:           "Invalid JSON",
 			website:        "test.com",
-			payload:        "invalid-json", // This will be sent as a string, still valid JSON if quoted, but we'll send it as raw bytes
+			payload:        "invalid-json", // Raw invalid json bytes below
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
@@ -79,6 +111,7 @@ func TestHandleCaptureForm(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			mockPub.PublishedRaw = nil // reset
 			mockDB := &MockQuerier{
 				CreateLeadFormFunc: tc.mockFunc,
 			}
@@ -114,11 +147,55 @@ func TestHandleCaptureForm(t *testing.T) {
 				if resp["id"] == nil {
 					t.Error("Expected ID in response, got nil")
 				}
+
+				// Verify NATS event published to proof.outgoing.chat
+				if len(mockPub.PublishedRaw) != 1 {
+					t.Fatalf("Expected 1 NATS raw event published, got %d", len(mockPub.PublishedRaw))
+				}
+				pubEvent := mockPub.PublishedRaw[0]
+				if pubEvent.Subject != "proof.outgoing.chat" {
+					t.Errorf("Expected NATS subject 'proof.outgoing.chat', got '%s'", pubEvent.Subject)
+				}
+
+				var env core.Envelope
+				if err := json.Unmarshal(pubEvent.Data, &env); err != nil {
+					t.Fatalf("Failed to unmarshal envelope: %v", err)
+				}
+				if env.Performative != core.INFORM {
+					t.Errorf("Expected performative INFORM, got %v", env.Performative)
+				}
+
+				var proof core.Proof
+				if err := json.Unmarshal(env.Body, &proof); err != nil {
+					t.Fatalf("Failed to unmarshal proof: %v", err)
+				}
+
+				var response map[string]interface{}
+				if err := json.Unmarshal(proof.Data, &response); err != nil {
+					t.Fatalf("Failed to unmarshal proof response data: %v", err)
+				}
+
+				if response["source"] != "email" {
+					t.Errorf("Expected source 'email', got %v", response["source"])
+				}
+				if response["from_handle"] != "forms@usetoro.io" {
+					t.Errorf("Expected from_handle 'forms@usetoro.io', got %v", response["from_handle"])
+				}
+				if response["to_handle"] != "yankz@usetoro.io" {
+					t.Errorf("Expected to_handle 'yankz@usetoro.io', got %v", response["to_handle"])
+				}
+				if !strings.Contains(response["subject"].(string), "example.com") {
+					t.Errorf("Expected subject to contain 'example.com', got %v", response["subject"])
+				}
+				if !strings.Contains(response["body_text"].(string), "john@example.com") {
+					t.Errorf("Expected body_text to contain 'john@example.com', got %v", response["body_text"])
+				}
 			}
 		})
 	}
 }
 
 func testLogger() *slog.Logger {
-    return slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	return slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
 }
+

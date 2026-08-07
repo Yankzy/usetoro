@@ -137,7 +137,7 @@ func (h *VectorHydrator) registerMemoryRules(ctx context.Context) error {
 			return fmt.Errorf("register memory rules scan: %w", err)
 		}
 		meta := map[string]any{"source": "agent_memory_rules"}
-		if err := h.store.Upsert(ctx, realmID, VectorSourceMemoryRule, instruction, rowID, nil, meta); err != nil {
+		if err := h.store.Upsert(ctx, realmID, "general", VectorSourceMemoryRule, instruction, rowID, nil, meta); err != nil {
 			h.logger.Warn("hydrator: failed to register memory rule", "row_id", rowID, "error", err)
 		}
 	}
@@ -186,7 +186,7 @@ func (h *VectorHydrator) registerResolvedTx(ctx context.Context, minConfidence f
 			"macro_class":  derefStr(macroClass),
 			"account_type": derefStr(accountType),
 		}
-		if err := h.store.Upsert(ctx, realmID, VectorSourceResolvedTx, rawDesc, rowID, nil, meta); err != nil {
+		if err := h.store.Upsert(ctx, realmID, "general", VectorSourceResolvedTx, rawDesc, rowID, nil, meta); err != nil {
 			h.logger.Warn("hydrator: failed to register resolved tx", "row_id", rowID, "error", err)
 		}
 	}

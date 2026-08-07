@@ -36,6 +36,7 @@ CREATE EXTENSION IF NOT EXISTS alloydb_scann;
 CREATE TABLE IF NOT EXISTS toro_core.ase_vector_memory (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     realm_id      TEXT        NOT NULL,
+    namespace     TEXT        NOT NULL DEFAULT 'general',
     source_type   TEXT        NOT NULL CHECK (source_type IN ('memory_rule', 'resolved_tx')),
     raw_text      TEXT        NOT NULL,
     embedding     vector(1536),              -- NULL until hydrated by VectorHydrator
@@ -45,18 +46,18 @@ CREATE TABLE IF NOT EXISTS toro_core.ase_vector_memory (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    UNIQUE (realm_id, source_type, source_row_id)
+    UNIQUE (realm_id, namespace, source_type, source_row_id)
 );
 
 -- =========================================================================
 -- Phase 4: Indexes
 -- =========================================================================
 
--- B-Tree index: enables the planner to pre-filter by realm_id before the
--- ScaNN scan, achieving Bitmap-Assisted Inline Filtering.
+-- B-Tree index: enables the planner to pre-filter by realm_id and namespace
+-- before the ScaNN scan, achieving Bitmap-Assisted Inline Filtering.
 -- Also used by the hydrator to find un-embedded rows efficiently.
-CREATE INDEX IF NOT EXISTS idx_ase_vector_memory_realm
-    ON toro_core.ase_vector_memory (realm_id, source_type);
+CREATE INDEX IF NOT EXISTS idx_ase_vector_memory_realm_ns
+    ON toro_core.ase_vector_memory (realm_id, namespace, source_type);
 
 -- Partial index: helps the hydrator quickly find rows pending embedding.
 CREATE INDEX IF NOT EXISTS idx_ase_vector_memory_pending

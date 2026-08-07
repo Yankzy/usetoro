@@ -713,6 +713,7 @@ type ToroCoreAseDagVersion struct {
 type ToroCoreAseVectorMemory struct {
 	ID          pgtype.UUID
 	RealmID     string
+	Namespace   string
 	SourceType  string
 	RawText     string
 	Embedding   string

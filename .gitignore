@@ -7,6 +7,9 @@
 *.dll
 *.so
 *.dylib
+/torodb
+/test_export_flow
+*.pdf
 # Explicitly ignore dynamically built Go binaries and extension-less executables
 go/*
 !go/*/

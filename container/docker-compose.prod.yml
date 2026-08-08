@@ -309,28 +309,26 @@ services:
     build:
       context: ../
       dockerfile: container/nginx/nginx.prod.Dockerfile
-    ports:
-      - "80:80"
     depends_on:
       - gate
       - graphql
     networks:
       - toro-net
 
-  # caddy:
-  #   image: caddy:alpine
-  #   restart: always
-  #   ports:
-  #     - "80:80"
-  #     - "443:443"
-  #   command: caddy reverse-proxy --from api.usetoro.io --to nginx:80
-  #   volumes:
-  #     - caddy_data:/data
-  #     - caddy_config:/config
-  #   depends_on:
-  #     - nginx
-  #   networks:
-  #     - toro-net
+  caddy:
+    image: caddy:alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    command: caddy reverse-proxy --from api.usetoro.io --to nginx:80
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - nginx
+    networks:
+      - toro-net
 
   migrator:
     image: yankz/usetoro-migrator:latest
@@ -352,8 +350,8 @@ volumes:
   nats_1_data:
   nats_2_data:
   nats_3_data:
-    # caddy_data:
-    # caddy_config:
+  caddy_data:
+  caddy_config:
 
 networks:
   toro-net:

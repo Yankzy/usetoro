@@ -6,15 +6,18 @@ x-nats-common: &nats-common
 services:
 
   db:
-    #   image: timescale/timescaledb:latest-pg18
-    image: google/alloydbomni:17.7-ubi9
+    build:
+      context: ../
+      dockerfile: container/torodb/Dockerfile
     restart: always
-    command: [ "postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=5", "-c", "max_wal_senders=5", "-c", "max_connections=200" ]
     environment:
       POSTGRES_DB: toro
       POSTGRES_USER: toro
       POSTGRES_PASSWORD: toro_password
       PGDATA: /var/lib/postgresql/data/pgdata
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      DATABASE_URL: postgres://toro:toro_password@localhost:5432/toro?sslmode=disable
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     volumes:
       - ./postgres/db_data:/var/lib/postgresql/data
       - ./postgres/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh

@@ -187,10 +187,10 @@ When an ASE DAG micro-agent encounters a transaction with missing context or con
 ---
 
 ### Roadmap Checklist (What Must Be Implemented to Wire CDC In)
-- [ ] **Create Migration `040_create_toro_core_documents.sql`**: Add the `toro_core.documents` table schema and indexes.
-- [ ] **Update Publication (`004_logical_publication.sql`)**: Include `toro_core.documents` in `toro_ledger_pub`.
-- [ ] **Bridge OCR Worker to `toro_core.documents`**: Ensure OCR text extraction writes `raw_ocr_json` and `s3_url` upon completion.
-- [ ] **CDC Ingestion Worker Handler**: Wire the CDC event listener (`toro.cdc.documents.processed`) to execute `enterprise_facts` inserts and `VectorStore.Upsert()`.
+- [x] **Create Migration `040_create_toro_core_knowledge_system.sql`**: Add the `toro_core.documents`, `toro_core.enterprise_facts`, and `toro_core.enterprise_relationships` table schemas and indexes.
+- [x] **Update Publication (`004_logical_publication.sql`)**: Include `toro_core.documents`, `toro_core.enterprise_facts`, and `toro_core.enterprise_relationships` in `toro_ledger_pub`.
+- [x] **Bridge OCR Worker to `toro_core.documents`**: Ensure OCR text extraction writes `raw_ocr_json` and `s3_url` upon completion.
+- [x] **CDC Ingestion Worker Handler**: Wire the CDC event listener and `KnowledgeIngestionEngine` to execute `enterprise_facts` inserts, `enterprise_relationships` edges, and `VectorStore.Upsert()`.
 
 ---
 

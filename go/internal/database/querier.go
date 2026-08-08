@@ -37,6 +37,7 @@ type Querier interface {
 	// =========================================================================
 	CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (CreateCleanupSessionRow, error)
 	CreateConversion(ctx context.Context, arg CreateConversionParams) (MarketingConversion, error)
+	CreateDocument(ctx context.Context, arg CreateDocumentParams) (ToroCoreDocument, error)
 	CreateEmployeeProfile(ctx context.Context, arg CreateEmployeeProfileParams) error
 	// =========================================================================
 	// Auth: Employee Registration & Login
@@ -45,6 +46,7 @@ type Querier interface {
 	CreateEnterpriseAgentAlias(ctx context.Context, arg CreateEnterpriseAgentAliasParams) (ToroCoreEnterpriseAgentAlias, error)
 	CreateEnterpriseDomain(ctx context.Context, arg CreateEnterpriseDomainParams) (ToroCoreEnterpriseDomain, error)
 	CreateEntity(ctx context.Context, arg CreateEntityParams) (pgtype.UUID, error)
+	CreateFact(ctx context.Context, arg CreateFactParams) (ToroCoreEnterpriseFact, error)
 	CreateLeadForm(ctx context.Context, arg CreateLeadFormParams) (MarketingLeadForm, error)
 	CreateMarketingList(ctx context.Context, arg CreateMarketingListParams) (MarketingList, error)
 	CreateMasterMerchant(ctx context.Context, arg CreateMasterMerchantParams) (FignodeMasterMerchant, error)
@@ -55,6 +57,7 @@ type Querier interface {
 	CreateProposedTransaction(ctx context.Context, arg CreateProposedTransactionParams) (FignodeStagingTransaction, error)
 	CreateReconciliationTask(ctx context.Context, arg CreateReconciliationTaskParams) (ShadowErpReconciliationTask, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error
+	CreateRelationship(ctx context.Context, arg CreateRelationshipParams) (ToroCoreEnterpriseRelationship, error)
 	CreateRuleAuditLog(ctx context.Context, arg CreateRuleAuditLogParams) (ShadowErpRuleAuditLog, error)
 	CreateRuleCondition(ctx context.Context, arg CreateRuleConditionParams) (ShadowErpRuleCondition, error)
 	CreateRuleGroup(ctx context.Context, arg CreateRuleGroupParams) (ShadowErpRuleGroup, error)
@@ -143,6 +146,7 @@ type Querier interface {
 	// Used by bootstrap_allocations.go.
 	GetDepositSplitPercentages(ctx context.Context, realmID string) ([]GetDepositSplitPercentagesRow, error)
 	GetDistinctMacroClassesUnmatched(ctx context.Context, sessionID pgtype.UUID) ([]pgtype.Text, error)
+	GetDocumentByID(ctx context.Context, id pgtype.UUID) (ToroCoreDocument, error)
 	GetERPConnection(ctx context.Context, entityID pgtype.UUID) (ToroCoreErpConnection, error)
 	GetERPConnectionByRealm(ctx context.Context, arg GetERPConnectionByRealmParams) (ToroCoreErpConnection, error)
 	GetERPTokens(ctx context.Context, arg GetERPTokensParams) (GetERPTokensRow, error)
@@ -169,6 +173,8 @@ type Querier interface {
 	GetEntityDescendants(ctx context.Context, id pgtype.UUID) ([]pgtype.UUID, error)
 	GetEntityIDByEmail(ctx context.Context, email string) (pgtype.UUID, error)
 	GetExpenseAccountsFromPurchases(ctx context.Context, realmID string) ([]GetExpenseAccountsFromPurchasesRow, error)
+	GetFactByID(ctx context.Context, factID pgtype.UUID) (ToroCoreEnterpriseFact, error)
+	GetFactByURI(ctx context.Context, arg GetFactByURIParams) (ToroCoreEnterpriseFact, error)
 	GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredAccountsForAIParams) ([]GetFilteredAccountsForAIRow, error)
 	GetHeldTransactionsBySession(ctx context.Context, sessionID pgtype.UUID) ([]GetHeldTransactionsBySessionRow, error)
 	// Finds customers with extreme variance across amounts and income accounts.
@@ -347,6 +353,10 @@ type Querier interface {
 	// Returns CSV sessions for a realm (when realm_id is provided) OR CSV sessions created by a user
 	// (when realm_id is NULL). Excludes SYSTEM/PLAID sessions which are not user-facing.
 	ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]ListCleanupSessionsRow, error)
+	ListFactsByRealmAndNamespace(ctx context.Context, arg ListFactsByRealmAndNamespaceParams) ([]ToroCoreEnterpriseFact, error)
+	ListPendingDocuments(ctx context.Context, limit int32) ([]ToroCoreDocument, error)
+	ListRelationshipsFromFact(ctx context.Context, fromFactID pgtype.UUID) ([]ListRelationshipsFromFactRow, error)
+	ListRelationshipsToFact(ctx context.Context, toFactID pgtype.UUID) ([]ListRelationshipsToFactRow, error)
 	ListUsersWithVCOO(ctx context.Context) ([]ListUsersWithVCOORow, error)
 	LogBulkBurn(ctx context.Context, arg LogBulkBurnParams) (ToroCoreWalletTransaction, error)
 	LogEmailEvent(ctx context.Context, arg LogEmailEventParams) error
@@ -398,6 +408,7 @@ type Querier interface {
 	UpdateCustomerTaxonomy(ctx context.Context, arg UpdateCustomerTaxonomyParams) error
 	UpdateCustomerVectorSync(ctx context.Context, arg UpdateCustomerVectorSyncParams) error
 	UpdateDepositRuleID(ctx context.Context, arg UpdateDepositRuleIDParams) error
+	UpdateDocumentOCRStatus(ctx context.Context, arg UpdateDocumentOCRStatusParams) (ToroCoreDocument, error)
 	UpdateERPTokens(ctx context.Context, arg UpdateERPTokensParams) error
 	UpdateEmailAccountStatus(ctx context.Context, arg UpdateEmailAccountStatusParams) error
 	UpdateEmailAccountWarmup(ctx context.Context, arg UpdateEmailAccountWarmupParams) error

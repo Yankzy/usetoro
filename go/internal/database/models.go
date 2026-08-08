@@ -765,6 +765,23 @@ type ToroCoreConversationSession struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type ToroCoreDocument struct {
+	ID            pgtype.UUID
+	RealmID       string
+	DocumentType  string
+	FileName      string
+	MimeType      string
+	S3Url         string
+	OcrStatus     string
+	RawOcrJson    []byte
+	ExtractedText pgtype.Text
+	SenderEmail   pgtype.Text
+	SourceChannel string
+	ProcessedAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type ToroCoreEnterpriseAgentAlias struct {
 	ID         pgtype.UUID
 	DomainID   pgtype.UUID
@@ -782,6 +799,27 @@ type ToroCoreEnterpriseDomain struct {
 	Status                  string
 	CreatedAt               pgtype.Timestamptz
 	UpdatedAt               pgtype.Timestamptz
+}
+
+type ToroCoreEnterpriseFact struct {
+	FactID     pgtype.UUID
+	RealmID    string
+	Namespace  string
+	EntityType string
+	Uri        string
+	Payload    []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+type ToroCoreEnterpriseRelationship struct {
+	RelationshipID pgtype.UUID
+	RealmID        string
+	Namespace      string
+	FromFactID     pgtype.UUID
+	ToFactID       pgtype.UUID
+	RelationType   string
+	Weight         float64
+	CreatedAt      pgtype.Timestamptz
 }
 
 type ToroCoreEntity struct {

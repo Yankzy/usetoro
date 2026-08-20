@@ -15,7 +15,7 @@ COPY go/cmd/fignode ./cmd/fignode
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /fignode ./cmd/fignode/main.go
 
 # Final stage
-FROM alpine:3.19
+FROM alpine:3.19 AS production
 
 RUN apk --no-cache add ca-certificates
 
@@ -30,3 +30,10 @@ USER nobody
 ENTRYPOINT ["fignode"]
 
 COPY --chown=nobody:nobody keys /keys
+
+FROM golang:1.25-alpine AS development
+
+RUN apk add --no-cache ca-certificates git \
+    && go install github.com/air-verse/air@v1.63.0
+
+WORKDIR /workspace

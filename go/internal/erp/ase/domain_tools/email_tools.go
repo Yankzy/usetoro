@@ -107,7 +107,7 @@ func (t *EmailTool) BuildAgents(ctx context.Context, env core.Envelope, dagName 
 		"domain_tool": "email",
 	}
 
-	agent := ase.NewASENode(payload.EntityID, "", dagName, nodePayload)
+	agent := ase.NewASENode(payload.EntityID, dagName, nodePayload)
 	agent.NodeID = payload.SessionID // Use session_id as the NodeID so we can resume it easily
 
 	return []*ase.AutonomousSemanticEngineNode{agent}, nil

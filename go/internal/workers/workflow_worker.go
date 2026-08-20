@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/database"
@@ -34,6 +36,7 @@ type WorkflowWorker struct {
 // the internal DB schema — just the canonical YAML field names.
 type UpsertWorkflowPayload struct {
 	Name         string          `json:"name" desc:"The unique name of the workflow blueprint"`
+	UserID       *string         `json:"user_id,omitempty" desc:"Optional user ID owning this blueprint"`
 	TriggerTopic string          `json:"trigger_topic" desc:"The NATS subject that triggers this workflow"`
 	Definition   json.RawMessage `json:"definition" desc:"The workflow definition in JSON format"`
 }
@@ -123,8 +126,16 @@ func (w *WorkflowWorker) handleUpsert(ctx context.Context, msg *nats.Msg) error 
 		return nil
 	}
 
+	var uid pgtype.UUID
+	if payload.UserID != nil && *payload.UserID != "" {
+		if parsed, err := uuid.Parse(*payload.UserID); err == nil {
+			uid = pgtype.UUID{Bytes: parsed, Valid: true}
+		}
+	}
+
 	_, err := w.db.UpsertWorkflowBlueprint(ctx, database.UpsertWorkflowBlueprintParams{
 		Name:         payload.Name,
+		UserID:       uid,
 		TriggerTopic: payload.TriggerTopic,
 		Definition:   payload.Definition,
 	})

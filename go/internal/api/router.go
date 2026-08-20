@@ -67,6 +67,10 @@ func NewRouter(h *Handler, wm *micrion.WalletManager, mailpoolHandler *mailpool.
 	mux.HandleFunc("GET /files/{session_id}/export", h.HandleExport)
 	mux.HandleFunc("GET /files/{session_id}/audit", h.HandleAudit)
 
+	// Moroccan Cognitive Financial Enrichment Engine (CEE-MA) A2A Endpoints
+	mux.HandleFunc("POST /api/v1/enrichment/morocco", h.HandleMoroccanEnrichment)
+	mux.HandleFunc("GET /api/v1/enrichment/morocco/foreign-totals", h.HandleGetForeignProviderRunningTotals)
+
 	// Wallet Operations (Stripe / Checks)
 	mux.Handle("GET /wallet/balance", h.Authenticator.Middleware(http.HandlerFunc(h.HandleGetWalletBalance)))
 	mux.Handle("POST /wallet/topup", h.Authenticator.Middleware(http.HandlerFunc(h.HandleCreateWalletTopUp)))

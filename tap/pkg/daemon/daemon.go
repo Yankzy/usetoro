@@ -113,7 +113,7 @@ func (d *ProtocolDaemon) Run(ctx context.Context) error {
 	}
 
 	// 5. Initialize the Workflow Orchestrator
-	d.Orchestrator = workflows.NewOrchestrator(d.Logger, bus, d.NATS, d.JS, d.Supervisor.Queries)
+	d.Orchestrator = workflows.NewOrchestrator(d.Logger, bus, d.NATS, d.JS, d.Supervisor.Queries, d.DBPool)
 
 	// YAML bootstrap: upsert blueprints into the DB.
 	if err := d.Orchestrator.LoadFromDir(ctx, "tap/workflows"); err != nil {

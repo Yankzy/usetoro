@@ -1,8 +1,10 @@
-# Knowledge System (Epistemology)
+# Knowledge System (Epistemology) & ToroDB Engine Architecture
 
-**Location:** `go/internal/erp/ase/knowledge_system.md`  
-**Package:** `github.com/Yankzy/usetoro/internal/erp/ase`  
+**Document Location:** `go/internal/erp/ase/knowledge_system.md`  
+**Package:** `github.com/Yankzy/usetoro/internal/erp/ase/knowledge_system` & `github.com/Yankzy/usetoro/internal/erp/ase`  
 **Subsystem:** System 1 of the 5 Core Harness Subsystems  
+**Target Architecture:** ToroDB Engine (Standalone Agentic Database in a Box)  
+**Status:** Fully Implemented & Integrated  
 
 ---
 
@@ -35,7 +37,7 @@ Reality is represented across three unified layers inside PostgreSQL / AlloyDB O
 ```
 
 ## 1.3 Shannon Entropy & Confidence Guardrails ($C \ge 0.98$)
-Every fact candidate and classification choice evaluated by an autonomous agent (`ASENode`) in an ASE DAG tracks **Shannon Entropy**:
+Every fact candidate and classification choice evaluated by an autonomous micro-agent (`ASENode`) in an Autonomous Semantic Engine (ASE) DAG tracks **Shannon Entropy**:
 
 $$H(k) = -\sum_{j} p_j \log_2 p_j$$
 
@@ -44,87 +46,146 @@ And **Unified Confidence**:
 $$C = 1 - \frac{\sum H(k)}{\text{Total Properties}}$$
 
 ### Architectural System Boundary & Guardrail Interaction
-
-It is critical to distinguish between the **Knowledge System** and the **ASE DAG Execution Engine**:
-
-* **Knowledge System (`VectorStore` + Property Graph)**: Acts as the **Epistemological Context Provider**. It stores and retrieves $\text{Layer 1}$ Ground Truth Facts, $\text{Layer 2}$ Graph Relationships, and $\text{Layer 3}$ Situation Memories.
-* **ASE DAG Execution Engine (`ASENode`)**: Acts as the **Consumer & Decision Engine**. During node execution, micro-agents query the Knowledge System, calculate entropy/confidence, and enforce state transitions:
+* **Knowledge System (`VectorStore` + `GraphStore`)**: Acts as the **Epistemological Context Provider**. It stores and retrieves $\text{Layer 1}$ Ground Truth Facts, $\text{Layer 2}$ Graph Relationships, and $\text{Layer 3}$ Situation Vector Memories.
+* **ASE DAG Execution Engine (`ASENode`)**: Acts as the **Consumer & Decision Engine**. During node execution, micro-agents query the Knowledge System via `GraphContextProvider`, calculate entropy/confidence, and enforce state transitions:
   * **Automated Sync Guardrail**: If Unified Confidence $C \ge 0.98$, the `ASENode` transitions to `StateReadyForSync` or `StateClassified` for ledger writeback.
-  * **Hold Transition**: If $C < 0.98$ or required ground-truth context cannot be resolved, the **ASE DAG Node** transitions its execution state to `StateHoldMissingCtx` (`"HOLD_MISSING_CONTEXT"`), halting automated writeback and holding the agent and handing over to the `Recovery system` (Decision theory).
+  * **Hold Transition**: If $C < 0.98$ or required ground-truth context cannot be resolved, the `ASENode` transitions its execution state to `StateHoldMissingCtx` (`"HOLD_MISSING_CONTEXT"`), halting automated writeback and handing over to the Recovery Engine.
 
 ---
 
-# 2. Architecture & Mechanism ("How")
+# 2. ToroDB Standalone Packaging & Container Architecture
 
-## 2.1 Multi-Tenant Isolation & Contextual Namespacing
-To deliver high precision without breaking unified enterprise knowledge:
-
-1. **Multi-Tenant Boundary (`realm_id`)**: Matches the ERP company connection ID. Cross-realm data leakage is physically impossible at the database query planner level.
-2. **Domain Scoping (`namespace`)**: Partitions situation memories into logical scopes (e.g., `accounting:invoices`, `tax_rules`, `bank_reconciliation`, `audit_logs`).
-
-### Query Modes:
-* **Scoped Search**: Filters vectors by `WHERE realm_id = $1 AND namespace = $2` to eliminate vector noise during specialized micro-agent tasks.
-* **Unified Enterprise Search**: Queries `WHERE realm_id = $1` (by passing `namespace = ""` or `"*"`), searching across all namespaces when discovering holistic enterprise patterns.
-
-## 2.2 ScaNN Vector Acceleration & Inline Filtering
-Vectors are embedded into `vector(1536)` columns and indexed using **Google's ScaNN** (Sparsifying Category Nearest Neighbor) index bundled in AlloyDB Omni:
-
-* **Bitmap-Assisted Pre-Filtering**: The query planner uses the composite B-Tree index on `(realm_id, namespace, source_type)` to construct a tight in-memory bitmap before ScaNN executes cosine similarity search over that tenant's vector subset.
-
-## 2.3 The Hydration Lifecycle (`VectorHydrator`)
-A background worker continuously synchronizes enterprise activity into Layer 3 situation memory:
+## 2.1 The "Agentic Database in a Box" Concept
+ToroDB is not just a database image; it is an **OCI-compliant standalone container artifact** (`container/torodb/Dockerfile`) that packages:
+1. **Google AlloyDB Omni Core**: High-performance PostgreSQL 17 database with Google ScaNN ANN vector search and Columnar HTAP analytics.
+2. **The Go Execution Harness Binary (`/usr/local/bin/torodb`)**: Compiled from `go/cmd/torodb/main.go`, running natively alongside AlloyDB inside the container.
+3. **Native PostgreSQL CDC Replicator**: Tailings WAL logs (`toro_ledger_pub`) directly inside the Go harness via `pglogrepl`, eliminating external sidecar containers.
+4. **Knowledge System Engine**: Managing Layer 1 Facts, Layer 2 Directional Relationships, Layer 3 Vector Memories, Master Documents, and `GraphContextProvider`.
 
 ```
-[Agent Memory Rules] ------+
-                           |---> [Register Pending Row (embedding = NULL)]
-[Staging Transactions] ----+                      |
-                                                  v
-                                      [VectorHydrator Embedder]
-                                                  |
-                                                  v
-                               [OpenAI text-embedding-3-small (1536d)]
-                                                  |
-                                                  v
-                               [Update Embedding & Build ScaNN Index]
++-----------------------------------------------------------------------------------------------+
+|                                    ToroDB Container Image                                     |
+|                                (container/torodb/Dockerfile)                                  |
+|                                                                                               |
+|  +-----------------------------------------------------------------------------------------+  |
+|  |                 Go Execution Harness Binary (/usr/local/bin/torodb)                     |  |
+|  |                             (go/cmd/torodb/main.go)                                     |  |
+|  |                                                                                         |  |
+|  |  +-----------------------------------------------------------------------------------+  |  |
+|  |  |           Knowledge System Engine (go/internal/erp/ase/knowledge_system/)        |  |  |
+|  |  |                                                                                   |  |  |
+|  |  |   [GraphStore]             [DocumentStore]         [KnowledgeIngestionEngine]     |  |  |
+|  |  |   (L1 Facts & L2 Edges)   (toro_core.documents)    (OCR -> L1/L2/L3 pipeline)      |  |  |
+|  |  |                                                                                   |  |  |
+|  |  |   [GraphContextProvider]   [VectorStore]           [VectorHydrator]               |  |  |
+|  |  |   (DAG Node context)       (ScaNN search)          (Async embedding background)   |  |  |
+|  |  +-----------------------------------------------------------------------------------+  |  |
+|  |                                                                                         |  |
+|  |  +-----------------------------------------------------------------------------------+  |  |
+|  |  |           Native CDC Replicator Engine (go/internal/cdc/replicator.go)            |  |  |
+|  |  |   - Tails WAL via pglogrepl on publication 'toro_ledger_pub'                      |  |  |
+|  |  |   - Publishes change events synchronously to NATS JetStream (ledger.table.action)  |  |  |
+|  |  +-----------------------------------------------------------------------------------+  |  |
+|  +-----------------------------------------------------------------------------------------+  |
+|                                              │                                                |
+|                                              ▼ Unix Socket / Localhost 5432                   |
+|  +-----------------------------------------------------------------------------------------+  |
+|  |                         Google AlloyDB Omni Engine (PostgreSQL 17)                      |  |
+|  |                                                                                         |  |
+|  |   Layer 3: Situation Vector Memory    (toro_core.ase_vector_memory + ScaNN index)       |  |
+|  |   Layer 2: Directional Entity Graph   (toro_core.enterprise_relationships)              |  |
+|  |   Layer 1: Ground Truth Facts         (toro_core.enterprise_facts)                      |  |
+|  |   Master Documents Store              (toro_core.documents)                             |  |
+|  +-----------------------------------------------------------------------------------------+  |
++-----------------------------------------------------------------------------------------------+
 ```
 
-## 2.4 Master Documents Storage & PostgreSQL CDC Pipeline Architecture
+## 2.2 Docker Service & Network Integration
+In `container/docker-compose.yml`, the primary database service `db` is defined as:
 
-> **⚠️ Ingestion Gap Analysis & Status Warning:**  
-> In the current codebase:
-> * Bank feed rows & CSV statements are staged in `fignode.staging_transactions`.
-> * QBO synced invoices & bills reside in `shadow_erp.invoices` and `shadow_erp.bills`.
-> * Physical files (PDFs, PNGs) live in **AWS S3**.
-> 
-> **The Missing Ingestion Link:** There is currently **no unified master document table** (`toro_core.documents`) storing OCR-structured JSON data across invoices, receipts, and bank statements. Furthermore, **automatic CDC event streams from document insertions to Knowledge System vector/fact tables are NOT YET WIRED in production**. Below is the technical specification to implement this pipeline.
+```yaml
+  db:
+    build:
+      context: ../
+      dockerfile: container/torodb/Dockerfile
+    restart: always
+    environment:
+      POSTGRES_DB: toro
+      POSTGRES_USER: toro
+      POSTGRES_PASSWORD: toro_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      DATABASE_URL: postgres://toro:toro_password@localhost:5432/toro?sslmode=disable
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    volumes:
+      - ./postgres/db_data:/var/lib/postgresql/data
+      - ./postgres/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -h localhost -U toro" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - toro-net
+```
 
-### Physical Document Storage Policy (AWS S3)
-* **Zero Database BLOBs**: Physical PDF files, scanned receipts, and bank statement images are **never stored inside AlloyDB / PostgreSQL**.
-* **S3 URI Pointer**: Raw files are uploaded to **AWS S3** bucket storage (`s3://toro-enterprise-vault/{realm_id}/{document_id}.pdf`). The database stores only S3 URI metadata and structured OCR JSON payloads.
+All application microservices (`gate`, `graphql`, `sync`, `fignode`, `protocol`, `python-worker`) connect directly to `db:5432` / `DATABASE_URL`.
 
 ---
 
-### Target Master Documents Table (`toro_core.documents`)
+# 3. Database Schemas & Migrations
 
-To unify all incoming ground-truth documents (invoices, receipts, bank statements, bills, tax forms) into a single CDC-monitored stream, we introduce the `toro_core.documents` schema:
+The Knowledge System database schemas are declared across four migration files under `sql/schema/`:
+
+### 3.1 Migration `040_create_toro_core_knowledge_system.sql`
 
 ```sql
+-- Layer 1: Authoritative Fact Nodes
+CREATE TABLE IF NOT EXISTS toro_core.enterprise_facts (
+    fact_id     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    realm_id    TEXT        NOT NULL,
+    namespace   TEXT        NOT NULL DEFAULT 'general',
+    entity_type TEXT        NOT NULL, -- e.g. 'invoice', 'supplier', 'bank_account'
+    uri         TEXT        UNIQUE NOT NULL, -- e.g. 'fact:accounting:invoice:284'
+    payload     JSONB       NOT NULL DEFAULT '{}',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_facts_realm_ns_type 
+    ON toro_core.enterprise_facts (realm_id, namespace, entity_type);
+
+-- Layer 2: Directional Relationships
+CREATE TABLE IF NOT EXISTS toro_core.enterprise_relationships (
+    relationship_id UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    realm_id        TEXT        NOT NULL,
+    namespace       TEXT        NOT NULL DEFAULT 'general',
+    from_fact_id    UUID        NOT NULL REFERENCES toro_core.enterprise_facts(fact_id) ON DELETE CASCADE,
+    to_fact_id      UUID        NOT NULL REFERENCES toro_core.enterprise_facts(fact_id) ON DELETE CASCADE,
+    relation_type   TEXT        NOT NULL, -- e.g. 'ISSUED_BY', 'PAID_BY', 'SETTLES'
+    weight          FLOAT8      NOT NULL DEFAULT 1.0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT unique_relation UNIQUE (realm_id, namespace, from_fact_id, to_fact_id, relation_type)
+);
+
+CREATE INDEX idx_rel_from_to 
+    ON toro_core.enterprise_relationships (from_fact_id, to_fact_id);
+
+-- Master Documents Table
 CREATE TABLE IF NOT EXISTS toro_core.documents (
-    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    realm_id       TEXT NOT NULL,
-    document_type  TEXT NOT NULL CHECK (document_type IN ('INVOICE', 'RECEIPT', 'BANK_STATEMENT', 'BILL', 'TAX_FORM', 'OTHER')),
-    file_name      TEXT NOT NULL,
-    mime_type      TEXT NOT NULL,
-    s3_url         TEXT NOT NULL, -- e.g., 's3://toro-vault/realm_123/doc_456.pdf'
-    
-    -- OCR Extraction Payload
-    ocr_status     TEXT NOT NULL DEFAULT 'PENDING' CHECK (ocr_status IN ('PENDING', 'PROCESSING', 'PROCESSED', 'FAILED')),
-    raw_ocr_json   JSONB NOT NULL DEFAULT '{}', -- Complete structured OCR JSON payload
-    extracted_text TEXT,                        -- Clean text representation for embedding
-    
-    -- Entity & Audit Links
+    id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    realm_id       TEXT        NOT NULL,
+    document_type  TEXT        NOT NULL CHECK (document_type IN ('INVOICE', 'RECEIPT', 'BANK_STATEMENT', 'BILL', 'TAX_FORM', 'OTHER')),
+    file_name      TEXT        NOT NULL,
+    mime_type      TEXT        NOT NULL,
+    s3_url         TEXT        NOT NULL,
+    ocr_status     TEXT        NOT NULL DEFAULT 'PENDING' CHECK (ocr_status IN ('PENDING', 'PROCESSING', 'PROCESSED', 'FAILED')),
+    raw_ocr_json   JSONB       NOT NULL DEFAULT '{}',
+    extracted_text TEXT,
     sender_email   TEXT,
-    source_channel TEXT NOT NULL DEFAULT 'EMAIL' CHECK (source_channel IN ('EMAIL', 'WEB_UPLOAD', 'MOBILE_SCAN', 'API_SYNC')),
+    source_channel TEXT        NOT NULL DEFAULT 'EMAIL' CHECK (source_channel IN ('EMAIL', 'WEB_UPLOAD', 'MOBILE_SCAN', 'API_SYNC')),
     processed_at   TIMESTAMPTZ,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -134,92 +195,8 @@ CREATE INDEX idx_documents_realm_status ON toro_core.documents (realm_id, ocr_st
 CREATE INDEX idx_documents_type ON toro_core.documents (realm_id, document_type);
 ```
 
----
+### 3.2 Migration `006_ase_vector_memory.sql` & `039_add_namespace_to_knowledge_system.sql`
 
-### PostgreSQL CDC (Logical Replication) Pipeline Architecture
-
-When OCR completes and structured data is written into `toro_core.documents`, PostgreSQL Logical Replication (`toro_ledger_pub`) automatically emits a CDC change event to feed the Knowledge System:
-
-```
-[Inbound Document: PDF / Image]
-               │
-               ▼
-      [Upload to AWS S3] ─────────> Returns s3:// URI
-               │
-               ▼
-   [OCR Worker (Textract / Claude)]
-               │
-               ▼
-[INSERT INTO toro_core.documents]  (ocr_status = 'PROCESSED', raw_ocr_json = {...})
-               │
-               ▼
- [PostgreSQL Logical Publication] (toro_ledger_pub WAL Stream)
-               │
-               ▼
-  [Debezium / NATS CDC Connector] ──> Emits `toro.cdc.documents.processed`
-               │
-               ├──────────────────────────────────────────┐
-               ▼                                          ▼
-   [Knowledge Graph Ingestion]                [Vector Memory Registration]
-  1. Insert Layer 1 Fact Nodes               3. Insert Layer 3 Pending Row
-     (toro_core.enterprise_facts)               (VectorStore.Upsert)
-  2. Insert Layer 2 Graph Edges              4. VectorHydrator Embeds Text
-     (toro_core.enterprise_relationships)          & Refreshes ScaNN Index
-               │                                          │
-               └────────────────────┬─────────────────────┘
-                                    ▼
-                     [Resume ASE DAG Execution]
-```
-
----
-
-### Integration with Recovery System (Decision Theory)
-
-When an ASE DAG micro-agent encounters a transaction with missing context or confidence $C < 0.98$:
-1. The **ASE DAG Node** transitions to `StateHoldMissingCtx` (`"HOLD_MISSING_CONTEXT"`).
-2. Control is handed over to the **Recovery System (Decision Theory / Mailroom Triage Agent)**, which sends a Daily Digest or clarification email to the client.
-3. When the client replies with an attached receipt/invoice or clarification text:
-   - The attachment is stored in S3 and registered in `toro_core.documents`.
-   - OCR runs $\rightarrow$ `toro_core.documents` row updates to `PROCESSED`.
-   - **CDC Event Fires**: The Knowledge System automatically ingests the new facts ($\text{L1}/\text{L2}$) and embeds the new vector memory ($\text{L3}$).
-   - The Recovery Engine wakes up the paused ASE DAG Node, which now re-evaluates context with $C \ge 0.98$ and auto-posts the transaction to the ERP ledger!
-
----
-
-### Roadmap Checklist (What Must Be Implemented to Wire CDC In)
-- [x] **Create Migration `040_create_toro_core_knowledge_system.sql`**: Add the `toro_core.documents`, `toro_core.enterprise_facts`, and `toro_core.enterprise_relationships` table schemas and indexes.
-- [x] **Update Publication (`004_logical_publication.sql`)**: Include `toro_core.documents`, `toro_core.enterprise_facts`, and `toro_core.enterprise_relationships` in `toro_ledger_pub`.
-- [x] **Bridge OCR Worker to `toro_core.documents`**: Ensure OCR text extraction writes `raw_ocr_json` and `s3_url` upon completion.
-- [x] **CDC Ingestion Worker Handler**: Wire the CDC event listener and `KnowledgeIngestionEngine` to execute `enterprise_facts` inserts, `enterprise_relationships` edges, and `VectorStore.Upsert()`.
-
----
-
-# 3. How We Are Going to Use It
-
-## 3.1 Micro-Agent Classification Flow
-When a transaction or document arrives for classification in an Autonomous Semantic Engine (ASE) DAG:
-
-1. **Context Resolution**:
-   - The micro-agent requests vector context for the current node description.
-   - `VectorStore.Search()` executes a ScaNN ANN query inside the relevant `realm_id` and `namespace`.
-   - Past human decisions and high-confidence memory rules are attached to the agent prompt.
-2. **Graph Traversal**:
-   - Layer 1 facts and Layer 2 relationship edges are queried to verify entity histories and parent accounts.
-3. **Guardrail Evaluation**:
-   - If confidence $C \ge 0.98$, the decision is auto-resolved and scheduled for writeback.
-   - If $C < 0.98$, the system refuses automated writeback and requests additional context.
-
----
-
-# 4. Developer Documentation & API Guide
-
-## 4.1 Database Schemas & Migrations
-
-The Knowledge System database structures are declared in:
-- `sql/schema/006_ase_vector_memory.sql` (Base table & indexes)
-- `sql/schema/039_add_namespace_to_knowledge_system.sql` (Namespace migration & composite indexes)
-
-### Table Schema (`toro_core.ase_vector_memory`)
 ```sql
 CREATE TABLE IF NOT EXISTS toro_core.ase_vector_memory (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -227,7 +204,7 @@ CREATE TABLE IF NOT EXISTS toro_core.ase_vector_memory (
     namespace     TEXT        NOT NULL DEFAULT 'general',
     source_type   TEXT        NOT NULL CHECK (source_type IN ('memory_rule', 'resolved_tx')),
     raw_text      TEXT        NOT NULL,
-    embedding     vector(1536),
+    embedding     vector(1536),              -- NULL until hydrated by VectorHydrator
     source_row_id UUID        NOT NULL,
     metadata      JSONB       NOT NULL DEFAULT '{}',
     embedded_at   TIMESTAMPTZ,
@@ -242,71 +219,173 @@ CREATE INDEX idx_ase_vector_memory_realm_ns
     ON toro_core.ase_vector_memory (realm_id, namespace, source_type);
 ```
 
+### 3.3 Logical Publication `004_logical_publication.sql`
+
+```sql
+DROP PUBLICATION IF EXISTS toro_ledger_pub;
+
+CREATE PUBLICATION toro_ledger_pub FOR TABLE
+    toro_core.users,
+    toro_core.erp_connections,
+    toro_core.documents,
+    toro_core.enterprise_facts,
+    toro_core.enterprise_relationships;
+```
+
 ---
 
-## 4.2 Go Package Structures & Methods
+# 4. Go Implementation & API Reference
 
-Package path: `github.com/Yankzy/usetoro/internal/erp/ase`
+Package paths:
+- `github.com/Yankzy/usetoro/internal/erp/ase/knowledge_system`
+- `github.com/Yankzy/usetoro/internal/erp/ase`
 
-### 1. `VectorStore`
-Primary struct handling embedding generation, upserts, and ScaNN semantic searches.
+## 4.1 `GraphStore` (`graph_store.go`)
+Manages Layer 1 Facts and Layer 2 Directional Relationships.
 
 ```go
-type VectorStore struct {
-    pool     *pgxpool.Pool
-    embedder *vector.Embedder
-    logger   *slog.Logger
+type Fact struct {
+    FactID     uuid.UUID       `json:"fact_id"`
+    RealmID    string          `json:"realm_id"`
+    Namespace  string          `json:"namespace"`
+    EntityType string          `json:"entity_type"`
+    URI        string          `json:"uri"`
+    Payload    json.RawMessage `json:"payload"`
+    CreatedAt  time.Time       `json:"created_at"`
 }
 
-func NewVectorStore(pool *pgxpool.Pool, embedder *vector.Embedder, logger *slog.Logger) *VectorStore
+type Relationship struct {
+    RelationshipID uuid.UUID `json:"relationship_id"`
+    RealmID        string    `json:"realm_id"`
+    Namespace      string    `json:"namespace"`
+    FromFactID     uuid.UUID `json:"from_fact_id"`
+    ToFactID       uuid.UUID `json:"to_fact_id"`
+    RelationType   string    `json:"relation_type"`
+    Weight         float64   `json:"weight"`
+    CreatedAt      time.Time `json:"created_at"`
+}
+
+type GraphNeighbor struct {
+    Relationship Relationship `json:"relationship"`
+    Fact         Fact         `json:"fact"`
+    Direction    string       `json:"direction"` // "OUTBOUND" or "INBOUND"
+}
+
+type GraphStore struct { ... }
 ```
 
-#### Key Methods:
+### Key Methods:
+- `CreateFact(ctx, sessionID, namespace, entityType, uri, payload)`
+- `GetFactByURI(ctx, sessionID, uri)`
+- `GetFactByID(ctx, factID)`
+- `CreateRelationship(ctx, sessionID, namespace, fromFactID, toFactID, relationType, weight)`
+- `GetOutboundRelationships(ctx, factID)`
+- `GetInboundRelationships(ctx, factID)`
+- `TraverseGraph(ctx, factID)`
 
-##### **`Upsert`**
-Inserts or updates a vector memory row. If `embedding` is `nil`, the row is registered as pending hydration for the `VectorHydrator`.
+---
+
+## 4.2 `DocumentStore` & `KnowledgeIngestionEngine` (`documents_store.go`)
+Handles master document lifecycle and automatic ingestion into L1 facts, L2 graph edges, and L3 vector memory.
 
 ```go
-func (vs *VectorStore) Upsert(
-    ctx context.Context,
-    realmID string,
-    namespace string,
-    sourceType VectorSourceType,
-    rawText string,
-    sourceRowID uuid.UUID,
-    embedding []float32,
-    metadata map[string]any,
-) error
+type Document struct {
+    ID            uuid.UUID       `json:"id"`
+    RealmID       string          `json:"realm_id"`
+    DocumentType  DocumentType    `json:"document_type"`
+    FileName      string          `json:"file_name"`
+    MimeType      string          `json:"mime_type"`
+    S3URL         string          `json:"s3_url"`
+    OCRStatus     string          `json:"ocr_status"`
+    RawOCRJSON    json.RawMessage `json:"raw_ocr_json"`
+    ExtractedText string          `json:"extracted_text"`
+    SenderEmail   string          `json:"sender_email,omitempty"`
+    SourceChannel string          `json:"source_channel"`
+    ProcessedAt   *time.Time      `json:"processed_at,omitempty"`
+    CreatedAt     time.Time       `json:"created_at"`
+    UpdatedAt     time.Time       `json:"updated_at"`
+}
 ```
 
-##### **`Search`**
-Executes a ScaNN ANN cosine search. Pass a non-empty `namespace` for scoped search, or `""` / `"*"` for cross-namespace search.
+### Key Methods:
+- `CreateDocument(ctx, sessionID, docType, fileName, mimeType, s3URL, sourceChannel, senderEmail)`
+- `UpdateOCRStatus(ctx, id, status, rawOCRPayload, extractedText)`
+- `GetDocumentByID(ctx, id)`
+- `IngestProcessedDocument(ctx, doc)`:
+  1. Creates Layer 1 document fact (`fact:document:{type}:{id}`).
+  2. Extracts vendor/counterparty facts and creates Layer 2 directional relationship (`Document --ISSUED_BY--> Vendor`).
+  3. Registers Layer 3 vector memory (`VectorStore.Upsert` with `embedding = nil` for async hydration).
+
+---
+
+## 4.3 `GraphContextProvider` (`graph_context_provider.go`)
+Implements `ase.ContextProvider` to resolve graph subgraphs during ASE DAG micro-agent node execution.
 
 ```go
-func (vs *VectorStore) Search(
-    ctx context.Context,
-    tenantID string,
-    realmID string,
-    namespace string,
-    queryEmbedding []float32,
-) ([]VectorMemoryRow, error)
-```
+type GraphContextProvider struct { ... }
 
-##### **`GenerateEmbedding`**
-Generates a vector embedding slice using OpenAI's API.
-
-```go
-func (vs *VectorStore) GenerateEmbedding(
-    ctx context.Context, 
-    tenantID, realmID, text string,
-) ([]float32, error)
+func (gcp *GraphContextProvider) Name() string // "graph_knowledge_provider"
+func (gcp *GraphContextProvider) Resolve(ctx context.Context, node *ase.AutonomousSemanticEngineNode, config map[string]any, deps ase.ProviderDependencies) (any, error)
 ```
 
 ---
 
-### 2. Code Examples for Developers
+## 4.4 `VectorStore` & `VectorHydrator` (`vector_store.go` & `vector_hydrator.go`)
+Manages ScaNN ANN cosine vector retrieval and background embedding generation.
 
-#### Example A: Scoped Vector Search within a Micro-Agent
+- `VectorStore.Upsert(ctx, realmID, namespace, sourceType, rawText, sourceRowID, embedding, metadata)`
+- `VectorStore.Search(ctx, tenantID, realmID, namespace, queryEmbedding)`
+- `VectorStore.EnsureScaNNIndex(ctx, tenantID, realmID)`
+- `VectorHydrator.Run(ctx)`: Polling background loop generating embeddings via OpenAI and maintaining ScaNN indices.
+
+---
+
+# 5. End-to-End Ingestion & Processing Lifecycle
+
+```
+[Inbound Document Ingress (e.g. Postmark Email)]
+                       │
+                       ▼
+       [Upload Attachments to AWS S3]
+                       │
+                       ▼
+    [INSERT INTO toro_core.documents]      (ocr_status = 'PENDING', metadata = {"callback_topic": "..."})
+                       │
+                       ▼
+         [Relinquish Control to ToroDB]    (Handoff to ToroDB Ingestion Engine)
+                       │
+                       ▼
+ [ToroDB Dispatches to Python OCR Worker]  (Subject: worker.inbox.python.ocr)
+                       │
+                       ▼
+    [Python OCR Microservice Execution]    (OpenAI Vision visual extraction)
+                       │
+                       ▼
+    [UPDATE toro_core.documents]           (ocr_status = 'PROCESSED', raw_ocr_json = {...})
+                       │
+                       ▼
+    [KnowledgeIngestionEngine Ingest]
+     1. Insert Layer 1 Fact Nodes          (toro_core.enterprise_facts)
+     2. Insert Layer 2 Graph Edges         (toro_core.enterprise_relationships)
+     3. Queue Layer 3 Vector Row           (toro_core.ase_vector_memory)
+                       │
+                       ▼
+ [Publish Event to TAP Orchestrator]       (Topic: events.accounting.1.pcm_bookkeeping)
+                       │
+                       ▼
+  [TAP Orchestrator Manages Workflow]      (tap/workflows/pcm_bookkeeping.yml)
+   1. pcm_worker (ingests ToroDB facts into staging_transactions)
+   2. run_enrichment (database.enrich_rows)
+   3. ase_bridge (fans out ASE DAG micro-agents)
+   4. pcm_export (generates export artifact)
+   5. human_review (HITL review step)
+```
+
+---
+
+# 6. Developer Code Examples
+
+### Example A: Ingesting an OCR Document into Knowledge Graph & Vector Memory
 ```go
 package main
 
@@ -314,61 +393,44 @@ import (
     "context"
     "log"
 
-    "github.com/Yankzy/usetoro/internal/erp/ase"
+    "github.com/Yankzy/usetoro/internal/erp/ase/knowledge_system"
 )
 
-func FindTaxRules(ctx context.Context, vs *ase.VectorStore, tenantID, realmID, queryText string) {
-    // 1. Generate query embedding
+func ProcessIncomingInvoice(ctx context.Context, kie *knowledge_system.KnowledgeIngestionEngine, doc *knowledge_system.Document) {
+    err := kie.IngestProcessedDocument(ctx, doc)
+    if err != nil {
+        log.Fatalf("failed to ingest document: %v", err)
+    }
+    log.Println("Document successfully ingested into L1 Facts, L2 Graph, and L3 Vector Memory.")
+}
+```
+
+### Example B: Traversing Entity Graph Neighborhood
+```go
+func InspectSupplierHistory(ctx context.Context, gs *knowledge_system.GraphStore, factID uuid.UUID) {
+    neighbors, err := gs.TraverseGraph(ctx, factID)
+    if err != nil {
+        log.Fatalf("failed to traverse graph: %v", err)
+    }
+    for _, n := range neighbors {
+        log.Printf("[%s] %s -> Edge: %s -> Target URI: %s", n.Direction, n.Relationship.RelationType, n.Fact.URI)
+    }
+}
+```
+
+### Example C: Scoped ScaNN Vector Search
+```go
+func SearchTaxContext(ctx context.Context, vs *ase.VectorStore, tenantID, realmID, queryText string) {
     embedding, err := vs.GenerateEmbedding(ctx, tenantID, realmID, queryText)
     if err != nil {
         log.Fatalf("failed to generate embedding: %v", err)
     }
-
-    // 2. Perform scoped search in the 'tax_rules' namespace
     results, err := vs.Search(ctx, tenantID, realmID, "tax_rules", embedding)
     if err != nil {
         log.Fatalf("vector search failed: %v", err)
     }
-
     for _, res := range results {
-        log.Printf("[%s] (sim: %.4f): %s", res.Namespace, res.Similarity, res.RawText)
+        log.Printf("Similarity: %.4f | Text: %s", res.Similarity, res.RawText)
     }
 }
 ```
-
-#### Example B: Registering a New Pending Vector Memory
-```go
-func RegisterMemoryRule(ctx context.Context, vs *ase.VectorStore, realmID string, ruleID uuid.UUID, ruleText string) error {
-    metadata := map[string]any{
-        "source": "user_defined_rule",
-    }
-    // Passing nil embedding registers row as pending; VectorHydrator will embed it
-    return vs.Upsert(
-        ctx,
-        realmID,
-        "general",
-        ase.VectorSourceMemoryRule,
-        ruleText,
-        ruleID,
-        nil, // embedding = nil (pending hydration)
-        metadata,
-    )
-}
-```
-
----
-
-## 4.3 Configuration Parameters (`ase.yml` / `VectorMemoryConfig`)
-
-Vector memory behavior is hot-reloadable and configured via `VectorMemoryConfig`:
-
-| Parameter | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `Enabled` | `bool` | `false` | Enables/disables vector memory retrieval and hydration |
-| `EmbeddingProvider` | `string` | `"openai"` | Embedding API provider |
-| `OpenAIEmbeddingModel` | `string` | `"text-embedding-3-small"` | OpenAI model name |
-| `EmbeddingDimensions` | `int` | `1536` | Vector dimension size |
-| `ScaNNNumLeaves` | `int` | `10` | Number of leaves for ScaNN ANN index |
-| `RetrievalTopK` | `int` | `5` | Number of top nearest neighbors returned |
-| `HydratorIntervalSeconds` | `int` | `30` | Background hydrator polling tick interval |
-| `HydratorMinConfidence` | `float64` | `0.98` | Minimum transaction confidence threshold for auto-hydration |

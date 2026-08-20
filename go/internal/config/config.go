@@ -384,6 +384,7 @@ func Unmarshal(v *viper.Viper) (*Config, error) {
 	// Automatically map internal Docker DSNs to external host equivalents if running on host Mac
 	if !inDocker {
 		c.DatabaseURL = strings.Replace(c.DatabaseURL, "@db:5432", "@localhost:5435", 1)
+		c.DatabaseURL = strings.Replace(c.DatabaseURL, "@torodb:5432", "@localhost:5435", 1)
 		if strings.Contains(c.NATS.URL, "nats-1") || strings.Contains(c.NATS.URL, "localhost") {
 			c.NATS.URL = "nats://localhost:4222"
 		}

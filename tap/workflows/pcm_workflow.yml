@@ -1,0 +1,269 @@
+name: PCM Workflow
+version: "2.0"
+trigger_topic: events.accounting.1.pcm_workflow
+steps:
+  - id: document_readiness
+    activity_type: workers.document_readiness
+    negotiate: false
+    timeout: "60s"
+    description: "Verifies that test PDF/documents attached to the test workflow have finished CDC OCR and embedding."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "from_handle": { "type": "string" },
+          "to_handle": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "external_id": { "type": "string" },
+          "reply_to": { "type": "string" },
+          "subject": { "type": "string" },
+          "body_text": { "type": "string" },
+          "agent_alias": { "type": "string" },
+          "document_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "document_id": { "type": "string" },
+                "name": { "type": "string" },
+                "content_type": { "type": "string" },
+                "s3_key": { "type": "string" },
+                "sha256": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+
+  - id: pcm_worker
+    activity_type: workers.pcm
+    depends_on:
+      - document_readiness
+    negotiate: false
+    timeout: "300s"
+    description: "Ingests extracted documents from email into staging transactions."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "from_handle": {
+            "type": "string"
+          },
+          "to_handle": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "reply_to": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "body_text": {
+            "type": "string"
+          },
+          "agent_alias": {
+            "type": "string"
+          },
+          "document_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "document_id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "content_type": {
+                  "type": "string"
+                },
+                "s3_key": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "document_verified": {
+            "type": "boolean"
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "document_id": {
+                  "type": "string"
+                },
+                "ocr_status": {
+                  "type": "string"
+                },
+                "raw_ocr_json": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "document_id",
+                "ocr_status",
+                "raw_ocr_json"
+              ]
+            }
+          }
+        },
+        "required": [
+          "session_id",
+          "entity_id",
+          "documents"
+        ]
+      }
+
+  - id: run_enrichment
+    activity_type: workers.database.enrich_rows
+    negotiate: false
+    timeout: "120s"
+    description: "Legacy enrichment step that maps strings to DB entities, outputs ENRICHED events."
+    depends_on:
+      - pcm_worker
+
+  - id: ase_bridge
+    activity_type: workers.ase_bridge
+    depends_on:
+      - run_enrichment
+    timeout: "600s"
+    description: "Hydrates DAG micro-agents from PostgreSQL staging_transactions and executes Moroccan PCGM rules."
+    config:
+      dag_name: "pcm_bank_cash_accounting_dag"
+      domain_tool: "pcm_cash_accounting"
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "realm_id": { "type": "string" },
+          "debug_start_node": { "type": "string" },
+          "debug_stop_after_node": { "type": "string" },
+          "debug_transaction_ids": { "type": "array", "items": { "type": "string" } },
+          "debug_llm_timeout_seconds": { "type": "integer" },
+          "from_handle": { "type": "string" },
+          "to_handle": { "type": "string" }
+        },
+        "required": ["session_id"]
+      }
+
+  - id: debug_worker
+    activity_type: workers.debug
+    negotiate: false
+    timeout: "10s"
+    description: "Debug worker to inspect ASE bridge completion output."
+    depends_on:
+      - ase_bridge
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "staging_session_id": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "realm_id": {
+            "type": "string"
+          },
+          "dag_name": {
+            "type": "string"
+          },
+          "domain_tool": {
+            "type": "string"
+          },
+          "agents_executed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "session_id",
+          "staging_session_id",
+          "entity_id",
+          "realm_id",
+          "dag_name",
+          "domain_tool",
+          "agents_executed"
+        ]
+      }
+
+  # # --- Step 4: Sage 100 (.PNM) & PCGM Journal Entry Export & Email Dispatch ---
+  # - id: pcm_export
+  #   activity_type: workers.pcm_export
+  #   depends_on:
+  #     - ase_bridge
+  #   timeout: "120s"
+  #   description: "Generates Sage 100 (.PNM) and Moroccan PCGM journal entries and dispatches via email."
+  #   config:
+  #     accounting_standard: "PCM"
+  #     export_to_email: true
+  #     export_to_csv: true
+  #     export_to_pnm: true
+  #   workflow_schema: |
+  #     {
+  #       "type": "object",
+  #       "properties": {
+  #         "session_id": { "type": "string" },
+  #         "from_handle": { "type": "string" },
+  #         "to_handle": { "type": "string" },
+  #         "accounting_standard": { "type": "string" },
+  #         "export_to_email": { "type": "boolean" },
+  #         "export_to_csv": { "type": "boolean" },
+  #         "export_to_pnm": { "type": "boolean" }
+  #       },
+  #       "required": ["session_id"]
+  #     }
+ 
+  # # --- Step 2: Deterministic Pre-Enrichment (CEE-MA Isolated Worker) ---
+  # - id: run_moroccan_enrichment
+  #   activity_type: workers.pcm.moroccan_enrichment
+  #   negotiate: false
+  #   timeout: "120s"
+  #   description: "Deterministic Moroccan Cognitive Financial Enrichment Engine (CEE-MA): resolves Arabic/French aliases, 10% RAS, 4-tier TVA, and persists to PostgreSQL staging_transactions."
+  #   depends_on:
+  #     - pcm_worker
+  #   workflow_schema: |
+  #     {
+  #       "type": "object",
+  #       "properties": {
+  #         "session_id": { "type": "string" },
+  #         "realm_id": { "type": "string" },
+  #         "entity_id": { "type": "string" }
+  #       },
+  #       "required": ["session_id"]
+  #     }

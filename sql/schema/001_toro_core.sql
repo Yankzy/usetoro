@@ -328,11 +328,15 @@ CREATE INDEX idx_workflow_history_workflow_id ON toro_core.workflow_history(work
 
 CREATE TABLE IF NOT EXISTS toro_core.workflow_blueprints (
     name          TEXT PRIMARY KEY,
+    user_id       UUID REFERENCES toro_core.users(id) ON DELETE CASCADE,
     trigger_topic TEXT NOT NULL,
     definition    JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_workflow_blueprints_user_id
+    ON toro_core.workflow_blueprints(user_id);
 
 CREATE INDEX IF NOT EXISTS idx_workflow_blueprints_trigger_topic
     ON toro_core.workflow_blueprints(trigger_topic);

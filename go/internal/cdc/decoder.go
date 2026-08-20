@@ -61,7 +61,7 @@ func (d *Decoder) Decode(walData []byte, lsn pglogrepl.LSN) (*Event, error) {
 		data := d.decodeTuples(rel, msg.Tuple)
 		return &Event{
 			EventID:   lsn.String(),
-			Table:     rel.RelationName,
+			Table:     fmt.Sprintf("%s.%s", rel.Namespace, rel.RelationName),
 			Action:    "INSERT",
 			Timestamp: time.Now(),
 			Data:      data,
@@ -75,7 +75,7 @@ func (d *Decoder) Decode(walData []byte, lsn pglogrepl.LSN) (*Event, error) {
 		data := d.decodeTuples(rel, msg.NewTuple)
 		return &Event{
 			EventID:   lsn.String(),
-			Table:     rel.RelationName,
+			Table:     fmt.Sprintf("%s.%s", rel.Namespace, rel.RelationName),
 			Action:    "UPDATE",
 			Timestamp: time.Now(),
 			Data:      data,
@@ -89,7 +89,7 @@ func (d *Decoder) Decode(walData []byte, lsn pglogrepl.LSN) (*Event, error) {
 		data := d.decodeTuples(rel, msg.OldTuple)
 		return &Event{
 			EventID:   lsn.String(),
-			Table:     rel.RelationName,
+			Table:     fmt.Sprintf("%s.%s", rel.Namespace, rel.RelationName),
 			Action:    "DELETE",
 			Timestamp: time.Now(),
 			Data:      data,

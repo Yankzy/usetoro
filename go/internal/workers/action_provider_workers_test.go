@@ -80,7 +80,12 @@ func TestActionProviderWorkers_Handle(t *testing.T) {
 	assert.NoError(t, err)
 	defer actionSub2.Unsubscribe()
 
-	err = nc.PublishRequest("worker.inbox.action.inter_bank_transfer_collapse", replyInbox, reqBytes)
+	replyInbox2 := nats.NewInbox()
+	replySub2, err := nc.SubscribeSync(replyInbox2)
+	assert.NoError(t, err)
+	defer replySub2.Unsubscribe()
+
+	err = nc.PublishRequest("worker.inbox.action.inter_bank_transfer_collapse", replyInbox2, reqBytes)
 	assert.NoError(t, err)
 
 	msg2, err := actionSub2.NextMsg(2 * time.Second)
@@ -89,12 +94,13 @@ func TestActionProviderWorkers_Handle(t *testing.T) {
 	err = w2.Handle(ctx, msg2)
 	assert.NoError(t, err)
 
-	replyMsg2, err := replySub.NextMsg(2 * time.Second)
+	replyMsg2, err := replySub2.NextMsg(2 * time.Second)
 	assert.NoError(t, err)
 	var resp2 ActionResponse
 	err = json.Unmarshal(replyMsg2.Data, &resp2)
 	assert.NoError(t, err)
 	assert.Equal(t, "close_status", resp2.Property)
+	assert.NotEmpty(t, resp2.Candidates)
 	assert.Equal(t, "CLASSIFIED", resp2.Candidates[0].Value)
 }
 
@@ -121,7 +127,7 @@ func TestNatsRecoveryExecutor_ExecuteAction(t *testing.T) {
 		logger: logger,
 	}
 
-	node := ase.NewASENode("tenant-1", "realm-1", "dag-test", map[string]interface{}{"raw_amount": "50.00"})
+	node := ase.NewASENode("tenant-1", "dag-test", map[string]interface{}{"raw_amount": "50.00"})
 	node.NodeID = "node-test-recovery"
 	node.SetLogger(logger)
 

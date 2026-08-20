@@ -164,6 +164,7 @@ type FignodeStagingTransaction struct {
 	AseExecutionTrace     []byte
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	MoroccanEnrichment    []byte
 }
 
 type FignodeVendorAlias struct {
@@ -690,8 +691,7 @@ type ToroCoreAgentMemoryRule struct {
 
 type ToroCoreAseDag struct {
 	ID              pgtype.UUID
-	TenantID        pgtype.UUID
-	RealmID         pgtype.Text
+	UserID          pgtype.UUID
 	Name            string
 	DagConfig       []byte
 	HyperParameters []byte
@@ -767,16 +767,18 @@ type ToroCoreConversationSession struct {
 
 type ToroCoreDocument struct {
 	ID            pgtype.UUID
-	RealmID       string
+	SessionID     string
 	DocumentType  string
 	FileName      string
 	MimeType      string
 	S3Url         string
+	Sha256        pgtype.Text
 	OcrStatus     string
 	RawOcrJson    []byte
 	ExtractedText pgtype.Text
 	SenderEmail   pgtype.Text
 	SourceChannel string
+	Metadata      []byte
 	ProcessedAt   pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
@@ -803,23 +805,25 @@ type ToroCoreEnterpriseDomain struct {
 
 type ToroCoreEnterpriseFact struct {
 	FactID     pgtype.UUID
-	RealmID    string
+	SessionID  string
 	Namespace  string
 	EntityType string
 	Uri        string
 	Payload    []byte
 	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
 }
 
 type ToroCoreEnterpriseRelationship struct {
 	RelationshipID pgtype.UUID
-	RealmID        string
+	SessionID      string
 	Namespace      string
 	FromFactID     pgtype.UUID
 	ToFactID       pgtype.UUID
 	RelationType   string
 	Weight         float64
 	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type ToroCoreEntity struct {
@@ -874,6 +878,22 @@ type ToroCoreFinancialConnectionAttempt struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type ToroCoreForeignServiceRunningTotal struct {
+	ID                         pgtype.UUID
+	RealmID                    string
+	ProviderID                 pgtype.UUID
+	FiscalYear                 int32
+	FiscalMonth                int32
+	CumulativeGrossInvoicedMad pgtype.Numeric
+	CumulativeRasWithheldMad   pgtype.Numeric
+	CumulativeNetPaidMad       pgtype.Numeric
+	TransactionCount           int32
+	DgiDeclarationStatus       string
+	LastTransactionAt          pgtype.Timestamptz
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+}
+
 type ToroCoreLinkedBankAccount struct {
 	ID              pgtype.UUID
 	EntityID        pgtype.UUID
@@ -922,6 +942,68 @@ type ToroCoreLlmTurnMetric struct {
 	Metadata        []byte
 	CreatedAt       pgtype.Timestamptz
 	PayerTenantID   pgtype.UUID
+}
+
+type ToroCoreMasterMerchant struct {
+	ID                 pgtype.UUID
+	NormalizedName     string
+	LegalName          pgtype.Text
+	CountryCode        string
+	MerchantCategory   string
+	Ice                pgtype.Text
+	IdentifiantFiscal  pgtype.Text
+	RegistreCommerce   pgtype.Text
+	CnssNumber         pgtype.Text
+	PrimaryDomain      pgtype.Text
+	LogoUrl            pgtype.Text
+	DefaultPcgmAccount string
+	DefaultTvaRate     pgtype.Numeric
+	DefaultTvaAccount  string
+	IsTvaDeductible    bool
+	IsForeignService   bool
+	RasApplicable      bool
+	RasRate            pgtype.Numeric
+	ConfidenceWeight   pgtype.Numeric
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type ToroCoreMasterPattern struct {
+	ID               pgtype.UUID
+	MasterMerchantID pgtype.UUID
+	CleanedStem      string
+	PatternType      string
+	RegexPattern     pgtype.Text
+	IsIntermediary   bool
+	MatchCount       int64
+	CreatedAt        pgtype.Timestamptz
+}
+
+type ToroCoreMoroccanMerchantMultilingualAlias struct {
+	ID               pgtype.UUID
+	MasterMerchantID pgtype.UUID
+	AliasVariant     string
+	ScriptType       string
+	LanguageCode     string
+	IsPrimary        bool
+	ConfidenceScore  pgtype.Numeric
+	CreatedAt        pgtype.Timestamptz
+}
+
+type ToroCoreNonResidentForeignProvider struct {
+	ID                     pgtype.UUID
+	MasterMerchantID       pgtype.UUID
+	ProviderName           string
+	HeadquartersCountry    string
+	TaxResidencyStatus     string
+	VatWithholdingRate     pgtype.Numeric
+	ServiceType            string
+	PcgmExpenseAccount     string
+	PcgmWithholdingAccount string
+	IsActive               bool
+	StatutoryLegalBasis    string
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
 }
 
 type ToroCoreRefreshToken struct {
@@ -1084,10 +1166,28 @@ type ToroCoreWorkflow struct {
 
 type ToroCoreWorkflowBlueprint struct {
 	Name         string
+	UserID       pgtype.UUID
 	TriggerTopic string
 	Definition   []byte
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type ToroCoreWorkflowDispatchOutbox struct {
+	ID             pgtype.UUID
+	WorkflowID     pgtype.UUID
+	StepID         string
+	ConversationID string
+	TargetSubject  string
+	Envelope       []byte
+	Status         string
+	Attempts       int32
+	NextAttemptAt  pgtype.Timestamptz
+	LeasedUntil    pgtype.Timestamptz
+	LastError      pgtype.Text
+	DeliveredAt    pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type ToroCoreWorkflowHistory struct {

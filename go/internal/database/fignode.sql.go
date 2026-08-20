@@ -454,7 +454,7 @@ func (q *Queries) GetEmployeeStats(ctx context.Context, userID pgtype.UUID) (Get
 
 const getInitialEnrichedTransactionsByRealm = `-- name: GetInitialEnrichedTransactionsByRealm :many
 
-SELECT cs.id, cs.session_id, cs.row_index, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date, cs.cash_direction, cs.iso_currency_code, cs.transaction_hash, cs.erp_transaction_id, cs.transaction_id, cs.pending_transaction_id, cs.merchant_name, cs.logo_url, cs.category, cs.is_pending, cs.predicted_vendor_id, cs.predicted_vendor_name, cs.predicted_customer_id, cs.predicted_customer_name, cs.predicted_account_id, cs.predicted_account_name, cs.confidence_score, cs.ai_reasoning, cs.human_action, cs.swiped_by, cs.swiped_at, cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.duplicate_of, cs.is_recurring, cs.split_suggestion, cs.status, cs.error_message, cs.reconciled_at, cs.reconciled_by, cs.rule_group_id, cs.macro_class, cs.account_type, cs.synced_at, cs.ase_execution_trace, cs.created_at, cs.updated_at FROM fignode.staging_transactions cs
+SELECT cs.id, cs.session_id, cs.row_index, cs.source_type, cs.raw_description, cs.raw_amount, cs.raw_date, cs.parsed_date, cs.cash_direction, cs.iso_currency_code, cs.transaction_hash, cs.erp_transaction_id, cs.transaction_id, cs.pending_transaction_id, cs.merchant_name, cs.logo_url, cs.category, cs.is_pending, cs.predicted_vendor_id, cs.predicted_vendor_name, cs.predicted_customer_id, cs.predicted_customer_name, cs.predicted_account_id, cs.predicted_account_name, cs.confidence_score, cs.ai_reasoning, cs.human_action, cs.swiped_by, cs.swiped_at, cs.override_vendor_id, cs.override_customer_id, cs.override_account_id, cs.duplicate_of, cs.is_recurring, cs.split_suggestion, cs.status, cs.error_message, cs.reconciled_at, cs.reconciled_by, cs.rule_group_id, cs.macro_class, cs.account_type, cs.synced_at, cs.ase_execution_trace, cs.created_at, cs.updated_at, cs.moroccan_enrichment FROM fignode.staging_transactions cs
 JOIN fignode.staging_sessions ss ON ss.id = cs.session_id
 WHERE cs.status = 'READY_FOR_REVIEW' AND ss.realm_id = $1 AND cs.duplicate_of IS NULL
 ORDER BY cs.created_at DESC LIMIT 50
@@ -519,6 +519,7 @@ func (q *Queries) GetInitialEnrichedTransactionsByRealm(ctx context.Context, rea
 			&i.AseExecutionTrace,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MoroccanEnrichment,
 		); err != nil {
 			return nil, err
 		}
@@ -552,7 +553,7 @@ func (q *Queries) GetLatestLeaderboardSnapshot(ctx context.Context, period strin
 
 const getPendingFignodeTransactions = `-- name: GetPendingFignodeTransactions :many
 
-SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, macro_class, account_type, synced_at, ase_execution_trace, created_at, updated_at FROM fignode.staging_transactions
+SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, macro_class, account_type, synced_at, ase_execution_trace, created_at, updated_at, moroccan_enrichment FROM fignode.staging_transactions
 WHERE status = 'PENDING_AI' 
   AND human_action IS NULL
   AND session_id IS NOT NULL -- Example: filter logic
@@ -619,6 +620,81 @@ func (q *Queries) GetPendingFignodeTransactions(ctx context.Context) ([]FignodeS
 			&i.AseExecutionTrace,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MoroccanEnrichment,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPendingSessionStagingTransactions = `-- name: GetPendingSessionStagingTransactions :many
+SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, macro_class, account_type, synced_at, ase_execution_trace, created_at, updated_at, moroccan_enrichment FROM fignode.staging_transactions
+WHERE session_id = $1 AND status = 'PENDING_AI'
+ORDER BY created_at ASC
+`
+
+func (q *Queries) GetPendingSessionStagingTransactions(ctx context.Context, sessionID pgtype.UUID) ([]FignodeStagingTransaction, error) {
+	rows, err := q.db.Query(ctx, getPendingSessionStagingTransactions, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FignodeStagingTransaction
+	for rows.Next() {
+		var i FignodeStagingTransaction
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RowIndex,
+			&i.SourceType,
+			&i.RawDescription,
+			&i.RawAmount,
+			&i.RawDate,
+			&i.ParsedDate,
+			&i.CashDirection,
+			&i.IsoCurrencyCode,
+			&i.TransactionHash,
+			&i.ErpTransactionID,
+			&i.TransactionID,
+			&i.PendingTransactionID,
+			&i.MerchantName,
+			&i.LogoUrl,
+			&i.Category,
+			&i.IsPending,
+			&i.PredictedVendorID,
+			&i.PredictedVendorName,
+			&i.PredictedCustomerID,
+			&i.PredictedCustomerName,
+			&i.PredictedAccountID,
+			&i.PredictedAccountName,
+			&i.ConfidenceScore,
+			&i.AiReasoning,
+			&i.HumanAction,
+			&i.SwipedBy,
+			&i.SwipedAt,
+			&i.OverrideVendorID,
+			&i.OverrideCustomerID,
+			&i.OverrideAccountID,
+			&i.DuplicateOf,
+			&i.IsRecurring,
+			&i.SplitSuggestion,
+			&i.Status,
+			&i.ErrorMessage,
+			&i.ReconciledAt,
+			&i.ReconciledBy,
+			&i.RuleGroupID,
+			&i.MacroClass,
+			&i.AccountType,
+			&i.SyncedAt,
+			&i.AseExecutionTrace,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.MoroccanEnrichment,
 		); err != nil {
 			return nil, err
 		}
@@ -632,7 +708,7 @@ func (q *Queries) GetPendingFignodeTransactions(ctx context.Context) ([]FignodeS
 
 const getPendingStagingTransactions = `-- name: GetPendingStagingTransactions :many
 
-SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, macro_class, account_type, synced_at, ase_execution_trace, created_at, updated_at FROM fignode.staging_transactions
+SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, macro_class, account_type, synced_at, ase_execution_trace, created_at, updated_at, moroccan_enrichment FROM fignode.staging_transactions
 WHERE session_id = $1 AND status = 'ENRICHED'
 `
 
@@ -695,6 +771,7 @@ func (q *Queries) GetPendingStagingTransactions(ctx context.Context, sessionID p
 			&i.AseExecutionTrace,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MoroccanEnrichment,
 		); err != nil {
 			return nil, err
 		}
@@ -707,7 +784,7 @@ func (q *Queries) GetPendingStagingTransactions(ctx context.Context, sessionID p
 }
 
 const getUnmatchedRowsByMacroClass = `-- name: GetUnmatchedRowsByMacroClass :many
-SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, macro_class, account_type, synced_at, ase_execution_trace, created_at, updated_at FROM fignode.staging_transactions
+SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, macro_class, account_type, synced_at, ase_execution_trace, created_at, updated_at, moroccan_enrichment FROM fignode.staging_transactions
 WHERE session_id = $1 AND rule_group_id IS NULL AND macro_class = $2
 `
 
@@ -772,6 +849,7 @@ func (q *Queries) GetUnmatchedRowsByMacroClass(ctx context.Context, arg GetUnmat
 			&i.AseExecutionTrace,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MoroccanEnrichment,
 		); err != nil {
 			return nil, err
 		}
@@ -784,7 +862,7 @@ func (q *Queries) GetUnmatchedRowsByMacroClass(ctx context.Context, arg GetUnmat
 }
 
 const getUnmatchedSessionRows = `-- name: GetUnmatchedSessionRows :many
-SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, macro_class, account_type, synced_at, ase_execution_trace, created_at, updated_at FROM fignode.staging_transactions
+SELECT id, session_id, row_index, source_type, raw_description, raw_amount, raw_date, parsed_date, cash_direction, iso_currency_code, transaction_hash, erp_transaction_id, transaction_id, pending_transaction_id, merchant_name, logo_url, category, is_pending, predicted_vendor_id, predicted_vendor_name, predicted_customer_id, predicted_customer_name, predicted_account_id, predicted_account_name, confidence_score, ai_reasoning, human_action, swiped_by, swiped_at, override_vendor_id, override_customer_id, override_account_id, duplicate_of, is_recurring, split_suggestion, status, error_message, reconciled_at, reconciled_by, rule_group_id, macro_class, account_type, synced_at, ase_execution_trace, created_at, updated_at, moroccan_enrichment FROM fignode.staging_transactions
 WHERE session_id = $1 AND rule_group_id IS NULL AND status = 'ENRICHED'
 `
 
@@ -844,6 +922,7 @@ func (q *Queries) GetUnmatchedSessionRows(ctx context.Context, sessionID pgtype.
 			&i.AseExecutionTrace,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MoroccanEnrichment,
 		); err != nil {
 			return nil, err
 		}
@@ -997,6 +1076,45 @@ type UpdateStagingTransactionMacroClassParams struct {
 
 func (q *Queries) UpdateStagingTransactionMacroClass(ctx context.Context, arg UpdateStagingTransactionMacroClassParams) error {
 	_, err := q.db.Exec(ctx, updateStagingTransactionMacroClass, arg.ID, arg.MacroClass, arg.AiReasoning)
+	return err
+}
+
+const updateStagingTransactionMoroccanEnrichment = `-- name: UpdateStagingTransactionMoroccanEnrichment :exec
+UPDATE fignode.staging_transactions
+SET predicted_vendor_name = $1,
+    predicted_account_name = $2,
+    confidence_score = $3,
+    ai_reasoning = $4,
+    merchant_name = $5,
+    category = $6,
+    moroccan_enrichment = $7,
+    status = 'ENRICHED',
+    updated_at = NOW()
+WHERE id = $8
+`
+
+type UpdateStagingTransactionMoroccanEnrichmentParams struct {
+	PredictedVendorName  pgtype.Text
+	PredictedAccountName pgtype.Text
+	ConfidenceScore      pgtype.Numeric
+	AiReasoning          pgtype.Text
+	MerchantName         pgtype.Text
+	Category             pgtype.Text
+	MoroccanEnrichment   []byte
+	ID                   pgtype.UUID
+}
+
+func (q *Queries) UpdateStagingTransactionMoroccanEnrichment(ctx context.Context, arg UpdateStagingTransactionMoroccanEnrichmentParams) error {
+	_, err := q.db.Exec(ctx, updateStagingTransactionMoroccanEnrichment,
+		arg.PredictedVendorName,
+		arg.PredictedAccountName,
+		arg.ConfidenceScore,
+		arg.AiReasoning,
+		arg.MerchantName,
+		arg.Category,
+		arg.MoroccanEnrichment,
+		arg.ID,
+	)
 	return err
 }
 

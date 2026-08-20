@@ -4,18 +4,22 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 )
 
 // GraphContextProvider resolves Layer 1 Ground Truth Facts and Layer 2 Relationship Subgraphs for ASE DAG nodes.
 type GraphContextProvider struct {
 	graphStore *GraphStore
+	docStore   *DocumentStore
 }
 
 // NewGraphContextProvider creates a new GraphContextProvider.
-func NewGraphContextProvider(graphStore *GraphStore) *GraphContextProvider {
+func NewGraphContextProvider(graphStore *GraphStore, docStore *DocumentStore) *GraphContextProvider {
 	return &GraphContextProvider{
 		graphStore: graphStore,
+		docStore:   docStore,
 	}
 }
 
@@ -42,14 +46,20 @@ func (gcp *GraphContextProvider) Resolve(
 
 	// Read URI from node payload if present
 	var factURI string
-	if uriVal, ok := node.Payload["fact_uri"].(string); ok {
+	if uriVal, ok := node.Payload["fact_uri"].(string); ok && uriVal != "" {
 		factURI = uriVal
-	} else if docIDVal, ok := node.Payload["document_id"].(string); ok {
+	} else if docIDVal, ok := node.Payload["document_id"].(string); ok && docIDVal != "" {
 		docType, _ := node.Payload["document_type"].(string)
-		if docType == "" {
-			docType = "INVOICE"
+		if docType == "" && gcp.docStore != nil {
+			if docID, err := uuid.Parse(docIDVal); err == nil {
+				if doc, err := gcp.docStore.GetDocumentByID(ctx, docID); err == nil && doc != nil {
+					docType = string(doc.DocumentType)
+				}
+			}
 		}
-		factURI = fmt.Sprintf("fact:document:%s:%s", docType, docIDVal)
+		if docType != "" {
+			factURI = fmt.Sprintf("fact:document:%s:%s", docType, docIDVal)
+		}
 	}
 
 	if factURI == "" {

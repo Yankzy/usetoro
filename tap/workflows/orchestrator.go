@@ -18,6 +18,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/spf13/viper"
 	"github.com/tidwall/gjson"
@@ -74,6 +75,7 @@ var errMessageDeadLettered = errors.New("message already dead lettered")
 type Orchestrator struct {
 	logger  *slog.Logger
 	queries *database.Queries
+	dbPool  *pgxpool.Pool
 	bus     core.EventBus
 
 	nc *nats.Conn
@@ -84,6 +86,21 @@ type Orchestrator struct {
 
 	// subs holds the NATS subscriptions so we can drain them on shutdown.
 	subs []*nats.Subscription
+}
+
+// workflowDispatch is a command durably queued alongside its state transition.
+type workflowDispatch struct {
+	ID             uuid.UUID
+	StepID         string
+	ConversationID string
+	TargetSubject  string
+	Envelope       []byte
+}
+
+type outboxDispatch struct {
+	ID            uuid.UUID
+	TargetSubject string
+	Envelope      []byte
 }
 
 // InstanceState represents the internal state stored in the DB JSONB field.
@@ -112,13 +129,14 @@ type DelegationRequest struct {
 }
 
 // NewOrchestrator initialises the central orchestrator system.
-func NewOrchestrator(logger *slog.Logger, bus core.EventBus, nc *nats.Conn, js nats.JetStreamContext, queries *database.Queries) *Orchestrator {
+func NewOrchestrator(logger *slog.Logger, bus core.EventBus, nc *nats.Conn, js nats.JetStreamContext, queries *database.Queries, dbPool *pgxpool.Pool) *Orchestrator {
 	return &Orchestrator{
 		logger:  logger,
 		bus:     bus,
 		nc:      nc,
 		js:      js,
 		queries: queries,
+		dbPool:  dbPool,
 	}
 }
 
@@ -218,6 +236,7 @@ func (o *Orchestrator) UpsertWorkflowFromFile(ctx context.Context, filePath stri
 
 	_, err = o.queries.UpsertWorkflowBlueprint(ctx, database.UpsertWorkflowBlueprintParams{
 		Name:         wfDef.Name,
+		UserID:       pgtype.UUID{Valid: false},
 		TriggerTopic: wfDef.TriggerTopic,
 		Definition:   defBytes,
 	})
@@ -242,7 +261,6 @@ func (o *Orchestrator) WatchWorkflows(ctx context.Context, dirPath string) error
 	}
 
 	o.logger.Info("👁️  Orchestrator: watching workflows directory for changes", "path", dirPath)
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -251,11 +269,12 @@ func (o *Orchestrator) WatchWorkflows(ctx context.Context, dirPath string) error
 			if !ok {
 				return nil
 			}
+			o.logger.Info("RAW WATCHER EVENT", "name", event.Name, "op", event.Op.String())
 			// We only care about writes or creates of .yml files
 			if filepath.Ext(event.Name) != ".yml" {
 				continue
 			}
-			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Chmod) != 0 {
 				o.logger.Info("🔄 Workflow file change detected", "file", event.Name)
 				// Defer a bit to let the write finish (debounce)
 				time.Sleep(200 * time.Millisecond)
@@ -310,6 +329,7 @@ func (o *Orchestrator) SyncBlueprints(ctx context.Context) error {
 			defBytes, _ := json.Marshal(def)
 			if _, err := o.queries.UpsertWorkflowBlueprint(ctx, database.UpsertWorkflowBlueprintParams{
 				Name:         def.Name,
+				UserID:       row.UserID,
 				TriggerTopic: def.TriggerTopic,
 				Definition:   defBytes,
 			}); err != nil {
@@ -657,6 +677,10 @@ func (o *Orchestrator) Start(ctx context.Context) error {
 	if o.nc == nil || o.js == nil {
 		return fmt.Errorf("orchestrator: missing nats dependencies (nc/js)")
 	}
+	if o.dbPool == nil {
+		return fmt.Errorf("orchestrator: missing database pool for workflow dispatch outbox")
+	}
+	go o.runDispatchRelay(ctx)
 
 	// Subscribe to OrchestratorInbox to receive PROPOSE bids and INFORM proofs from agents.
 	inboxSub, err := o.bus.QueueSubscribe(
@@ -725,6 +749,89 @@ func (o *Orchestrator) Start(ctx context.Context) error {
 	// Best-effort drain; shutdown ordering is managed by the daemon.
 	for _, sub := range o.subs {
 		_ = sub.Drain()
+	}
+	return nil
+}
+
+// runDispatchRelay delivers database-backed commands. Leases make it safe for
+// multiple orchestrator instances and allow recovery after a process crash.
+func (o *Orchestrator) runDispatchRelay(ctx context.Context) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := o.deliverQueuedDispatches(ctx); err != nil && ctx.Err() == nil {
+			o.logger.Error("Orchestrator: workflow dispatch relay failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (o *Orchestrator) deliverQueuedDispatches(ctx context.Context) error {
+	tx, err := o.dbPool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		WITH candidates AS (
+			SELECT id FROM toro_core.workflow_dispatch_outbox
+			WHERE (status = 'PENDING' AND next_attempt_at <= NOW())
+			   OR (status = 'LEASED' AND leased_until <= NOW())
+			ORDER BY created_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT 25
+		)
+		UPDATE toro_core.workflow_dispatch_outbox o
+		SET status = 'LEASED', attempts = attempts + 1, leased_until = NOW() + INTERVAL '30 seconds', updated_at = NOW()
+		FROM candidates
+		WHERE o.id = candidates.id
+		RETURNING o.id, o.target_subject, o.envelope`)
+	if err != nil {
+		return err
+	}
+	var dispatches []outboxDispatch
+	for rows.Next() {
+		var dispatch outboxDispatch
+		if err := rows.Scan(&dispatch.ID, &dispatch.TargetSubject, &dispatch.Envelope); err != nil {
+			rows.Close()
+			return err
+		}
+		dispatches = append(dispatches, dispatch)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	for _, dispatch := range dispatches {
+		if err := o.bus.Publish(dispatch.TargetSubject, dispatch.Envelope); err != nil {
+			_, dbErr := o.dbPool.Exec(ctx, `
+				UPDATE toro_core.workflow_dispatch_outbox
+				SET status = 'PENDING',
+					next_attempt_at = NOW() + LEAST(60, power(2, LEAST(attempts, 6))::int) * INTERVAL '1 second',
+					leased_until = NULL, last_error = $2, updated_at = NOW()
+				WHERE id = $1`, dispatch.ID, err.Error())
+			if dbErr != nil {
+				return fmt.Errorf("publish dispatch: %w; schedule retry: %v", err, dbErr)
+			}
+			o.logger.Warn("Orchestrator: dispatch publish failed; retry scheduled", "id", dispatch.ID, "target", dispatch.TargetSubject, "error", err)
+			continue
+		}
+		if _, err := o.dbPool.Exec(ctx, `
+			UPDATE toro_core.workflow_dispatch_outbox
+			SET status = 'DELIVERED', delivered_at = NOW(), leased_until = NULL, last_error = NULL, updated_at = NOW()
+			WHERE id = $1`, dispatch.ID); err != nil {
+			return fmt.Errorf("mark workflow dispatch delivered: %w", err)
+		}
+		o.logger.Info("Orchestrator: dispatched outbox command", "id", dispatch.ID, "target", dispatch.TargetSubject)
 	}
 	return nil
 }
@@ -809,12 +916,12 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 		return fmt.Errorf("orchestrator: failed to update initial state: %w", err)
 	}
 
-	ready, err := o.scheduleReadySteps(ctx, def, &state, wf.EntityID, triggerPayload)
+	ready, dispatches, err := o.scheduleReadySteps(ctx, def, &state, wf.EntityID, triggerPayload)
 	if err != nil {
 		return fmt.Errorf("orchestrator: failed to dispatch initial steps: %w", err)
 	}
 	stateBytes, _ = json.Marshal(state)
-	wf, err = o.persistWorkflowState(ctx, wf, state)
+	wf, err = o.persistWorkflowStateAndDispatches(ctx, wf, state, dispatches)
 	if err != nil {
 		return fmt.Errorf("orchestrator: failed to persist state after scheduling: %w", err)
 	}
@@ -830,7 +937,7 @@ func (o *Orchestrator) handleTrigger(ctx context.Context, def WorkflowDef, msg *
 	return nil
 }
 
-func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, instancePath []string, payload []byte, state *InstanceState) error {
+func (o *Orchestrator) prepareStepDispatch(ctx context.Context, step WorkflowStep, instancePath []string, payload []byte, state *InstanceState) (workflowDispatch, error) {
 	cid := buildConversationID(instancePath, step.ID)
 
 	o.logger.Info("🚀 [DEBUG] Orchestrator dispatching step",
@@ -838,7 +945,7 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 		"cid", cid,
 	)
 	if len(instancePath) == 0 {
-		return fmt.Errorf("orchestrator: missing instance path for step %q", step.ID)
+		return workflowDispatch{}, fmt.Errorf("orchestrator: missing instance path for step %q", step.ID)
 	}
 	instanceID := instancePath[len(instancePath)-1]
 	convID := buildConversationID(instancePath, step.ID)
@@ -853,7 +960,7 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 	if step.Negotiate {
 		queue, err := core.NormalizeTaskQueueWithComplexity(step.ActivityType, step.TaskQueue, step.Complexity)
 		if err != nil {
-			return fmt.Errorf("orchestrator: invalid task queue for step %q: %w", step.ID, err)
+			return workflowDispatch{}, fmt.Errorf("orchestrator: invalid task queue for step %q: %w", step.ID, err)
 		}
 
 		o.logger.Info("Orchestrator: dispatching step",
@@ -885,13 +992,10 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 			taskDef,
 		)
 		if err != nil {
-			return fmt.Errorf("orchestrator: failed to build CFP: %w", err)
+			return workflowDispatch{}, fmt.Errorf("orchestrator: failed to build CFP: %w", err)
 		}
 		cfpBytes, _ := json.Marshal(cfp)
-		if err := o.bus.Publish(queue, cfpBytes); err != nil {
-			return fmt.Errorf("orchestrator: failed to publish CFP to %s: %w", queue, err)
-		}
-		o.logger.Info("Orchestrator: CFP broadcast", "task_queue", queue, "conv_id", convID)
+		return workflowDispatch{ID: uuid.New(), StepID: step.ID, ConversationID: convID, TargetSubject: queue, Envelope: cfpBytes}, nil
 
 	} else {
 		// ── Direct path: dispatch to a specific actor ─────────────────────────
@@ -903,21 +1007,21 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 		if strings.HasPrefix(step.ActivityType, core.PrefixWorkerActivities+".") {
 			normalized, err := core.NormalizeTaskQueueWithComplexity(step.ActivityType, step.TaskQueue, step.Complexity)
 			if err != nil {
-				return fmt.Errorf("orchestrator: invalid worker queue for step %q: %w", step.ID, err)
+				return workflowDispatch{}, fmt.Errorf("orchestrator: invalid worker queue for step %q: %w", step.ID, err)
 			}
 			inbox = normalized
 			o.logger.Debug("Orchestrator: using worker inbox for dispatch", "inbox", inbox)
 		} else if step.TaskQueue != "" {
 			normalized, err := core.NormalizeTaskQueueWithComplexity(step.ActivityType, step.TaskQueue, step.Complexity)
 			if err != nil {
-				return fmt.Errorf("orchestrator: invalid task queue override for step %q: %w", step.ID, err)
+				return workflowDispatch{}, fmt.Errorf("orchestrator: invalid task queue override for step %q: %w", step.ID, err)
 			}
 			inbox = normalized
 			o.logger.Debug("Orchestrator: using direct queue for dispatch", "inbox", inbox)
 		} else {
 			discoveredInbox, err := o.resolveActorByCapability(ctx, step.ActivityType)
 			if err != nil {
-				return fmt.Errorf("orchestrator: almanac lookup failed for step %q: %w", step.ID, err)
+				return workflowDispatch{}, fmt.Errorf("orchestrator: almanac lookup failed for step %q: %w", step.ID, err)
 			}
 			inbox = discoveredInbox
 			o.logger.Info("Orchestrator: resolved actor via Almanac",
@@ -957,17 +1061,13 @@ func (o *Orchestrator) dispatchStep(ctx context.Context, step WorkflowStep, inst
 			taskDef,
 		)
 		if err != nil {
-			return fmt.Errorf("orchestrator: failed to build ACCEPT: %w", err)
+			return workflowDispatch{}, fmt.Errorf("orchestrator: failed to build ACCEPT: %w", err)
 		}
 		acceptBytes, _ := json.Marshal(accept)
-
-		if err := o.bus.Publish(inbox, acceptBytes); err != nil {
-			return fmt.Errorf("orchestrator: failed to dispatch to %s: %w", inbox, err)
-		}
-		o.logger.Info("Orchestrator: dispatched directly to actor", "inbox", inbox, "step", step.ID)
+		return workflowDispatch{ID: uuid.New(), StepID: step.ID, ConversationID: convID, TargetSubject: inbox, Envelope: acceptBytes}, nil
 	}
 
-	return nil
+	return workflowDispatch{}, nil
 }
 
 func (o *Orchestrator) spawnSubWorkflow(ctx context.Context, step WorkflowStep, parentState *InstanceState, entityID pgtype.UUID, payload []byte) error {
@@ -1023,12 +1123,12 @@ func (o *Orchestrator) spawnSubWorkflow(ctx context.Context, step WorkflowStep, 
 	// for UnmarshalTaskPayload to reach. Unwrap one level so the child sees a raw payload,
 	// identical to what a standalone trigger would deliver.
 	childFallback := unwrapStepPayload(payload)
-	ready, err := o.scheduleReadySteps(ctx, childDef, &childState, childWf.EntityID, childFallback)
+	ready, dispatches, err := o.scheduleReadySteps(ctx, childDef, &childState, childWf.EntityID, childFallback)
 	if err != nil {
 		return fmt.Errorf("orchestrator: failed to dispatch sub-workflow %q: %w", childDef.Name, err)
 	}
 
-	if _, err := o.persistWorkflowState(ctx, childWf, childState); err != nil {
+	if _, err := o.persistWorkflowStateAndDispatches(ctx, childWf, childState, dispatches); err != nil {
 		return fmt.Errorf("orchestrator: failed to persist sub-workflow active steps: %w", err)
 	}
 
@@ -1160,6 +1260,7 @@ func (o *Orchestrator) handleIncoming(msg *nats.Msg) {
 		defBytes, _ := json.Marshal(dynDef)
 		_, err = o.queries.UpsertWorkflowBlueprint(ctx, database.UpsertWorkflowBlueprintParams{
 			Name:         dynamicName,
+			UserID:       pgtype.UUID{Valid: false},
 			TriggerTopic: "",
 			Definition:   defBytes,
 		})
@@ -1501,13 +1602,13 @@ func (o *Orchestrator) handleWorkflowResume(msg *nats.Msg) {
 			return
 		}
 
-		ready, err := o.scheduleReadySteps(ctx, wfDef, &state, wf.EntityID, approvalProof)
+		ready, dispatches, err := o.scheduleReadySteps(ctx, wfDef, &state, wf.EntityID, approvalProof)
 		if err != nil {
 			o.logger.Error("Orchestrator: HITL approval scheduling failed", "id", req.InstanceID, "error", err)
 			msg.Nak()
 			return
 		}
-		if _, err := o.persistWorkflowState(ctx, wf, state); err != nil {
+		if _, err := o.persistWorkflowStateAndDispatches(ctx, wf, state, dispatches); err != nil {
 			o.logger.Error("Orchestrator: failed to persist HITL post-approval state", "id", req.InstanceID, "error", err)
 			msg.Nak()
 			return
@@ -1540,14 +1641,14 @@ func (o *Orchestrator) handleWorkflowResume(msg *nats.Msg) {
 		return
 	}
 
-	ready, err := o.scheduleReadySteps(ctx, wfDef, &state, wf.EntityID, payload)
+	ready, dispatches, err := o.scheduleReadySteps(ctx, wfDef, &state, wf.EntityID, payload)
 	if err != nil {
 		o.logger.Error("Orchestrator: resume scheduling failed", "id", req.InstanceID, "error", err)
 		msg.Nak()
 		return
 	}
 
-	if _, err := o.persistWorkflowState(ctx, wf, state); err != nil {
+	if _, err := o.persistWorkflowStateAndDispatches(ctx, wf, state, dispatches); err != nil {
 		o.logger.Error("Orchestrator: failed to persist resumed state", "id", req.InstanceID, "error", err)
 		msg.Nak()
 		return
@@ -1606,12 +1707,12 @@ func (o *Orchestrator) handleStepCompletion(ctx context.Context, wf database.Tor
 		return nil
 	}
 
-	ready, err := o.scheduleReadySteps(ctx, wfDef, state, wf.EntityID, proofCopy)
+	ready, dispatches, err := o.scheduleReadySteps(ctx, wfDef, state, wf.EntityID, proofCopy)
 	if err != nil {
 		return err
 	}
 	if len(ready) > 0 {
-		if _, err := o.persistWorkflowState(ctx, wf, *state); err != nil {
+		if _, err := o.persistWorkflowStateAndDispatches(ctx, wf, *state, dispatches); err != nil {
 			return err
 		}
 		nextIDs := stepIDsFromList(ready)
@@ -1729,14 +1830,15 @@ func ensureInstanceState(state *InstanceState, path []string) {
 	}
 }
 
-func (o *Orchestrator) scheduleReadySteps(ctx context.Context, def WorkflowDef, state *InstanceState, entityID pgtype.UUID, fallback []byte) ([]WorkflowStep, error) {
+func (o *Orchestrator) scheduleReadySteps(ctx context.Context, def WorkflowDef, state *InstanceState, entityID pgtype.UUID, fallback []byte) ([]WorkflowStep, []workflowDispatch, error) {
 	if state.Suspended {
-		return nil, nil
+		return nil, nil, nil
 	}
 	ready := readySteps(def, *state)
 	if len(ready) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
+	dispatches := make([]workflowDispatch, 0, len(ready))
 	for _, step := range ready {
 		payload := buildStepPayload(step, *state, fallback)
 		var err error
@@ -1748,7 +1850,7 @@ func (o *Orchestrator) scheduleReadySteps(ctx context.Context, def WorkflowDef, 
 			err = o.suspendForHITL(step, state, entityID)
 			if err == nil {
 				// Return immediately: nothing else should be dispatched once suspended.
-				return []WorkflowStep{step}, nil
+				return []WorkflowStep{step}, dispatches, nil
 			}
 		case step.SubWorkflow != "":
 			err = o.spawnSubWorkflow(ctx, step, state, entityID, payload)
@@ -1756,16 +1858,18 @@ func (o *Orchestrator) scheduleReadySteps(ctx context.Context, def WorkflowDef, 
 				state.ActiveSteps[step.ID] = true
 			}
 		default:
-			err = o.dispatchStep(ctx, step, state.InstancePath, payload, state)
+			var dispatch workflowDispatch
+			dispatch, err = o.prepareStepDispatch(ctx, step, state.InstancePath, payload, state)
 			if err == nil {
 				state.ActiveSteps[step.ID] = true
+				dispatches = append(dispatches, dispatch)
 			}
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return ready, nil
+	return ready, dispatches, nil
 }
 
 func readySteps(def WorkflowDef, state InstanceState) []WorkflowStep {
@@ -2020,6 +2124,12 @@ func reshapePayloadToSchema(schemaStr string, rbacPolicy []string, payload []byt
 		return payload
 	}
 
+	requiredFields := make(map[string]bool)
+	for _, reqItem := range gjson.Get(schemaStr, "required").Array() {
+		requiredFields[reqItem.String()] = true
+	}
+	hasRequiredList := len(requiredFields) > 0
+
 	// Parse the incoming payload so we can cherry-pick values for schema keys.
 	var inputPayload map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &inputPayload); err != nil || inputPayload == nil {
@@ -2088,13 +2198,20 @@ func reshapePayloadToSchema(schemaStr string, rbacPolicy []string, payload []byt
 				}
 			}
 
-			// Only warn if the field is not an output field.
 			if !isOutput {
-				slog.Warn("reshapePayloadToSchema: field not found in any source",
-					"key", key,
-					"trigger_available", triggerStr != "",
-					"prior_steps_searched", len(stepVars),
-				)
+				if hasRequiredList && !requiredFields[key] {
+					slog.Debug("reshapePayloadToSchema: optional field not found in any source",
+						"key", key,
+						"trigger_available", triggerStr != "",
+						"prior_steps_searched", len(stepVars),
+					)
+				} else {
+					slog.Warn("reshapePayloadToSchema: field not found in any source",
+						"key", key,
+						"trigger_available", triggerStr != "",
+						"prior_steps_searched", len(stepVars),
+					)
+				}
 			}
 		}
 	}
@@ -2153,6 +2270,42 @@ func (o *Orchestrator) persistWorkflowState(ctx context.Context, wf database.Tor
 		State:      stateBytes,
 		SequenceID: wf.SequenceID + 1,
 	})
+}
+
+// persistWorkflowStateAndDispatches commits a state transition and its outgoing
+// commands together. A relay publishes the commands only after this commit.
+func (o *Orchestrator) persistWorkflowStateAndDispatches(ctx context.Context, wf database.ToroCoreWorkflow, state InstanceState, dispatches []workflowDispatch) (database.ToroCoreWorkflow, error) {
+	if o.dbPool == nil {
+		return database.ToroCoreWorkflow{}, fmt.Errorf("orchestrator: workflow dispatch outbox requires database pool")
+	}
+	tx, err := o.dbPool.Begin(ctx)
+	if err != nil {
+		return database.ToroCoreWorkflow{}, fmt.Errorf("orchestrator: begin workflow dispatch transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	stateBytes, _ := json.Marshal(state)
+	updated, err := o.queries.WithTx(tx).UpdateWorkflowState(ctx, database.UpdateWorkflowStateParams{
+		ID: wf.ID, State: stateBytes, SequenceID: wf.SequenceID + 1,
+	})
+	if err != nil {
+		return database.ToroCoreWorkflow{}, err
+	}
+	for _, dispatch := range dispatches {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO toro_core.workflow_dispatch_outbox
+				(id, workflow_id, step_id, conversation_id, target_subject, envelope)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (workflow_id, step_id, conversation_id) DO NOTHING`,
+			dispatch.ID, wf.ID, dispatch.StepID, dispatch.ConversationID, dispatch.TargetSubject, json.RawMessage(dispatch.Envelope))
+		if err != nil {
+			return database.ToroCoreWorkflow{}, fmt.Errorf("orchestrator: enqueue workflow dispatch %q: %w", dispatch.StepID, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return database.ToroCoreWorkflow{}, fmt.Errorf("orchestrator: commit workflow dispatch transaction: %w", err)
+	}
+	return updated, nil
 }
 
 func parseConversationID(convID string) ([]string, string, error) {

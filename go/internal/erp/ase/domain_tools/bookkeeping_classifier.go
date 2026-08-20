@@ -111,9 +111,9 @@ func (cs *BookkeepingClassifier) classifyGeneric(ctx context.Context, promptKey 
 		dagName = batch[0].DagName
 	}
 
-	systemPrompt := ase.GetPrompt(tenantID, realmID, dagName, promptKey)
+	systemPrompt := ase.GetPrompt(tenantID, dagName, promptKey)
 	if systemPrompt == "" {
-		return nil, fmt.Errorf("prompt not found in configuration for key: %s (tenant: %s, realm: %s)", promptKey, tenantID, realmID)
+		return nil, fmt.Errorf("prompt not found in configuration for key: %s (user/tenant: %s)", promptKey, tenantID)
 	}
 
 	macroClass := batchMacroClass(batch)
@@ -140,7 +140,8 @@ func (cs *BookkeepingClassifier) classifyGeneric(ctx context.Context, promptKey 
 
 	// We removed the local LLM loop; dispatch directly via NATS to the generic agent
 	// which executes via the Redux engine circuit breaker.
-	genericResp, err := cs.dispatchViaNATS(ctx, systemPrompt, remainingRows, batchCashDirection(batch), tenantID, realmID, dagName)
+	debugRun, debugTimeout := debugDispatchConfig(batch)
+	genericResp, err := cs.dispatchViaNATS(ctx, systemPrompt, remainingRows, batchCashDirection(batch), tenantID, realmID, dagName, debugRun, debugTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -231,15 +232,16 @@ func (cs *BookkeepingClassifier) dynamicChartOfAccounts(ctx context.Context, bat
 		promptKey = "terminal"
 	}
 
-	systemPrompt := ase.GetPrompt(tenantID, realmID, dagName, promptKey)
+	systemPrompt := ase.GetPrompt(tenantID, dagName, promptKey)
 	if systemPrompt == "" {
-		return nil, fmt.Errorf("prompt not found in configuration for key: %s (tenant: %s, realm: %s)", promptKey, tenantID, realmID)
+		return nil, fmt.Errorf("prompt not found in configuration for key: %s (user/tenant: %s)", promptKey, tenantID)
 	}
 	systemPrompt = strings.ReplaceAll(systemPrompt, "{{.ChartOfAccounts}}", strings.Join(coaLines, "\n"))
 
 	rows := cs.batchToRows(ctx, batch)
 
-	genericResp, err := cs.dispatchViaNATS(ctx, systemPrompt, rows, cashDirection, tenantID, realmID, dagName)
+	debugRun, debugTimeout := debugDispatchConfig(batch)
+	genericResp, err := cs.dispatchViaNATS(ctx, systemPrompt, rows, cashDirection, tenantID, realmID, dagName, debugRun, debugTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -383,7 +385,7 @@ type genericNatsResponse struct {
 	Rows map[string]PropertyResponseMap `json:"rows"`
 }
 
-func (cs *BookkeepingClassifier) dispatchViaNATS(ctx context.Context, systemPrompt string, rows map[string]RowPayload, cashDirection string, tenantID, realmID, dagName string) (*genericNatsResponse, error) {
+func (cs *BookkeepingClassifier) dispatchViaNATS(ctx context.Context, systemPrompt string, rows map[string]RowPayload, cashDirection string, tenantID, realmID, dagName string, debugRun bool, debugTimeoutSeconds int) (*genericNatsResponse, error) {
 	reqData := map[string]interface{}{
 		"system_prompt":  systemPrompt,
 		"rows":           rows,
@@ -459,6 +461,7 @@ func (cs *BookkeepingClassifier) dispatchViaNATS(ctx context.Context, systemProm
 	}
 
 	cfpBytes, _ := json.Marshal(cfpEnv)
+	cs.logger.Info("pcm classifier: dispatching batch request", "task_queue", cs.agentTaskQueue, "reply_subject", replySubject, "task_id", taskDef.ID, "batch_size", len(rows), "prompt_key", dagName)
 	if err := cs.nc.Publish(cs.agentTaskQueue, cfpBytes); err != nil {
 		return nil, fmt.Errorf("publish cfp: %w", err)
 	}
@@ -469,8 +472,13 @@ func (cs *BookkeepingClassifier) dispatchViaNATS(ctx context.Context, systemProm
 	if dagToUse == "" {
 		dagToUse = "default"
 	}
-	if cfg := ase.GetConfig(tenantID, realmID, dagToUse); cfg != nil {
+	if cfg := ase.GetConfig(tenantID, dagToUse); cfg != nil {
 		timeoutDuration = time.Duration(cfg.HyperParameters.LLMTimeoutSeconds) * time.Second
+	}
+	if debugTimeoutSeconds > 0 {
+		timeoutDuration = time.Duration(debugTimeoutSeconds) * time.Second
+	} else if debugRun {
+		timeoutDuration = 15 * time.Second
 	}
 	timeout := time.NewTimer(timeoutDuration)
 	defer timeout.Stop()
@@ -480,12 +488,14 @@ func (cs *BookkeepingClassifier) dispatchViaNATS(ctx context.Context, systemProm
 		case <-ctx.Done():
 			return nil, fmt.Errorf("context cancelled while waiting for agent reply: %w", ctx.Err())
 		case <-timeout.C:
-			return nil, fmt.Errorf("timeout waiting for agent reply")
+			return nil, fmt.Errorf("timeout waiting for agent reply (task_queue=%s reply_subject=%s task_id=%s)", cs.agentTaskQueue, replySubject, taskDef.ID)
 		case reply := <-msgChan:
 			var replyEnv core.Envelope
 			if err := json.Unmarshal(reply.Data, &replyEnv); err != nil {
+				cs.logger.Warn("pcm classifier: ignoring malformed reply", "reply_subject", replySubject, "error", err)
 				continue
 			}
+			cs.logger.Info("pcm classifier: received reply", "reply_subject", replySubject, "performative", replyEnv.Performative, "sender", replyEnv.SenderDID)
 
 			switch replyEnv.Performative {
 			case core.PROPOSE:
@@ -543,4 +553,13 @@ func (cs *BookkeepingClassifier) dispatchViaNATS(ctx context.Context, systemProm
 			}
 		}
 	}
+}
+
+func debugDispatchConfig(batch []*ase.AutonomousSemanticEngineNode) (bool, int) {
+	if len(batch) == 0 {
+		return false, 0
+	}
+	debugRun, _ := batch[0].Payload["debug_run"].(bool)
+	seconds, _ := batch[0].Payload["debug_llm_timeout_seconds"].(int)
+	return debugRun, seconds
 }

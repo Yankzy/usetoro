@@ -8,14 +8,14 @@ import (
 )
 
 func TestGraphContextProvider_Name(t *testing.T) {
-	gcp := NewGraphContextProvider(nil)
+	gcp := NewGraphContextProvider(nil, nil)
 	if gcp.Name() != "graph_knowledge_provider" {
 		t.Fatalf("expected provider name 'graph_knowledge_provider', got %s", gcp.Name())
 	}
 }
 
 func TestGraphContextProvider_NilNode(t *testing.T) {
-	gcp := NewGraphContextProvider(nil)
+	gcp := NewGraphContextProvider(nil, nil)
 	res, err := gcp.Resolve(context.Background(), nil, nil, ase.ProviderDependencies{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -26,8 +26,8 @@ func TestGraphContextProvider_NilNode(t *testing.T) {
 }
 
 func TestGraphContextProvider_EmptyPayload(t *testing.T) {
-	gcp := NewGraphContextProvider(nil)
-	node := ase.NewASENode("t_tenant", "t_realm", "dag_test", map[string]any{})
+	gcp := NewGraphContextProvider(nil, nil)
+	node := ase.NewASENode("t_tenant", "dag_test", map[string]any{})
 
 	res, err := gcp.Resolve(context.Background(), node, nil, ase.ProviderDependencies{})
 	if err != nil {

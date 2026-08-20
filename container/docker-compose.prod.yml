@@ -4,18 +4,20 @@ x-nats-common: &nats-common
     - toro-net
 
 services:
-  db:
-    image: yankz/usetoro-db:latest
+  torodb:
+    image: yankz/usetoro:torodb
     build:
       context: ../
-      dockerfile: container/postgres/postgres.prod.Dockerfile
+      dockerfile: container/torodb/Dockerfile
     restart: always
-    command: [ "postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=5", "-c", "max_wal_senders=5", "-c", "max_connections=200" ]
     environment:
       POSTGRES_DB: toro
       POSTGRES_USER: toro
       POSTGRES_PASSWORD: toro_password
       PGDATA: /var/lib/postgresql/data/pgdata
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      DATABASE_URL: postgres://toro:toro_password@localhost:5432/toro?sslmode=disable
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     volumes:
       - db_data:/var/lib/postgresql/data
     ports:
@@ -24,15 +26,19 @@ services:
       test: [ "CMD-SHELL", "pg_isready -h localhost -U toro" ]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 60s
     networks:
       - toro-net
 
   gate:
-    image: yankz/usetoro-gate:latest
+    image: yankz/usetoro:gate
     build:
       context: ../
       dockerfile: container/gate/gate.prod.Dockerfile
+      target: ${GO_BUILD_TARGET:-development}
+    working_dir: /workspace
+    command: ["air", "-c", "/etc/air/gate.toml"]
     restart: always
     ports:
       - "8080:8080"
@@ -51,15 +57,21 @@ services:
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
 
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       nats-1:
         condition: service_healthy
     networks:
       - toro-net
+    volumes:
+      - ../go:/workspace/go
+      - ../tap:/workspace/tap
+      - ./air:/etc/air:ro
+      - go_build_cache:/root/.cache/go-build
+      - go_mod_cache:/go/pkg/mod
 
   python-worker:
-    image: yankz/usetoro-python-worker:latest
+    image: yankz/usetoro:python-worker
     build:
       context: ../
       dockerfile: python-worker/Dockerfile
@@ -72,7 +84,7 @@ services:
       NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,fignode,public"
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       nats-1:
         condition: service_healthy
@@ -80,10 +92,13 @@ services:
       - toro-net
 
   protocol:
-    image: yankz/usetoro-protocol:latest
+    image: yankz/usetoro:protocol
     build:
       context: ../
       dockerfile: container/protocol/protocol.prod.Dockerfile
+      target: ${GO_BUILD_TARGET:-development}
+    working_dir: /workspace
+    command: ["air", "-c", "/etc/air/protocol.toml"]
     restart: always
     ports:
       - "9090:9090"
@@ -107,19 +122,39 @@ services:
       CDC_SYNC_INTERVAL: ${CDC_SYNC_INTERVAL:-1h}
       POSTMARK_TRANSACTIONAL_SERVER_TOKEN: ${POSTMARK_TRANSACTIONAL_SERVER_TOKEN}
       POSTMARK_SENDER_SIGNATURE: ${POSTMARK_SENDER_SIGNATURE}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-${SLACK_BOT_AUTH_TOKEN}}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+      AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME}
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       nats-1:
         condition: service_healthy
     networks:
       - toro-net
+    volumes:
+      - ../tap/workflows:/app/tap/workflows
+      - ../go/internal/config/defaults.yml:/app/internal/config/defaults.yml
+      - ../go/internal/erp/ase/dags:/app/internal/erp/ase/dags
+      - ../go:/workspace/go
+      - ../tap:/workspace/tap
+      - ./air:/etc/air:ro
+      - go_build_cache:/root/.cache/go-build
+      - go_mod_cache:/go/pkg/mod
 
   sync:
-    image: yankz/usetoro-sync:latest
+    image: yankz/usetoro:sync
     build:
       context: ../
       dockerfile: container/sync/Dockerfile
+      target: ${GO_BUILD_TARGET:-development}
+    working_dir: /workspace
+    command: ["air", "-c", "/etc/air/sync.toml"]
     restart: always
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -137,36 +172,45 @@ services:
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       nats-1:
         condition: service_healthy
     networks:
       - toro-net
+    volumes:
+      - ../go:/workspace/go
+      - ../tap:/workspace/tap
+      - ./air:/etc/air:ro
+      - go_build_cache:/root/.cache/go-build
+      - go_mod_cache:/go/pkg/mod
 
-  cdc-worker:
-    image: yankz/usetoro-cdc-worker:latest
-    build:
-      context: ../
-      dockerfile: container/cdc-worker/Dockerfile
-    restart: always
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
-      PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
-    depends_on:
-      db:
-        condition: service_healthy
-      nats-1:
-        condition: service_healthy
-    networks:
-      - toro-net
+  # cdc-worker:
+  #   image: yankz/usetoro:cdc-worker
+  #   build:
+  #     context: ../
+  #     dockerfile: container/cdc-worker/Dockerfile
+  #   restart: always
+  #   environment:
+  #     DATABASE_URL: ${DATABASE_URL}
+  #     NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+  #     PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
+  #   depends_on:
+  #     torodb:
+  #       condition: service_healthy
+  #     nats-1:
+  #       condition: service_healthy
+  #   networks:
+  #     - toro-net
 
   ws:
-    image: yankz/usetoro-ws:latest
+    image: yankz/usetoro:ws
     build:
       context: ../
       dockerfile: container/ws/ws.prod.Dockerfile
+      target: ${GO_BUILD_TARGET:-development}
+    working_dir: /workspace
+    command: ["air", "-c", "/etc/air/ws.toml"]
     restart: always
     ports:
       - "8081:8080"
@@ -186,7 +230,7 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       redis:
         condition: service_started
@@ -194,6 +238,12 @@ services:
         condition: service_healthy
     networks:
       - toro-net
+    volumes:
+      - ../go:/workspace/go
+      - ../tap:/workspace/tap
+      - ./air:/etc/air:ro
+      - go_build_cache:/root/.cache/go-build
+      - go_mod_cache:/go/pkg/mod
 
   redis:
     image: redis:alpine
@@ -240,10 +290,13 @@ services:
       - nats_3_data:/data
 
   fignode:
-    image: yankz/usetoro-fignode:latest
+    image: yankz/usetoro:fignode
     build:
       context: ../
       dockerfile: container/fignode/fignode.prod.Dockerfile
+      target: ${GO_BUILD_TARGET:-development}
+    working_dir: /workspace
+    command: ["air", "-c", "/etc/air/fignode.toml"]
     restart: always
     ports:
       - "8083:8083"
@@ -259,7 +312,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PGOPTIONS: "-c search_path=fignode,toro_core,shadow_erp,public"
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       redis:
         condition: service_started
@@ -267,12 +320,21 @@ services:
         condition: service_healthy
     networks:
       - toro-net
+    volumes:
+      - ../go:/workspace/go
+      - ../tap:/workspace/tap
+      - ./air:/etc/air:ro
+      - go_build_cache:/root/.cache/go-build
+      - go_mod_cache:/go/pkg/mod
 
   graphql:
-    image: yankz/usetoro-graphql:latest
+    image: yankz/usetoro:graphql
     build:
       context: ../
       dockerfile: container/graphql/graphql.prod.Dockerfile
+      target: ${GO_BUILD_TARGET:-development}
+    working_dir: /workspace
+    command: ["air", "-c", "/etc/air/graphql.toml"]
     restart: always
     ports:
       - "8082:8080" # Exposed on host 8082 for debugging, but Nginx uses internal 8080
@@ -295,7 +357,7 @@ services:
       QBO_IS_PRODUCTION: ${QBO_IS_PRODUCTION:-false}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       redis:
         condition: service_started
@@ -303,43 +365,53 @@ services:
         condition: service_healthy
     networks:
       - toro-net
+    volumes:
+      - ../go:/workspace/go
+      - ../tap:/workspace/tap
+      - ./air:/etc/air:ro
+      - go_build_cache:/root/.cache/go-build
+      - go_mod_cache:/go/pkg/mod
 
   nginx:
-    image: yankz/usetoro-nginx:latest
+    image: yankz/usetoro:nginx
     build:
       context: ../
       dockerfile: container/nginx/nginx.prod.Dockerfile
+    ports:
+      - "80:80"
     depends_on:
       - gate
       - graphql
     networks:
       - toro-net
 
-  caddy:
-    image: caddy:alpine
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    command: caddy reverse-proxy --from api.usetoro.io --to nginx:80
-    volumes:
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - nginx
-    networks:
-      - toro-net
+  # caddy:
+  #   image: caddy:alpine
+  #   restart: always
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   command: caddy reverse-proxy --from api.usetoro.io --to nginx:80
+  #   volumes:
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - nginx
+  #   networks:
+  #     - toro-net
 
   migrator:
-    image: yankz/usetoro-migrator:latest
+    image: yankz/usetoro:migrator
     build:
       context: ../
       dockerfile: container/migrator/migrator.prod.Dockerfile
     restart: on-failure
     command: >
-      sh -c "sleep 2 && goose -dir /migrations postgres \"postgres://toro:toro_password@db/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,fignode,public\" up"
+      sh -c "sleep 2 && goose -dir /migrations postgres \"postgres://toro:toro_password@torodb/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,fignode,public\" up"
+    volumes:
+      - ../sql/schema:/migrations
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
     networks:
       - toro-net
@@ -352,6 +424,8 @@ volumes:
   nats_3_data:
   caddy_data:
   caddy_config:
+  go_build_cache:
+  go_mod_cache:
 
 networks:
   toro-net:

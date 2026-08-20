@@ -1,0 +1,100 @@
+name: DAG Test Workflow
+version: "2.0"
+trigger_topic: events.accounting.1.test_dag
+steps:
+  - id: document_readiness
+    activity_type: workers.document_readiness
+    negotiate: false
+    timeout: "60s"
+    description: "Verifies that test PDF/documents attached to the test workflow have finished CDC OCR and embedding."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "from_handle": { "type": "string" },
+          "to_handle": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "external_id": { "type": "string" },
+          "reply_to": { "type": "string" },
+          "subject": { "type": "string" },
+          "body_text": { "type": "string" },
+          "agent_alias": { "type": "string" },
+          "document_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "document_id": { "type": "string" },
+                "name": { "type": "string" },
+                "content_type": { "type": "string" },
+                "s3_key": { "type": "string" },
+                "sha256": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+
+  - id: pcm_worker
+    activity_type: workers.pcm
+    depends_on:
+      - document_readiness
+    negotiate: false
+    timeout: "300s"
+    description: "Ingests extracted documents from email into staging transactions."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "from_handle": { "type": "string" },
+          "to_handle": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "external_id": { "type": "string" },
+          "reply_to": { "type": "string" },
+          "subject": { "type": "string" },
+          "body_text": { "type": "string" },
+          "agent_alias": { "type": "string" },
+          "document_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "document_id": { "type": "string" },
+                "name": { "type": "string" },
+                "content_type": { "type": "string" }
+              }
+            }
+          },
+          "documents": { "type": "array" }
+        }
+      }
+      
+
+  - id: ase_bridge
+    activity_type: workers.ase_bridge
+    depends_on:
+      - pcm_worker
+    timeout: "300s"
+    description: "Executes the Test DAG with single debug terminal node and prints DAG finished."
+    config:
+      dag_name: "test_dag"
+      domain_tool: "pcm_cash_accounting"
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "upload_id": { "type": "string" }
+        },
+        "required": ["session_id"]
+      }

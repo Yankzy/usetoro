@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // LoadFromDir performs an initial full sync of all .yml files in the given directory.
@@ -75,7 +76,6 @@ func WatchDAGs(ctx context.Context, dirPath string) error {
 	if logger != nil {
 		logger.Info("👁️  ASE: watching dag config directory for changes", "path", dirPath)
 	}
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -84,10 +84,13 @@ func WatchDAGs(ctx context.Context, dirPath string) error {
 			if !ok {
 				return nil
 			}
+			if logger != nil {
+				logger.Info("RAW DAG WATCHER EVENT", "name", event.Name, "op", event.Op.String())
+			}
 			if filepath.Ext(event.Name) != ".yml" {
 				continue
 			}
-			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Chmod) != 0 {
 				if logger != nil {
 					logger.Info("🔄 ASE: DAG file change detected", "file", event.Name)
 				}
@@ -167,8 +170,9 @@ func UpsertDAGFromFile(ctx context.Context, filePath string) error {
 	dagName := strings.TrimSuffix(baseName, filepath.Ext(baseName))
 	// dagName := "ase_gaap_us"
 
-	// The watcher syncs the 'global' configuration fallback (tenant_id IS NULL AND realm_id IS NULL).
+	// The watcher syncs the 'global' configuration fallback (user_id IS NULL).
 	_, err = dbQueries.UpsertASEConfig(ctx, database.UpsertASEConfigParams{
+		UserID:          pgtype.UUID{Valid: false},
 		Name:            dagName,
 		DagConfig:       dagBytes,
 		HyperParameters: hpBytes,
@@ -178,7 +182,7 @@ func UpsertDAGFromFile(ctx context.Context, filePath string) error {
 		return fmt.Errorf("upsert db: %w", err)
 	}
 
-	InvalidateConfigCache("", "", dagName)
+	InvalidateConfigCache("", dagName)
 
 	// Clear cache for this global DAG
 	if configCache != nil {

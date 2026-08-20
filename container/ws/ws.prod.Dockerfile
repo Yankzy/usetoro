@@ -19,7 +19,7 @@ COPY go/cmd/ws ./cmd/ws
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /ws ./cmd/ws
 
 # Final stage
-FROM alpine:latest
+FROM alpine:latest AS production
 
 RUN apk --no-cache add ca-certificates
 
@@ -37,3 +37,10 @@ USER nobody
 ENTRYPOINT ["ws"]
 
 COPY --chown=nobody:nobody keys /keys
+
+FROM golang:1.25-alpine AS development
+
+RUN apk add --no-cache ca-certificates git \
+    && go install github.com/air-verse/air@v1.63.0
+
+WORKDIR /workspace

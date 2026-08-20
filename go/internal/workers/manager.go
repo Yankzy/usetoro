@@ -65,7 +65,7 @@ func NewManager(logger *slog.Logger, nc *nats.Conn) *Manager {
 	}
 }
 
-const workerDeliverLimit = 5
+const workerDeliverLimit = 3
 
 func (m *Manager) emitWorkerDLQ(msg *nats.Msg, reason string, md *nats.MsgMetadata) {
 	dlqSubject := "worker.dlq"
@@ -141,6 +141,10 @@ func (m *Manager) StartAll(ctx context.Context) error {
 
 					if err := worker.Handle(ctx, msg); err != nil {
 						m.logger.Error("worker handle error", "subject", msg.Subject, "error", err)
+						if md != nil && md.NumDelivered >= workerDeliverLimit {
+							m.emitWorkerDLQ(msg, fmt.Sprintf("exceeded max deliveries (%d): %v", md.NumDelivered, err), md)
+							return
+						}
 						msg.Nak()
 						return
 					}
@@ -167,6 +171,9 @@ func (m *Manager) StartAll(ctx context.Context) error {
 				} else if isMismatch {
 					durable := durableFromSubject(subCfg.Subject)
 					durables := []string{durable}
+					if subCfg.Group != "" {
+						durables = append(durables, subCfg.Group)
+					}
 					if strings.Contains(subCfg.Subject, "ase_bridge") {
 						durables = append(durables, "ase-orchestrator-worker")
 					}
@@ -191,6 +198,14 @@ func (m *Manager) StartAll(ctx context.Context) error {
 
 					streamName, sErr := findStreamForSubject(js, subCfg.Subject)
 					if sErr == nil {
+						if consumerChan := js.Consumers(streamName); consumerChan != nil {
+							for cInfo := range consumerChan {
+								if cInfo != nil && (strings.Contains(cInfo.Name, sanitizeSubjectName(subCfg.Subject)) || cInfo.Config.FilterSubject == subCfg.Subject) {
+									durables = append(durables, cInfo.Name)
+								}
+							}
+						}
+
 						for _, d := range durables {
 							m.logger.Warn("Consumer configuration mismatch detected, deleting consumer to recreate...", "durable", d, "stream", streamName, "error", err)
 							if delErr := js.DeleteConsumer(streamName, d); delErr != nil {

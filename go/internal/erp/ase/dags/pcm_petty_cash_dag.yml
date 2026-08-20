@@ -1,0 +1,252 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  max_llm_retries: 3
+  llm_timeout_seconds: 120
+  batch_flush_seconds: 5
+  active_agent_ttl_minutes: 10
+  lock_ttl_seconds: 30
+  domain_tool: "pcm_petty_cash"
+  expected_properties: 2
+
+prompts:
+  _shared_guardrails: &guardrails |
+    ### CONFIDENCE GUARDRAILS
+    - CRITICAL: "Confidence" does NOT mean "how sure are you of your answer". It means "should this transaction automatically progress to the next node of the DAG?".
+    - The system has a strict guardrail: if your top candidate's confidence is < 0.98, the transaction will be placed on HOLD and will NOT progress.
+    - If the transaction is fully compliant and should progress, you MUST set the highest score to >= 0.98.
+    - If you determine the transaction is NON-COMPLIANT (e.g. missing voucher, exceeding daily/monthly cash payment cap, missing ICE) and MUST be placed on HOLD, you MUST intentionally set the highest score to < 0.98 (e.g. 0.85).
+    - Because confidence is probability distribution, candidates map MUST contain at least 2 candidates.
+    - EXTREMELY IMPORTANT: When you intentionally set the confidence to < 0.98 to trigger a hold, you MUST write your `reasoning` as a highly detailed DIRECT INSTRUCTION to the email/TAP agent.
+
+  petty_cash_rubrique_prompt:
+    - |
+      You are an expert Moroccan PCGM Petty Cash accountant (Compte 5161 - Caisse).
+      Analyze the unstructured cash voucher description and use semantic judgment to classify the expense into the appropriate Class 6 account:
+
+      STATUTORY EXPENSE SELECTION GUIDANCE:
+      * 6111_ACHATS_DE_MARCHANDISES — Purchases of goods, products, or merchandise intended for resale without transformation.
+      * 6121_ACHATS_DE_MATIERES — Purchases of raw materials, physical ingredients, and direct consumables used in production or operations.
+      * 6125_FOURNITURES_DE_BUREAU — Office stationery, paper, printer cartridges, small office consumables, and minor tools under capital threshold.
+      * 6131_LOCATIONS_CHARGES — Short-term rentals, equipment leases, storage space fees, and building rental charges.
+      * 6141_ETUDES_RECHERCHES — Technical consulting fees, research studies, documentation, and external specialized service reports.
+      * 6145_FRAIS_DE_DEPLACEMENT — Staff travel expenses, taxi receipts, parking fees, highway tolls, mileage allowances, and business meals.
+      * 6147_SERVICES_BANCAIRES — Cash handling fees, cash transport charges, and minor petty cash transaction administrative fees.
+      * 6181_CHARGES_NON_DEDUCTIBLES — Non-deductible operational expenses and cash payments exceeding statutory limits.
+
+      DETAILED GUIDANCE FOR 6181_CHARGES_NON_DEDUCTIBLES:
+      1. What are Non-Deductible Operational Expenses?
+         Expenses that cannot be deducted from taxable income for Corporate Tax (IS/IR) or whose input VAT cannot be recovered.
+         Examples:
+         - Traffic fines, parking tickets, administrative penalties, or tax late payment surcharges.
+         - Personal or non-business expenditures lacking direct corporate scope.
+         - Expense vouchers lacking proper supporting documentation (missing invoice, missing ICE/IF, or unverified vendor receipt).
+         - Excessive corporate gifts lacking company branding/logo.
+
+      2. Statutory Supplier Cash Payment Limits & Exceeded Conditions (CGI Art. 193):
+         - Statutory Caps: Maximum 5,000 MAD TTC per day per supplier, AND maximum 50,000 MAD TTC per calendar month per supplier.
+         - Exceeded Condition A (Single Payment): A single cash voucher paid to Supplier X where Amount TTC > 5,000 MAD.
+         - Exceeded Condition B (Cumulative Daily Payments): Total cumulative cash vouchers paid to Supplier X on the same calendar Day D exceeding 5,000 MAD TTC.
+         - Exceeded Condition C (Cumulative Monthly Payments): Total cumulative cash vouchers paid to Supplier X within the same calendar Month M exceeding 50,000 MAD TTC.
+         - Tax Consequence: If any of these conditions are met, the expense is non-deductible for corporate tax and input VAT cannot be recovered. Must be classified under 6181_CHARGES_NON_DEDUCTIBLES.
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+                "property": "petty_cash_rubrique",
+                "candidates": {
+                  "1": { "value": "6125_FOURNITURES_DE_BUREAU", "confidence": 0.98, "reasoning": "Purchased printer paper and office stationery." },
+                  "2": { "value": "6181_CHARGES_NON_DEDUCTIBLES", "confidence": 0.02, "reasoning": "Fallback category." }
+                }
+              }
+            }
+          }
+        ]
+
+  simpl_tva_extractor_prompt:
+    - |
+      You are a Moroccan DGI Tax Specialist for Cash-Basis VAT (Régime d'encaissement).
+
+      STATUTORY CASH-BASIS VAT RULE & GUIDANCE:
+      Under Moroccan cash-basis VAT rules, input VAT becomes deductible ONLY upon actual physical cash disbursement.
+      To qualify for VAT deduction on official tax returns, the voucher must contain 6 mandatory metadata fields:
+      1. Payment Date — Exact calendar date of cash payment.
+      2. Payment Mode — Method of settlement (must be 'Espèces' for petty cash vouchers).
+      3. Reference Number — Voucher number, receipt invoice number, or stub reference.
+      4. Counterparty Name — Full legal name of vendor or supplier.
+      5. 15-digit ICE — The unique 15-digit Identifiant Commun de l'Entreprise assigned to Moroccan businesses.
+      6. VAT Breakdown — Clear identification of HT amount, statutory VAT rate (20%, 14%, 10%, 7%, 0%), and VAT amount.
+
+      Candidates for property "simpl_tva_status":
+      - SIMPL_TVA_VALID: All 6 mandatory fields present and valid (ICE is valid 15-digit string).
+      - SIMPL_TVA_MISSING_FIELDS: One or more required fields are missing from voucher details.
+      - SIMPL_TVA_INVALID_ICE: Vendor ICE is missing or does not match the mandatory 15-digit numerical format.
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+                "property": "simpl_tva_status",
+                "candidates": {
+                  "1": { "value": "SIMPL_TVA_VALID", "confidence": 0.98, "reasoning": "All 6 required DGI fields and valid 15-digit ICE present." },
+                  "2": { "value": "SIMPL_TVA_MISSING_FIELDS", "confidence": 0.02, "reasoning": "Missing field fallback." }
+                }
+              }
+            }
+          }
+        ]
+
+# ====================================================================
+# DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY - PETTY CASH (COMPTE 5161)
+# ====================================================================
+dag:
+  entry_node: petty_cash_ingress
+  nodes:
+
+    # ------------------------------------------------------------------
+    # STEP 0: PETTY CASH INGRESS ROUTING
+    # ------------------------------------------------------------------
+    petty_cash_ingress:
+      name: petty_cash_ingress
+      batch_flush_seconds: &flush 5
+      kind: initial_router
+      batch_size: &bsize 50
+      edge_type: &estatic static
+      execution_parameters:
+        payload_key: raw_description
+      default_child: petty_cash_guardrails
+
+    # ------------------------------------------------------------------
+    # STEP 1: DETERMINISTIC STATUTORY GUARDRAILS (CGI Art. 210 & 193)
+    # ------------------------------------------------------------------
+    petty_cash_guardrails:
+      name: petty_cash_guardrails
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: petty_cash_guardrails
+      children:
+        PASS_GUARDRAILS: petty_cash_rubrique_classifier
+        CAP_EXCEEDED_NON_DEDUCTIBLE: petty_cash_rubrique_classifier
+        HOLD_CAISSE_CREDITRICE: hold_caisse_creditrice
+        HOLD_MISSING_VOUCHER: hold_missing_voucher
+      default_child: petty_cash_rubrique_classifier
+
+    # ------------------------------------------------------------------
+    # STEP 2: LLM SEMANTIC CLASSIFICATION (CLASS 6 EXPENSE)
+    # ------------------------------------------------------------------
+    petty_cash_rubrique_classifier:
+      name: petty_cash_rubrique_classifier
+      batch_flush_seconds: *flush
+      kind: account_type
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: petty_cash_rubrique_prompt
+      children:
+        "6111_ACHATS_DE_MARCHANDISES": simpl_tva_extractor
+        "6121_ACHATS_DE_MATIERES": simpl_tva_extractor
+        "6125_FOURNITURES_DE_BUREAU": simpl_tva_extractor
+        "6131_LOCATIONS_CHARGES": simpl_tva_extractor
+        "6141_ETUDES_RECHERCHES": simpl_tva_extractor
+        "6145_FRAIS_DE_DEPLACEMENT": simpl_tva_extractor
+        "6147_SERVICES_BANCAIRES": simpl_tva_extractor
+        "6181_CHARGES_NON_DEDUCTIBLES": simpl_tva_extractor
+      default_child: simpl_tva_extractor
+
+    # ------------------------------------------------------------------
+    # STEP 3: LLM CASH-BASIS VAT EXTRACTION (SIMPL-TVA 6 FIELDS)
+    # ------------------------------------------------------------------
+    simpl_tva_extractor:
+      name: simpl_tva_extractor
+      batch_flush_seconds: *flush
+      kind: evaluation
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: simpl_tva_extractor_prompt
+      children:
+        "SIMPL_TVA_VALID": post_petty_cash_journal
+        "SIMPL_TVA_MISSING_FIELDS": hold_missing_vat_evidence
+        "SIMPL_TVA_INVALID_ICE": hold_invalid_ice
+      default_child: post_petty_cash_journal
+
+    # ------------------------------------------------------------------
+    # STEP 4: COMMIT FINAL JOURNAL ENTRY (DEBIT CLASS 6, CREDIT 5161)
+    # ------------------------------------------------------------------
+    post_petty_cash_journal:
+      name: post_petty_cash_journal
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_type: emit_resume_signal
+      default_child: petty_cash_complete
+
+    # ------------------------------------------------------------------
+    # HOLD & TERMINAL STATES
+    # ------------------------------------------------------------------
+    hold_caisse_creditrice:
+      name: hold_caisse_creditrice
+      kind: terminal
+      hold_state_signal: HOLD_CAISSE_CREDITRICE_PREVENTED
+      hold_reason_string: "Petty cash voucher would cause Compte 5161 (Caisse) balance to drop below 0 MAD, which is strictly prohibited under Moroccan tax law (CGI Art. 210/145)."
+      annotation:
+        tax_rule_code: "CGI Art. 210 & 145 (Solde Caisse Créditeur Interdit)"
+        document_required: "Pièce d'approvisionnement caisse (Retrait bancaire 5115 / Apport)"
+        instruction: "Comptabiliser préalablement l'approvisionnement en espèces pour rétablir un solde de caisse positif."
+        severity: "BLOCKING"
+
+    hold_missing_voucher:
+      name: hold_missing_voucher
+      kind: terminal
+      hold_state_signal: HOLD_MISSING_CASH_VOUCHER
+      hold_reason_string: "Physical cash voucher (Bon de caisse) is missing or unverified."
+      annotation:
+        tax_rule_code: "CGI Art. 145 (Pièce Justificative Caisse)"
+        document_required: "Bon de caisse signé / Reçu de paiement espèces"
+        instruction: "Obtenir le bon de caisse numéroté et signé par le bénéficiaire pour justifier la sortie d'espèces."
+        severity: "ACTION_REQUIRED"
+
+    hold_missing_vat_evidence:
+      name: hold_missing_vat_evidence
+      kind: terminal
+      hold_state_signal: HOLD_MISSING_VAT_EVIDENCE
+      hold_reason_string: "Mandatory SIMPL-TVA cash deduction fields are incomplete."
+      annotation:
+        tax_rule_code: "CGI Art. 125 & SIMPL-TVA (DGI)"
+        document_required: "Facture d'achat originale avec mentions légales complètes"
+        instruction: "Renseigner les 6 champs obligatoires du tableau de déduction SIMPL-TVA pour valider la déduction de TVA."
+        severity: "ACTION_REQUIRED"
+
+    hold_invalid_ice:
+      name: hold_invalid_ice
+      kind: terminal
+      hold_state_signal: HOLD_INVALID_ICE
+      hold_reason_string: "Vendor 15-digit Identifiant Commun de l'Entreprise (ICE) is missing or invalid."
+      annotation:
+        tax_rule_code: "CGI Art. 125 & 145 (ICE Obligatoire)"
+        document_required: "Facture originale avec ICE 15 chiffres"
+        instruction: "Collecter l'ICE valide auprès du fournisseur pour éviter le rejet du droit à déduction TVA sur SIMPL-TVA."
+        severity: "BLOCKING"
+
+
+    petty_cash_complete:
+      name: petty_cash_complete
+      kind: terminal
+      execution_parameters:
+        close_status: CLASSIFIED

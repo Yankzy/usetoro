@@ -13,7 +13,7 @@ func TestFact_StructFields(t *testing.T) {
 
 	fact := &Fact{
 		FactID:     factID,
-		RealmID:    "realm_123",
+		SessionID:  "realm_123",
 		Namespace:  "accounting",
 		EntityType: "invoice",
 		URI:        "fact:accounting:invoice:001",
@@ -24,8 +24,8 @@ func TestFact_StructFields(t *testing.T) {
 	if fact.FactID != factID {
 		t.Fatalf("expected factID %v, got %v", factID, fact.FactID)
 	}
-	if fact.RealmID != "realm_123" {
-		t.Fatalf("expected realm_123, got %s", fact.RealmID)
+	if fact.SessionID != "realm_123" {
+		t.Fatalf("expected realm_123, got %s", fact.SessionID)
 	}
 	if fact.URI != "fact:accounting:invoice:001" {
 		t.Fatalf("expected fact:accounting:invoice:001, got %s", fact.URI)
@@ -40,7 +40,7 @@ func TestRelationship_StructFields(t *testing.T) {
 
 	rel := &Relationship{
 		RelationshipID: relID,
-		RealmID:        "realm_123",
+		SessionID:      "session_123",
 		Namespace:      "accounting",
 		FromFactID:     fromID,
 		ToFactID:       toID,

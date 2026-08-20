@@ -61,10 +61,9 @@ func main() {
 	hyperParams, _ := json.Marshal(parsed.HyperParameters)
 	prompts, _ := json.Marshal(parsed.Prompts)
 
-	// Insert into DB as a global DAG (null tenant/realm)
+	// Insert into DB as a global DAG (null user_id)
 	_, err = queries.UpsertASEConfig(ctx, database.UpsertASEConfigParams{
-		TenantID:        pgtype.UUID{Valid: false},
-		RealmID:         pgtype.Text{Valid: false},
+		UserID:          pgtype.UUID{Valid: false},
 		Name:            "default_inbound_email",
 		DagConfig:       dagConfig,
 		HyperParameters: hyperParams,

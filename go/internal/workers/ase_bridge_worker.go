@@ -21,6 +21,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/internal/erp/ase/domain_tools"
+	_ "github.com/Yankzy/usetoro/internal/erp/ase/domain_tools/pcm_cash"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/workflows"
@@ -250,7 +251,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 		domainToolName := resumeEvt.DomainTool
 		if domainToolName == "" {
-			if cfg := ase.GetConfig("", "", dagName); cfg != nil && cfg.HyperParameters.DomainTool != "" {
+			if cfg := ase.GetConfig("", dagName); cfg != nil && cfg.HyperParameters.DomainTool != "" {
 				domainToolName = cfg.HyperParameters.DomainTool
 			} else {
 				w.logger.Error("ase_bridge: domain_tool not provided in event and not found in DAG config", "dag_name", dagName)
@@ -272,20 +273,18 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			return nil
 		}
 
-		tenantID := agent.TenantID
-		realmID := agent.RealmID
+		userID := agent.UserID
+		if userID == "" {
+			userID = agent.TenantID
+		}
 
 		// Lazily trigger config fetch, which returns the config from DB or cache
-		cfg := ase.GetConfig(tenantID, realmID, dagName)
+		cfg := ase.GetConfig(userID, dagName)
 
-		// Dynamically resolve the correct DAG instance for this tenant/realm
-		dagKey := ""
-		if tenantID != "" {
-			dagKey = dagName + "_" + tenantID
-		} else if realmID != "" {
-			dagKey = dagName + "_" + realmID
-		} else {
-			dagKey = dagName
+		// Dynamically resolve the correct DAG instance for this user
+		dagKey := dagName
+		if userID != "" {
+			dagKey = dagName + "_" + userID
 		}
 		dagToUse, _ := w.dags.Get(dagKey)
 
@@ -365,6 +364,10 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 			state := a.GetState()
 			if strings.HasPrefix(string(state), "HOLD_") {
+				if isDebugRun(a) {
+					w.logger.Info("ase_bridge: debug run hold alert suppressed", "node_id", a.NodeID, "state", state, "reason", a.GetHoldReason())
+					return
+				}
 				if dt, ok := a.Payload["domain_tool"].(string); ok && dt != "" {
 					if t := domain_tools.Get(dt); t != nil {
 						deps := w.buildDeps(t)
@@ -372,6 +375,11 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 						if pErr == nil && payload != nil {
 							if _, ok := payload["entity_id"]; !ok && a.TenantID != "" {
 								payload["entity_id"] = a.TenantID
+							}
+							entityID, _ := payload["entity_id"].(string)
+							if entityID == "" {
+								w.logger.Error("ase_bridge: suppressing hold alert without workflow entity", "node_id", a.NodeID, "state", state)
+								return
 							}
 							payloadBytes, _ := json.Marshal(payload)
 							ingressSubject, sErr := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
@@ -427,7 +435,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	if domainToolName == "" {
-		if cfg := ase.GetConfig("", "", dagName); cfg != nil && cfg.HyperParameters.DomainTool != "" {
+		if cfg := ase.GetConfig("", dagName); cfg != nil && cfg.HyperParameters.DomainTool != "" {
 			domainToolName = cfg.HyperParameters.DomainTool
 		} else {
 			w.logger.Error("ase_bridge: domain_tool not provided in task config and not found in DAG config", "dag_name", dagName)
@@ -451,24 +459,22 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 	if len(agents) == 0 {
 		w.logger.Info("ase_bridge: no agents to launch")
-		return nil
+		return fmt.Errorf("no agents to launch")
 	}
 
-	// Grab tenantID and realmID from the first agent to wire the DAG dynamically
-	tenantID := agents[0].TenantID
-	realmID := agents[0].RealmID
+	// Grab userID from the first agent to wire the DAG dynamically
+	userID := agents[0].UserID
+	if userID == "" {
+		userID = agents[0].TenantID
+	}
 
 	// Lazily trigger config fetch, which returns the config from DB or cache
-	cfg := ase.GetConfig(tenantID, realmID, dagName)
+	cfg := ase.GetConfig(userID, dagName)
 
-	// Dynamically resolve the correct DAG instance for this tenant/realm
-	dagKey := ""
-	if tenantID != "" {
-		dagKey = dagName + "_" + tenantID
-	} else if realmID != "" {
-		dagKey = dagName + "_" + realmID
-	} else {
-		dagKey = dagName
+	// Dynamically resolve the correct DAG instance for this user
+	dagKey := dagName
+	if userID != "" {
+		dagKey = dagName + "_" + userID
 	}
 	dagToUse, _ := w.dags.Get(dagKey)
 
@@ -518,8 +524,8 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	if dagToUse == nil {
-		w.logger.Error("ase_bridge: no matching DAG found", "tenantID", tenantID, "realmID", realmID, "dagName", dagName)
-		return nil
+		w.logger.Error("ase_bridge: no matching DAG found", "userID", userID, "dagName", dagName)
+		return fmt.Errorf("no matching DAG found for user %s and dagName %s", userID, dagName)
 	}
 
 	w.logger.Info("ase_bridge: launching agents", "count", len(agents))
@@ -542,7 +548,8 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 				}
 			})
 
-			if err := a.Run(ctx, dagToUse, deps.Store); err != nil {
+			debugStartNode, _ := a.Payload["debug_start_node"].(string)
+			if err := a.Resume(ctx, dagToUse, deps.Store, debugStartNode); err != nil {
 				w.logger.Error("ase_bridge: agent crashed", "node_id", a.NodeID, "error", err)
 				terminalOnce.Do(func() { doneCh <- struct{}{} })
 			}
@@ -552,6 +559,10 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 
 			state := a.GetState()
 			if strings.HasPrefix(string(state), "HOLD_") {
+				if isDebugRun(a) {
+					w.logger.Info("ase_bridge: debug run hold alert suppressed", "node_id", a.NodeID, "state", state, "reason", a.GetHoldReason())
+					return
+				}
 				if dt, ok := a.Payload["domain_tool"].(string); ok && dt != "" {
 					if t := domain_tools.Get(dt); t != nil {
 						deps := w.buildDeps(t)
@@ -559,6 +570,11 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 						if pErr == nil && payload != nil {
 							if _, ok := payload["entity_id"]; !ok && a.TenantID != "" {
 								payload["entity_id"] = a.TenantID
+							}
+							entityID, _ := payload["entity_id"].(string)
+							if entityID == "" {
+								w.logger.Error("ase_bridge: suppressing hold alert without workflow entity", "node_id", a.NodeID, "state", state)
+								return
 							}
 							payloadBytes, _ := json.Marshal(payload)
 							ingressSubject, sErr := core.BuildWorkerInboxFromActivity("workers.general_agent_ingress")
@@ -577,28 +593,79 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	w.logger.Info("ase_bridge: all agents completed")
 
 	sessionID := ""
+	stagingSessionID := ""
+	entityID := ""
+	realmID := ""
+
 	if len(agents) > 0 {
-		if sid, ok := agents[0].Payload["session_id"].(string); ok {
-			sessionID = sid
+		first := agents[0]
+
+		realmID = first.RealmID
+
+		if first.Payload != nil {
+			if v, ok := first.Payload["session_id"].(string); ok {
+				sessionID = v
+			}
+
+			if v, ok := first.Payload["staging_session_id"].(string); ok {
+				stagingSessionID = v
+			}
+
+			if v, ok := first.Payload["entity_id"].(string); ok {
+				entityID = v
+			}
+
+			if realmID == "" {
+				if v, ok := first.Payload["realm_id"].(string); ok {
+					realmID = v
+				}
+			}
 		}
 	}
 
-	if sessionID != "" {
-		w.logger.Info("ase_bridge: DAG classification completed for session", "session_id", sessionID)
+	// PCM currently uses the staging session as session_id.
+	// Keep both fields populated even if only session_id reached ASE.
+	if stagingSessionID == "" {
+		stagingSessionID = sessionID
+	}
+
+	proofData := map[string]interface{}{
+		"status":             "SUCCESS",
+		"session_id":         sessionID,
+		"staging_session_id": stagingSessionID,
+		"entity_id":          entityID,
+		"realm_id":           realmID,
+		"dag_name":           dagName,
+		"domain_tool":        domainToolName,
+		"agents_executed":    len(agents),
+	}
+	proofDataBytes, err := json.Marshal(proofData)
+	if err != nil {
+		return fmt.Errorf("ase_bridge: failed to marshal completion payload: %w", err)
+	}
+
+	proof := core.Proof{
+		Type:      core.ProofAPI,
+		Timestamp: time.Now().Unix(),
+		Data:      proofDataBytes,
 	}
 
 	cid := env.ConversationID
-	if cid != "" {
-		replyEnv := core.Envelope{
-			ID:             uuid.New().String(),
-			Timestamp:      time.Now().UTC(),
-			SenderDID:      "did:toro:ase-bridge",
-			ReceiverDID:    workflows.OrchestratorDID,
-			Performative:   core.INFORM,
-			ConversationID: cid,
-			Body:           env.Body, // Echo back the body
-		}
+	replyEnv := core.Envelope{
+		ID:             uuid.New().String(),
+		Timestamp:      time.Now().UTC(),
+		SenderDID:      "did:toro:ase-bridge",
+		ReceiverDID:    workflows.OrchestratorDID,
+		Performative:   core.INFORM,
+		ConversationID: cid,
+	}
 
+	replyEnv.Body, err = json.Marshal(proof)
+	if err != nil {
+		return fmt.Errorf("ase_bridge: failed to marshal completion proof: %w", err)
+	}
+
+	if cid != "" {
 		replyBytes, _ := json.Marshal(replyEnv)
 
 		targetSubject := msg.Reply
@@ -626,6 +693,11 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	}
 
 	return nil
+}
+
+func isDebugRun(a *ase.AutonomousSemanticEngineNode) bool {
+	debug, _ := a.Payload["debug_run"].(bool)
+	return debug
 }
 
 func (w *AseBridgeWorker) buildGenerateChannelDagFunc(channel string) ase.ThinkFunc {
@@ -773,13 +845,13 @@ func (w *AseBridgeWorker) buildActionProviderThinkFunc(actionProvider string) as
 			node.Mu.RUnlock()
 
 			req := map[string]interface{}{
-				"node_id":          nodeID,
-				"tenant_id":        tenantID,
-				"realm_id":         realmID,
-				"dag_name":         dagName,
-				"payload":          payload,
-				"context_updates":  ctxUpdates,
-				"action_provider":  actionProvider,
+				"node_id":         nodeID,
+				"tenant_id":       tenantID,
+				"realm_id":        realmID,
+				"dag_name":        dagName,
+				"payload":         payload,
+				"context_updates": ctxUpdates,
+				"action_provider": actionProvider,
 			}
 			reqBytes, err := json.Marshal(req)
 			if err != nil {
@@ -788,7 +860,11 @@ func (w *AseBridgeWorker) buildActionProviderThinkFunc(actionProvider string) as
 
 			// Respect configured llm_timeout_seconds from DAG configs
 			timeoutDuration := 120 * time.Second
-			if cfg := ase.GetConfig(tenantID, realmID, dagName); cfg != nil && cfg.HyperParameters.LLMTimeoutSeconds > 0 {
+			userID := node.UserID
+			if userID == "" {
+				userID = tenantID
+			}
+			if cfg := ase.GetConfig(userID, dagName); cfg != nil && cfg.HyperParameters.LLMTimeoutSeconds > 0 {
 				timeoutDuration = time.Duration(cfg.HyperParameters.LLMTimeoutSeconds) * time.Second
 			}
 
@@ -875,7 +951,11 @@ func (e *NatsRecoveryExecutor) ExecuteAction(ctx context.Context, actionID strin
 
 	// Use configured timeout or fallback to 120s
 	timeoutDuration := 120 * time.Second
-	if cfg := ase.GetConfig(tenantID, realmID, dagName); cfg != nil && cfg.HyperParameters.LLMTimeoutSeconds > 0 {
+	userID := node.UserID
+	if userID == "" {
+		userID = tenantID
+	}
+	if cfg := ase.GetConfig(userID, dagName); cfg != nil && cfg.HyperParameters.LLMTimeoutSeconds > 0 {
 		timeoutDuration = time.Duration(cfg.HyperParameters.LLMTimeoutSeconds) * time.Second
 	}
 
@@ -976,4 +1056,3 @@ func (e *NatsRecoveryExecutor) actionSearchDocumentStore(ctx context.Context, no
 
 	return false, nil
 }
-

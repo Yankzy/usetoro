@@ -5,7 +5,7 @@ x-nats-common: &nats-common
 
 services:
 
-  db:
+  torodb:
     build:
       context: ../
       dockerfile: container/torodb/Dockerfile
@@ -27,7 +27,7 @@ services:
       test: [ "CMD-SHELL", "pg_isready -h localhost -U toro" ]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
       start_period: 60s
     networks:
       - toro-net
@@ -62,7 +62,7 @@ services:
     volumes:
       - ../keys:/keys:ro
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       nats-1:
         condition: service_healthy
@@ -70,6 +70,7 @@ services:
       - toro-net
 
   python-worker:
+    image: yankz/usetoro:python-worker
     build:
       context: ../
       dockerfile: python-worker/Dockerfile
@@ -89,7 +90,7 @@ services:
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,fignode,public"
 
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       nats-1:
         condition: service_healthy
@@ -97,6 +98,7 @@ services:
       - toro-net
 
   protocol:
+    image: yankz/usetoro:protocol
     build:
       context: ../
       dockerfile: container/protocol/Dockerfile
@@ -136,7 +138,7 @@ services:
       AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
       AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME}
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       nats-1:
         condition: service_healthy
@@ -148,6 +150,7 @@ services:
       - ../go/internal/erp/ase/dags:/app/internal/erp/ase/dags
 
   sync:
+    image: yankz/usetoro:sync
     build:
       context: ../
       dockerfile: container/sync/Dockerfile
@@ -170,24 +173,7 @@ services:
       MAILPOOL_ENDPOINT: ${MAILPOOL_ENDPOINT}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
     depends_on:
-      db:
-        condition: service_healthy
-      nats-1:
-        condition: service_healthy
-    networks:
-      - toro-net
-
-  cdc-worker:
-    build:
-      context: ../
-      dockerfile: container/cdc-worker/Dockerfile
-    restart: always
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      NATS_URL: ${NATS_URL:-nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222}
-      PGOPTIONS: "-c search_path=toro_core,shadow_erp,public"
-    depends_on:
-      db:
+      torodb:
         condition: service_healthy
       nats-1:
         condition: service_healthy
@@ -195,6 +181,7 @@ services:
       - toro-net
 
   ws:
+    image: yankz/usetoro:ws
     build:
       context: ../
       dockerfile: container/ws/Dockerfile
@@ -221,7 +208,7 @@ services:
     volumes:
       - ../keys:/keys:ro
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       redis:
         condition: service_started
@@ -274,49 +261,8 @@ services:
     volumes:
       - nats_3_data:/data
 
-  # svix-redis:
-  #   image: redis:alpine
-  #   restart: always
-  #   command: [ "redis-server", "--appendonly", "yes" ]
-  #   volumes:
-  #     - svix_redis_data:/data
-  #   networks:
-  #     - toro-net
-
-  # svix-server:
-  #   image: svix/svix-server:v1.84.1
-  #   restart: always
-  #   environment:
-  #     SVIX_QUEUE_TYPE: redis
-  #     SVIX_DB_DSN: postgresql://toro:toro_password@db:5432/svix
-  #     SVIX_REDIS_DSN: redis://svix-redis:6379
-  #     SVIX_JWT_SECRET: ${SVIX_JWT_SECRET}
-  #   ports:
-  #     - "8071:8071"
-  #   depends_on:
-  #     - svix-redis
-  #     - db
-  #   networks:
-  #     - toro-net
-
-  # svix-ui:
-  #   build:
-  #     context: ../svixUI
-  #     dockerfile: Dockerfile
-  #   restart: always
-  #   environment:
-  #     SVIX_TOKEN: ${SVIX_EXAMPLE_TOKEN}
-  #     SVIX_WEBHOOK_SECRET: ${SVIX_EXAMPLE_WEBHOOK_SECRET}
-  #     SVIX_SERVER_URL: http://svix-server:8071
-  #     NEXT_PUBLIC_SVIX_API_URL: http://localhost:8071/api/v1
-  #   ports:
-  #     - "3000:3000"
-  #   depends_on:
-  #     - svix-server
-  #   networks:
-  #     - toro-net
-
   fignode:
+    image: yankz/usetoro:fignode
     build:
       context: ../
       dockerfile: container/fignode/Dockerfile
@@ -337,7 +283,7 @@ services:
     volumes:
       - ../keys:/keys:ro
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       redis:
         condition: service_started
@@ -347,6 +293,7 @@ services:
       - toro-net
 
   graphql:
+    image: yankz/usetoro:graphql
     build:
       context: ../
       dockerfile: container/graphql/Dockerfile
@@ -378,7 +325,7 @@ services:
     volumes:
       - ../keys:/keys # Mount keys directory
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
       redis:
         condition: service_started
@@ -388,6 +335,7 @@ services:
       - toro-net
 
   nginx:
+    image: yankz/usetoro:nginx
     build:
       context: ../
       dockerfile: container/nginx/Dockerfile
@@ -400,14 +348,14 @@ services:
       - toro-net
 
   migrator:
-    image: gomicro/goose
+    image: yankz/usetoro:migrator
     restart: on-failure
     command: >
-      sh -c "sleep 2 && goose -dir /migrations postgres \"postgres://toro:toro_password@db/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,fignode,public\" up"
+      sh -c "sleep 2 && goose -dir /migrations postgres \"postgres://toro:toro_password@torodb/toro?sslmode=disable&options=-c%20search_path=toro_core,shadow_erp,fignode,public\" up"
     volumes:
       - ../sql/schema:/migrations
     depends_on:
-      db:
+      torodb:
         condition: service_healthy
     networks:
       - toro-net

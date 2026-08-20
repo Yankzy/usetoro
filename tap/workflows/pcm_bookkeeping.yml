@@ -2,8 +2,48 @@ name: PCM Bookkeeping Workflow
 version: "2.0"
 trigger_topic: events.accounting.1.pcm_bookkeeping
 steps:
+  - id: document_readiness
+    activity_type: workers.document_readiness
+    negotiate: false
+    timeout: "60s"
+    description: "Verifies that all workflow documents have completed centralized CDC OCR and embedding ingestion before advancing to reconciliation."
+    workflow_schema: |
+      {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "from_handle": { "type": "string" },
+          "to_handle": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "external_id": { "type": "string" },
+          "reply_to": { "type": "string" },
+          "subject": { "type": "string" },
+          "body_text": { "type": "string" },
+          "agent_alias": { "type": "string" },
+          "document_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "document_id": { "type": "string" },
+                "name": { "type": "string" },
+                "content_type": { "type": "string" },
+                "s3_key": { "type": "string" },
+                "sha256": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+
   - id: pcm_worker
     activity_type: workers.pcm
+    depends_on:
+      - document_readiness
     negotiate: false
     timeout: "300s"
     description: "Ingests pre-extracted OCR documents from email/PDF attachments into staging transactions once all extractions complete."
@@ -20,21 +60,22 @@ steps:
           "subject": { "type": "string" },
           "body_text": { "type": "string" },
           "agent_alias": { "type": "string" },
-          "document_url": { "type": "string" },
+          "document_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "attachments": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
+                "document_id": { "type": "string" },
                 "name": { "type": "string" },
-                "document_url": { "type": "string" },
                 "content_type": { "type": "string" }
               }
             }
           },
-          "total_attachments": { "type": "integer" },
-          "ocr_extraction": { "type": "object" },
-          "ocr_extractions": { "type": "array" }
+          "documents": { "type": "array" }
         }
       }
 

@@ -34,17 +34,24 @@ RETURNING *;
 -- =========================================================================
 
 -- name: UpsertWorkflowBlueprint :one
-INSERT INTO toro_core.workflow_blueprints (name, trigger_topic, definition)
-VALUES (@name, @trigger_topic, @definition)
+INSERT INTO toro_core.workflow_blueprints (name, user_id, trigger_topic, definition)
+VALUES (@name, @user_id, @trigger_topic, @definition)
 ON CONFLICT (name) DO UPDATE
 SET trigger_topic = EXCLUDED.trigger_topic,
     definition    = EXCLUDED.definition,
+    user_id       = COALESCE(EXCLUDED.user_id, toro_core.workflow_blueprints.user_id),
     updated_at    = NOW()
 RETURNING *;
 
 -- name: GetWorkflowBlueprints :many
 SELECT *
 FROM toro_core.workflow_blueprints
+ORDER BY name;
+
+-- name: GetWorkflowBlueprintsByUser :many
+SELECT *
+FROM toro_core.workflow_blueprints
+WHERE user_id = $1 OR user_id IS NULL
 ORDER BY name;
 
 -- name: GetBlueprintByName :one

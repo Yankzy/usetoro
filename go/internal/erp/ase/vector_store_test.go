@@ -114,6 +114,9 @@ func TestVectorSourceTypeConstants(t *testing.T) {
 	if VectorSourceResolvedTx != "resolved_tx" {
 		t.Errorf("VectorSourceResolvedTx = %q, want 'resolved_tx'", VectorSourceResolvedTx)
 	}
+	if VectorSourceDocument != "document" {
+		t.Errorf("VectorSourceDocument = %q, want 'document'", VectorSourceDocument)
+	}
 }
 
 // TestMetaToJSON verifies the metadata serialization helper.

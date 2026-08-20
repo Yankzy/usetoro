@@ -14,6 +14,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/cdc"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/internal/erp/ase/knowledge_system"
+	"github.com/Yankzy/usetoro/internal/infra/vector"
 )
 
 func main() {
@@ -58,27 +59,54 @@ func main() {
 	logger := slog.Default().With("component", "torodb_engine")
 
 	// 3. Initialize Knowledge System Core (Epistemology)
+	var embedder *vector.Embedder
+	if openAIKey := os.Getenv("OPENAI_API_KEY"); openAIKey != "" {
+		var embErr error
+		embedder, embErr = vector.NewEmbedder(openAIKey, "text-embedding-3-small", 1536)
+		if embErr != nil {
+			logger.Warn("Failed to initialize vector Embedder in ToroDB", "error", embErr)
+		} else {
+			logger.Info("Vector Embedder successfully initialized for ToroDB.")
+		}
+	} else {
+		logger.Warn("OPENAI_API_KEY not set in environment; VectorHydrator will skip embedding generation.")
+	}
+
 	graphStore := knowledge_system.NewGraphStore(pool, logger)
 	docStore := knowledge_system.NewDocumentStore(pool, logger)
-	vectorStore := ase.NewVectorStore(pool, nil, logger)
+	vectorStore := ase.NewVectorStore(pool, embedder, logger)
 	ingestionEngine := knowledge_system.NewKnowledgeIngestionEngine(docStore, graphStore, vectorStore, logger)
 
 	// Register GraphContextProvider for ASE DAG micro-agent node execution
-	graphProvider := knowledge_system.NewGraphContextProvider(graphStore)
+	graphProvider := knowledge_system.NewGraphContextProvider(graphStore, docStore)
 	ase.RegisterContextProvider(graphProvider)
 
 	// Start VectorHydrator background worker
-	hydrator := ase.NewVectorHydrator(vectorStore, pool, nil, logger)
+	hydrator := ase.NewVectorHydrator(vectorStore, pool, embedder, logger)
 	go hydrator.Run(ctx)
 
 	logger.Info("Knowledge System Epistemological Core initialized.", "provider", graphProvider.Name())
 
-	// 4. Start Native CDC Replicator in background goroutine
+	// 4. Start Native CDC Replicator in background goroutine with auto-reconnect
 	go func() {
-		logger.Info("Starting native ToroDB CDC Replicator WAL tailer...", "nats_url", natsURL)
-		if err := cdc.RunReplicator(ctx, dbURL, natsURL); err != nil {
-			if err != context.Canceled {
-				logger.Error("Native CDC Replicator stopped with error", "error", err)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			logger.Info("Starting native ToroDB CDC Replicator WAL tailer...", "nats_url", natsURL)
+			if err := cdc.RunReplicator(ctx, dbURL, natsURL); err != nil {
+				if err == context.Canceled {
+					return
+				}
+				logger.Error("Native CDC Replicator stopped with error, retrying in 5s...", "error", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+				}
 			}
 		}
 	}()

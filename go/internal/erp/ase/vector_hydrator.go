@@ -200,6 +200,10 @@ func (h *VectorHydrator) embedPending(ctx context.Context, cfg VectorMemoryConfi
 		return fmt.Errorf("embed pending: fetch: %w", err)
 	}
 
+	if h.embedder == nil {
+		return fmt.Errorf("embedder is not initialized (OpenAI API key missing?)")
+	}
+
 	model := cfg.OpenAIEmbeddingModel
 	if model == "" {
 		model = "text-embedding-3-small"

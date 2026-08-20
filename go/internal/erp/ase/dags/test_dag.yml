@@ -1,0 +1,25 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  batch_flush_seconds: 1
+  domain_tool: "pcm_cash_accounting"
+
+dag:
+  entry_node: debug_terminal
+  nodes:
+    debug_terminal:
+      name: debug_terminal
+      kind: debug_terminal
+      batch_size: 1
+      batch_flush_seconds: 1
+      execution_parameters:
+        close_status: "CLASSIFIED"
+
+    check_existing_documents:
+      name: check_existing_documents
+      kind: gatekeeper
+      execution_parameters:
+        query_name: ""
+        query_description: ""
+        required_fields: []
+

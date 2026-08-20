@@ -37,7 +37,8 @@ type Querier interface {
 	// =========================================================================
 	CreateCleanupSession(ctx context.Context, arg CreateCleanupSessionParams) (CreateCleanupSessionRow, error)
 	CreateConversion(ctx context.Context, arg CreateConversionParams) (MarketingConversion, error)
-	CreateDocument(ctx context.Context, arg CreateDocumentParams) (ToroCoreDocument, error)
+	CreateCoreMasterPattern(ctx context.Context, arg CreateCoreMasterPatternParams) (CreateCoreMasterPatternRow, error)
+	CreateDocument(ctx context.Context, arg CreateDocumentParams) (CreateDocumentRow, error)
 	CreateEmployeeProfile(ctx context.Context, arg CreateEmployeeProfileParams) error
 	// =========================================================================
 	// Auth: Employee Registration & Login
@@ -46,18 +47,19 @@ type Querier interface {
 	CreateEnterpriseAgentAlias(ctx context.Context, arg CreateEnterpriseAgentAliasParams) (ToroCoreEnterpriseAgentAlias, error)
 	CreateEnterpriseDomain(ctx context.Context, arg CreateEnterpriseDomainParams) (ToroCoreEnterpriseDomain, error)
 	CreateEntity(ctx context.Context, arg CreateEntityParams) (pgtype.UUID, error)
-	CreateFact(ctx context.Context, arg CreateFactParams) (ToroCoreEnterpriseFact, error)
+	CreateFact(ctx context.Context, arg CreateFactParams) (CreateFactRow, error)
 	CreateLeadForm(ctx context.Context, arg CreateLeadFormParams) (MarketingLeadForm, error)
 	CreateMarketingList(ctx context.Context, arg CreateMarketingListParams) (MarketingList, error)
 	CreateMasterMerchant(ctx context.Context, arg CreateMasterMerchantParams) (FignodeMasterMerchant, error)
 	CreateMasterPattern(ctx context.Context, arg CreateMasterPatternParams) (FignodeMasterPattern, error)
 	CreateMemoryRule(ctx context.Context, arg CreateMemoryRuleParams) error
+	CreateMerchantMultilingualAlias(ctx context.Context, arg CreateMerchantMultilingualAliasParams) (CreateMerchantMultilingualAliasRow, error)
 	CreateOrGetWorkflow(ctx context.Context, arg CreateOrGetWorkflowParams) (ToroCoreWorkflow, error)
 	// session_id must point at a per-realm SYSTEM session (see GetOrCreateSystemSession).
 	CreateProposedTransaction(ctx context.Context, arg CreateProposedTransactionParams) (FignodeStagingTransaction, error)
 	CreateReconciliationTask(ctx context.Context, arg CreateReconciliationTaskParams) (ShadowErpReconciliationTask, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error
-	CreateRelationship(ctx context.Context, arg CreateRelationshipParams) (ToroCoreEnterpriseRelationship, error)
+	CreateRelationship(ctx context.Context, arg CreateRelationshipParams) (CreateRelationshipRow, error)
 	CreateRuleAuditLog(ctx context.Context, arg CreateRuleAuditLogParams) (ShadowErpRuleAuditLog, error)
 	CreateRuleCondition(ctx context.Context, arg CreateRuleConditionParams) (ShadowErpRuleCondition, error)
 	CreateRuleGroup(ctx context.Context, arg CreateRuleGroupParams) (ShadowErpRuleGroup, error)
@@ -75,8 +77,9 @@ type Querier interface {
 	DeleteStalledMessage(ctx context.Context, id pgtype.UUID) error
 	DeleteWorkflowBlueprint(ctx context.Context, name string) error
 	FindLastTouch(ctx context.Context, arg FindLastTouchParams) (MarketingEmailLog, error)
-	GetASEConfigByRealm(ctx context.Context, arg GetASEConfigByRealmParams) (ToroCoreAseDag, error)
-	GetASEConfigByTenant(ctx context.Context, arg GetASEConfigByTenantParams) (ToroCoreAseDag, error)
+	FindMerchantByExactMultilingualAlias(ctx context.Context, lower string) (FindMerchantByExactMultilingualAliasRow, error)
+	FindMerchantByFuzzyMultilingualAlias(ctx context.Context, similarity string) ([]FindMerchantByFuzzyMultilingualAliasRow, error)
+	GetASEConfigByUser(ctx context.Context, arg GetASEConfigByUserParams) (ToroCoreAseDag, error)
 	GetASEConfigGlobalByName(ctx context.Context, name string) (ToroCoreAseDag, error)
 	GetASEDagVersion(ctx context.Context, id pgtype.UUID) (ToroCoreAseDagVersion, error)
 	GetAccountByERPID(ctx context.Context, arg GetAccountByERPIDParams) (ShadowErpAccount, error)
@@ -106,6 +109,7 @@ type Querier interface {
 	GetAllVendorsForRealms(ctx context.Context, realmIds []string) ([]ShadowErpVendor, error)
 	GetAllWarmingEmailAccounts(ctx context.Context) ([]GetAllWarmingEmailAccountsRow, error)
 	GetAmbiguousProposals(ctx context.Context, arg GetAmbiguousProposalsParams) ([]FignodeStagingTransaction, error)
+	GetAnnualForeignServiceRunningTotal(ctx context.Context, arg GetAnnualForeignServiceRunningTotalParams) (GetAnnualForeignServiceRunningTotalRow, error)
 	GetApprovedRows(ctx context.Context, sessionID pgtype.UUID) ([]GetApprovedRowsRow, error)
 	GetAttachableByERPID(ctx context.Context, arg GetAttachableByERPIDParams) (ShadowErpAttachable, error)
 	GetAwaitingReplySessions(ctx context.Context) ([]ToroCoreConversationSession, error)
@@ -121,7 +125,9 @@ type Querier interface {
 	GetCheckingAccounts(ctx context.Context) ([]string, error)
 	GetCleanupRow(ctx context.Context, id pgtype.UUID) (GetCleanupRowRow, error)
 	GetCleanupSession(ctx context.Context, id pgtype.UUID) (GetCleanupSessionRow, error)
+	GetClientDossierByDossierCode(ctx context.Context, dossierCode string) (ShadowErpClientDossier, error)
 	GetClientDossierByRealm(ctx context.Context, realmID string) (ShadowErpClientDossier, error)
+	GetClientDossierByRealmOrCode(ctx context.Context, realmID string) (ShadowErpClientDossier, error)
 	GetCompanyInfo(ctx context.Context, realmID string) (ShadowErpCompanyInfo, error)
 	GetCompletedPcmSessions(ctx context.Context) ([]GetCompletedPcmSessionsRow, error)
 	GetConditionsByRuleGroups(ctx context.Context, ruleGroupIds []int32) ([]ShadowErpRuleCondition, error)
@@ -146,7 +152,7 @@ type Querier interface {
 	// Used by bootstrap_allocations.go.
 	GetDepositSplitPercentages(ctx context.Context, realmID string) ([]GetDepositSplitPercentagesRow, error)
 	GetDistinctMacroClassesUnmatched(ctx context.Context, sessionID pgtype.UUID) ([]pgtype.Text, error)
-	GetDocumentByID(ctx context.Context, id pgtype.UUID) (ToroCoreDocument, error)
+	GetDocumentByID(ctx context.Context, id pgtype.UUID) (GetDocumentByIDRow, error)
 	GetERPConnection(ctx context.Context, entityID pgtype.UUID) (ToroCoreErpConnection, error)
 	GetERPConnectionByRealm(ctx context.Context, arg GetERPConnectionByRealmParams) (ToroCoreErpConnection, error)
 	GetERPTokens(ctx context.Context, arg GetERPTokensParams) (GetERPTokensRow, error)
@@ -173,9 +179,10 @@ type Querier interface {
 	GetEntityDescendants(ctx context.Context, id pgtype.UUID) ([]pgtype.UUID, error)
 	GetEntityIDByEmail(ctx context.Context, email string) (pgtype.UUID, error)
 	GetExpenseAccountsFromPurchases(ctx context.Context, realmID string) ([]GetExpenseAccountsFromPurchasesRow, error)
-	GetFactByID(ctx context.Context, factID pgtype.UUID) (ToroCoreEnterpriseFact, error)
-	GetFactByURI(ctx context.Context, arg GetFactByURIParams) (ToroCoreEnterpriseFact, error)
+	GetFactByID(ctx context.Context, factID pgtype.UUID) (GetFactByIDRow, error)
+	GetFactByURI(ctx context.Context, arg GetFactByURIParams) (GetFactByURIRow, error)
 	GetFilteredAccountsForAI(ctx context.Context, arg GetFilteredAccountsForAIParams) ([]GetFilteredAccountsForAIRow, error)
+	GetForeignServiceRunningTotalForPeriod(ctx context.Context, arg GetForeignServiceRunningTotalForPeriodParams) (GetForeignServiceRunningTotalForPeriodRow, error)
 	GetHeldTransactionsBySession(ctx context.Context, sessionID pgtype.UUID) ([]GetHeldTransactionsBySessionRow, error)
 	// Finds customers with extreme variance across amounts and income accounts.
 	// Used by bootstrap_review_flags.go.
@@ -215,10 +222,13 @@ type Querier interface {
 	GetLatestLeaderboardSnapshot(ctx context.Context, period string) (GetLatestLeaderboardSnapshotRow, error)
 	GetListRevenueMetrics(ctx context.Context, listID pgtype.UUID) ([]GetListRevenueMetricsRow, error)
 	GetMasterMerchantByExactPattern(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error)
+	GetMasterMerchantByICE(ctx context.Context, ice pgtype.Text) (ToroCoreMasterMerchant, error)
+	GetMasterMerchantByID(ctx context.Context, id pgtype.UUID) (ToroCoreMasterMerchant, error)
 	GetMasterMerchantBySubstringPattern(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error)
 	GetMasterMerchantByTrigramSimilarity(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error)
 	GetMemoryRules(ctx context.Context, realmID string) ([]GetMemoryRulesRow, error)
 	GetNextAvailableEmailAccount(ctx context.Context, tenantID pgtype.UUID) (GetNextAvailableEmailAccountRow, error)
+	GetNonResidentForeignProviderByMerchantID(ctx context.Context, masterMerchantID pgtype.UUID) (ToroCoreNonResidentForeignProvider, error)
 	// Returns the SYSTEM session for a given realm, creating it if it does not exist.
 	// Used by non-CSV transaction stagers (rule engine, Plaid webhooks) to satisfy the
 	// session_id linkage now that realm_id has been removed from staging_transactions.
@@ -236,6 +246,7 @@ type Querier interface {
 	GetPendingJobsWindow(ctx context.Context, arg GetPendingJobsWindowParams) ([]ToroCoreScheduledJob, error)
 	GetPendingRealmRows(ctx context.Context, arg GetPendingRealmRowsParams) ([]GetPendingRealmRowsRow, error)
 	GetPendingSessionRows(ctx context.Context, sessionID pgtype.UUID) ([]GetPendingSessionRowsRow, error)
+	GetPendingSessionStagingTransactions(ctx context.Context, sessionID pgtype.UUID) ([]FignodeStagingTransaction, error)
 	// =========================================================================
 	// Rule evaluation worker
 	// =========================================================================
@@ -325,6 +336,7 @@ type Querier interface {
 	GetWebhookSecret(ctx context.Context, connectionID string) (string, error)
 	GetWorkflow(ctx context.Context, id pgtype.UUID) (ToroCoreWorkflow, error)
 	GetWorkflowBlueprints(ctx context.Context) ([]ToroCoreWorkflowBlueprint, error)
+	GetWorkflowBlueprintsByUser(ctx context.Context, userID pgtype.UUID) ([]ToroCoreWorkflowBlueprint, error)
 	GetWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error)
 	HasProspectInteracted(ctx context.Context, arg HasProspectInteractedParams) (bool, error)
 	IncrementEmailAccountSendCount(ctx context.Context, id pgtype.UUID) error
@@ -346,15 +358,18 @@ type Querier interface {
 	// Skip: Record a skip
 	// =========================================================================
 	InsertSkip(ctx context.Context, id pgtype.UUID) error
-	ListASEConfigsByTenant(ctx context.Context, tenantID pgtype.UUID) ([]ToroCoreAseDag, error)
+	ListASEConfigsByUser(ctx context.Context, userID pgtype.UUID) ([]ToroCoreAseDag, error)
 	ListASEDagVersions(ctx context.Context, dagID pgtype.UUID) ([]ListASEDagVersionsRow, error)
+	ListActiveNonResidentForeignProviders(ctx context.Context) ([]ListActiveNonResidentForeignProvidersRow, error)
 	ListAgentConfigurations(ctx context.Context) ([]ToroCoreAgentConfiguration, error)
 	ListAllASEConfigs(ctx context.Context) ([]ToroCoreAseDag, error)
+	ListAllMultilingualAliases(ctx context.Context) ([]ListAllMultilingualAliasesRow, error)
 	// Returns CSV sessions for a realm (when realm_id is provided) OR CSV sessions created by a user
 	// (when realm_id is NULL). Excludes SYSTEM/PLAID sessions which are not user-facing.
 	ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]ListCleanupSessionsRow, error)
-	ListFactsByRealmAndNamespace(ctx context.Context, arg ListFactsByRealmAndNamespaceParams) ([]ToroCoreEnterpriseFact, error)
-	ListPendingDocuments(ctx context.Context, limit int32) ([]ToroCoreDocument, error)
+	ListFactsBySessionAndNamespace(ctx context.Context, arg ListFactsBySessionAndNamespaceParams) ([]ListFactsBySessionAndNamespaceRow, error)
+	ListForeignServiceRunningTotalsForTenantPeriod(ctx context.Context, arg ListForeignServiceRunningTotalsForTenantPeriodParams) ([]ListForeignServiceRunningTotalsForTenantPeriodRow, error)
+	ListPendingDocuments(ctx context.Context, limit int32) ([]ListPendingDocumentsRow, error)
 	ListRelationshipsFromFact(ctx context.Context, fromFactID pgtype.UUID) ([]ListRelationshipsFromFactRow, error)
 	ListRelationshipsToFact(ctx context.Context, toFactID pgtype.UUID) ([]ListRelationshipsToFactRow, error)
 	ListUsersWithVCOO(ctx context.Context) ([]ListUsersWithVCOORow, error)
@@ -408,7 +423,7 @@ type Querier interface {
 	UpdateCustomerTaxonomy(ctx context.Context, arg UpdateCustomerTaxonomyParams) error
 	UpdateCustomerVectorSync(ctx context.Context, arg UpdateCustomerVectorSyncParams) error
 	UpdateDepositRuleID(ctx context.Context, arg UpdateDepositRuleIDParams) error
-	UpdateDocumentOCRStatus(ctx context.Context, arg UpdateDocumentOCRStatusParams) (ToroCoreDocument, error)
+	UpdateDocumentOCRStatus(ctx context.Context, arg UpdateDocumentOCRStatusParams) (UpdateDocumentOCRStatusRow, error)
 	UpdateERPTokens(ctx context.Context, arg UpdateERPTokensParams) error
 	UpdateEmailAccountStatus(ctx context.Context, arg UpdateEmailAccountStatusParams) error
 	UpdateEmailAccountWarmup(ctx context.Context, arg UpdateEmailAccountWarmupParams) error
@@ -438,6 +453,7 @@ type Querier interface {
 	UpdateStagingTransactionAccountType(ctx context.Context, arg UpdateStagingTransactionAccountTypeParams) error
 	UpdateStagingTransactionCashDirection(ctx context.Context, arg UpdateStagingTransactionCashDirectionParams) error
 	UpdateStagingTransactionMacroClass(ctx context.Context, arg UpdateStagingTransactionMacroClassParams) error
+	UpdateStagingTransactionMoroccanEnrichment(ctx context.Context, arg UpdateStagingTransactionMoroccanEnrichmentParams) error
 	UpdateStagingTransactionWithRule(ctx context.Context, arg UpdateStagingTransactionWithRuleParams) error
 	// =========================================================================
 	// Streak: Update & midnight reset
@@ -471,7 +487,12 @@ type Querier interface {
 	// Evict any connection the incoming entity already owns under a different realm
 	// before upserting, so the UNIQUE(entity_id) constraint never blocks a transfer.
 	UpsertERPTokens(ctx context.Context, arg UpsertERPTokensParams) error
+	UpsertForeignServiceRunningTotal(ctx context.Context, arg UpsertForeignServiceRunningTotalParams) (UpsertForeignServiceRunningTotalRow, error)
 	UpsertInvoice(ctx context.Context, arg UpsertInvoiceParams) error
+	// =========================================================================
+	// Dynamic Seeding & Continuous Learning Queries
+	// =========================================================================
+	UpsertMasterMerchant(ctx context.Context, arg UpsertMasterMerchantParams) (UpsertMasterMerchantRow, error)
 	UpsertPayment(ctx context.Context, arg UpsertPaymentParams) error
 	UpsertPurchase(ctx context.Context, arg UpsertPurchaseParams) error
 	UpsertSalesReceipt(ctx context.Context, arg UpsertSalesReceiptParams) error

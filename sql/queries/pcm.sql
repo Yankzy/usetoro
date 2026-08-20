@@ -49,6 +49,12 @@ SELECT * FROM fignode.canonical_vendors WHERE realm_id = $1;
 -- name: GetClientDossierByRealm :one
 SELECT * FROM shadow_erp.client_dossiers WHERE realm_id = $1 LIMIT 1;
 
+-- name: GetClientDossierByDossierCode :one
+SELECT * FROM shadow_erp.client_dossiers WHERE dossier_code = $1 LIMIT 1;
+
+-- name: GetClientDossierByRealmOrCode :one
+SELECT * FROM shadow_erp.client_dossiers WHERE realm_id = $1 OR dossier_code = $1 LIMIT 1;
+
 -- name: GetSageImportTemplate :one
 SELECT * FROM shadow_erp.sage_import_templates WHERE id = $1 LIMIT 1;
 

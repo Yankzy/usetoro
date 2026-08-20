@@ -197,7 +197,7 @@ func (tp *TelemetryPublisher) PublishGuardrailBlock(node *AutonomousSemanticEngi
 
 
 	threshold := 0.98
-	if cfg := GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
+	if cfg := GetConfig(node.UserID, node.DagName); cfg != nil {
 		threshold = cfg.HyperParameters.ConfidenceThreshold
 	}
 
@@ -249,7 +249,7 @@ func (tp *TelemetryPublisher) PublishCollapseReady(node *AutonomousSemanticEngin
 // is missing, suitable for routing to Slack or other virtual workforce channels.
 func formatContextRequest(node *AutonomousSemanticEngineNode) string {
 	threshold := 0.98
-	if cfg := GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
+	if cfg := GetConfig(node.UserID, node.DagName); cfg != nil {
 		threshold = cfg.HyperParameters.ConfidenceThreshold
 	}
 

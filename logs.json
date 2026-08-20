@@ -1,0 +1,55 @@
+{
+    "time": "2026-08-19T05:51:51.866941827Z",
+    "level": "INFO",
+    "msg": "DebugWorker",
+    "worker": "debug",
+    "DEBUG_PAYLOAD": {
+        "body": {
+            "complexity": 1,
+            "currency": "",
+            "domain": "workers.debug",
+            "expires_at": 0,
+            "id": "f87dfc41-7518-496f-b925-e419a811295e",
+            "payload": {
+                "data": {
+                    "input": {
+                        "agent_alias": "sarah",
+                        "attachments": [
+                            {
+                                "content_length": 2431,
+                                "content_type": "application/pdf",
+                                "document_id": "6d2f765a-2422-404e-a75d-a94c5a14b7d9",
+                                "name": "releve_bancaire.pdf",
+                                "s3_key": "ca7ebd8a-0d48-4a74-a429-7b764f96f22d-releve_bancaire.pdf",
+                                "sha256": "5e46b256ee01d073e80f779dbd24ff7fc1b1c9cc53717f60d1e2bd7279d6056b"
+                            }
+                        ],
+                        "body_text": "Run PCM Workflow",
+                        "document_ids": [
+                            "6d2f765a-2422-404e-a75d-a94c5a14b7d9"
+                        ],
+                        "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+                        "external_id": "c7ff8bcb-1fcd-4e7e-af3d-088c775a106e",
+                        "from_handle": "yankz@fignode.com",
+                        "reply_to": "",
+                        "session_id": "c8d416ac-69f2-429c-ac0c-9956e145fe9f",
+                        "subject": "Run payload test",
+                        "to_handle": "sarah@a.usetoro.io"
+                    }
+                },
+                "sig": "",
+                "task_id": "",
+                "ts": 1787118711,
+                "type": "proof.api"
+            },
+            "reward": 0,
+            "workflow_schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"session_id\": { \"type\": \"string\" },\n    \"from_handle\": { \"type\": \"string\" },\n    \"to_handle\": { \"type\": \"string\" },\n    \"entity_id\": { \"type\": \"string\" },\n    \"external_id\": { \"type\": \"string\" },\n    \"reply_to\": { \"type\": \"string\" },\n    \"subject\": { \"type\": \"string\" },\n    \"body_text\": { \"type\": \"string\" },\n    \"agent_alias\": { \"type\": \"string\" },\n    \"document_ids\": {\n      \"type\": \"array\",\n      \"items\": { \"type\": \"string\" }\n    },\n    \"attachments\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"document_id\": { \"type\": \"string\" },\n          \"name\": { \"type\": \"string\" },\n          \"content_type\": { \"type\": \"string\" },\n          \"s3_key\": { \"type\": \"string\" },\n          \"sha256\": { \"type\": \"string\" }\n        }\n      }\n    }\n  }\n}\n"
+        },
+        "cid": "f87dfc41-7518-496f-b925-e419a811295e/debug_worker",
+        "id": "d237c9a5-16aa-4218-9524-321e35bcff98",
+        "perf": "request",
+        "sig": "",
+        "src": "did:toro:orchestrator",
+        "ts": "2026-08-19T05:51:51.864321077Z"
+    }
+}

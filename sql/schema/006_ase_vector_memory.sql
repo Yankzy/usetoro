@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS toro_core.ase_vector_memory (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     realm_id      TEXT        NOT NULL,
     namespace     TEXT        NOT NULL DEFAULT 'general',
-    source_type   TEXT        NOT NULL CHECK (source_type IN ('memory_rule', 'resolved_tx')),
+    source_type   TEXT        NOT NULL CHECK (source_type IN ('memory_rule', 'resolved_tx', 'document', 'fact')),
     raw_text      TEXT        NOT NULL,
     embedding     vector(1536),              -- NULL until hydrated by VectorHydrator
     source_row_id UUID        NOT NULL,      -- PK of the originating row

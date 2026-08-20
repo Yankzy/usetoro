@@ -4,7 +4,7 @@ PY := $(ENV) && python manage.py
 PACKAGE ?= $(shell bash -c 'read -p "Package name: " package; echo $$package')
 BRANCH ?= $(shell bash -c 'read -p "Branch name: " branch; echo $$package')
 MSG ?= $(shell bash -c 'read -p "What is the commit message?: " commit message; echo $$commit message')
-# PRODUCTION_SERVER := 1
+PRODUCTION_SERVER := 1
 ENVIRONMENT := $(if $(PRODUCTION_SERVER),prod,dev)
 PROJECT_NAME := usetoro
 
@@ -18,8 +18,8 @@ DEPLOY_CONTEXT ?= droplet
 DOCKER_CONTEXT := docker --context $(DEPLOY_CONTEXT) compose -f container/docker-compose.prod.yml
 
 # App Services
-SERVICES := redis db gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync cdc-worker fignode protocol python-worker
-OUR_SERVICES := gate migrator nginx ws graphql sync cdc-worker fignode protocol python-worker
+SERVICES := redis torodb gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync fignode protocol python-worker
+OUR_SERVICES := torodb gate migrator nginx ws graphql sync fignode protocol python-worker
 
 # Allow passing service names as arguments, e.g., "make rebuild nginx" or "make restart nginx"
 ifneq ($(filter rebuild restart build_prod docker_context_prod_push deploy_second_mac build_run build_up two_stage,$(firstword $(MAKECMDGOALS))),)
@@ -95,9 +95,17 @@ build: create_networks
 build_no_cache: create_networks
 	$(DOCKER_COMPOSE) build --no-cache $(SERVICES)
 
-up: create_networks
+dev: create_networks
+	$(DOCKER_COMPOSE) up --build --remove-orphans
+
+up: 
+	$(MAKE) start-colima
+	$(MAKE) create_networks
 	$(DOCKER_COMPOSE) up --remove-orphans $(SERVICES)
-upd: create_networks
+
+upd: 
+	$(MAKE) start-colima
+	$(MAKE) create_networks
 	$(MAKE) vndr && $(DOCKER_COMPOSE) up -d --build --remove-orphans $(SERVICES) && $(MAKE) logs
 
 
@@ -140,7 +148,7 @@ restart:
 psql:
 	@echo "Enter DB_USER: "; \
 	read DB_USER; \
-	$(DOCKER_COMPOSE) exec db psql -U $$DB_USER -d db
+	$(DOCKER_COMPOSE) exec torodb psql -U $$DB_USER -d toro
 
 
 
@@ -172,6 +180,7 @@ create_networks:
 
 	
 prune:
+	$(MAKE) start-colima
 	docker builder prune -f && docker system prune --volumes -f
 
 install_make:
@@ -179,7 +188,8 @@ install_make:
 
 
 migrate:
-	$(DOCKER_COMPOSE) up migrator
+	$(MAKE) start-colima
+	$(DOCKER_COMPOSE) run --rm migrator
 
 sqlc:
 	~/go/bin/sqlc generate && $(MAKE) migrate
@@ -188,11 +198,13 @@ test:
 	cd go && GOWORK=off go test -mod=vendor ./...
 
 clean_db:
-	$(DOCKER_COMPOSE) down
+	$(DOCKER_COMPOSE) down -v
 	rm -rf container/postgres/db_data
 	rm -rf container/postgres/alloydb_data
-	$(MAKE) sqlc && $(MAKE) upd && \
-	cd go && go build -o ../bin/store-webhook-secret ./cmd/store-webhook-secret/main.go && .. && ./bin/store-webhook-secret
+	$(DOCKER_COMPOSE) up -d torodb
+	$(DOCKER_COMPOSE) run --rm migrator
+	~/go/bin/sqlc generate
+	cd go && go build -o ../bin/store-webhook-secret ./cmd/store-webhook-secret/main.go && cd .. && ./bin/store-webhook-secret
 
 scr:
 	scrcpy --window-title "iPhone"
@@ -207,7 +219,7 @@ rebuild_all:
 	$(MAKE) vndr && $(MAKE) down && $(MAKE) upd && $(MAKE) logs
 
 
-rebuild: fix-permissions
+rebuild:
 	@if [ -n "$(RUN_ARGS)" ]; then \
 		$(MAKE) down && $(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) build $(RUN_ARGS) && $(MAKE) up; \
 	else \
@@ -227,10 +239,14 @@ nats_consumers:
 
 
 build_prod:
-	docker compose -f container/docker-compose.prod.yml build $(if $(RUN_ARGS),$(RUN_ARGS),$(OUR_SERVICES))
+	GO_BUILD_TARGET=production docker compose -f container/docker-compose.prod.yml build $(if $(RUN_ARGS),$(RUN_ARGS),$(OUR_SERVICES))
+
+
+
+
 
 docker_context_prod_push:
-	$(MAKE) build_prod RUN_ARGS="$(RUN_ARGS)"
+	colima start
 	docker compose -f container/docker-compose.prod.yml push $(if $(RUN_ARGS),$(RUN_ARGS),$(OUR_SERVICES))
 
 docker_context_prod_up:
@@ -284,3 +300,20 @@ dev_protocol_docker: create_networks
 	docker compose -f container/docker-compose.yml up --build --no-deps protocol
 
 
+start-colima:
+	colima start --cpu 4 --memory 8 --disk 100 --mount-inotify
+	docker context use colima
+
+reset-colima:
+	colima delete && colima start --cpu 4 --memory 8 --disk 100 --mount-inotify
+
+stop-colima:
+	colima stop
+
+
+colima-status:
+	colima status
+
+
+delete-colima:
+	colima delete

@@ -14,8 +14,7 @@ import (
 
 type aseConfigJSON struct {
 	ID              pgtype.UUID        `json:"id"`
-	TenantID        pgtype.UUID        `json:"tenant_id"`
-	RealmID         pgtype.Text        `json:"realm_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
 	Name            string             `json:"name"`
 	DagConfig       []byte             `json:"dag_config,omitempty"`
 	HyperParameters []byte             `json:"hyper_parameters,omitempty"`
@@ -25,20 +24,23 @@ type aseConfigJSON struct {
 }
 
 func (h *Handler) HandleListASEConfigs(rw http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenant_id")
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		userID = r.URL.Query().Get("tenant_id")
+	}
 
 	var configs []database.ToroCoreAseDag
 	var err error
 
-	if tenantID == "" {
+	if userID == "" {
 		configs, err = h.DB.ListAllASEConfigs(r.Context())
 	} else {
-		uid, parseErr := uuid.Parse(tenantID)
+		uid, parseErr := uuid.Parse(userID)
 		if parseErr != nil {
-			http.Error(rw, "invalid tenant_id", http.StatusBadRequest)
+			http.Error(rw, "invalid user_id", http.StatusBadRequest)
 			return
 		}
-		configs, err = h.DB.ListASEConfigsByTenant(r.Context(), pgtype.UUID{Bytes: uid, Valid: true})
+		configs, err = h.DB.ListASEConfigsByUser(r.Context(), pgtype.UUID{Bytes: uid, Valid: true})
 	}
 
 	if err != nil {
@@ -51,8 +53,7 @@ func (h *Handler) HandleListASEConfigs(rw http.ResponseWriter, r *http.Request) 
 	for i, c := range configs {
 		resp[i] = aseConfigJSON{
 			ID:              c.ID,
-			TenantID:        c.TenantID,
-			RealmID:         c.RealmID,
+			UserID:          c.UserID,
 			Name:            c.Name,
 			DagConfig:       c.DagConfig,
 			HyperParameters: c.HyperParameters,
@@ -67,8 +68,10 @@ func (h *Handler) HandleListASEConfigs(rw http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) HandleGetASEConfig(rw http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenant_id")
-	realmID := r.URL.Query().Get("realm_id")
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		userID = r.URL.Query().Get("tenant_id")
+	}
 	name := r.URL.Query().Get("name")
 	if name == "" {
 		http.Error(rw, "name query parameter is required", http.StatusBadRequest)
@@ -78,21 +81,16 @@ func (h *Handler) HandleGetASEConfig(rw http.ResponseWriter, r *http.Request) {
 	var dbRow database.ToroCoreAseDag
 	var err error
 
-	if tenantID != "" {
-		uid, parseErr := uuid.Parse(tenantID)
+	if userID != "" {
+		uid, parseErr := uuid.Parse(userID)
 		if parseErr == nil {
-			dbRow, err = h.DB.GetASEConfigByTenant(r.Context(), database.GetASEConfigByTenantParams{
-				TenantID: pgtype.UUID{Bytes: uid, Valid: true},
-				Name:     name,
+			dbRow, err = h.DB.GetASEConfigByUser(r.Context(), database.GetASEConfigByUserParams{
+				UserID: pgtype.UUID{Bytes: uid, Valid: true},
+				Name:   name,
 			})
 		} else {
-			err = fmt.Errorf("invalid tenant UUID")
+			err = fmt.Errorf("invalid user UUID")
 		}
-	} else if realmID != "" {
-		dbRow, err = h.DB.GetASEConfigByRealm(r.Context(), database.GetASEConfigByRealmParams{
-			RealmID: pgtype.Text{String: realmID, Valid: true},
-			Name:    name,
-		})
 	} else {
 		dbRow, err = h.DB.GetASEConfigGlobalByName(r.Context(), name)
 	}
@@ -139,8 +137,8 @@ func (h *Handler) HandleUpsertASEConfig(rw http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		TenantID        string          `json:"tenant_id"`
-		RealmID         string          `json:"realm_id"`
+		UserID          string          `json:"user_id"`
+		TenantID        string          `json:"tenant_id,omitempty"`
 		Name            string          `json:"name"`
 		DagConfig       json.RawMessage `json:"dag"`
 		HyperParameters json.RawMessage `json:"hyper_parameters"`
@@ -157,22 +155,21 @@ func (h *Handler) HandleUpsertASEConfig(rw http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	uidStr := req.UserID
+	if uidStr == "" {
+		uidStr = req.TenantID
+	}
+
 	var uid pgtype.UUID
-	if req.TenantID != "" {
-		parsed, err := uuid.Parse(req.TenantID)
+	if uidStr != "" {
+		parsed, err := uuid.Parse(uidStr)
 		if err == nil {
 			uid = pgtype.UUID{Bytes: parsed, Valid: true}
 		}
 	}
 
-	var rid pgtype.Text
-	if req.RealmID != "" {
-		rid = pgtype.Text{String: req.RealmID, Valid: true}
-	}
-
 	cfg, err := h.DB.UpsertASEConfig(r.Context(), database.UpsertASEConfigParams{
-		TenantID:        uid,
-		RealmID:         rid,
+		UserID:          uid,
 		Name:            req.Name,
 		DagConfig:       req.DagConfig,
 		HyperParameters: req.HyperParameters,
@@ -185,8 +182,8 @@ func (h *Handler) HandleUpsertASEConfig(rw http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ase.InvalidateConfigCache(req.TenantID, req.RealmID, req.Name)
-	ase.GetConfig(req.TenantID, req.RealmID, req.Name)
+	ase.InvalidateConfigCache(uidStr, req.Name)
+	ase.GetConfig(uidStr, req.Name)
 
 	rw.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(rw).Encode(cfg)
@@ -344,24 +341,19 @@ func (h *Handler) HandleRestoreASEDagVersion(rw http.ResponseWriter, r *http.Req
 	}
 
 	// Invalidate cache
-	tenantIDStr := ""
-	if updated.TenantID.Valid {
-		tenantIDStr = uuid.UUID(updated.TenantID.Bytes).String()
+	userIDStr := ""
+	if updated.UserID.Valid {
+		userIDStr = uuid.UUID(updated.UserID.Bytes).String()
 	}
-	realmIDStr := ""
-	if updated.RealmID.Valid {
-		realmIDStr = updated.RealmID.String
-	}
-	ase.InvalidateConfigCache(tenantIDStr, realmIDStr, updated.Name)
+	ase.InvalidateConfigCache(userIDStr, updated.Name)
 
 	// Fetch current configuration to force reload & return
-	ase.GetConfig(tenantIDStr, realmIDStr, updated.Name)
+	ase.GetConfig(userIDStr, updated.Name)
 
 	rw.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(rw).Encode(aseConfigJSON{
 		ID:              updated.ID,
-		TenantID:        updated.TenantID,
-		RealmID:         updated.RealmID,
+		UserID:          updated.UserID,
 		Name:            updated.Name,
 		DagConfig:       updated.DagConfig,
 		HyperParameters: updated.HyperParameters,

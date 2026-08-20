@@ -14,6 +14,7 @@ import (
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
+	"github.com/go-pdf/fpdf"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -452,4 +453,25 @@ func ExportToCSV(headers []string, rows [][]string, delimiter rune) ([]byte, err
 // This delegates to ExportToCSV but can be extended for PNM-specific formatting.
 func ExportToPNM(headers []string, rows [][]string, delimiter rune) ([]byte, error) {
 	return ExportToCSV(headers, rows, delimiter)
+}
+
+func convertImageToPDF(imgBytes []byte, contentType string) ([]byte, error) {
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	var opts fpdf.ImageOptions
+	switch {
+	case strings.Contains(contentType, "png"):
+		opts.ImageType = "png"
+	case strings.Contains(contentType, "jpeg"), strings.Contains(contentType, "jpg"):
+		opts.ImageType = "jpg"
+	default:
+		opts.ImageType = "png"
+	}
+	pdf.RegisterImageOptionsReader("img", opts, bytes.NewReader(imgBytes))
+	pdf.ImageOptions("img", 10, 10, 190, 0, false, opts, 0, "")
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

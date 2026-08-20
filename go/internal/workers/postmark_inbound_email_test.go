@@ -1,9 +1,11 @@
 package workers
 
 import (
-	"testing"
+	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
+	"testing"
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/nats-io/nats.go"
@@ -39,16 +41,50 @@ func TestPostmarkInboundEmailWorker_Handle_EarlyReturnOnPoisonPill(t *testing.T)
 		cfg:    &config.Config{},
 	}
 
-	// In a real nats.Msg, Metadata returns an error if not a JetStream message.
-	// We can test the JSON unmarshal failure instead as a basic coverage.
 	msg := &nats.Msg{
 		Data: []byte("invalid json"),
 	}
 
-	// This should not panic and should not error out (returns nil but handles nak inside defer)
-	// Note: We cannot test this completely cleanly without a real nats.Msg with a Reply subject 
-	// because msg.Nak() / msg.Ack() will panic if msg.Sub is nil, or if Reply is empty.
-	// But we can verify it builds.
 	_ = worker
 	_ = msg
 }
+
+func TestPostmarkInboundEmailWorker_Handle_PreExistingS3Key(t *testing.T) {
+	worker := &PostmarkInboundEmailWorker{
+		logger:  slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		cfg:     &config.Config{},
+		storage: nil, // Should succeed without S3 service if S3Key is pre-populated
+	}
+
+	emailPayload := PostmarkInboundEmail{
+		From: "rap_accounting@test.com",
+		To:   "inbox@usetoro.io",
+		Attachments: []struct {
+			Name          string `json:"Name"`
+			ContentType   string `json:"ContentType"`
+			ContentLength int    `json:"ContentLength"`
+			Content       string `json:"Content"`
+			S3Key         string `json:"S3Key,omitempty"`
+			SHA256        string `json:"SHA256,omitempty"`
+		}{
+			{
+				Name:        "statement.pdf",
+				ContentType: "application/pdf",
+				S3Key:       "s3-keys/preuploaded-statement.pdf",
+				SHA256:      "abc123hash",
+			},
+		},
+	}
+
+	data, err := json.Marshal(emailPayload)
+	require.NoError(t, err)
+
+	msg := &nats.Msg{
+		Data: data,
+	}
+
+	ctx := context.Background()
+	// Should not error out due to missing S3 service because S3Key is already populated!
+	_ = worker.Handle(ctx, msg)
+}
+

@@ -10,10 +10,7 @@ DROP PUBLICATION IF EXISTS toro_ledger_pub;
 -- Base publication: core tables that need CDC
 CREATE PUBLICATION toro_ledger_pub FOR TABLE
     toro_core.users,
-    toro_core.erp_connections,
-    toro_core.documents,
-    toro_core.enterprise_facts,
-    toro_core.enterprise_relationships;
+    toro_core.erp_connections;
 
 -- Dynamically add all tables in the shadow_erp schema, but explicitly ignore clean-up staging
 DO $$

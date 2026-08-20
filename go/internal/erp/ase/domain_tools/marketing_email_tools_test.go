@@ -64,7 +64,7 @@ func TestMarketingStore_PersistReadyForSync(t *testing.T) {
 	store := NewMarketingStore(nil, cfg)
 
 	// Create a node with COLD_OUTREACH intent
-	node := ase.NewASENode("tenant-123", "realm-123", "marketing_email", map[string]interface{}{
+	node := ase.NewASENode("tenant-123", "marketing_email", map[string]interface{}{
 		"email": "lead@company.com",
 	})
 	node.Candidates = map[string][]ase.ProbabilityCandidate{

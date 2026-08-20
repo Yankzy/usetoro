@@ -11,52 +11,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getASEConfigByRealm = `-- name: GetASEConfigByRealm :one
-SELECT id, tenant_id, realm_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
-WHERE realm_id = $1 AND name = $2
+const getASEConfigByUser = `-- name: GetASEConfigByUser :one
+SELECT id, user_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
+WHERE user_id = $1 AND name = $2
 LIMIT 1
 `
 
-type GetASEConfigByRealmParams struct {
-	RealmID pgtype.Text
-	Name    string
+type GetASEConfigByUserParams struct {
+	UserID pgtype.UUID
+	Name   string
 }
 
-func (q *Queries) GetASEConfigByRealm(ctx context.Context, arg GetASEConfigByRealmParams) (ToroCoreAseDag, error) {
-	row := q.db.QueryRow(ctx, getASEConfigByRealm, arg.RealmID, arg.Name)
+func (q *Queries) GetASEConfigByUser(ctx context.Context, arg GetASEConfigByUserParams) (ToroCoreAseDag, error) {
+	row := q.db.QueryRow(ctx, getASEConfigByUser, arg.UserID, arg.Name)
 	var i ToroCoreAseDag
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
-		&i.RealmID,
-		&i.Name,
-		&i.DagConfig,
-		&i.HyperParameters,
-		&i.Prompts,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getASEConfigByTenant = `-- name: GetASEConfigByTenant :one
-SELECT id, tenant_id, realm_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
-WHERE tenant_id = $1 AND name = $2
-LIMIT 1
-`
-
-type GetASEConfigByTenantParams struct {
-	TenantID pgtype.UUID
-	Name     string
-}
-
-func (q *Queries) GetASEConfigByTenant(ctx context.Context, arg GetASEConfigByTenantParams) (ToroCoreAseDag, error) {
-	row := q.db.QueryRow(ctx, getASEConfigByTenant, arg.TenantID, arg.Name)
-	var i ToroCoreAseDag
-	err := row.Scan(
-		&i.ID,
-		&i.TenantID,
-		&i.RealmID,
+		&i.UserID,
 		&i.Name,
 		&i.DagConfig,
 		&i.HyperParameters,
@@ -68,8 +39,8 @@ func (q *Queries) GetASEConfigByTenant(ctx context.Context, arg GetASEConfigByTe
 }
 
 const getASEConfigGlobalByName = `-- name: GetASEConfigGlobalByName :one
-SELECT id, tenant_id, realm_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
-WHERE tenant_id IS NULL AND realm_id IS NULL AND name = $1
+SELECT id, user_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
+WHERE user_id IS NULL AND name = $1
 LIMIT 1
 `
 
@@ -78,8 +49,7 @@ func (q *Queries) GetASEConfigGlobalByName(ctx context.Context, name string) (To
 	var i ToroCoreAseDag
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
-		&i.RealmID,
+		&i.UserID,
 		&i.Name,
 		&i.DagConfig,
 		&i.HyperParameters,
@@ -112,8 +82,8 @@ func (q *Queries) GetASEDagVersion(ctx context.Context, id pgtype.UUID) (ToroCor
 }
 
 const getDefaultASEConfig = `-- name: GetDefaultASEConfig :one
-SELECT id, tenant_id, realm_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
-WHERE tenant_id IS NULL AND realm_id IS NULL AND name = 'default'
+SELECT id, user_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
+WHERE user_id IS NULL AND name = 'default'
 LIMIT 1
 `
 
@@ -122,8 +92,7 @@ func (q *Queries) GetDefaultASEConfig(ctx context.Context) (ToroCoreAseDag, erro
 	var i ToroCoreAseDag
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
-		&i.RealmID,
+		&i.UserID,
 		&i.Name,
 		&i.DagConfig,
 		&i.HyperParameters,
@@ -134,14 +103,14 @@ func (q *Queries) GetDefaultASEConfig(ctx context.Context) (ToroCoreAseDag, erro
 	return i, err
 }
 
-const listASEConfigsByTenant = `-- name: ListASEConfigsByTenant :many
-SELECT id, tenant_id, realm_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
-WHERE tenant_id = $1
+const listASEConfigsByUser = `-- name: ListASEConfigsByUser :many
+SELECT id, user_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
+WHERE user_id = $1
 ORDER BY updated_at DESC
 `
 
-func (q *Queries) ListASEConfigsByTenant(ctx context.Context, tenantID pgtype.UUID) ([]ToroCoreAseDag, error) {
-	rows, err := q.db.Query(ctx, listASEConfigsByTenant, tenantID)
+func (q *Queries) ListASEConfigsByUser(ctx context.Context, userID pgtype.UUID) ([]ToroCoreAseDag, error) {
+	rows, err := q.db.Query(ctx, listASEConfigsByUser, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -151,8 +120,7 @@ func (q *Queries) ListASEConfigsByTenant(ctx context.Context, tenantID pgtype.UU
 		var i ToroCoreAseDag
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
-			&i.RealmID,
+			&i.UserID,
 			&i.Name,
 			&i.DagConfig,
 			&i.HyperParameters,
@@ -210,7 +178,7 @@ func (q *Queries) ListASEDagVersions(ctx context.Context, dagID pgtype.UUID) ([]
 }
 
 const listAllASEConfigs = `-- name: ListAllASEConfigs :many
-SELECT id, tenant_id, realm_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
+SELECT id, user_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at FROM toro_core.ase_dags
 ORDER BY updated_at DESC
 `
 
@@ -225,8 +193,7 @@ func (q *Queries) ListAllASEConfigs(ctx context.Context) ([]ToroCoreAseDag, erro
 		var i ToroCoreAseDag
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
-			&i.RealmID,
+			&i.UserID,
 			&i.Name,
 			&i.DagConfig,
 			&i.HyperParameters,
@@ -251,7 +218,7 @@ SET dag_config = $2,
     prompts = $4,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, tenant_id, realm_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at
+RETURNING id, user_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at
 `
 
 type UpdateASEConfigByIDParams struct {
@@ -271,8 +238,7 @@ func (q *Queries) UpdateASEConfigByID(ctx context.Context, arg UpdateASEConfigBy
 	var i ToroCoreAseDag
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
-		&i.RealmID,
+		&i.UserID,
 		&i.Name,
 		&i.DagConfig,
 		&i.HyperParameters,
@@ -285,28 +251,26 @@ func (q *Queries) UpdateASEConfigByID(ctx context.Context, arg UpdateASEConfigBy
 
 const upsertASEConfig = `-- name: UpsertASEConfig :one
 INSERT INTO toro_core.ase_dags (
-    tenant_id,
-    realm_id,
+    user_id,
     name,
     dag_config,
     hyper_parameters,
     prompts,
     updated_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, NOW()
+    $1, $2, $3, $4, $5, NOW()
 )
-ON CONFLICT (tenant_id, realm_id, name)
+ON CONFLICT ON CONSTRAINT uq_ase_dags_user_name
 DO UPDATE SET
     dag_config = EXCLUDED.dag_config,
     hyper_parameters = EXCLUDED.hyper_parameters,
     prompts = EXCLUDED.prompts,
     updated_at = NOW()
-RETURNING id, tenant_id, realm_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at
+RETURNING id, user_id, name, dag_config, hyper_parameters, prompts, created_at, updated_at
 `
 
 type UpsertASEConfigParams struct {
-	TenantID        pgtype.UUID
-	RealmID         pgtype.Text
+	UserID          pgtype.UUID
 	Name            string
 	DagConfig       []byte
 	HyperParameters []byte
@@ -315,8 +279,7 @@ type UpsertASEConfigParams struct {
 
 func (q *Queries) UpsertASEConfig(ctx context.Context, arg UpsertASEConfigParams) (ToroCoreAseDag, error) {
 	row := q.db.QueryRow(ctx, upsertASEConfig,
-		arg.TenantID,
-		arg.RealmID,
+		arg.UserID,
 		arg.Name,
 		arg.DagConfig,
 		arg.HyperParameters,
@@ -325,8 +288,7 @@ func (q *Queries) UpsertASEConfig(ctx context.Context, arg UpsertASEConfigParams
 	var i ToroCoreAseDag
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
-		&i.RealmID,
+		&i.UserID,
 		&i.Name,
 		&i.DagConfig,
 		&i.HyperParameters,

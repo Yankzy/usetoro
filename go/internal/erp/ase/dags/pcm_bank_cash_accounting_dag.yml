@@ -1,0 +1,325 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  max_llm_retries: 3
+  llm_timeout_seconds: 120
+  batch_flush_seconds: 5
+  active_agent_ttl_minutes: 10
+  lock_ttl_seconds: 30
+  domain_tool: "pcm_cash_accounting"
+  expected_properties: 2
+
+prompts:
+  _shared_guardrails: &guardrails |
+    ### CONFIDENCE GUARDRAILS
+    - CRITICAL: "Confidence" does NOT mean "how sure are you of your answer". It means "should this transaction automatically progress to the next node of the DAG?".
+    - The system has a strict guardrail: if your top candidate's confidence is < 0.98, the transaction will be placed on HOLD and will NOT progress.
+    - If the transaction is fully compliant and should progress, you MUST set the highest score to >= 0.98.
+    - If you determine the transaction is NON-COMPLIANT (e.g. ambiguous bank charge, missing check slip, missing foreign tax residency cert) and MUST be placed on HOLD, you MUST intentionally set the highest score to < 0.98 (e.g. 0.85).
+    - Because confidence is probability distribution, candidates map MUST contain at least 2 candidates.
+    - EXTREMELY IMPORTANT: When you intentionally set the confidence to < 0.98 to trigger a hold, you MUST write your `reasoning` as a highly detailed DIRECT INSTRUCTION to the email/TAP agent.
+
+  bank_transaction_classifier_prompt:
+    - |
+      You are an expert Moroccan PCGM Bank Statement accountant (Compte 5141 - Banque).
+      Analyze the unstructured bank statement description string and use semantic judgment to classify the transaction type:
+
+      STATUTORY CLASSIFICATION GUIDANCE & RULE SPECIFICATIONS:
+      * BANK_FEE_COMMISSION — Bank service charges, account maintenance fees, wire fees, or overdraft interest/agios.
+        Rule: Bank fees (Account 614700) and agios (Account 631100) are subject to a statutory 10% VAT rate (deductible into Account 345520).
+      * TRANSIT_TRANSFER_5115 — Fund transfers between internal bank accounts or cash withdrawals to replenish petty cash box.
+        Rule: Must route through Account 511500 (Virements de fonds) to clear net transfers to exactly 0 MAD across statements.
+      * CHECK_OR_BILL_CLEARING — Bank debits/credits clearing previously issued or received checks (Accounts 5111/5143) or bills of exchange / LCN (Accounts 3425/4415/5520).
+        Rule: Links statement clearing date to uncleared instrument ledger entries.
+      * FOREIGN_VENDOR_OR_RENT — Payments to non-resident foreign software/services vendors or commercial property lease payments.
+        Rule A (Foreign Services): Payments to non-resident foreign entities (AWS, Google Cloud, SaaS) trigger a 10% Retenue à la Source (RAS) tax withholding credited to Account 445800 at payment time.
+        Rule B (Commercial Rent): Lease payments for commercial property trigger a 5% Retenue à la Source (RAS) tax withholding credited to Account 445800 at payment time.
+      * SUPPLIER_PAYMENT_4411 — Direct wire or bank payment to domestic vendors (Account 4411).
+      * CUSTOMER_RECEIPT_3421 — Direct bank deposit or wire receipt from customers (Account 3421).
+      * HOLD_AMBIGUOUS_BANK_LINE — Description is unidentifiable and requires human accountant review or situation memory lookup.
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+                "property": "bank_transaction_intent",
+                "candidates": {
+                  "1": { "value": "BANK_FEE_COMMISSION", "confidence": 0.98, "reasoning": "Standard bank commission charges identified." },
+                  "2": { "value": "HOLD_AMBIGUOUS_BANK_LINE", "confidence": 0.02, "reasoning": "Fallback category." }
+                }
+              }
+            }
+          }
+        ]
+
+  simpl_tva_extractor_prompt:
+    - |
+      You are a Moroccan DGI Tax Specialist for Cash-Basis VAT (Régime d'encaissement).
+
+      STATUTORY CASH-BASIS VAT RULE & GUIDANCE:
+      Under Moroccan cash-basis VAT rules, input VAT becomes deductible ONLY upon actual bank disbursement or deposit date.
+      To qualify for VAT reporting on official tax declarations, the statement line must extract 6 mandatory metadata fields:
+      1. Payment Date — Exact bank clearing date.
+      2. Payment Mode — Method of settlement (Virement, Chèque, Carte, Effet).
+      3. Reference Number — Bank transaction reference, check number, or operation code.
+      4. Counterparty Name — Full legal name of vendor or client.
+      5. 15-digit ICE — The unique 15-digit Identifiant Commun de l'Entreprise assigned to Moroccan entities.
+      6. VAT Breakdown — Clear identification of HT amount, statutory VAT rate (20%, 14%, 10%, 7%, 0%), and VAT amount.
+
+      Candidates for property "simpl_tva_status":
+      - SIMPL_TVA_VALID: All 6 mandatory fields present and valid (ICE is valid 15-digit string).
+      - SIMPL_TVA_MISSING_FIELDS: One or more required fields missing from statement line.
+      - SIMPL_TVA_INVALID_ICE: Counterparty ICE is missing or not a valid 15-digit numerical format.
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+                "property": "simpl_tva_status",
+                "candidates": {
+                  "1": { "value": "SIMPL_TVA_VALID", "confidence": 0.98, "reasoning": "All 6 required DGI fields and valid 15-digit ICE present." },
+                  "2": { "value": "SIMPL_TVA_MISSING_FIELDS", "confidence": 0.02, "reasoning": "Missing field fallback." }
+                }
+              }
+            }
+          }
+        ]
+
+
+# ====================================================================
+# DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY - BANK CASH ACCOUNTING (5141)
+# ====================================================================
+dag:
+  entry_node: bank_cash_ingress
+  nodes:
+
+    # ------------------------------------------------------------------
+    # STEP 0: BANK STATEMENT INGRESS ROUTING
+    # ------------------------------------------------------------------
+    bank_cash_ingress:
+      name: bank_cash_ingress
+      batch_flush_seconds: &flush 5
+      kind: initial_router
+      batch_size: &bsize 50
+      edge_type: &estatic static
+      execution_parameters:
+        payload_key: raw_description
+      default_child: bank_transaction_classifier
+
+    # ------------------------------------------------------------------
+    # STEP 1: LLM SEMANTIC CLASSIFICATION OF TRANSACTION TYPE
+    # ------------------------------------------------------------------
+    bank_transaction_classifier:
+      name: bank_transaction_classifier
+      batch_flush_seconds: *flush
+      kind: macro_classifier
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: bank_transaction_classifier_prompt
+      children:
+        debug_terminal: debug_terminal
+      #   BANK_FEE_COMMISSION: bank_fee_agios_splitter
+      #   TRANSIT_TRANSFER_5115: transit_reconciler_node
+      #   CHECK_OR_BILL_CLEARING: pending_instruments_matcher
+      #   FOREIGN_VENDOR_OR_RENT: ras_tax_evaluator
+      #   SUPPLIER_PAYMENT_4411: simpl_tva_extractor
+      #   CUSTOMER_RECEIPT_3421: simpl_tva_extractor
+      #   HOLD_AMBIGUOUS_BANK_LINE: hold_ambiguous_bank_line
+      # default_child: simpl_tva_extractor
+
+    # # ------------------------------------------------------------------
+    # # STEP 2A: DETERMINISTIC 10% BANK FEE & AGIOS AUTO-SPLITTER
+    # # ------------------------------------------------------------------
+    # bank_fee_agios_splitter:
+    #   name: bank_fee_agios_splitter
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_fee_splitter
+    #   children:
+    #     SPLIT_SUCCESS: simpl_tva_extractor
+    #     HOLD_AMBIGUOUS_FEE: hold_ambiguous_bank_fee
+    #   default_child: simpl_tva_extractor
+
+    # # ------------------------------------------------------------------
+    # # STEP 2B: DETERMINISTIC 5115 TRANSIT ACCOUNT ZERO-NETTING
+    # # ------------------------------------------------------------------
+    # transit_reconciler_node:
+    #   name: transit_reconciler_node
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: transit_reconciler
+    #   children:
+    #     NETTING_ZERO_MATCH: post_bank_cash_journal
+    #     HOLD_UNMATCHED_TRANSIT: hold_unmatched_transit_pair
+    #   default_child: post_bank_cash_journal
+
+    # # ------------------------------------------------------------------
+    # # STEP 2C: DETERMINISTIC PENDING INSTRUMENTS MATCHER (5111/5143/3425)
+    # # ------------------------------------------------------------------
+    # pending_instruments_matcher:
+    #   name: pending_instruments_matcher
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: pending_instruments_matcher
+    #   children:
+    #     MATCH_CLEARED: simpl_tva_extractor
+    #     HOLD_UNMATCHED_INSTRUMENT: hold_unmatched_check_slip
+    #   default_child: simpl_tva_extractor
+
+    # # ------------------------------------------------------------------
+    # # STEP 2D: DETERMINISTIC WITHHOLDING TAX EVALUATOR (10%/5% RAS 4458)
+    # # ------------------------------------------------------------------
+    # ras_tax_evaluator:
+    #   name: ras_tax_evaluator
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: ras_tax_evaluator
+    #   children:
+    #     RAS_APPLIED: simpl_tva_extractor
+    #     HOLD_RAS_AMBIGUITY: hold_ras_tax_ambiguity
+    #   default_child: simpl_tva_extractor
+
+    # # ------------------------------------------------------------------
+    # # STEP 3: LLM CASH-BASIS VAT EXTRACTION (SIMPL-TVA 6 FIELDS)
+    # # ------------------------------------------------------------------
+    # simpl_tva_extractor:
+    #   name: simpl_tva_extractor
+    #   batch_flush_seconds: *flush
+    #   kind: evaluation
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   prompt_key: simpl_tva_extractor_prompt
+    #   children:
+    #     SIMPL_TVA_VALID: post_bank_cash_journal
+    #     SIMPL_TVA_MISSING_FIELDS: hold_missing_vat_evidence
+    #     SIMPL_TVA_INVALID_ICE: hold_invalid_ice
+    #   default_child: post_bank_cash_journal
+
+    # # ------------------------------------------------------------------
+    # # STEP 4: COMMIT FINAL JOURNAL ENTRY (5141 BANQUE)
+    # # ------------------------------------------------------------------
+    # post_bank_cash_journal:
+    #   name: post_bank_cash_journal
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_type: emit_resume_signal
+    #   default_child: bank_cash_complete
+
+    # # ------------------------------------------------------------------
+    # # HOLD & TERMINAL STATES
+    # # ------------------------------------------------------------------
+    # hold_ambiguous_bank_line:
+    #   name: hold_ambiguous_bank_line
+    #   kind: terminal
+    #   hold_state_signal: HOLD_AMBIGUOUS_BANK_LINE
+    #   hold_reason_string: "Bank statement description is ambiguous and requires human accountant review or situation memory lookup."
+    #   annotation:
+    #     tax_rule_code: "PCGM / Diligence Comptable"
+    #     document_required: "Justificatif de dépense / Facture / Contrat"
+    #     instruction: "Vérifier la nature de l'opération auprès du client et imputer au compte de charge ou de tiers approprié."
+    #     severity: "ACTION_REQUIRED"
+
+    # hold_ambiguous_bank_fee:
+    #   name: hold_ambiguous_bank_fee
+    #   kind: terminal
+    #   hold_state_signal: HOLD_AMBIGUOUS_BANK_FEE
+    #   hold_reason_string: "Bank fee cannot be split deterministically into 10% VAT and HT charges."
+    #   annotation:
+    #     tax_rule_code: "CGI Art. 89 (TVA Bancaire 10%)"
+    #     document_required: "Avis d'opéré bancaire / Relevé d'agios"
+    #     instruction: "Vérifier la décomposition HT et TVA 10% sur l'avis d'opéré bancaire émis par la banque."
+    #     severity: "WARNING"
+
+    # hold_unmatched_transit_pair:
+    #   name: hold_unmatched_transit_pair
+    #   kind: terminal
+    #   hold_state_signal: HOLD_UNMATCHED_TRANSIT_PAIR
+    #   hold_reason_string: "Single-sided transit movement in Account 5115 does not have a matching counterpart to clear to 0 MAD."
+    #   annotation:
+    #     tax_rule_code: "PCGM Compte 5115 (Virements de fonds)"
+    #     document_required: "Relevé bancaire du second compte bancaire (compte miroir)"
+    #     instruction: "Rapprocher le virement interne avec le relevé de l'autre compte bancaire pour solder le compte 5115."
+    #     severity: "ACTION_REQUIRED"
+
+    # hold_unmatched_check_slip:
+    #   name: hold_unmatched_check_slip
+    #   kind: terminal
+    #   hold_state_signal: HOLD_UNMATCHED_CHECK_SLIP
+    #   hold_reason_string: "Uncleared check or trade bill cannot be matched against bank statement settlement line."
+    #   annotation:
+    #     tax_rule_code: "PCGM Comptes 5111 / 5143 / 3425"
+    #     document_required: "Bordereau de remise de chèque ou copie LCN"
+    #     instruction: "Lettrer l'encaissement avec le bordereau de remise pour apurer le compte d'effets/chèques à l'encaissement."
+    #     severity: "ACTION_REQUIRED"
+
+    # hold_ras_tax_ambiguity:
+    #   name: hold_ras_tax_ambiguity
+    #   kind: terminal
+    #   hold_state_signal: HOLD_RAS_TAX_AMBIGUITY
+    #   hold_reason_string: "Foreign service or rent payment requires tax residency certificate or withholding clarification."
+    #   annotation:
+    #     tax_rule_code: "CGI Art. 15 (RAS 10%) / CGI Art. 160 (RAS 5%)"
+    #     document_required: "Certificat de résidence fiscale étranger / Contrat de bail commercial"
+    #     instruction: "Exiger le certificat de résidence fiscale étranger pour justifier l'exonération ou comptabiliser la retenue (Compte 445800)."
+    #     severity: "ACTION_REQUIRED"
+
+    # hold_missing_vat_evidence:
+    #   name: hold_missing_vat_evidence
+    #   kind: terminal
+    #   hold_state_signal: HOLD_MISSING_VAT_EVIDENCE
+    #   hold_reason_string: "Mandatory SIMPL-TVA cash deduction fields are incomplete."
+    #   annotation:
+    #     tax_rule_code: "CGI Art. 125 & SIMPL-TVA (DGI)"
+    #     document_required: "Facture d'achat originale avec mentions légales complètes"
+    #     instruction: "Renseigner les 6 champs obligatoires du tableau de déduction SIMPL-TVA pour valider le droit à déduction."
+    #     severity: "ACTION_REQUIRED"
+
+    # hold_invalid_ice:
+    #   name: hold_invalid_ice
+    #   kind: terminal
+    #   hold_state_signal: HOLD_INVALID_ICE
+    #   hold_reason_string: "Counterparty 15-digit Identifiant Commun de l'Entreprise (ICE) is missing or invalid."
+    #   annotation:
+    #     tax_rule_code: "CGI Art. 125 & 145 (ICE Obligatoire)"
+    #     document_required: "Facture originale avec ICE 15 chiffres"
+    #     instruction: "Collecter l'ICE valide auprès du fournisseur pour éviter le rejet du droit à déduction TVA sur SIMPL-TVA."
+    #     severity: "BLOCKING"
+
+    # bank_cash_complete:
+    #   name: bank_cash_complete
+    #   kind: terminal
+    #   execution_parameters:
+    #     close_status: CLASSIFIED
+
+    debug_terminal:
+      name: debug_terminal
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: terminal

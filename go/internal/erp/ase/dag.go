@@ -17,16 +17,17 @@ type DAGNodeKind string
 // Each node accepts transaction agents, batches them, and routes results
 // to child nodes.
 type DAGNode struct {
-	ID                  string      `json:"id"`
-	Kind                DAGNodeKind `json:"kind"`
-	Name                string      `json:"name"`
-	AutoAdvance         *bool       `json:"auto_advance"`
-	PromptKey           string      `json:"prompt_key"`
-	EdgeType            string      `json:"edge_type"`
-	DynamicEdgeProvider string      `json:"dynamic_edge_provider"`
-	HoldStateSignal     string      `json:"hold_state_signal"`
-	HoldReasonString    string      `json:"hold_reason_string"`
-	Email               *EmailTemplate `json:"email"`
+	ID                  string              `json:"id"`
+	Kind                DAGNodeKind         `json:"kind"`
+	Name                string              `json:"name"`
+	AutoAdvance         *bool               `json:"auto_advance"`
+	PromptKey           string              `json:"prompt_key"`
+	EdgeType            string              `json:"edge_type"`
+	DynamicEdgeProvider string              `json:"dynamic_edge_provider"`
+	HoldStateSignal     string              `json:"hold_state_signal"`
+	HoldReasonString    string              `json:"hold_reason_string"`
+	Email               *EmailTemplate      `json:"email"`
+	Annotation          *AnnotationTemplate `json:"annotation"`
 
 	// Batching
 	queue      []*AutonomousSemanticEngineNode
@@ -57,6 +58,7 @@ type DAGNode struct {
 	resumeChild *DAGNode
 
 	logger  *slog.Logger
+	dag     *DAG
 	ctx     context.Context
 	cancel  context.CancelFunc
 	stopped chan struct{}
@@ -87,11 +89,15 @@ type DAG struct {
 
 // NewDAG creates a new classification DAG with the given entry node.
 func NewDAG(entryNode *DAGNode, nodes map[string]*DAGNode, logger *slog.Logger) *DAG {
-	return &DAG{
+	dag := &DAG{
 		EntryNode: entryNode,
 		Nodes:     nodes,
 		logger:    logger,
 	}
+	for _, node := range nodes {
+		node.dag = dag
+	}
+	return dag
 }
 
 // Route determines the entry point for a transaction agent into the DAG.
@@ -124,6 +130,7 @@ func NewDAGNode(id string, kind DAGNodeKind, name string, batchSize int, batchFl
 		HoldStateSignal:     cfg.HoldStateSignal,
 		HoldReasonString:    cfg.HoldReasonString,
 		Email:               cfg.Email,
+		Annotation:          cfg.Annotation,
 		ExecutionParams:     cfg.ExecutionParams,
 		ContextConfig:       cfg.Context,
 		RecoveryPolicy:      cfg.RecoveryPolicy,
@@ -290,6 +297,15 @@ func (dn *DAGNode) flush() {
 			} else {
 				node.Mu.Lock()
 				node.HoldReason = dn.HoldReasonString
+				if dn.Annotation != nil {
+					if node.Payload == nil {
+						node.Payload = make(map[string]any)
+					}
+					node.Payload["tax_rule_code"] = dn.Annotation.TaxRuleCode
+					node.Payload["document_required"] = dn.Annotation.DocumentRequired
+					node.Payload["instruction"] = dn.Annotation.Instruction
+					node.Payload["severity"] = dn.Annotation.Severity
+				}
 				node.Mu.Unlock()
 				node.transition(NodeState(dn.HoldStateSignal))
 			}
@@ -327,17 +343,16 @@ func (dn *DAGNode) flush() {
 		return
 	}
 
-
 	// 3) AutoAdvance Halt
 	// If auto_advance is false, halt the node BEFORE thinking, unless it was human approved.
 	autoAdv := true
 	if len(batch) > 0 {
 		node := batch[0]
-		if cfg := GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
+		if cfg := GetConfig(node.UserID, node.DagName); cfg != nil {
 			autoAdv = cfg.HyperParameters.AutoAdvance
 		}
 	} else {
-		if cfg := GetConfig("", "", "default"); cfg != nil {
+		if cfg := GetConfig("", "default"); cfg != nil {
 			autoAdv = cfg.HyperParameters.AutoAdvance
 		}
 	}
@@ -471,11 +486,20 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 	}
 	dn.mu.Unlock()
 
+	// Per-run debug checkpoints are carried on the micro-agent payload so the
+	// production DAG topology remains unchanged. A successful target node is
+	// routed to the terminal where its complete trace is printed.
+	if stopAfter, _ := node.Payload["debug_stop_after_node"].(string); stopAfter != "" && stopAfter == dn.ID && dn.dag != nil {
+		if debugTerminal := dn.dag.GetNode("debug_terminal"); debugTerminal != nil {
+			child = debugTerminal
+		}
+	}
+
 	// Enforce strict top candidate confidence guardrail at each routing step (unless routing to debug_terminal).
 	isDebugTarget := (child != nil && (child.ID == "debug_terminal" || child.Name == "debug_terminal" || child.Kind == "debug_terminal")) || strings.EqualFold(routeKey, "debug_terminal")
 	if !isDebugTarget {
 		threshold := 0.98
-		cfg := GetConfig(node.TenantID, node.RealmID, node.DagName)
+		cfg := GetConfig(node.UserID, node.DagName)
 		if cfg != nil && cfg.HyperParameters.ConfidenceThreshold > 0 {
 			threshold = cfg.HyperParameters.ConfidenceThreshold
 		}
@@ -512,7 +536,7 @@ func (dn *DAGNode) routeToChild(node *AutonomousSemanticEngineNode, propertyKey 
 				}
 			} else {
 				node.Mu.Lock()
-				cfg := GetConfig(node.TenantID, node.RealmID, node.DagName)
+				cfg := GetConfig(node.UserID, node.DagName)
 				if cfg != nil {
 					node.HoldReason = fmt.Sprintf("Unified Confidence Score below %v structural threshold.", cfg.HyperParameters.ConfidenceThreshold)
 				} else {
@@ -587,7 +611,7 @@ func BuildDAGFromConfig(cfg DAGConfig, logger *slog.Logger) *DAG {
 	nodesMap := make(map[string]*DAGNode)
 
 	defaultBatchFlush := 5 * time.Second
-	if config := GetConfig("", "", "default"); config != nil && config.HyperParameters.BatchFlushSeconds > 0 {
+	if config := GetConfig("", "default"); config != nil && config.HyperParameters.BatchFlushSeconds > 0 {
 		defaultBatchFlush = time.Duration(config.HyperParameters.BatchFlushSeconds) * time.Second
 	}
 
@@ -716,6 +740,8 @@ func (d *DAG) UpdateFromConfig(cfg DAGConfig, logger *slog.Logger) {
 		node.DynamicEdgeProvider = nCfg.DynamicEdgeProvider
 		node.HoldStateSignal = nCfg.HoldStateSignal
 		node.HoldReasonString = nCfg.HoldReasonString
+		node.Email = nCfg.Email
+		node.Annotation = nCfg.Annotation
 		node.ExecutionParams = nCfg.ExecutionParams
 		node.ContextConfig = nCfg.Context
 		node.batchSize = nCfg.BatchSize
@@ -871,8 +897,8 @@ func printDebugTerminalState(dn *DAGNode, batch []*AutonomousSemanticEngineNode)
 			}
 		}
 		node.Mu.RUnlock()
-		sb.WriteString("--------------------------------------------------------------------------------\n")
 	}
+	sb.WriteString("DAG finished\n")
 	sb.WriteString("================================================================================\n")
 	fmt.Print(sb.String())
 
@@ -920,6 +946,29 @@ func (dn *DAGNode) applyHoldPolicyOrTransition(node *AutonomousSemanticEngineNod
 			dn.logger.Warn("ase_dag: Layer 3 Recovery Policy evaluation failed", "error", err)
 		}
 	}
+
+	node.Mu.Lock()
+	if dn.Annotation != nil {
+		if node.Payload == nil {
+			node.Payload = make(map[string]any)
+		}
+		if dn.Annotation.TaxRuleCode != "" {
+			node.Payload["tax_rule_code"] = dn.Annotation.TaxRuleCode
+		}
+		if dn.Annotation.DocumentRequired != "" {
+			node.Payload["document_required"] = dn.Annotation.DocumentRequired
+		}
+		if dn.Annotation.Instruction != "" {
+			node.Payload["instruction"] = dn.Annotation.Instruction
+		}
+		if dn.Annotation.Severity != "" {
+			node.Payload["severity"] = dn.Annotation.Severity
+		}
+	}
+	if dn.HoldReasonString != "" && node.HoldReason == "" {
+		node.HoldReason = dn.HoldReasonString
+	}
+	node.Mu.Unlock()
 
 	node.transition(fallbackState)
 }

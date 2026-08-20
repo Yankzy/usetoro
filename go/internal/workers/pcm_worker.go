@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/conversation"
 	"github.com/Yankzy/usetoro/internal/database"
-	"github.com/Yankzy/usetoro/internal/infra"
 	csvmapping "github.com/Yankzy/usetoro/tap/agents/csv_mapping"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/identity"
@@ -22,26 +23,19 @@ import (
 )
 
 type PcmWorker struct {
-	db      *database.Queries
-	logger  *slog.Logger
-	cfg     *config.Config
-	nc      *nats.Conn
-	storage infra.S3Service
+	db     *database.Queries
+	logger *slog.Logger
+	cfg    *config.Config
+	nc     *nats.Conn
 }
 
 func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
-		storageSvc, err := infra.NewS3Service(deps.Config)
-		if err != nil {
-			deps.Logger.Warn("PcmWorker: S3 storage not configured", "error", err)
-		}
-
 		return &PcmWorker{
-			db:      deps.Store.Queries,
-			logger:  deps.Logger.With("worker", "pcm"),
-			cfg:     deps.Config,
-			nc:      deps.Queue,
-			storage: storageSvc,
+			db:     deps.Store.Queries,
+			logger: deps.Logger.With("worker", "pcm"),
+			cfg:    deps.Config,
+			nc:     deps.Queue,
 		}, nil
 	})
 }
@@ -53,6 +47,7 @@ func (w *PcmWorker) Init(ctx context.Context) error {
 
 func (w *PcmWorker) Subscriptions() []SubscriptionConfig {
 	_, workerCfg := w.cfg.Workers.GetForWorker(w)
+
 	activityType := workerCfg.ActivityType
 	if activityType == "" {
 		activityType = "workers.pcm"
@@ -85,20 +80,56 @@ func (w *PcmWorker) Subscriptions() []SubscriptionConfig {
 	}
 }
 
-// PcmParsedDocument represents a structured document (e.g. bank statement or invoice) extracted by OCR.
-type PcmParsedDocument struct {
-	Type string                 `json:"type"`
-	Data map[string]interface{} `json:"data"`
+// PcmReadyDocument is the document contract emitted by document_readiness.
+//
+// PCM does not query ToroDB for OCR results anymore. document_readiness owns
+// readiness verification and retrieval of RawOCRJSON.
+//
+// Expected shape:
+//
+//	{
+//	  "document_id": "...",
+//	  "ocr_status": "EMBEDDINGS_SUCCESS",
+//	  "raw_ocr_json": { ... }
+//	}
+type PcmReadyDocument struct {
+	DocumentID string          `json:"document_id"`
+	OCRStatus  string          `json:"ocr_status"`
+	RawOCRJSON json.RawMessage `json:"raw_ocr_json"`
 }
 
-// PcmAttachment represents an email document attachment with presigned S3 URL.
+// PcmParsedDocument is PCM's normalized representation of an OCR document.
+//
+// RawOCRJSON is converted into this representation before staging ingestion.
+// Document metadata is retained so later PCM processing can reason about the
+// source document without another database lookup.
+type PcmParsedDocument struct {
+	DocumentID    string                       `json:"document_id,omitempty"`
+	OCRStatus     string                       `json:"ocr_status,omitempty"`
+	Type          string                       `json:"type"`
+	FileName      string                       `json:"file_name,omitempty"`
+	Data          map[string]interface{}       `json:"data"`
+	ColumnMapping *csvmapping.LLMColumnMapping `json:"column_mapping,omitempty"`
+	Confidence    float64                      `json:"confidence,omitempty"`
+}
+
+// PcmAttachment represents source attachment metadata.
+//
+// document_url remains for backwards compatibility with older direct PCM
+// invocation paths. Workflow execution normally uses DocumentID/S3Key.
 type PcmAttachment struct {
+	DocumentID  string `json:"document_id,omitempty"`
 	Name        string `json:"name,omitempty"`
 	DocumentURL string `json:"document_url,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
+	S3Key       string `json:"s3_key,omitempty"`
+	SHA256      string `json:"sha256,omitempty"`
 }
 
-// PcmOCRExtraction holds OCR parsing results returned from the Python OCR agent.
+// PcmOCRExtraction is the canonical OCR extraction structure.
+//
+// These fields correspond directly to the structure stored inside
+// documents[].raw_ocr_json.
 type PcmOCRExtraction struct {
 	DocType       string                       `json:"doc_type"`
 	FileName      string                       `json:"file_name,omitempty"`
@@ -107,384 +138,1083 @@ type PcmOCRExtraction struct {
 	Confidence    float64                      `json:"confidence"`
 }
 
-// PcmInboundMessage represents the incoming payload delivered via NATS to PcmWorker.
+// PcmInboundMessage is the workflow contract consumed by PcmWorker.
+//
+// The primary OCR input is Documents. OCRExtraction/OCRExtractions remain only
+// as migration compatibility for callers that have not yet adopted
+// document_readiness.
 type PcmInboundMessage struct {
-	EntityID         string             `json:"entity_id,omitempty"`
-	SessionID        string             `json:"session_id"`
-	ConversationID   string             `json:"conversation_id,omitempty"`
-	ExternalID       string             `json:"external_id"`
-	FromHandle       string             `json:"from_handle"`
-	ToHandle         string             `json:"to_handle"`
-	ReplyTo          string             `json:"reply_to"`
-	Subject          string             `json:"subject"`
-	BodyText         string             `json:"body_text"`
-	AgentAlias       string             `json:"agent_alias"`
-	DocumentURL      string             `json:"document_url,omitempty"`
+	EntityID       string `json:"entity_id,omitempty"`
+	SessionID      string `json:"session_id"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	ExternalID     string `json:"external_id"`
+	FromHandle     string `json:"from_handle"`
+	ToHandle       string `json:"to_handle"`
+	ReplyTo        string `json:"reply_to"`
+	Subject        string `json:"subject"`
+	BodyText       string `json:"body_text"`
+	AgentAlias     string `json:"agent_alias"`
+
+	DocumentIDs      []string           `json:"document_ids,omitempty"`
 	Attachments      []PcmAttachment    `json:"attachments,omitempty"`
-	AttachmentIndex  int                `json:"attachment_index"`
-	TotalAttachments int                `json:"total_attachments"`
+	DocumentVerified bool               `json:"document_verified,omitempty"`
+	Documents        []PcmReadyDocument `json:"documents,omitempty"`
+
+	// Legacy inputs.
+	DocumentURL      string             `json:"document_url,omitempty"`
+	AttachmentIndex  int                `json:"attachment_index,omitempty"`
+	TotalAttachments int                `json:"total_attachments,omitempty"`
 	OCRExtraction    PcmOCRExtraction   `json:"ocr_extraction,omitempty"`
 	OCRExtractions   []PcmOCRExtraction `json:"ocr_extractions,omitempty"`
 }
 
-// Handle processes incoming PCM tasks delivered via NATS.
-// It resolves user identity, handles delegation to Python OCR when extractions are pending,
-// ingests bank statement transactions into database staging, and responds to the Orchestrator or downstream DAG.
+// Handle processes an incoming PCM workflow task.
+//
+// The normal workflow is:
+//
+//	document_readiness
+//	    |
+//	    | documents[].raw_ocr_json
+//	    v
+//	pcm_worker
+//	    |
+//	    | normalized transactions
+//	    v
+//	staging_transactions
+//
+// PcmWorker deliberately does not perform document readiness checks or query
+// the document store. Those responsibilities belong to document_readiness.
 func (w *PcmWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	reqEnv, inbound, err := w.parseInboundMessage(msg)
 	if err != nil {
 		return err
 	}
 
-	w.logger.Info("PcmWorker: processing pre-extracted OCR matching task", "from", inbound.FromHandle, "to", inbound.ToHandle)
+	w.logger.Info(
+		"PcmWorker: processing pre-extracted OCR task",
+		"from", inbound.FromHandle,
+		"to", inbound.ToHandle,
+		"document_count", len(inbound.Documents),
+		"document_verified", inbound.DocumentVerified,
+	)
 
-	entityID, session, realmID, sessionIDStr, err := w.resolveEntityAndSession(ctx, &inbound)
+	entityID, session, realmID, conversationSessionID, err := w.resolveEntityAndSession(
+		ctx,
+		&inbound,
+	)
 	if err != nil {
 		return err
 	}
+
 	_ = session
 
-	w.createReconciliationTaskIfNeeded(ctx, &inbound, realmID, sessionIDStr)
+	documents, err := w.extractOCRDocuments(&inbound)
+	if err != nil {
+		w.logger.Error(
+			"PcmWorker: failed to decode OCR documents",
+			"error", err,
+			"session_id", conversationSessionID,
+		)
 
-	documents := w.extractOCRDocuments(&inbound)
-
-	// If no OCR documents are extracted yet, batch all attachments and delegate to Python OCR agent
-	if len(documents) == 0 {
-		delegated, err := w.delegateToPythonOCR(&inbound, &reqEnv, sessionIDStr)
-		if err != nil {
-			return err
-		}
-		if delegated {
-			return nil
-		}
+		return fmt.Errorf("pcm: decode OCR documents: %w", err)
 	}
 
 	hasBankStatement := false
+
 	for _, doc := range documents {
-		if doc.Type == "bank_statement" {
+		if isBankStatementType(doc.Type) {
 			hasBankStatement = true
 			break
 		}
 	}
 
 	if !hasBankStatement {
-		w.logger.Info("PcmWorker: documents received contain no bank statement (invoice/receipt evidence only); skipping bank reconciliation DAG execution", "doc_count", len(documents), "session_id", sessionIDStr)
+		w.logger.Info(
+			"PcmWorker: documents contain no bank statement; skipping bank reconciliation ingestion",
+			"doc_count", len(documents),
+			"session_id", conversationSessionID,
+		)
+
+		if reqEnv.Performative == core.REQUEST {
+			if err := w.sendSkipProofToOrchestrator(
+				&inbound,
+				&reqEnv,
+				conversationSessionID,
+				realmID,
+			); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	}
 
-	stagingSessionID, stagingSessionIDStr, fileName, err := w.ingestStagingSession(ctx, &inbound, documents, entityID, realmID, sessionIDStr)
+	stagingSessionID,
+		stagingSessionIDStr,
+		fileName,
+		err := w.ingestStagingSession(
+		ctx,
+		&inbound,
+		documents,
+		entityID,
+		realmID,
+		conversationSessionID,
+	)
 	if err != nil {
 		return err
 	}
 
-	return w.publishOutflowResult(&inbound, &reqEnv, documents, entityID, stagingSessionID, stagingSessionIDStr, realmID, fileName)
+	return w.publishOutflowResult(
+		&inbound,
+		&reqEnv,
+		documents,
+		entityID,
+		stagingSessionID,
+		stagingSessionIDStr,
+		conversationSessionID,
+		realmID,
+		fileName,
+	)
 }
 
-// parseInboundMessage unmarshals raw NATS message data into a TAP core.Envelope, PcmInboundMessage, or raw email payload.
-func (w *PcmWorker) parseInboundMessage(msg *nats.Msg) (core.Envelope, PcmInboundMessage, error) {
+// parseInboundMessage supports:
+//
+//  1. Orchestrator REQUEST envelopes.
+//  2. Direct PCM payloads.
+//  3. Legacy Postmark payloads.
+//
+// Unknown JSON objects are not silently accepted as empty PcmInboundMessage
+// values.
+func (w *PcmWorker) parseInboundMessage(
+	msg *nats.Msg,
+) (core.Envelope, PcmInboundMessage, error) {
 	var reqEnv core.Envelope
 	var inbound PcmInboundMessage
 
-	if err := json.Unmarshal(msg.Data, &reqEnv); err == nil && reqEnv.Performative == core.REQUEST {
-		_ = core.UnmarshalTaskPayload(reqEnv.Body, &inbound)
+	if err := json.Unmarshal(msg.Data, &reqEnv); err == nil &&
+		reqEnv.Performative == core.REQUEST {
+
+		if err := core.UnmarshalTaskPayload(reqEnv.Body, &inbound); err != nil {
+			w.logger.Error(
+				"PcmWorker: failed to unmarshal orchestrator task payload",
+				"error", err,
+				"cid", reqEnv.ConversationID,
+			)
+
+			return reqEnv, inbound, fmt.Errorf(
+				"unmarshal orchestrator PCM payload: %w",
+				err,
+			)
+		}
+
 		return reqEnv, inbound, nil
 	}
 
-	if err := json.Unmarshal(msg.Data, &inbound); err == nil {
+	if err := json.Unmarshal(msg.Data, &inbound); err == nil &&
+		isRecognizedPCMInbound(inbound) {
+
 		return reqEnv, inbound, nil
 	}
 
 	var inboundEmail PostmarkInboundEmail
-	if emailErr := json.Unmarshal(msg.Data, &inboundEmail); emailErr == nil {
+
+	if err := json.Unmarshal(msg.Data, &inboundEmail); err == nil &&
+		inboundEmail.From != "" {
+
 		inbound.FromHandle = inboundEmail.From
 		inbound.ToHandle = inboundEmail.OriginalRecipient
+
 		if inbound.ToHandle == "" {
 			inbound.ToHandle = inboundEmail.To
 		}
+
 		inbound.Subject = inboundEmail.Subject
 		inbound.BodyText = inboundEmail.TextBody
+
 		return reqEnv, inbound, nil
 	}
 
-	w.logger.Error("PcmWorker: failed to unmarshal payload", "error", string(msg.Data))
-	return reqEnv, inbound, fmt.Errorf("failed to unmarshal payload")
+	w.logger.Error(
+		"PcmWorker: failed to recognize inbound payload",
+		"payload_size", len(msg.Data),
+	)
+
+	return reqEnv, inbound, fmt.Errorf(
+		"pcm: unsupported or malformed inbound payload",
+	)
 }
 
-// resolveEntityAndSession resolves user entity ID, agent realm, and finds or creates a conversation session in the database.
-func (w *PcmWorker) resolveEntityAndSession(ctx context.Context, inbound *PcmInboundMessage) (pgtype.UUID, database.ToroCoreConversationSession, string, string, error) {
+func isRecognizedPCMInbound(inbound PcmInboundMessage) bool {
+	return inbound.SessionID != "" ||
+		inbound.EntityID != "" ||
+		inbound.FromHandle != "" ||
+		inbound.ToHandle != "" ||
+		len(inbound.DocumentIDs) > 0 ||
+		len(inbound.Documents) > 0 ||
+		len(inbound.OCRExtractions) > 0 ||
+		inbound.OCRExtraction.DocType != ""
+}
+
+// resolveEntityAndSession resolves entity, accounting realm and conversation
+// session.
+//
+// EntityID from the workflow payload is used as a fallback when the sender
+// email cannot be resolved directly.
+func (w *PcmWorker) resolveEntityAndSession(
+	ctx context.Context,
+	inbound *PcmInboundMessage,
+) (
+	pgtype.UUID,
+	database.ToroCoreConversationSession,
+	string,
+	string,
+	error,
+) {
 	var entityID pgtype.UUID
-	if w.db != nil {
-		if id, err := w.db.GetEntityIDByEmail(ctx, inbound.FromHandle); err == nil && id.Valid {
+
+	if w.db != nil && inbound.FromHandle != "" {
+		if id, err := w.db.GetEntityIDByEmail(
+			ctx,
+			inbound.FromHandle,
+		); err == nil && id.Valid {
 			entityID = id
 		}
 	}
+
 	if !entityID.Valid && inbound.EntityID != "" {
-		_ = entityID.Scan(inbound.EntityID)
-	}
-	if !entityID.Valid {
-		w.logger.Warn("PcmWorker: ignoring email from unknown user", "from", inbound.FromHandle, "entity_id", inbound.EntityID)
-		return entityID, database.ToroCoreConversationSession{}, "", "", fmt.Errorf("unknown user")
+		if err := entityID.Scan(inbound.EntityID); err != nil {
+			w.logger.Warn(
+				"PcmWorker: invalid entity_id in workflow payload",
+				"entity_id", inbound.EntityID,
+				"error", err,
+			)
+		}
 	}
 
-	agentAlias, _ := ParseAgentEmail(inbound.ToHandle)
-	realmID := "default_realm"
-	if agentAlias != "" {
-		realmID = agentAlias
+	if !entityID.Valid {
+		w.logger.Warn(
+			"PcmWorker: unable to resolve entity",
+			"from", inbound.FromHandle,
+			"entity_id", inbound.EntityID,
+		)
+
+		return entityID,
+			database.ToroCoreConversationSession{},
+			"",
+			"",
+			fmt.Errorf("pcm: unknown entity")
 	}
+
+	agentAlias := inbound.AgentAlias
+
+	if agentAlias == "" {
+		agentAlias, _ = ParseAgentEmail(inbound.ToHandle)
+	}
+
+	realmID := w.resolveRealmIDFromAlias(ctx, agentAlias)
 
 	var session database.ToroCoreConversationSession
+
 	if inbound.SessionID != "" && w.db != nil {
 		var sessionUUID pgtype.UUID
-		if scanErr := sessionUUID.Scan(inbound.SessionID); scanErr == nil {
-			if sess, fetchErr := w.db.GetConversationSession(ctx, sessionUUID); fetchErr == nil {
-				session = sess
+
+		if err := sessionUUID.Scan(inbound.SessionID); err == nil {
+			if existing, fetchErr := w.db.GetConversationSession(
+				ctx,
+				sessionUUID,
+			); fetchErr == nil {
+				session = existing
 			}
 		}
 	}
 
 	if !session.ID.Valid && w.db != nil {
-		sessionManager := conversation.NewSessionManager(w.db, w.logger)
-		var errSess error
-		session, _, errSess = sessionManager.FindOrCreateSession(ctx, conversation.FindOrCreateParams{
-			EntityID:          entityID,
-			ParticipantHandle: inbound.FromHandle,
-			ToroHandle:        inbound.ToHandle,
-			Source:            "email",
-			Subject:           inbound.Subject,
-		})
-		if errSess != nil {
-			w.logger.Error("PcmWorker: failed to find or create conversation session", "error", errSess)
-			return entityID, session, realmID, "", fmt.Errorf("session resolution failed: %w", errSess)
+		sessionManager := conversation.NewSessionManager(
+			w.db,
+			w.logger,
+		)
+
+		resolved,
+			_,
+			err := sessionManager.FindOrCreateSession(
+			ctx,
+			conversation.FindOrCreateParams{
+				EntityID:          entityID,
+				ParticipantHandle: inbound.FromHandle,
+				ToroHandle:        inbound.ToHandle,
+				Source:            "email",
+				Subject:           inbound.Subject,
+			},
+		)
+		if err != nil {
+			w.logger.Error(
+				"PcmWorker: failed to find or create conversation session",
+				"error", err,
+			)
+
+			return entityID,
+				session,
+				realmID,
+				"",
+				fmt.Errorf(
+					"pcm: session resolution failed: %w",
+					err,
+				)
 		}
+
+		session = resolved
 	}
 
 	sessionIDStr := uuidFromPG(session.ID)
+
 	return entityID, session, realmID, sessionIDStr, nil
 }
 
-// createReconciliationTaskIfNeeded inserts a shadow ERP reconciliation task entry when processing an email directed to a rap_ agent alias.
-func (w *PcmWorker) createReconciliationTaskIfNeeded(ctx context.Context, inbound *PcmInboundMessage, realmID string, sessionIDStr string) {
-	agentAlias, _ := ParseAgentEmail(inbound.ToHandle)
-	isRapEmail := strings.Contains(strings.ToLower(inbound.ToHandle), "rap_") ||
-		strings.Contains(strings.ToLower(agentAlias), "rap_")
+// resolveRealmIDFromAlias resolves realm_id using client_dossiers.
+//
+// It first tries the complete alias and then the legacy "rap_" stripped dossier
+// code.
+func (w *PcmWorker) resolveRealmIDFromAlias(
+	ctx context.Context,
+	agentAlias string,
+) string {
+	if agentAlias == "" {
+		w.logger.Warn(
+			"PcmWorker: agent alias unavailable while resolving realm",
+		)
 
-	if isRapEmail && w.db != nil {
-		periodLabel := time.Now().Format("2006-01")
-		_, err := w.db.CreateReconciliationTask(ctx, database.CreateReconciliationTaskParams{
-			RealmID:       realmID,
-			PeriodLabel:   periodLabel,
-			Status:        "PENDING_MATCH",
-			EmailThreadID: pgtype.Text{String: sessionIDStr, Valid: true},
-		})
-		if err != nil {
-			w.logger.Warn("PcmWorker: failed to insert reconciliation task", "error", err, "session_id", sessionIDStr)
-		} else {
-			w.logger.Info("PcmWorker: created reconciliation task for rap_ email", "session_id", sessionIDStr, "realm_id", realmID)
+		return ""
+	}
+
+	if w.db != nil {
+		if dossier, err := w.db.GetClientDossierByRealmOrCode(
+			ctx,
+			agentAlias,
+		); err == nil {
+
+			w.logger.Info(
+				"PcmWorker: resolved realm_id from client_dossiers",
+				"alias", agentAlias,
+				"realm_id", dossier.RealmID,
+			)
+
+			return dossier.RealmID
 		}
-	}
-}
 
-// extractOCRDocuments collects extracted document structures from OCRExtractions or single OCRExtraction fields.
-func (w *PcmWorker) extractOCRDocuments(inbound *PcmInboundMessage) []PcmParsedDocument {
-	var documents []PcmParsedDocument
+		dossierCode := strings.TrimPrefix(agentAlias, "rap_")
 
-	for _, ext := range inbound.OCRExtractions {
-		if ext.DocType != "" && ext.Data != nil {
-			documents = append(documents, PcmParsedDocument{
-				Type: ext.DocType,
-				Data: ext.Data,
-			})
-		}
-	}
+		if dossierCode != agentAlias {
+			if dossier, err := w.db.GetClientDossierByRealmOrCode(
+				ctx,
+				dossierCode,
+			); err == nil {
 
-	if len(documents) == 0 && inbound.OCRExtraction.DocType != "" && inbound.OCRExtraction.Data != nil {
-		documents = append(documents, PcmParsedDocument{
-			Type: inbound.OCRExtraction.DocType,
-			Data: inbound.OCRExtraction.Data,
-		})
-	}
+				w.logger.Info(
+					"PcmWorker: resolved realm_id from dossier_code",
+					"dossier_code", dossierCode,
+					"realm_id", dossier.RealmID,
+				)
 
-	return documents
-}
-
-// delegateToPythonOCR gathers email attachment URLs and delegates them in a single batch NATS request to the Python OCR agent.
-// Returns true if a delegation request was published.
-func (w *PcmWorker) delegateToPythonOCR(inbound *PcmInboundMessage, reqEnv *core.Envelope, sessionIDStr string) (bool, error) {
-	var ocrAttachments []map[string]interface{}
-	if len(inbound.Attachments) > 0 {
-		for _, att := range inbound.Attachments {
-			if att.DocumentURL != "" {
-				ocrAttachments = append(ocrAttachments, map[string]interface{}{
-					"name":         att.Name,
-					"document_url": att.DocumentURL,
-					"content_type": att.ContentType,
-				})
+				return dossier.RealmID
 			}
 		}
-	} else if inbound.DocumentURL != "" {
-		ocrAttachments = append(ocrAttachments, map[string]interface{}{
-			"document_url": inbound.DocumentURL,
-		})
+
+		w.logger.Warn(
+			"PcmWorker: no client_dossier found for alias; using alias as realm_id",
+			"alias", agentAlias,
+		)
 	}
 
-	if len(ocrAttachments) > 0 {
-		firstDocURL := ""
-		if u, ok := ocrAttachments[0]["document_url"].(string); ok {
-			firstDocURL = u
-		}
-
-		ocrTaskPayload := map[string]interface{}{
-			"session_id":                sessionIDStr,
-			"conversation_id":           reqEnv.ConversationID,
-			"external_id":               inbound.ExternalID,
-			"from_handle":               inbound.FromHandle,
-			"to_handle":                 inbound.ToHandle,
-			"reply_to":                  inbound.ReplyTo,
-			"subject":                   inbound.Subject,
-			"body_text":                 inbound.BodyText,
-			"agent_alias":               inbound.AgentAlias,
-			"document_url":              firstDocURL,
-			"attachments":               ocrAttachments,
-			"total_attachments":         len(ocrAttachments),
-			"final_destination_subject": "worker.inbox.pcm",
-		}
-		ocrBytes, _ := json.Marshal(ocrTaskPayload)
-		w.logger.Info("PcmWorker: delegating attachments batch to Python OCR agent", "attachments_count", len(ocrAttachments))
-		if w.nc != nil {
-			if err := w.nc.Publish("worker.inbox.python.ocr", ocrBytes); err != nil {
-				return false, err
-			}
-			return true, nil
-		}
-	}
-	return false, nil
+	return agentAlias
 }
 
-// ingestStagingSession creates a database cleanup session and inserts bank statement transaction rows into fignode.staging_transactions.
-func (w *PcmWorker) ingestStagingSession(ctx context.Context, inbound *PcmInboundMessage, documents []PcmParsedDocument, entityID pgtype.UUID, realmID string, sessionIDStr string) (pgtype.UUID, string, string, error) {
-	outflowIs := "NEGATIVE"
+// extractOCRDocuments converts document_readiness output into PCM documents.
+//
+// documents[].raw_ocr_json is authoritative whenever Documents is non-empty.
+// Legacy OCRExtraction fields are considered only when Documents is absent.
+//
+// Critically, this function performs no database queries.
+func (w *PcmWorker) extractOCRDocuments(
+	inbound *PcmInboundMessage,
+) ([]PcmParsedDocument, error) {
+	if len(inbound.Documents) > 0 {
+		documents := make(
+			[]PcmParsedDocument,
+			0,
+			len(inbound.Documents),
+		)
+
+		for index, readyDocument := range inbound.Documents {
+			document, err := parseReadyDocument(readyDocument)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"documents[%d]: %w",
+					index,
+					err,
+				)
+			}
+
+			documents = append(documents, document)
+		}
+
+		return documents, nil
+	}
+
+	// Migration compatibility for callers that still provide the historical
+	// OCRExtractions structure directly.
+	documents := make(
+		[]PcmParsedDocument,
+		0,
+		len(inbound.OCRExtractions)+1,
+	)
+
+	for index, extraction := range inbound.OCRExtractions {
+		if extraction.DocType == "" {
+			w.logger.Warn(
+				"PcmWorker: ignoring legacy OCR extraction with no document type",
+				"index", index,
+			)
+
+			continue
+		}
+
+		if extraction.Data == nil {
+			w.logger.Warn(
+				"PcmWorker: ignoring legacy OCR extraction with no data",
+				"index", index,
+				"doc_type", extraction.DocType,
+			)
+
+			continue
+		}
+
+		documents = append(
+			documents,
+			PcmParsedDocument{
+				Type:          extraction.DocType,
+				FileName:      extraction.FileName,
+				Data:          extraction.Data,
+				ColumnMapping: extraction.ColumnMapping,
+				Confidence:    extraction.Confidence,
+			},
+		)
+	}
+
+	if len(documents) == 0 &&
+		inbound.OCRExtraction.DocType != "" &&
+		inbound.OCRExtraction.Data != nil {
+
+		extraction := inbound.OCRExtraction
+
+		documents = append(
+			documents,
+			PcmParsedDocument{
+				Type:          extraction.DocType,
+				FileName:      extraction.FileName,
+				Data:          extraction.Data,
+				ColumnMapping: extraction.ColumnMapping,
+				Confidence:    extraction.Confidence,
+			},
+		)
+	}
+
+	return documents, nil
+}
+
+// parseReadyDocument parses one document_readiness result.
+//
+// RawOCRJSON is expected to contain the OCR agent's extraction document:
+//
+//	{
+//	  "doc_type": "bank_statement",
+//	  "data": { ... },
+//	  "confidence": 0.99,
+//	  "column_mapping": { ... }
+//	}
+func parseReadyDocument(
+	readyDocument PcmReadyDocument,
+) (PcmParsedDocument, error) {
+	if readyDocument.DocumentID == "" {
+		return PcmParsedDocument{}, fmt.Errorf(
+			"document_id is required",
+		)
+	}
+
+	if len(readyDocument.RawOCRJSON) == 0 {
+		return PcmParsedDocument{}, fmt.Errorf(
+			"document %q has empty raw_ocr_json",
+			readyDocument.DocumentID,
+		)
+	}
+
+	if !json.Valid(readyDocument.RawOCRJSON) {
+		return PcmParsedDocument{}, fmt.Errorf(
+			"document %q has invalid raw_ocr_json",
+			readyDocument.DocumentID,
+		)
+	}
+
+	var extraction PcmOCRExtraction
+
+	if err := json.Unmarshal(
+		readyDocument.RawOCRJSON,
+		&extraction,
+	); err != nil {
+		return PcmParsedDocument{}, fmt.Errorf(
+			"decode raw_ocr_json for document %q: %w",
+			readyDocument.DocumentID,
+			err,
+		)
+	}
+
+	// Defensive compatibility for older OCR producers that used "type" or
+	// "document_type" instead of "doc_type".
+	if extraction.DocType == "" || extraction.Data == nil {
+		var raw map[string]interface{}
+
+		if err := json.Unmarshal(
+			readyDocument.RawOCRJSON,
+			&raw,
+		); err != nil {
+			return PcmParsedDocument{}, fmt.Errorf(
+				"decode generic OCR payload for document %q: %w",
+				readyDocument.DocumentID,
+				err,
+			)
+		}
+
+		if extraction.DocType == "" {
+			if value, ok := raw["document_type"].(string); ok {
+				extraction.DocType = value
+			}
+
+			if extraction.DocType == "" {
+				if value, ok := raw["type"].(string); ok {
+					extraction.DocType = value
+				}
+			}
+		}
+
+		if extraction.Data == nil {
+			if value, ok := raw["data"].(map[string]interface{}); ok {
+				extraction.Data = value
+			} else {
+				// Historical OCR payloads occasionally emitted the extracted
+				// fields directly at the root.
+				extraction.Data = raw
+			}
+		}
+	}
+
+	if strings.TrimSpace(extraction.DocType) == "" {
+		return PcmParsedDocument{}, fmt.Errorf(
+			"document %q raw_ocr_json is missing doc_type",
+			readyDocument.DocumentID,
+		)
+	}
+
+	if extraction.Data == nil {
+		return PcmParsedDocument{}, fmt.Errorf(
+			"document %q raw_ocr_json is missing data",
+			readyDocument.DocumentID,
+		)
+	}
+
+	return PcmParsedDocument{
+		DocumentID:    readyDocument.DocumentID,
+		OCRStatus:     readyDocument.OCRStatus,
+		Type:          extraction.DocType,
+		FileName:      extraction.FileName,
+		Data:          extraction.Data,
+		ColumnMapping: extraction.ColumnMapping,
+		Confidence:    extraction.Confidence,
+	}, nil
+}
+
+func isBankStatementType(documentType string) bool {
+	normalized := strings.ToLower(
+		strings.TrimSpace(documentType),
+	)
+
+	switch normalized {
+	case "bank_statement", "bankstatement":
+		return true
+	default:
+		return false
+	}
+}
+
+// extractTransactionMaps normalizes the OCR transaction representation.
+//
+// Supported:
+//
+//	"transactions": [
+//	  {...},
+//	  {...}
+//	]
+//
+// and:
+//
+//	"transactions": {
+//	  "1": {...},
+//	  "2": {...}
+//	}
+//
+// The keyed-object form is sorted numerically to preserve statement order.
+func extractTransactionMaps(
+	raw interface{},
+) []map[string]interface{} {
+	switch transactions := raw.(type) {
+	case []interface{}:
+		result := make(
+			[]map[string]interface{},
+			0,
+			len(transactions),
+		)
+
+		for _, item := range transactions {
+			if transaction, ok := item.(map[string]interface{}); ok {
+				result = append(result, transaction)
+			}
+		}
+
+		return result
+
+	case map[string]interface{}:
+		keys := make([]string, 0, len(transactions))
+
+		for key := range transactions {
+			keys = append(keys, key)
+		}
+
+		sort.SliceStable(keys, func(i, j int) bool {
+			leftNumber, leftErr := strconv.Atoi(keys[i])
+			rightNumber, rightErr := strconv.Atoi(keys[j])
+
+			switch {
+			case leftErr == nil && rightErr == nil:
+				return leftNumber < rightNumber
+			case leftErr == nil:
+				return true
+			case rightErr == nil:
+				return false
+			default:
+				return keys[i] < keys[j]
+			}
+		})
+
+		result := make(
+			[]map[string]interface{},
+			0,
+			len(keys),
+		)
+
+		for _, key := range keys {
+			transaction, ok := transactions[key].(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			result = append(result, transaction)
+		}
+
+		return result
+
+	default:
+		return nil
+	}
+}
+
+// ingestStagingSession creates the PCM cleanup/staging session and inserts all
+// bank statement transactions.
+func (w *PcmWorker) ingestStagingSession(
+	ctx context.Context,
+	inbound *PcmInboundMessage,
+	documents []PcmParsedDocument,
+	entityID pgtype.UUID,
+	realmID string,
+	conversationSessionID string,
+) (
+	pgtype.UUID,
+	string,
+	string,
+	error,
+) {
+	const outflowIs = "NEGATIVE"
 
 	totalRowCount := 0
-	for _, doc := range documents {
-		if doc.Type == "bank_statement" {
-			if txList, ok := doc.Data["transactions"].([]interface{}); ok {
-				totalRowCount += len(txList)
-			}
+
+	for _, document := range documents {
+		if !isBankStatementType(document.Type) {
+			continue
 		}
+
+		totalRowCount += len(
+			extractTransactionMaps(
+				document.Data["transactions"],
+			),
+		)
+	}
+
+	if totalRowCount == 0 {
+		return pgtype.UUID{},
+			"",
+			"",
+			fmt.Errorf(
+				"pcm: bank statement contains no usable transactions",
+			)
 	}
 
 	var pgUserID pgtype.UUID
+
 	if inbound.FromHandle != "" && w.db != nil {
-		if user, errUser := w.db.GetUserByEmail(ctx, inbound.FromHandle); errUser == nil && user.ID.Valid {
+		if user, err := w.db.GetUserByEmail(
+			ctx,
+			inbound.FromHandle,
+		); err == nil && user.ID.Valid {
 			pgUserID = user.ID
 		}
 	}
 
-	fileName := inbound.Subject
-	if fileName == "" {
-		fileName = "Email_Bank_Statement.pdf"
-	}
+	fileName := resolvePCMFileName(
+		inbound,
+		documents,
+	)
 
 	if w.db == nil {
-		return pgtype.UUID{}, "", fileName, nil
+		return pgtype.UUID{},
+			"",
+			fileName,
+			fmt.Errorf("pcm: database unavailable")
 	}
 
-	cleanupSession, errCleanup := w.db.CreateCleanupSession(ctx, database.CreateCleanupSessionParams{
-		CreatedBy: pgUserID,
-		FileName:  pgtype.Text{String: fileName, Valid: true},
-		RowCount:  int32(totalRowCount),
-		RealmID:   pgtype.Text{String: realmID, Valid: true},
-		OutflowIs: outflowIs,
-	})
-	if errCleanup != nil || !cleanupSession.ID.Valid {
-		w.logger.Error("PcmWorker: failed to create cleanup session", "error", errCleanup)
-		return pgtype.UUID{}, "", fileName, fmt.Errorf("failed to create cleanup session: %w", errCleanup)
+	cleanupSession, err := w.db.CreateCleanupSession(
+		ctx,
+		database.CreateCleanupSessionParams{
+			CreatedBy: pgUserID,
+			FileName: pgtype.Text{
+				String: fileName,
+				Valid:  fileName != "",
+			},
+			RowCount: int32(totalRowCount),
+			RealmID: pgtype.Text{
+				String: realmID,
+				Valid:  realmID != "",
+			},
+			OutflowIs: outflowIs,
+		},
+	)
+	if err != nil {
+		w.logger.Error(
+			"PcmWorker: failed to create cleanup session",
+			"error", err,
+			"conversation_session_id", conversationSessionID,
+		)
+
+		return pgtype.UUID{},
+			"",
+			fileName,
+			fmt.Errorf(
+				"pcm: create cleanup session: %w",
+				err,
+			)
 	}
+
+	if !cleanupSession.ID.Valid {
+		return pgtype.UUID{},
+			"",
+			fileName,
+			fmt.Errorf(
+				"pcm: cleanup session returned invalid ID",
+			)
+	}
+
 	stagingSessionID := cleanupSession.ID
-	stagingSessionIDStr := uuid.UUID(stagingSessionID.Bytes).String()
+	stagingSessionIDStr := uuid.UUID(
+		stagingSessionID.Bytes,
+	).String()
 
-	if inbound.OCRExtraction.ColumnMapping != nil {
-		columnMapping := inbound.OCRExtraction.ColumnMapping
-		if columnMapping.PolaritySign == "none" && columnMapping.IsAmbiguous {
-			w.logger.Info("PcmWorker: statement marked structurally ambiguous by OCR agent", "reason", columnMapping.AmbiguityReason)
+	rowIndex := int32(0)
+
+	for _, document := range documents {
+		if !isBankStatementType(document.Type) {
+			continue
+		}
+
+		if document.ColumnMapping != nil &&
+			document.ColumnMapping.PolaritySign == "none" &&
+			document.ColumnMapping.IsAmbiguous {
+
+			w.logger.Info(
+				"PcmWorker: statement marked structurally ambiguous by OCR",
+				"document_id", document.DocumentID,
+				"reason", document.ColumnMapping.AmbiguityReason,
+			)
+		}
+
+		transactions := extractTransactionMaps(
+			document.Data["transactions"],
+		)
+
+		for _, transaction := range transactions {
+			description, _ := transaction["description"].(string)
+			transactionType, _ := transaction["type"].(string)
+			transactionDate, _ := transaction["date"].(string)
+
+			amount := formatPCMAmount(
+				transaction["amount"],
+				transactionType,
+			)
+
+			_, err := w.db.InsertCleanupRow(
+				ctx,
+				database.InsertCleanupRowParams{
+					SessionID: stagingSessionID,
+					RowIndex: pgtype.Int4{
+						Int32: rowIndex,
+						Valid: true,
+					},
+					SourceType: "BankStatement",
+					RawDescription: pgtype.Text{
+						String: description,
+						Valid:  description != "",
+					},
+					RawAmount: amount,
+					RawDate: pgtype.Text{
+						String: transactionDate,
+						Valid:  transactionDate != "",
+					},
+					Status: pgtype.Text{
+						String: "PENDING",
+						Valid:  true,
+					},
+				},
+			)
+			if err != nil {
+				w.logger.Error(
+					"PcmWorker: failed to insert staging transaction",
+					"error", err,
+					"staging_session_id", stagingSessionIDStr,
+					"document_id", document.DocumentID,
+					"row_index", rowIndex,
+				)
+
+				return pgtype.UUID{},
+					"",
+					fileName,
+					fmt.Errorf(
+						"pcm: insert staging transaction row %d: %w",
+						rowIndex,
+						err,
+					)
+			}
+
+			rowIndex++
 		}
 	}
 
-	for _, doc := range documents {
-		if doc.Type == "bank_statement" {
-			if txList, ok := doc.Data["transactions"].([]interface{}); ok {
-				for idx, txItem := range txList {
-					if txMap, ok := txItem.(map[string]interface{}); ok {
-						desc, _ := txMap["description"].(string)
-						txType, _ := txMap["type"].(string)
-						
-						amtVal := ""
-						if amtFloat, ok := txMap["amount"].(float64); ok {
-							if amtFloat < 0 {
-								amtFloat = -amtFloat
-							}
-							if txType == "debit" {
-								amtVal = fmt.Sprintf("-%.2f", amtFloat)
-							} else {
-								amtVal = fmt.Sprintf("%.2f", amtFloat)
-							}
-						} else if amtStr, ok := txMap["amount"].(string); ok {
-							amtStr = strings.TrimPrefix(amtStr, "-")
-							if txType == "debit" {
-								amtVal = "-" + amtStr
-							} else {
-								amtVal = amtStr
-							}
-						}
-						dt, _ := txMap["date"].(string)
-						rowIdx := int32(idx)
+	w.logger.Info(
+		"PcmWorker: staged bank statement transactions",
+		"staging_session_id", stagingSessionIDStr,
+		"conversation_session_id", conversationSessionID,
+		"transaction_count", rowIndex,
+		"document_count", len(documents),
+	)
 
-						_, errIns := w.db.InsertCleanupRow(ctx, database.InsertCleanupRowParams{
-							SessionID:      stagingSessionID,
-							RowIndex:       pgtype.Int4{Int32: rowIdx, Valid: true},
-							SourceType:     "BankStatement",
-							RawDescription: pgtype.Text{String: desc, Valid: desc != ""},
-							RawAmount:      amtVal,
-							RawDate:        pgtype.Text{String: dt, Valid: dt != ""},
-							Status:         pgtype.Text{String: "PENDING", Valid: true},
-						})
-						if errIns != nil {
-							w.logger.Warn("PcmWorker: failed to insert bank statement staging transaction row", "error", errIns, "session_id", sessionIDStr)
-						}
-					}
-				}
+	return stagingSessionID,
+		stagingSessionIDStr,
+		fileName,
+		nil
+}
+
+func resolvePCMFileName(
+	inbound *PcmInboundMessage,
+	documents []PcmParsedDocument,
+) string {
+	for _, document := range documents {
+		if document.FileName != "" {
+			return document.FileName
+		}
+
+		if document.DocumentID == "" {
+			continue
+		}
+
+		for _, attachment := range inbound.Attachments {
+			if attachment.DocumentID == document.DocumentID &&
+				attachment.Name != "" {
+				return attachment.Name
 			}
 		}
 	}
 
-	return stagingSessionID, stagingSessionIDStr, fileName, nil
+	for _, attachment := range inbound.Attachments {
+		if attachment.Name != "" {
+			return attachment.Name
+		}
+	}
+
+	if inbound.Subject != "" {
+		return inbound.Subject
+	}
+
+	return "Email_Bank_Statement.pdf"
 }
 
-// publishOutflowResult publishes the completed execution proof to the TAP Orchestrator if executing inside a workflow step,
-// or publishes a signed TAP event to JetStream / falls back to publishing an envelope to ase_bridge.
-func (w *PcmWorker) publishOutflowResult(inbound *PcmInboundMessage, reqEnv *core.Envelope, documents []PcmParsedDocument, entityID pgtype.UUID, stagingSessionID pgtype.UUID, stagingSessionIDStr string, realmID string, fileName string) error {
-	entityIDStr := uuid.UUID(entityID.Bytes).String()
+func formatPCMAmount(
+	rawAmount interface{},
+	transactionType string,
+) string {
+	var amount string
+
+	switch value := rawAmount.(type) {
+	case float64:
+		if value < 0 {
+			value = -value
+		}
+
+		amount = strconv.FormatFloat(
+			value,
+			'f',
+			2,
+			64,
+		)
+
+	case float32:
+		floatValue := float64(value)
+
+		if floatValue < 0 {
+			floatValue = -floatValue
+		}
+
+		amount = strconv.FormatFloat(
+			floatValue,
+			'f',
+			2,
+			64,
+		)
+
+	case int:
+		if value < 0 {
+			value = -value
+		}
+
+		amount = strconv.Itoa(value)
+
+	case int32:
+		if value < 0 {
+			value = -value
+		}
+
+		amount = strconv.FormatInt(
+			int64(value),
+			10,
+		)
+
+	case int64:
+		if value < 0 {
+			value = -value
+		}
+
+		amount = strconv.FormatInt(
+			value,
+			10,
+		)
+
+	case json.Number:
+		valueString := strings.TrimSpace(value.String())
+		valueString = strings.TrimPrefix(valueString, "-")
+		valueString = strings.TrimPrefix(valueString, "+")
+
+		amount = valueString
+
+	case string:
+		value = strings.TrimSpace(value)
+		value = strings.TrimPrefix(value, "-")
+		value = strings.TrimPrefix(value, "+")
+
+		amount = value
+	}
+
+	if amount == "" {
+		return ""
+	}
+
+	if strings.EqualFold(
+		strings.TrimSpace(transactionType),
+		"debit",
+	) {
+		return "-" + amount
+	}
+
+	return amount
+}
+
+// publishOutflowResult reports PCM completion.
+//
+// During orchestrated execution it returns both the staging result and the raw
+// readiness documents. Keeping Documents in the proof means subsequent steps
+// can request documents via workflow_schema without having to reach backwards
+// into document_readiness or ToroDB.
+func (w *PcmWorker) publishOutflowResult(
+	inbound *PcmInboundMessage,
+	reqEnv *core.Envelope,
+	documents []PcmParsedDocument,
+	entityID pgtype.UUID,
+	stagingSessionID pgtype.UUID,
+	stagingSessionIDStr string,
+	conversationSessionID string,
+	realmID string,
+	fileName string,
+) error {
+	entityIDStr := uuid.UUID(
+		entityID.Bytes,
+	).String()
+
 	cid := reqEnv.ConversationID
+
 	if cid == "" {
 		cid = inbound.ConversationID
 	}
 
 	if cid != "" && w.nc != nil {
 		proofData := map[string]interface{}{
-			"session_id":  stagingSessionIDStr,
-			"entity_id":   entityIDStr,
-			"realm_id":    realmID,
+			// Keep session_id as the staging session for backwards
+			// compatibility with the downstream PCM/ASE pipeline.
+			"session_id": stagingSessionIDStr,
+
+			"staging_session_id":      stagingSessionIDStr,
+			"conversation_session_id": conversationSessionID,
+
+			"entity_id": entityIDStr,
+			"realm_id":  realmID,
+
 			"from_handle": inbound.FromHandle,
 			"to_handle":   inbound.ToHandle,
-			"documents":   len(documents),
+
+			"document_verified": inbound.DocumentVerified,
+			"document_count":    len(documents),
+
+			// Preserve the document_readiness contract for later workflow
+			// stages, including raw_ocr_json.
+			"documents": inbound.Documents,
 		}
-		proofDataBytes, _ := json.Marshal(proofData)
+
+		proofDataBytes, err := json.Marshal(proofData)
+		if err != nil {
+			return fmt.Errorf(
+				"pcm: marshal completion proof data: %w",
+				err,
+			)
+		}
+
 		proof := core.Proof{
 			Type:      core.ProofAPI,
 			Timestamp: time.Now().Unix(),
 			Data:      json.RawMessage(proofDataBytes),
 		}
-		replyEnv, envErr := core.NewEnvelope(
+
+		replyEnv, err := core.NewEnvelope(
 			uuid.New().String(),
 			"worker.pcm",
 			workflows.OrchestratorInbox,
@@ -492,14 +1222,42 @@ func (w *PcmWorker) publishOutflowResult(inbound *PcmInboundMessage, reqEnv *cor
 			core.INFORM,
 			proof,
 		)
-		if envErr == nil {
-			replyBytes, _ := json.Marshal(replyEnv)
-			_ = w.nc.Publish(workflows.OrchestratorInbox, replyBytes)
-			w.logger.Info("PcmWorker: sent completion proof to TAP Orchestrator", "cid", cid)
-			return nil
+		if err != nil {
+			return fmt.Errorf(
+				"pcm: build completion envelope: %w",
+				err,
+			)
 		}
+
+		replyBytes, err := json.Marshal(replyEnv)
+		if err != nil {
+			return fmt.Errorf(
+				"pcm: marshal completion envelope: %w",
+				err,
+			)
+		}
+
+		if err := w.nc.Publish(
+			workflows.OrchestratorInbox,
+			replyBytes,
+		); err != nil {
+			return fmt.Errorf(
+				"pcm: publish completion proof: %w",
+				err,
+			)
+		}
+
+		w.logger.Info(
+			"PcmWorker: sent completion proof to TAP Orchestrator",
+			"cid", cid,
+			"staging_session_id", stagingSessionIDStr,
+			"document_count", len(documents),
+		)
+
+		return nil
 	}
 
+	// Non-orchestrated compatibility path.
 	payload := map[string]interface{}{
 		"upload_id":  stagingSessionIDStr,
 		"session_id": stagingSessionIDStr,
@@ -511,7 +1269,14 @@ func (w *PcmWorker) publishOutflowResult(inbound *PcmInboundMessage, reqEnv *cor
 		"outflow_is": "NEGATIVE",
 		"documents":  documents,
 	}
-	payloadBytes, _ := json.Marshal(payload)
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf(
+			"pcm: marshal outflow payload: %w",
+			err,
+		)
+	}
 
 	taskDef := core.TaskDefinition{
 		ID:         stagingSessionIDStr,
@@ -520,10 +1285,17 @@ func (w *PcmWorker) publishOutflowResult(inbound *PcmInboundMessage, reqEnv *cor
 		Payload:    payloadBytes,
 	}
 
-	kp, _ := identity.KeyPairFromSeed("gateway")
+	kp, err := identity.KeyPairFromSeed("gateway")
+	if err != nil {
+		return fmt.Errorf(
+			"pcm: create gateway identity: %w",
+			err,
+		)
+	}
+
 	gateDID := identity.CreateDID(kp.Public)
 
-	informEnv, errEnv := core.NewEnvelope(
+	informEnv, err := core.NewEnvelope(
 		uuid.New().String(),
 		gateDID,
 		"",
@@ -531,19 +1303,41 @@ func (w *PcmWorker) publishOutflowResult(inbound *PcmInboundMessage, reqEnv *cor
 		core.REQUEST,
 		taskDef,
 	)
-	if errEnv == nil && w.nc != nil {
+	if err == nil && w.nc != nil {
 		informEnv.Signature = kp.Sign(informEnv.Body)
-		informBytes, _ := json.Marshal(informEnv)
 
-		topic := core.BuildEventSubject("accounting", core.ComplexityEntry, "pcm_bookkeeping")
-		if pubErr := w.nc.Publish(topic, informBytes); pubErr == nil {
-			w.logger.Info("PcmWorker: published signed TAP event to JetStream", "topic", topic, "session_id", stagingSessionIDStr)
+		informBytes, marshalErr := json.Marshal(informEnv)
+		if marshalErr != nil {
+			return fmt.Errorf(
+				"pcm: marshal signed TAP event: %w",
+				marshalErr,
+			)
+		}
+
+		topic := core.BuildEventSubject(
+			"accounting",
+			core.ComplexityEntry,
+			"pcm_bookkeeping",
+		)
+
+		if publishErr := w.nc.Publish(
+			topic,
+			informBytes,
+		); publishErr == nil {
+
+			w.logger.Info(
+				"PcmWorker: published signed TAP event to JetStream",
+				"topic", topic,
+				"session_id", stagingSessionIDStr,
+			)
+
 			return nil
 		}
 	}
 
+	// Final compatibility fallback to ase_bridge.
 	ocrPayload := map[string]interface{}{
-		"entity_id":  fmt.Sprintf("%x-%x-%x-%x-%x", entityID.Bytes[0:4], entityID.Bytes[4:6], entityID.Bytes[6:8], entityID.Bytes[8:10], entityID.Bytes[10:16]),
+		"entity_id":  entityIDStr,
 		"realm_id":   realmID,
 		"session_id": stagingSessionIDStr,
 		"documents":  documents,
@@ -565,16 +1359,133 @@ func (w *PcmWorker) publishOutflowResult(inbound *PcmInboundMessage, reqEnv *cor
 		"config": taskConfig,
 		"input":  ocrPayload,
 	}
-	env.Body, _ = json.Marshal(bodyData)
-	envBytes, _ := json.Marshal(env)
 
-	if w.nc != nil {
-		if err := w.nc.Publish(core.BuildWorkerInbox("ase_bridge"), envBytes); err != nil {
-			w.logger.Error("PcmWorker: failed to publish fallback to ase_bridge", "error", err)
-			return err
-		}
+	bodyBytes, err := json.Marshal(bodyData)
+	if err != nil {
+		return fmt.Errorf(
+			"pcm: marshal ASE bridge payload: %w",
+			err,
+		)
 	}
 
-	w.logger.Info("PcmWorker: successfully published fallback payload to DAG", "realm_id", realmID)
+	env.Body = bodyBytes
+
+	envBytes, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf(
+			"pcm: marshal ASE bridge envelope: %w",
+			err,
+		)
+	}
+
+	if w.nc == nil {
+		return fmt.Errorf(
+			"pcm: NATS unavailable while publishing ASE fallback",
+		)
+	}
+
+	if err := w.nc.Publish(
+		core.BuildWorkerInbox("ase_bridge"),
+		envBytes,
+	); err != nil {
+		w.logger.Error(
+			"PcmWorker: failed to publish fallback to ase_bridge",
+			"error", err,
+		)
+
+		return fmt.Errorf(
+			"pcm: publish ASE fallback: %w",
+			err,
+		)
+	}
+
+	w.logger.Info(
+		"PcmWorker: successfully published fallback payload to DAG",
+		"realm_id", realmID,
+	)
+
 	return nil
 }
+
+func (w *PcmWorker) sendSkipProofToOrchestrator(
+	inbound *PcmInboundMessage,
+	reqEnv *core.Envelope,
+	sessionIDStr string,
+	realmID string,
+) error {
+	cid := reqEnv.ConversationID
+
+	if cid == "" {
+		cid = inbound.ConversationID
+	}
+
+	if cid == "" || w.nc == nil {
+		return nil
+	}
+
+	proofData := map[string]interface{}{
+		"session_id":        sessionIDStr,
+		"realm_id":          realmID,
+		"status":            "SKIPPED_NO_BANK_STATEMENT",
+		"document_verified": inbound.DocumentVerified,
+		"document_count":    len(inbound.Documents),
+		"documents":         inbound.Documents,
+	}
+
+	proofDataBytes, err := json.Marshal(proofData)
+	if err != nil {
+		return fmt.Errorf(
+			"pcm: marshal skip proof: %w",
+			err,
+		)
+	}
+
+	proof := core.Proof{
+		Type:      core.ProofAPI,
+		Timestamp: time.Now().Unix(),
+		Data:      json.RawMessage(proofDataBytes),
+	}
+
+	replyEnv, err := core.NewEnvelope(
+		uuid.New().String(),
+		"worker.pcm",
+		workflows.OrchestratorInbox,
+		cid,
+		core.INFORM,
+		proof,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"pcm: build skip proof envelope: %w",
+			err,
+		)
+	}
+
+	replyBytes, err := json.Marshal(replyEnv)
+	if err != nil {
+		return fmt.Errorf(
+			"pcm: marshal skip proof envelope: %w",
+			err,
+		)
+	}
+
+	if err := w.nc.Publish(
+		workflows.OrchestratorInbox,
+		replyBytes,
+	); err != nil {
+		return fmt.Errorf(
+			"pcm: publish skip proof: %w",
+			err,
+		)
+	}
+
+	w.logger.Info(
+		"PcmWorker: sent skip proof to TAP Orchestrator",
+		"cid", cid,
+	)
+
+	return nil
+}
+
+// Ensure PcmWorker satisfies the Worker interface at compile time.
+var _ Worker = (*PcmWorker)(nil)

@@ -20,6 +20,8 @@ const (
 	VectorSourceMemoryRule VectorSourceType = "memory_rule"
 	// VectorSourceResolvedTx is sourced from a high-confidence fignode.staging_transaction.
 	VectorSourceResolvedTx VectorSourceType = "resolved_tx"
+	// VectorSourceDocument is sourced from toro_core.documents.
+	VectorSourceDocument VectorSourceType = "document"
 )
 
 // VectorMemoryRow is a retrieved result from the toro_core.ase_vector_memory table.
@@ -279,7 +281,7 @@ func (vs *VectorStore) EnsureScaNNIndex(ctx context.Context, tenantID, realmID s
 	// a regular transaction block (hence pool.Exec is used directly).
 	_, err = vs.pool.Exec(ctx, fmt.Sprintf(`
 		CREATE INDEX IF NOT EXISTS idx_ase_vector_memory_scann
-		ON toro_core.ase_vector_memory USING scann (embedding cosine)
+		ON toro_core.ase_vector_memory USING scann (embedding)
 		WITH (num_leaves = %d)
 		WHERE embedding IS NOT NULL`, numLeaves))
 	if err != nil {

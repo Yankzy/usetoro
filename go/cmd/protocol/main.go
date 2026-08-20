@@ -23,8 +23,6 @@ import (
 	"github.com/Yankzy/usetoro/internal/services/mailpool"
 	"github.com/Yankzy/usetoro/internal/store"
 	"github.com/Yankzy/usetoro/internal/workers"
-	"github.com/Yankzy/usetoro/tap/pkg/agent"
-	"github.com/Yankzy/usetoro/tap/pkg/core"
 	_ "github.com/Yankzy/usetoro/tap/agents/approval"
 	_ "github.com/Yankzy/usetoro/tap/agents/csv_mapping"
 	_ "github.com/Yankzy/usetoro/tap/agents/general_agent"
@@ -34,6 +32,8 @@ import (
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_expense"
 	_ "github.com/Yankzy/usetoro/tap/agents/reconcile_revenue"
 	_ "github.com/Yankzy/usetoro/tap/agents/stripe_processor"
+	"github.com/Yankzy/usetoro/tap/pkg/agent"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/Yankzy/usetoro/tap/pkg/daemon"
 	"github.com/dgraph-io/ristretto"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -49,7 +49,7 @@ func main() {
 	// Structured Logging
 	var lvl slog.Level
 	if err := lvl.UnmarshalText([]byte(os.Getenv("LOG_LEVEL"))); err != nil {
-		lvl = slog.LevelWarn // Default to Warn to reduce noise
+		lvl = slog.LevelDebug
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: lvl,
@@ -337,7 +337,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		if err != nil {
 			return c, v, err
 		}
-		
+
 		// Dynamically inject inferred worker schemas into the general purpose agent
 		inferredTools := workerManager.InferToolConfigs(c)
 		for i, a := range c.Agents {
@@ -345,7 +345,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 				c.Agents[i].Tools = append(c.Agents[i].Tools, inferredTools...)
 			}
 		}
-		
+
 		return c, v, nil
 	}
 	d := daemon.New(logger, loader, ":9090", dbPool, q.Conn(), js, entityResolver, workerDeps.Mailpool)
@@ -391,4 +391,3 @@ func resolveDir(path string) string {
 	}
 	return path
 }
-

@@ -66,8 +66,7 @@ func main() {
 
 	db := database.New(pool)
 	_, err = db.UpsertASEConfig(ctx, database.UpsertASEConfigParams{
-		TenantID:        pgtype.UUID{Valid: false},
-		RealmID:         pgtype.Text{Valid: false},
+		UserID:          pgtype.UUID{Valid: false},
 		Name:            "email_inbound",
 		DagConfig:       dagConfigBytes,
 		HyperParameters: hyperParamsBytes,

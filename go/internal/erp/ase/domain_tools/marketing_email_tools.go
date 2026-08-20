@@ -34,7 +34,7 @@ func (t *EmailMarketingTool) BuildAgents(ctx context.Context, env core.Envelope,
 	}
 
 	nodeID := uuid.New().String()
-	agent := ase.NewASENode(entityID, "", dagName, payload)
+	agent := ase.NewASENode(entityID, dagName, payload)
 	agent.NodeID = nodeID
 
 	return []*ase.AutonomousSemanticEngineNode{agent}, nil

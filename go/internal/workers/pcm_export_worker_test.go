@@ -7,11 +7,13 @@ import (
 	"testing"
 
 	"github.com/Yankzy/usetoro/internal/config"
-	"github.com/Yankzy/usetoro/internal/database"
+	"github.com/Yankzy/usetoro/internal/erp/ase/domain_tools/pcm_cash"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/nats-io/nats.go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPcmExportWorker_Handle_BasicEnvelope(t *testing.T) {
@@ -60,41 +62,54 @@ func TestPcmExportWorker_Handle_BasicEnvelope(t *testing.T) {
 	_ = ctx
 }
 
-func TestPcmExportWorker_GeneratePCMCSV(t *testing.T) {
-	txs := []database.GetPcmSessionTransactionsRow{
+func TestPcmExportWorker_GeneratePCMCSV_DirectMoroccanAccounts(t *testing.T) {
+	txs := []PcmExportTxRow{
 		{
-			RawDescription: pgtype.Text{String: "Paiement CB Uber SA", Valid: true},
-			RawAmount:      "150.00",
-			CashDirection:  pgtype.Text{String: "OUTFLOW", Valid: true},
-			AseExecutionTrace: []byte(`[
-				{"dag_node_id": "account_selection", "selected_edge": "619000"},
-				{"dag_node_id": "counterparty_extractor", "property_key": "counterparty", "selected_edge": "Uber"}
-			]`),
+			RawDescription:       pgtype.Text{String: "PRLV MAROC TELECOM FIBRE PRO", Valid: true},
+			RawAmount:            "1200.00",
+			CashDirection:        pgtype.Text{String: "OUTFLOW", Valid: true},
+			PredictedAccountName: pgtype.Text{String: "614510", Valid: true},
+			PredictedVendorName:  pgtype.Text{String: "Maroc Telecom", Valid: true},
+		},
+		{
+			RawDescription:       pgtype.Text{String: "CARTE AWS EMEA SOFTWARE", Valid: true},
+			RawAmount:            "6000.00",
+			CashDirection:        pgtype.Text{String: "OUTFLOW", Valid: true},
+			PredictedAccountName: pgtype.Text{String: "613670", Valid: true},
+			PredictedVendorName:  pgtype.Text{String: "Amazon Web Services", Valid: true},
+		},
+		{
+			RawDescription: pgtype.Text{String: "VIR RECU CLIENT DISTRIBUTION", Valid: true},
+			RawAmount:      "24000.00",
+			CashDirection:  pgtype.Text{String: "INFLOW", Valid: true},
+			MoroccanEnrichment: []byte(`{
+				"counterparty": {"normalized_name": "Atlas Distribution"},
+				"pcgm_accounting": {"suggested_account": "342100"}
+			}`),
 		},
 	}
 
-	accMap := map[string]string{
-		"619000": "619000",
-	}
+	accMap := map[string]string{}
 
 	csvOutput := generatePCMCSV(txs, accMap)
-	if !strings.Contains(csvOutput, "Journal;Date;CompteG;CompteA;Piece;Libelle;Debit;Credit") {
-		t.Errorf("expected header in PCM CSV output, got:\n%s", csvOutput)
-	}
-	if !strings.Contains(csvOutput, "BQ;") {
-		t.Errorf("expected BQ journal in PCM CSV, got:\n%s", csvOutput)
-	}
-	if !strings.Contains(csvOutput, "F_UBER") {
-		t.Errorf("expected auxiliary F_UBER in PCM CSV, got:\n%s", csvOutput)
-	}
+	require.NotEmpty(t, csvOutput)
+
+	assert.Contains(t, csvOutput, "Journal;Date;CompteG;CompteA;Piece;Libelle;Debit;Credit")
+	assert.Contains(t, csvOutput, "614510")
+	assert.Contains(t, csvOutput, "F_MAROCTEL")
+	assert.Contains(t, csvOutput, "613670")
+	assert.Contains(t, csvOutput, "F_AMAZONWE")
+	assert.Contains(t, csvOutput, "342100")
+	assert.Contains(t, csvOutput, "C_ATLASDIS")
 }
 
 func TestPcmExportWorker_GenerateUSGAAPCSV(t *testing.T) {
-	txs := []database.GetPcmSessionTransactionsRow{
+	txs := []PcmExportTxRow{
 		{
-			RawDescription: pgtype.Text{String: "AWS Cloud Services", Valid: true},
-			RawAmount:      "450.00",
-			CashDirection:  pgtype.Text{String: "OUTFLOW", Valid: true},
+			RawDescription:      pgtype.Text{String: "AWS Cloud Services", Valid: true},
+			RawAmount:           "450.00",
+			CashDirection:       pgtype.Text{String: "OUTFLOW", Valid: true},
+			PredictedVendorName: pgtype.Text{String: "Amazon Web Services", Valid: true},
 			AseExecutionTrace: []byte(`[
 				{"dag_node_id": "account_selection", "selected_edge": "Software Overhead"},
 				{"dag_node_id": "counterparty_extractor", "property_key": "counterparty", "selected_edge": "Amazon Web Services"}
@@ -141,6 +156,55 @@ func TestPcmExportWorker_Handle_DisabledExport(t *testing.T) {
 
 	err := worker.Handle(context.Background(), msg)
 	if err != nil {
-		t.Fatalf("expected handle to return nil without error when export disabled, got: %v", err)
+		t.Fatalf("expected nil error for disabled export, got %v", err)
 	}
 }
+
+func TestPcmExportWorker_GenerateExcelWorkbook_Attachment(t *testing.T) {
+	txs := []PcmExportTxRow{
+		{
+			ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			RawDescription:       pgtype.Text{String: "COMMISSIONS BANCAIRES JUILLET", Valid: true},
+			RawAmount:            "110.00",
+			CashDirection:        pgtype.Text{String: "OUTFLOW", Valid: true},
+			PredictedAccountName: pgtype.Text{String: "614700", Valid: true},
+			PredictedVendorName:  pgtype.Text{String: "Banque Populaire", Valid: true},
+		},
+		{
+			ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			RawDescription:       pgtype.Text{String: "LOYER COMMERCIAL BD ZERKTOUNI", Valid: true},
+			RawAmount:            "8000.00",
+			CashDirection:        pgtype.Text{String: "OUTFLOW", Valid: true},
+			PredictedAccountName: pgtype.Text{String: "613100", Valid: true},
+			PredictedVendorName:  pgtype.Text{String: "SCI Zerktouni", Valid: true},
+		},
+	}
+
+	accMap := map[string]string{}
+	var exportRecs []pcm_cash.ExportRecord
+	for _, tx := range txs {
+		desc := tx.RawDescription.String
+		amount := 110.0
+		if desc == "LOYER COMMERCIAL BD ZERKTOUNI" {
+			amount = 8000.0
+		}
+		compteA := extractAuxAccount(desc, tx.PredictedVendorName.String, "OUTFLOW", tx.PredictedAccountName.String)
+		exportRecs = append(exportRecs, pcm_cash.ExportRecord{
+			ID:             uuid.UUID(tx.ID.Bytes).String(),
+			DateStr:        "15/07/2026",
+			RawDescription: desc,
+			Amount:         amount,
+			Direction:      "OUTFLOW",
+			AccountCode:    tx.PredictedAccountName.String,
+			AuxiliaryCode:  compteA,
+			Counterparty:   tx.PredictedVendorName.String,
+			StatementType:  "BANK_STATEMENT",
+		})
+	}
+
+	_ = accMap
+	xlsxBytes, err := pcm_cash.GenerateMoroccanBookkeepingWorkbook(exportRecs)
+	require.NoError(t, err)
+	require.NotEmpty(t, xlsxBytes)
+}
+

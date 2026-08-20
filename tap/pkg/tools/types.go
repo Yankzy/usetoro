@@ -51,6 +51,7 @@ type SessionIDKey struct{}
 type MessageIDKey struct{}
 type RealmIDKey struct{}
 type NodeIDKey struct{}
+type InboundTaskPayloadKey struct{}
 
 type Message struct {
 	Role       string     // "user", "assistant", "tool"

@@ -70,26 +70,26 @@ func main() {
 	// =========================================================================
 	// STEP 1: SEED DATABASE (toro_core.entities & shadow_erp)
 	// =========================================================================
-	// entityID := uuid.New()
+	entityID := uuid.New()
 
-	// // Seed entity and user for yankz@usetoro.io
-	// _, err = dbPool.Exec(ctx, `
-	// 	INSERT INTO toro_core.entities (id, name, entity_type)
-	// 	VALUES ($1, 'Yankz (Toro Admin)', 'apex_cpa')
-	// 	ON CONFLICT (id) DO NOTHING;
-	// `, entityID)
-	// if err != nil {
-	// 	logger.Warn("Database seed entity check", "error", err)
-	// }
+	// Seed entity and user for yankz@usetoro.io
+	_, err = dbPool.Exec(ctx, `
+		INSERT INTO toro_core.entities (id, name, entity_type)
+		VALUES ($1, 'Yankz (Toro Admin)', 'apex_cpa')
+		ON CONFLICT (id) DO NOTHING;
+	`, entityID)
+	if err != nil {
+		logger.Warn("Database seed entity check", "error", err)
+	}
 
-	// _, err = dbPool.Exec(ctx, `
-	// 	INSERT INTO toro_core.users (entity_id, email, password_hash, full_name)
-	// 	VALUES ($1, $2, '$2a$10$dummyhash', 'Yankz Admin')
-	// 	ON CONFLICT (email) DO UPDATE SET updated_at = NOW();
-	// `, entityID, TargetEmail)
-	// if err != nil {
-	// 	logger.Warn("Database seed user check", "error", err)
-	// }
+	_, err = dbPool.Exec(ctx, `
+		INSERT INTO toro_core.users (entity_id, email, password_hash, full_name)
+		VALUES ($1, $2, '$2a$10$dummyhash', 'Yankz Admin')
+		ON CONFLICT (email) DO UPDATE SET updated_at = NOW();
+	`, entityID, TargetEmail)
+	if err != nil {
+		logger.Warn("Database seed user check", "error", err)
+	}
 
 	// Fetch confirmed entity ID for this user
 	var dbEntityID uuid.UUID

@@ -120,8 +120,8 @@ async def perform_ocr(
             parsed_llm = {"doc_type": "other", "confidence": 0.8, "data": {"raw_text": raw_output}}
 
     except Exception as e:
-        logger.warning(f"OpenAI responses API call failed: {e}, attempting chat completions fallback")
-        
+        logger.error(f"OpenAI OCR responses API call failed for file_url {file_url}: {e}", exc_info=True)
+        raise RuntimeError(f"OpenAI OCR API failed: {e}") from e
 
     # Build standardized OCRExtraction matching agent.go
     req = payload or {}
@@ -146,14 +146,16 @@ async def perform_ocr(
     return extraction
 
 
-
-
 async def handle_ocr_request(msg: Any) -> None:
     """
     NATS JetStream handler for OCR jobs.
     Receives NATS payload, extracts image/doc URL, performs OCR, and publishes back to NATS.
     """
     logger.info(f"Received OCR NATS message on subject: {getattr(msg, 'subject', 'unknown')}")
+    req_data: dict = {}
+    payload: dict = {}
+    task_payload: dict = {}
+
     try:
         raw_data = msg.data.decode("utf-8")
         req_data = json.loads(raw_data)
@@ -242,6 +244,10 @@ async def handle_ocr_request(msg: Any) -> None:
 
     except Exception as e:
         logger.error(f"Error handling OCR request: {e}", exc_info=True)
+        error_payload = dict(task_payload or payload or {})
+        error_payload["status"] = "ERROR"
+        error_payload["error"] = str(e)
+        await _publish_ocr_response(msg, payload or {}, error_payload)
         try:
             if hasattr(msg, "nak"):
                 await msg.nak()

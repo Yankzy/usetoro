@@ -201,12 +201,56 @@ func (q *Queries) GetCanonicalVendorsByRealm(ctx context.Context, realmID pgtype
 	return items, nil
 }
 
+const getClientDossierByDossierCode = `-- name: GetClientDossierByDossierCode :one
+SELECT id, realm_id, fiduciaire_id, dossier_code, company_name, ice_number, sage_template_profile_id, event_source, created_at, updated_at FROM shadow_erp.client_dossiers WHERE dossier_code = $1 LIMIT 1
+`
+
+func (q *Queries) GetClientDossierByDossierCode(ctx context.Context, dossierCode string) (ShadowErpClientDossier, error) {
+	row := q.db.QueryRow(ctx, getClientDossierByDossierCode, dossierCode)
+	var i ShadowErpClientDossier
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.FiduciaireID,
+		&i.DossierCode,
+		&i.CompanyName,
+		&i.IceNumber,
+		&i.SageTemplateProfileID,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getClientDossierByRealm = `-- name: GetClientDossierByRealm :one
 SELECT id, realm_id, fiduciaire_id, dossier_code, company_name, ice_number, sage_template_profile_id, event_source, created_at, updated_at FROM shadow_erp.client_dossiers WHERE realm_id = $1 LIMIT 1
 `
 
 func (q *Queries) GetClientDossierByRealm(ctx context.Context, realmID string) (ShadowErpClientDossier, error) {
 	row := q.db.QueryRow(ctx, getClientDossierByRealm, realmID)
+	var i ShadowErpClientDossier
+	err := row.Scan(
+		&i.ID,
+		&i.RealmID,
+		&i.FiduciaireID,
+		&i.DossierCode,
+		&i.CompanyName,
+		&i.IceNumber,
+		&i.SageTemplateProfileID,
+		&i.EventSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getClientDossierByRealmOrCode = `-- name: GetClientDossierByRealmOrCode :one
+SELECT id, realm_id, fiduciaire_id, dossier_code, company_name, ice_number, sage_template_profile_id, event_source, created_at, updated_at FROM shadow_erp.client_dossiers WHERE realm_id = $1 OR dossier_code = $1 LIMIT 1
+`
+
+func (q *Queries) GetClientDossierByRealmOrCode(ctx context.Context, realmID string) (ShadowErpClientDossier, error) {
+	row := q.db.QueryRow(ctx, getClientDossierByRealmOrCode, realmID)
 	var i ShadowErpClientDossier
 	err := row.Scan(
 		&i.ID,

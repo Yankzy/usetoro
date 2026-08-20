@@ -107,7 +107,8 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 
 	publishCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-
+	// log msg
+	// h.Logger.Info("ingress: publishing", "NATS_MSG", msg)
 	if _, err := h.NATS.PublishMsg(msg, nats.Context(publishCtx)); err != nil {
 		h.Logger.Error("ingress: failed to publish to NATS", "error", err, "subject", subject)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -123,7 +124,6 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 
 // HandleEmailClick handles tracked links in marketing emails.
 // Endpoint: GET /c/{hash}
-
 
 // HandleMailpoolWebhook receives deliverability updates from Mailpool
 // Endpoint: POST /webhooks/mailpool/deliverability

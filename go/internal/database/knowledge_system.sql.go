@@ -13,14 +13,14 @@ import (
 
 const createDocument = `-- name: CreateDocument :one
 INSERT INTO toro_core.documents (
-    realm_id, document_type, file_name, mime_type, s3_url, ocr_status, raw_ocr_json, extracted_text, sender_email, source_channel
+    session_id, document_type, file_name, mime_type, s3_url, ocr_status, raw_ocr_json, extracted_text, sender_email, source_channel, metadata
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-) RETURNING id, realm_id, document_type, file_name, mime_type, s3_url, ocr_status, raw_ocr_json, extracted_text, sender_email, source_channel, processed_at, created_at, updated_at
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+) RETURNING id, session_id, document_type, file_name, mime_type, s3_url, ocr_status, raw_ocr_json, extracted_text, sender_email, source_channel, metadata, processed_at, created_at, updated_at
 `
 
 type CreateDocumentParams struct {
-	RealmID       string
+	SessionID     string
 	DocumentType  string
 	FileName      string
 	MimeType      string
@@ -30,11 +30,30 @@ type CreateDocumentParams struct {
 	ExtractedText pgtype.Text
 	SenderEmail   pgtype.Text
 	SourceChannel string
+	Metadata      []byte
 }
 
-func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) (ToroCoreDocument, error) {
+type CreateDocumentRow struct {
+	ID            pgtype.UUID
+	SessionID     string
+	DocumentType  string
+	FileName      string
+	MimeType      string
+	S3Url         string
+	OcrStatus     string
+	RawOcrJson    []byte
+	ExtractedText pgtype.Text
+	SenderEmail   pgtype.Text
+	SourceChannel string
+	Metadata      []byte
+	ProcessedAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) (CreateDocumentRow, error) {
 	row := q.db.QueryRow(ctx, createDocument,
-		arg.RealmID,
+		arg.SessionID,
 		arg.DocumentType,
 		arg.FileName,
 		arg.MimeType,
@@ -44,11 +63,12 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		arg.ExtractedText,
 		arg.SenderEmail,
 		arg.SourceChannel,
+		arg.Metadata,
 	)
-	var i ToroCoreDocument
+	var i CreateDocumentRow
 	err := row.Scan(
 		&i.ID,
-		&i.RealmID,
+		&i.SessionID,
 		&i.DocumentType,
 		&i.FileName,
 		&i.MimeType,
@@ -58,6 +78,7 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		&i.ExtractedText,
 		&i.SenderEmail,
 		&i.SourceChannel,
+		&i.Metadata,
 		&i.ProcessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -67,32 +88,46 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 
 const createFact = `-- name: CreateFact :one
 INSERT INTO toro_core.enterprise_facts (
-    realm_id, namespace, entity_type, uri, payload
+    session_id, namespace, entity_type, uri, payload
 ) VALUES (
     $1, $2, $3, $4, $5
-) RETURNING fact_id, realm_id, namespace, entity_type, uri, payload, created_at
+) ON CONFLICT (session_id, uri) DO UPDATE SET
+    namespace   = EXCLUDED.namespace,
+    entity_type = EXCLUDED.entity_type,
+    payload     = EXCLUDED.payload
+RETURNING fact_id, session_id, namespace, entity_type, uri, payload, created_at
 `
 
 type CreateFactParams struct {
-	RealmID    string
+	SessionID  string
 	Namespace  string
 	EntityType string
 	Uri        string
 	Payload    []byte
 }
 
-func (q *Queries) CreateFact(ctx context.Context, arg CreateFactParams) (ToroCoreEnterpriseFact, error) {
+type CreateFactRow struct {
+	FactID     pgtype.UUID
+	SessionID  string
+	Namespace  string
+	EntityType string
+	Uri        string
+	Payload    []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) CreateFact(ctx context.Context, arg CreateFactParams) (CreateFactRow, error) {
 	row := q.db.QueryRow(ctx, createFact,
-		arg.RealmID,
+		arg.SessionID,
 		arg.Namespace,
 		arg.EntityType,
 		arg.Uri,
 		arg.Payload,
 	)
-	var i ToroCoreEnterpriseFact
+	var i CreateFactRow
 	err := row.Scan(
 		&i.FactID,
-		&i.RealmID,
+		&i.SessionID,
 		&i.Namespace,
 		&i.EntityType,
 		&i.Uri,
@@ -104,16 +139,16 @@ func (q *Queries) CreateFact(ctx context.Context, arg CreateFactParams) (ToroCor
 
 const createRelationship = `-- name: CreateRelationship :one
 INSERT INTO toro_core.enterprise_relationships (
-    realm_id, namespace, from_fact_id, to_fact_id, relation_type, weight
+    session_id, namespace, from_fact_id, to_fact_id, relation_type, weight
 ) VALUES (
     $1, $2, $3, $4, $5, $6
 ) ON CONFLICT ON CONSTRAINT unique_relation DO UPDATE SET
     weight = EXCLUDED.weight
-RETURNING relationship_id, realm_id, namespace, from_fact_id, to_fact_id, relation_type, weight, created_at
+RETURNING relationship_id, session_id, namespace, from_fact_id, to_fact_id, relation_type, weight, created_at
 `
 
 type CreateRelationshipParams struct {
-	RealmID      string
+	SessionID    string
 	Namespace    string
 	FromFactID   pgtype.UUID
 	ToFactID     pgtype.UUID
@@ -121,19 +156,30 @@ type CreateRelationshipParams struct {
 	Weight       float64
 }
 
-func (q *Queries) CreateRelationship(ctx context.Context, arg CreateRelationshipParams) (ToroCoreEnterpriseRelationship, error) {
+type CreateRelationshipRow struct {
+	RelationshipID pgtype.UUID
+	SessionID      string
+	Namespace      string
+	FromFactID     pgtype.UUID
+	ToFactID       pgtype.UUID
+	RelationType   string
+	Weight         float64
+	CreatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) CreateRelationship(ctx context.Context, arg CreateRelationshipParams) (CreateRelationshipRow, error) {
 	row := q.db.QueryRow(ctx, createRelationship,
-		arg.RealmID,
+		arg.SessionID,
 		arg.Namespace,
 		arg.FromFactID,
 		arg.ToFactID,
 		arg.RelationType,
 		arg.Weight,
 	)
-	var i ToroCoreEnterpriseRelationship
+	var i CreateRelationshipRow
 	err := row.Scan(
 		&i.RelationshipID,
-		&i.RealmID,
+		&i.SessionID,
 		&i.Namespace,
 		&i.FromFactID,
 		&i.ToFactID,
@@ -145,17 +191,35 @@ func (q *Queries) CreateRelationship(ctx context.Context, arg CreateRelationship
 }
 
 const getDocumentByID = `-- name: GetDocumentByID :one
-SELECT id, realm_id, document_type, file_name, mime_type, s3_url, ocr_status, raw_ocr_json, extracted_text, sender_email, source_channel, processed_at, created_at, updated_at
+SELECT id, session_id, document_type, file_name, mime_type, s3_url, ocr_status, raw_ocr_json, extracted_text, sender_email, source_channel, metadata, processed_at, created_at, updated_at
 FROM toro_core.documents
 WHERE id = $1
 `
 
-func (q *Queries) GetDocumentByID(ctx context.Context, id pgtype.UUID) (ToroCoreDocument, error) {
+type GetDocumentByIDRow struct {
+	ID            pgtype.UUID
+	SessionID     string
+	DocumentType  string
+	FileName      string
+	MimeType      string
+	S3Url         string
+	OcrStatus     string
+	RawOcrJson    []byte
+	ExtractedText pgtype.Text
+	SenderEmail   pgtype.Text
+	SourceChannel string
+	Metadata      []byte
+	ProcessedAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) GetDocumentByID(ctx context.Context, id pgtype.UUID) (GetDocumentByIDRow, error) {
 	row := q.db.QueryRow(ctx, getDocumentByID, id)
-	var i ToroCoreDocument
+	var i GetDocumentByIDRow
 	err := row.Scan(
 		&i.ID,
-		&i.RealmID,
+		&i.SessionID,
 		&i.DocumentType,
 		&i.FileName,
 		&i.MimeType,
@@ -165,6 +229,7 @@ func (q *Queries) GetDocumentByID(ctx context.Context, id pgtype.UUID) (ToroCore
 		&i.ExtractedText,
 		&i.SenderEmail,
 		&i.SourceChannel,
+		&i.Metadata,
 		&i.ProcessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -173,17 +238,27 @@ func (q *Queries) GetDocumentByID(ctx context.Context, id pgtype.UUID) (ToroCore
 }
 
 const getFactByID = `-- name: GetFactByID :one
-SELECT fact_id, realm_id, namespace, entity_type, uri, payload, created_at
+SELECT fact_id, session_id, namespace, entity_type, uri, payload, created_at
 FROM toro_core.enterprise_facts
 WHERE fact_id = $1
 `
 
-func (q *Queries) GetFactByID(ctx context.Context, factID pgtype.UUID) (ToroCoreEnterpriseFact, error) {
+type GetFactByIDRow struct {
+	FactID     pgtype.UUID
+	SessionID  string
+	Namespace  string
+	EntityType string
+	Uri        string
+	Payload    []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) GetFactByID(ctx context.Context, factID pgtype.UUID) (GetFactByIDRow, error) {
 	row := q.db.QueryRow(ctx, getFactByID, factID)
-	var i ToroCoreEnterpriseFact
+	var i GetFactByIDRow
 	err := row.Scan(
 		&i.FactID,
-		&i.RealmID,
+		&i.SessionID,
 		&i.Namespace,
 		&i.EntityType,
 		&i.Uri,
@@ -194,22 +269,32 @@ func (q *Queries) GetFactByID(ctx context.Context, factID pgtype.UUID) (ToroCore
 }
 
 const getFactByURI = `-- name: GetFactByURI :one
-SELECT fact_id, realm_id, namespace, entity_type, uri, payload, created_at
+SELECT fact_id, session_id, namespace, entity_type, uri, payload, created_at
 FROM toro_core.enterprise_facts
-WHERE realm_id = $1 AND uri = $2
+WHERE session_id = $1 AND uri = $2
 `
 
 type GetFactByURIParams struct {
-	RealmID string
-	Uri     string
+	SessionID string
+	Uri       string
 }
 
-func (q *Queries) GetFactByURI(ctx context.Context, arg GetFactByURIParams) (ToroCoreEnterpriseFact, error) {
-	row := q.db.QueryRow(ctx, getFactByURI, arg.RealmID, arg.Uri)
-	var i ToroCoreEnterpriseFact
+type GetFactByURIRow struct {
+	FactID     pgtype.UUID
+	SessionID  string
+	Namespace  string
+	EntityType string
+	Uri        string
+	Payload    []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) GetFactByURI(ctx context.Context, arg GetFactByURIParams) (GetFactByURIRow, error) {
+	row := q.db.QueryRow(ctx, getFactByURI, arg.SessionID, arg.Uri)
+	var i GetFactByURIRow
 	err := row.Scan(
 		&i.FactID,
-		&i.RealmID,
+		&i.SessionID,
 		&i.Namespace,
 		&i.EntityType,
 		&i.Uri,
@@ -219,33 +304,43 @@ func (q *Queries) GetFactByURI(ctx context.Context, arg GetFactByURIParams) (Tor
 	return i, err
 }
 
-const listFactsByRealmAndNamespace = `-- name: ListFactsByRealmAndNamespace :many
-SELECT fact_id, realm_id, namespace, entity_type, uri, payload, created_at
+const listFactsBySessionAndNamespace = `-- name: ListFactsBySessionAndNamespace :many
+SELECT fact_id, session_id, namespace, entity_type, uri, payload, created_at
 FROM toro_core.enterprise_facts
-WHERE realm_id = $1 
+WHERE session_id = $1 
   AND (namespace = $2 OR $2 = '' OR $2 = '*')
   AND (entity_type = $3 OR $3 = '')
 ORDER BY created_at DESC
 `
 
-type ListFactsByRealmAndNamespaceParams struct {
-	RealmID    string
+type ListFactsBySessionAndNamespaceParams struct {
+	SessionID  string
 	Namespace  string
 	EntityType string
 }
 
-func (q *Queries) ListFactsByRealmAndNamespace(ctx context.Context, arg ListFactsByRealmAndNamespaceParams) ([]ToroCoreEnterpriseFact, error) {
-	rows, err := q.db.Query(ctx, listFactsByRealmAndNamespace, arg.RealmID, arg.Namespace, arg.EntityType)
+type ListFactsBySessionAndNamespaceRow struct {
+	FactID     pgtype.UUID
+	SessionID  string
+	Namespace  string
+	EntityType string
+	Uri        string
+	Payload    []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ListFactsBySessionAndNamespace(ctx context.Context, arg ListFactsBySessionAndNamespaceParams) ([]ListFactsBySessionAndNamespaceRow, error) {
+	rows, err := q.db.Query(ctx, listFactsBySessionAndNamespace, arg.SessionID, arg.Namespace, arg.EntityType)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ToroCoreEnterpriseFact
+	var items []ListFactsBySessionAndNamespaceRow
 	for rows.Next() {
-		var i ToroCoreEnterpriseFact
+		var i ListFactsBySessionAndNamespaceRow
 		if err := rows.Scan(
 			&i.FactID,
-			&i.RealmID,
+			&i.SessionID,
 			&i.Namespace,
 			&i.EntityType,
 			&i.Uri,
@@ -263,25 +358,43 @@ func (q *Queries) ListFactsByRealmAndNamespace(ctx context.Context, arg ListFact
 }
 
 const listPendingDocuments = `-- name: ListPendingDocuments :many
-SELECT id, realm_id, document_type, file_name, mime_type, s3_url, ocr_status, raw_ocr_json, extracted_text, sender_email, source_channel, processed_at, created_at, updated_at
+SELECT id, session_id, document_type, file_name, mime_type, s3_url, ocr_status, raw_ocr_json, extracted_text, sender_email, source_channel, metadata, processed_at, created_at, updated_at
 FROM toro_core.documents
 WHERE ocr_status = 'PENDING'
 ORDER BY created_at ASC
 LIMIT $1
 `
 
-func (q *Queries) ListPendingDocuments(ctx context.Context, limit int32) ([]ToroCoreDocument, error) {
+type ListPendingDocumentsRow struct {
+	ID            pgtype.UUID
+	SessionID     string
+	DocumentType  string
+	FileName      string
+	MimeType      string
+	S3Url         string
+	OcrStatus     string
+	RawOcrJson    []byte
+	ExtractedText pgtype.Text
+	SenderEmail   pgtype.Text
+	SourceChannel string
+	Metadata      []byte
+	ProcessedAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ListPendingDocuments(ctx context.Context, limit int32) ([]ListPendingDocumentsRow, error) {
 	rows, err := q.db.Query(ctx, listPendingDocuments, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ToroCoreDocument
+	var items []ListPendingDocumentsRow
 	for rows.Next() {
-		var i ToroCoreDocument
+		var i ListPendingDocumentsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.RealmID,
+			&i.SessionID,
 			&i.DocumentType,
 			&i.FileName,
 			&i.MimeType,
@@ -291,6 +404,7 @@ func (q *Queries) ListPendingDocuments(ctx context.Context, limit int32) ([]Toro
 			&i.ExtractedText,
 			&i.SenderEmail,
 			&i.SourceChannel,
+			&i.Metadata,
 			&i.ProcessedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -306,7 +420,7 @@ func (q *Queries) ListPendingDocuments(ctx context.Context, limit int32) ([]Toro
 }
 
 const listRelationshipsFromFact = `-- name: ListRelationshipsFromFact :many
-SELECT r.relationship_id, r.realm_id, r.namespace, r.from_fact_id, r.to_fact_id, r.relation_type, r.weight, r.created_at,
+SELECT r.relationship_id, r.session_id, r.namespace, r.from_fact_id, r.to_fact_id, r.relation_type, r.weight, r.created_at,
        f.entity_type AS to_entity_type, f.uri AS to_uri, f.payload AS to_payload
 FROM toro_core.enterprise_relationships r
 JOIN toro_core.enterprise_facts f ON r.to_fact_id = f.fact_id
@@ -315,7 +429,7 @@ WHERE r.from_fact_id = $1
 
 type ListRelationshipsFromFactRow struct {
 	RelationshipID pgtype.UUID
-	RealmID        string
+	SessionID      string
 	Namespace      string
 	FromFactID     pgtype.UUID
 	ToFactID       pgtype.UUID
@@ -338,7 +452,7 @@ func (q *Queries) ListRelationshipsFromFact(ctx context.Context, fromFactID pgty
 		var i ListRelationshipsFromFactRow
 		if err := rows.Scan(
 			&i.RelationshipID,
-			&i.RealmID,
+			&i.SessionID,
 			&i.Namespace,
 			&i.FromFactID,
 			&i.ToFactID,
@@ -360,7 +474,7 @@ func (q *Queries) ListRelationshipsFromFact(ctx context.Context, fromFactID pgty
 }
 
 const listRelationshipsToFact = `-- name: ListRelationshipsToFact :many
-SELECT r.relationship_id, r.realm_id, r.namespace, r.from_fact_id, r.to_fact_id, r.relation_type, r.weight, r.created_at,
+SELECT r.relationship_id, r.session_id, r.namespace, r.from_fact_id, r.to_fact_id, r.relation_type, r.weight, r.created_at,
        f.entity_type AS from_entity_type, f.uri AS from_uri, f.payload AS from_payload
 FROM toro_core.enterprise_relationships r
 JOIN toro_core.enterprise_facts f ON r.from_fact_id = f.fact_id
@@ -369,7 +483,7 @@ WHERE r.to_fact_id = $1
 
 type ListRelationshipsToFactRow struct {
 	RelationshipID pgtype.UUID
-	RealmID        string
+	SessionID      string
 	Namespace      string
 	FromFactID     pgtype.UUID
 	ToFactID       pgtype.UUID
@@ -392,7 +506,7 @@ func (q *Queries) ListRelationshipsToFact(ctx context.Context, toFactID pgtype.U
 		var i ListRelationshipsToFactRow
 		if err := rows.Scan(
 			&i.RelationshipID,
-			&i.RealmID,
+			&i.SessionID,
 			&i.Namespace,
 			&i.FromFactID,
 			&i.ToFactID,
@@ -421,7 +535,7 @@ SET ocr_status = $2,
     processed_at = NOW(),
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, realm_id, document_type, file_name, mime_type, s3_url, ocr_status, raw_ocr_json, extracted_text, sender_email, source_channel, processed_at, created_at, updated_at
+RETURNING id, session_id, document_type, file_name, mime_type, s3_url, ocr_status, raw_ocr_json, extracted_text, sender_email, source_channel, metadata, processed_at, created_at, updated_at
 `
 
 type UpdateDocumentOCRStatusParams struct {
@@ -431,17 +545,35 @@ type UpdateDocumentOCRStatusParams struct {
 	ExtractedText pgtype.Text
 }
 
-func (q *Queries) UpdateDocumentOCRStatus(ctx context.Context, arg UpdateDocumentOCRStatusParams) (ToroCoreDocument, error) {
+type UpdateDocumentOCRStatusRow struct {
+	ID            pgtype.UUID
+	SessionID     string
+	DocumentType  string
+	FileName      string
+	MimeType      string
+	S3Url         string
+	OcrStatus     string
+	RawOcrJson    []byte
+	ExtractedText pgtype.Text
+	SenderEmail   pgtype.Text
+	SourceChannel string
+	Metadata      []byte
+	ProcessedAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateDocumentOCRStatus(ctx context.Context, arg UpdateDocumentOCRStatusParams) (UpdateDocumentOCRStatusRow, error) {
 	row := q.db.QueryRow(ctx, updateDocumentOCRStatus,
 		arg.ID,
 		arg.OcrStatus,
 		arg.RawOcrJson,
 		arg.ExtractedText,
 	)
-	var i ToroCoreDocument
+	var i UpdateDocumentOCRStatusRow
 	err := row.Scan(
 		&i.ID,
-		&i.RealmID,
+		&i.SessionID,
 		&i.DocumentType,
 		&i.FileName,
 		&i.MimeType,
@@ -451,6 +583,7 @@ func (q *Queries) UpdateDocumentOCRStatus(ctx context.Context, arg UpdateDocumen
 		&i.ExtractedText,
 		&i.SenderEmail,
 		&i.SourceChannel,
+		&i.Metadata,
 		&i.ProcessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,

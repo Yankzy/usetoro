@@ -50,6 +50,8 @@ func main() {
 		dbURL,
 		strings.Replace(dbURL, "@db:5432", "@localhost:5435", 1),
 		strings.Replace(dbURL, "@db:5432", "@localhost:5432", 1),
+		strings.Replace(dbURL, "@torodb:5432", "@localhost:5435", 1),
+		strings.Replace(dbURL, "@torodb:5432", "@localhost:5432", 1),
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

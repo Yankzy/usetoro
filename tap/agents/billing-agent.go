@@ -14,6 +14,10 @@ import (
 )
 
 // Define the Data Contracts
+type OCRInput struct {
+	ImageURL string `json:"image_url"`
+}
+
 type OCRResult struct {
 	Text   string  `json:"text"`
 	Amount float64 `json:"amount"`

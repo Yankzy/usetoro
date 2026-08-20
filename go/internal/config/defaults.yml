@@ -218,17 +218,17 @@ agents:
       db_queries: false
       entity_resolver: false
 
-#   - did: did:toro:agent:ocr_agent
-#     name: OCR_Agent
-#     model: gpt-5.4-mini
-#     engine: internal
-#     internal_module: ocr_agent
-#     activity_type: agents.perception.ocr
-#     task_queue: tasks.perception.1.ocr
-#     dependencies:
-#       database: false
-#       db_queries: true
-#       entity_resolver: false
+  - did: did:toro:agent:ocr_agent
+    name: OCR_Agent
+    model: gpt-5.4-mini
+    engine: internal
+    internal_module: ocr_agent
+    activity_type: agents.perception.ocr
+    task_queue: tasks.perception.1.ocr
+    dependencies:
+      database: false
+      db_queries: true
+      entity_resolver: false
 
   - did: did:toro:agent:batch_categorization
     name: Batch Categorization Agent
@@ -248,6 +248,11 @@ agents:
     internal_module: dynamic-agent
     activity_type: agents.dynamic.purpose
     task_queue: tasks.dynamic.1.purpose
+    tools:
+      - name: get_user_workflows
+      - name: trigger_workflow
+      - name: CheckExistingDocuments
+      - name: QueueClientRequest
     dependencies:
       database: false
       db_queries: true
@@ -296,6 +301,10 @@ agents:
 
 
 workers:
+  debug_worker:
+    activity_type: workers.debug
+    subject: ""
+    group: ""
   a2a_gatekeeper:
     activity_type: workers.a2a_gatekeeper
     subject: ""
@@ -385,6 +394,21 @@ workers:
     activity_type: workers.pcm
     subject: worker.inbox.pcm
     group: worker-inbox-pcm-group
+
+  ocr_result:
+    activity_type: workers.ocr_result
+    subject: worker.inbox.go.knowledge_ingest
+    group: knowledge-ingest-group
+
+  document:
+    activity_type: workers.document.create
+    subject: worker.inbox.document.create
+    group: document-create-group
+
+  document_cdc:
+    activity_type: workers.document_cdc
+    subject: ledger.toro_core.documents.insert
+    group: ""
 
   db_receipt_lookup:
     activity_type: workers.action.db_receipt_lookup

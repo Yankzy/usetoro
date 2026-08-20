@@ -179,7 +179,11 @@ func (s *StateStore) PersistHoldReason(ctx context.Context, node *ase.Autonomous
 // This is the State Collapse point — only call when confidence >= threshold.
 func (s *StateStore) PersistReadyForSync(ctx context.Context, node *ase.AutonomousSemanticEngineNode) error {
 	threshold := 0.98
-	if cfg := ase.GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
+	userID := node.UserID
+	if userID == "" {
+		userID = node.TenantID
+	}
+	if cfg := ase.GetConfig(userID, node.DagName); cfg != nil {
 		threshold = cfg.HyperParameters.ConfidenceThreshold
 	}
 
@@ -227,7 +231,11 @@ func (s *StateStore) CacheActiveAgent(ctx context.Context, node *ase.AutonomousS
 	key := activeAgentPrefix + node.NodeID
 
 	ttl := 10 * time.Minute
-	if cfg := ase.GetConfig(node.TenantID, node.RealmID, node.DagName); cfg != nil {
+	userID := node.UserID
+	if userID == "" {
+		userID = node.TenantID
+	}
+	if cfg := ase.GetConfig(userID, node.DagName); cfg != nil {
 		ttl = time.Duration(cfg.HyperParameters.ActiveAgentTTLMinutes) * time.Minute
 	}
 
@@ -274,7 +282,7 @@ func (s *StateStore) AcquireLock(ctx context.Context, nodeID string) (bool, erro
 	key := lockPrefix + nodeID
 
 	ttl := 30 * time.Second
-	if cfg := ase.GetConfig("", "", "default"); cfg != nil {
+	if cfg := ase.GetConfig("", "default"); cfg != nil {
 		ttl = time.Duration(cfg.HyperParameters.LockTTLSeconds) * time.Second
 	}
 

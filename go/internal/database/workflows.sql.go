@@ -83,7 +83,7 @@ func (q *Queries) GetActiveWorkflowsByEntityID(ctx context.Context, entityID pgt
 }
 
 const getBlueprintByName = `-- name: GetBlueprintByName :one
-SELECT name, trigger_topic, definition, created_at, updated_at
+SELECT name, user_id, trigger_topic, definition, created_at, updated_at
 FROM toro_core.workflow_blueprints
 WHERE name = $1
 LIMIT 1
@@ -94,6 +94,7 @@ func (q *Queries) GetBlueprintByName(ctx context.Context, name string) (ToroCore
 	var i ToroCoreWorkflowBlueprint
 	err := row.Scan(
 		&i.Name,
+		&i.UserID,
 		&i.TriggerTopic,
 		&i.Definition,
 		&i.CreatedAt,
@@ -103,7 +104,7 @@ func (q *Queries) GetBlueprintByName(ctx context.Context, name string) (ToroCore
 }
 
 const getBlueprintByNameOrTriggerTopic = `-- name: GetBlueprintByNameOrTriggerTopic :one
-SELECT name, trigger_topic, definition, created_at, updated_at
+SELECT name, user_id, trigger_topic, definition, created_at, updated_at
 FROM toro_core.workflow_blueprints
 WHERE name = $1 OR trigger_topic = $1
 LIMIT 1
@@ -114,6 +115,7 @@ func (q *Queries) GetBlueprintByNameOrTriggerTopic(ctx context.Context, name str
 	var i ToroCoreWorkflowBlueprint
 	err := row.Scan(
 		&i.Name,
+		&i.UserID,
 		&i.TriggerTopic,
 		&i.Definition,
 		&i.CreatedAt,
@@ -142,7 +144,7 @@ func (q *Queries) GetWorkflow(ctx context.Context, id pgtype.UUID) (ToroCoreWork
 }
 
 const getWorkflowBlueprints = `-- name: GetWorkflowBlueprints :many
-SELECT name, trigger_topic, definition, created_at, updated_at
+SELECT name, user_id, trigger_topic, definition, created_at, updated_at
 FROM toro_core.workflow_blueprints
 ORDER BY name
 `
@@ -158,6 +160,41 @@ func (q *Queries) GetWorkflowBlueprints(ctx context.Context) ([]ToroCoreWorkflow
 		var i ToroCoreWorkflowBlueprint
 		if err := rows.Scan(
 			&i.Name,
+			&i.UserID,
+			&i.TriggerTopic,
+			&i.Definition,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getWorkflowBlueprintsByUser = `-- name: GetWorkflowBlueprintsByUser :many
+SELECT name, user_id, trigger_topic, definition, created_at, updated_at
+FROM toro_core.workflow_blueprints
+WHERE user_id = $1 OR user_id IS NULL
+ORDER BY name
+`
+
+func (q *Queries) GetWorkflowBlueprintsByUser(ctx context.Context, userID pgtype.UUID) ([]ToroCoreWorkflowBlueprint, error) {
+	rows, err := q.db.Query(ctx, getWorkflowBlueprintsByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToroCoreWorkflowBlueprint
+	for rows.Next() {
+		var i ToroCoreWorkflowBlueprint
+		if err := rows.Scan(
+			&i.Name,
+			&i.UserID,
 			&i.TriggerTopic,
 			&i.Definition,
 			&i.CreatedAt,
@@ -262,17 +299,19 @@ func (q *Queries) UpdateWorkflowState(ctx context.Context, arg UpdateWorkflowSta
 
 const upsertWorkflowBlueprint = `-- name: UpsertWorkflowBlueprint :one
 
-INSERT INTO toro_core.workflow_blueprints (name, trigger_topic, definition)
-VALUES ($1, $2, $3)
+INSERT INTO toro_core.workflow_blueprints (name, user_id, trigger_topic, definition)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (name) DO UPDATE
 SET trigger_topic = EXCLUDED.trigger_topic,
     definition    = EXCLUDED.definition,
+    user_id       = COALESCE(EXCLUDED.user_id, toro_core.workflow_blueprints.user_id),
     updated_at    = NOW()
-RETURNING name, trigger_topic, definition, created_at, updated_at
+RETURNING name, user_id, trigger_topic, definition, created_at, updated_at
 `
 
 type UpsertWorkflowBlueprintParams struct {
 	Name         string
+	UserID       pgtype.UUID
 	TriggerTopic string
 	Definition   []byte
 }
@@ -281,10 +320,16 @@ type UpsertWorkflowBlueprintParams struct {
 // Workflow Blueprints (declarative definitions)
 // =========================================================================
 func (q *Queries) UpsertWorkflowBlueprint(ctx context.Context, arg UpsertWorkflowBlueprintParams) (ToroCoreWorkflowBlueprint, error) {
-	row := q.db.QueryRow(ctx, upsertWorkflowBlueprint, arg.Name, arg.TriggerTopic, arg.Definition)
+	row := q.db.QueryRow(ctx, upsertWorkflowBlueprint,
+		arg.Name,
+		arg.UserID,
+		arg.TriggerTopic,
+		arg.Definition,
+	)
 	var i ToroCoreWorkflowBlueprint
 	err := row.Scan(
 		&i.Name,
+		&i.UserID,
 		&i.TriggerTopic,
 		&i.Definition,
 		&i.CreatedAt,

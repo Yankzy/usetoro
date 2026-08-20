@@ -4,8 +4,8 @@ FROM golang:1.25 AS builder
 WORKDIR /app
 # Copy the Go workspace and source files
 COPY go/go.mod go/go.sum ./
-COPY tap/ ./tap/
-COPY go/ ./go/
+COPY tap ./tap
+COPY go ./go
 
 WORKDIR /app/go
 # Build the ToroDB Stream Engine binary

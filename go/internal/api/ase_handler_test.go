@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,11 +19,14 @@ import (
 
 type mockASEQuerier struct {
 	database.Querier
-	listAllFunc      func(ctx context.Context) ([]database.ToroCoreAseDag, error)
-	listByTenantFunc func(ctx context.Context, tenantID pgtype.UUID) ([]database.ToroCoreAseDag, error)
-	listVersionsFunc func(ctx context.Context, dagID pgtype.UUID) ([]database.ListASEDagVersionsRow, error)
-	getVersionFunc   func(ctx context.Context, id pgtype.UUID) (database.ToroCoreAseDagVersion, error)
-	updateConfigFunc func(ctx context.Context, arg database.UpdateASEConfigByIDParams) (database.ToroCoreAseDag, error)
+	listAllFunc         func(ctx context.Context) ([]database.ToroCoreAseDag, error)
+	listByUserFunc      func(ctx context.Context, userID pgtype.UUID) ([]database.ToroCoreAseDag, error)
+	listVersionsFunc    func(ctx context.Context, dagID pgtype.UUID) ([]database.ListASEDagVersionsRow, error)
+	getVersionFunc      func(ctx context.Context, id pgtype.UUID) (database.ToroCoreAseDagVersion, error)
+	updateConfigFunc    func(ctx context.Context, arg database.UpdateASEConfigByIDParams) (database.ToroCoreAseDag, error)
+	getByUserFunc       func(ctx context.Context, arg database.GetASEConfigByUserParams) (database.ToroCoreAseDag, error)
+	getGlobalByNameFunc func(ctx context.Context, name string) (database.ToroCoreAseDag, error)
+	upsertConfigFunc    func(ctx context.Context, arg database.UpsertASEConfigParams) (database.ToroCoreAseDag, error)
 }
 
 func (m *mockASEQuerier) ListAllASEConfigs(ctx context.Context) ([]database.ToroCoreAseDag, error) {
@@ -32,9 +36,9 @@ func (m *mockASEQuerier) ListAllASEConfigs(ctx context.Context) ([]database.Toro
 	return nil, nil
 }
 
-func (m *mockASEQuerier) ListASEConfigsByTenant(ctx context.Context, tenantID pgtype.UUID) ([]database.ToroCoreAseDag, error) {
-	if m.listByTenantFunc != nil {
-		return m.listByTenantFunc(ctx, tenantID)
+func (m *mockASEQuerier) ListASEConfigsByUser(ctx context.Context, userID pgtype.UUID) ([]database.ToroCoreAseDag, error) {
+	if m.listByUserFunc != nil {
+		return m.listByUserFunc(ctx, userID)
 	}
 	return nil, nil
 }
@@ -60,18 +64,38 @@ func (m *mockASEQuerier) UpdateASEConfigByID(ctx context.Context, arg database.U
 	return database.ToroCoreAseDag{}, nil
 }
 
+func (m *mockASEQuerier) GetASEConfigByUser(ctx context.Context, arg database.GetASEConfigByUserParams) (database.ToroCoreAseDag, error) {
+	if m.getByUserFunc != nil {
+		return m.getByUserFunc(ctx, arg)
+	}
+	return database.ToroCoreAseDag{}, nil
+}
+
+func (m *mockASEQuerier) GetASEConfigGlobalByName(ctx context.Context, name string) (database.ToroCoreAseDag, error) {
+	if m.getGlobalByNameFunc != nil {
+		return m.getGlobalByNameFunc(ctx, name)
+	}
+	return database.ToroCoreAseDag{}, nil
+}
+
+func (m *mockASEQuerier) UpsertASEConfig(ctx context.Context, arg database.UpsertASEConfigParams) (database.ToroCoreAseDag, error) {
+	if m.upsertConfigFunc != nil {
+		return m.upsertConfigFunc(ctx, arg)
+	}
+	return database.ToroCoreAseDag{}, nil
+}
+
 func TestHandleListASEConfigs(t *testing.T) {
 	logger := testLogger()
 	handler := &Handler{
 		Logger: logger,
 	}
 
-	tenantUUID := uuid.New()
+	userUUID := uuid.New()
 	mockConfigs := []database.ToroCoreAseDag{
 		{
 			ID:              pgtype.UUID{Bytes: uuid.New(), Valid: true},
-			TenantID:        pgtype.UUID{Bytes: tenantUUID, Valid: true},
-			RealmID:         pgtype.Text{String: "realm-123", Valid: true},
+			UserID:          pgtype.UUID{Bytes: userUUID, Valid: true},
 			Name:            "test-config",
 			DagConfig:       []byte(`{"nodes":{}}`),
 			HyperParameters: []byte(`{"confidence_threshold":0.95}`),
@@ -106,14 +130,14 @@ func TestHandleListASEConfigs(t *testing.T) {
 				// Verify JSON keys are lowercase
 				item := parsed[0]
 				assert.Contains(t, item, "id")
-				assert.Contains(t, item, "tenant_id")
-				assert.Contains(t, item, "realm_id")
+				assert.Contains(t, item, "user_id")
 				assert.Contains(t, item, "name")
 				assert.Contains(t, item, "created_at")
 				assert.Contains(t, item, "updated_at")
 
 				// Ensure uppercase keys do NOT exist
 				assert.NotContains(t, item, "ID")
+				assert.NotContains(t, item, "UserID")
 				assert.NotContains(t, item, "TenantID")
 				assert.NotContains(t, item, "RealmID")
 				assert.NotContains(t, item, "Name")
@@ -122,11 +146,11 @@ func TestHandleListASEConfigs(t *testing.T) {
 			},
 		},
 		{
-			name:        "Success - List by Tenant ID",
-			queryParams: "?tenant_id=" + tenantUUID.String(),
+			name:        "Success - List by User ID",
+			queryParams: "?user_id=" + userUUID.String(),
 			mockSetup: func(m *mockASEQuerier) {
-				m.listByTenantFunc = func(ctx context.Context, tenantID pgtype.UUID) ([]database.ToroCoreAseDag, error) {
-					assert.Equal(t, tenantUUID, uuid.UUID(tenantID.Bytes))
+				m.listByUserFunc = func(ctx context.Context, userID pgtype.UUID) ([]database.ToroCoreAseDag, error) {
+					assert.Equal(t, userUUID, uuid.UUID(userID.Bytes))
 					return mockConfigs, nil
 				}
 			},
@@ -140,8 +164,8 @@ func TestHandleListASEConfigs(t *testing.T) {
 			},
 		},
 		{
-			name:           "Error - Invalid Tenant ID",
-			queryParams:    "?tenant_id=invalid-uuid",
+			name:           "Error - Invalid User ID",
+			queryParams:    "?user_id=invalid-uuid",
 			mockSetup:      func(m *mockASEQuerier) {},
 			expectedStatus: http.StatusBadRequest,
 		},
@@ -363,8 +387,7 @@ func TestHandleRestoreASEDagVersion(t *testing.T) {
 
 	mockConfig := database.ToroCoreAseDag{
 		ID:              pgtype.UUID{Bytes: dagUUID, Valid: true},
-		TenantID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		RealmID:         pgtype.Text{String: "realm-1", Valid: true},
+		UserID:          pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		Name:            "default",
 		DagConfig:       mockVersion.DagConfig,
 		HyperParameters: mockVersion.HyperParameters,
@@ -488,5 +511,106 @@ func TestHandleRestoreASEDagVersion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleGetASEConfig(t *testing.T) {
+	logger := testLogger()
+	handler := &Handler{Logger: logger}
+
+	userUUID := uuid.New()
+	mockConfig := database.ToroCoreAseDag{
+		ID:              pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		UserID:          pgtype.UUID{Bytes: userUUID, Valid: true},
+		Name:            "test-dag",
+		DagConfig:       []byte(`{"nodes":{}}`),
+		HyperParameters: []byte(`{"confidence_threshold":0.95}`),
+		Prompts:         []byte(`{}`),
+		CreatedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		UpdatedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}
+
+	t.Run("Success with user_id", func(t *testing.T) {
+		mockDB := &mockASEQuerier{
+			getByUserFunc: func(ctx context.Context, arg database.GetASEConfigByUserParams) (database.ToroCoreAseDag, error) {
+				assert.Equal(t, userUUID, uuid.UUID(arg.UserID.Bytes))
+				assert.Equal(t, "test-dag", arg.Name)
+				return mockConfig, nil
+			},
+		}
+		handler.DB = mockDB
+
+		req := httptest.NewRequest(http.MethodGet, "/ase/config?name=test-dag&user_id="+userUUID.String(), nil)
+		w := httptest.NewRecorder()
+
+		handler.HandleGetASEConfig(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("Success global", func(t *testing.T) {
+		mockDB := &mockASEQuerier{
+			getGlobalByNameFunc: func(ctx context.Context, name string) (database.ToroCoreAseDag, error) {
+				assert.Equal(t, "test-dag", name)
+				return mockConfig, nil
+			},
+		}
+		handler.DB = mockDB
+
+		req := httptest.NewRequest(http.MethodGet, "/ase/config?name=test-dag", nil)
+		w := httptest.NewRecorder()
+
+		handler.HandleGetASEConfig(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("Missing name", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/ase/config", nil)
+		w := httptest.NewRecorder()
+
+		handler.HandleGetASEConfig(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+}
+
+func TestHandleUpsertASEConfig(t *testing.T) {
+	logger := testLogger()
+	handler := &Handler{Logger: logger}
+
+	userUUID := uuid.New()
+	mockConfig := database.ToroCoreAseDag{
+		ID:              pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		UserID:          pgtype.UUID{Bytes: userUUID, Valid: true},
+		Name:            "test-dag",
+		DagConfig:       []byte(`{"nodes":{}}`),
+		HyperParameters: []byte(`{"confidence_threshold":0.95}`),
+		Prompts:         []byte(`{}`),
+		CreatedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		UpdatedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}
+
+	t.Run("Success with user_id", func(t *testing.T) {
+		mockDB := &mockASEQuerier{
+			upsertConfigFunc: func(ctx context.Context, arg database.UpsertASEConfigParams) (database.ToroCoreAseDag, error) {
+				assert.Equal(t, userUUID, uuid.UUID(arg.UserID.Bytes))
+				assert.Equal(t, "test-dag", arg.Name)
+				return mockConfig, nil
+			},
+		}
+		handler.DB = mockDB
+
+		body := fmt.Sprintf(`{"user_id":"%s","name":"test-dag","dag":{"nodes":{}},"hyper_parameters":{"confidence_threshold":0.95},"prompts":{}}`, userUUID.String())
+		req := httptest.NewRequest(http.MethodPost, "/ase/config", strings.NewReader(body))
+		w := httptest.NewRecorder()
+
+		handler.HandleUpsertASEConfig(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("Invalid method", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/ase/config", nil)
+		w := httptest.NewRecorder()
+
+		handler.HandleUpsertASEConfig(w, req)
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
 }
 

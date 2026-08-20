@@ -11,7 +11,7 @@ func TestLRUCaching(t *testing.T) {
 	assert.NoError(t, err)
 	
 	// Initially it should return nil because no DB
-	cfg := GetConfig("test-tenant", "", "test-dag")
+	cfg := GetConfig("test-user", "test-dag")
 	assert.Nil(t, cfg)
 	
 	// Manually inject something into the cache
@@ -20,10 +20,10 @@ func TestLRUCaching(t *testing.T) {
 			ConfidenceThreshold: 0.99,
 		},
 	}
-	configCache.Add("test-dag_test-tenant", customCfg)
+	configCache.Add("test-dag_test-user", customCfg)
 	
 	// Now GetConfig should return from cache
-	cachedCfg := GetConfig("test-tenant", "", "test-dag")
+	cachedCfg := GetConfig("test-user", "test-dag")
 	assert.NotNil(t, cachedCfg)
 	assert.Equal(t, float64(0.99), cachedCfg.HyperParameters.ConfidenceThreshold)
 }

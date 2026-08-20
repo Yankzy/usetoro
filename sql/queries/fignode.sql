@@ -291,3 +291,22 @@ WHERE session_id = $1 AND status = 'ENRICHED';
 UPDATE fignode.staging_transactions
 SET status = 'READY_FOR_REVIEW'
 WHERE session_id = $1 AND status = 'ENRICHED';
+
+-- name: GetPendingSessionStagingTransactions :many
+SELECT * FROM fignode.staging_transactions
+WHERE session_id = $1 AND status = 'PENDING_AI'
+ORDER BY created_at ASC;
+
+-- name: UpdateStagingTransactionMoroccanEnrichment :exec
+UPDATE fignode.staging_transactions
+SET predicted_vendor_name = sqlc.narg('predicted_vendor_name'),
+    predicted_account_name = sqlc.narg('predicted_account_name'),
+    confidence_score = sqlc.narg('confidence_score'),
+    ai_reasoning = sqlc.narg('ai_reasoning'),
+    merchant_name = sqlc.narg('merchant_name'),
+    category = sqlc.narg('category'),
+    moroccan_enrichment = sqlc.narg('moroccan_enrichment'),
+    status = 'ENRICHED',
+    updated_at = NOW()
+WHERE id = sqlc.narg('id');
+

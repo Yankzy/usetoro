@@ -60,25 +60,35 @@ type EmailTemplate struct {
 	BodyText string `json:"body_text"`
 }
 
+// AnnotationTemplate holds declarative, node-level statutory compliance metadata
+// for human accountant review when a transaction enters a holding or quarantine gate.
+type AnnotationTemplate struct {
+	TaxRuleCode      string `json:"tax_rule_code" yaml:"tax_rule_code"`
+	DocumentRequired string `json:"document_required" yaml:"document_required"`
+	Instruction      string `json:"instruction" yaml:"instruction"`
+	Severity         string `json:"severity" yaml:"severity"` // "BLOCKING", "ACTION_REQUIRED", "WARNING", "INFO"
+}
+
 // DAGNodeConfig defines a single node in the DAG topology.
 type DAGNodeConfig struct {
-	Kind                string            `json:"kind"`
-	Name                string            `json:"name"`
-	AutoAdvance         *bool             `json:"auto_advance"`
-	BatchSize           int               `json:"batch_size"`
-	BatchFlushSeconds   int               `json:"batch_flush_seconds"`
-	PromptKey           string            `json:"prompt_key"`
-	EdgeType            string            `json:"edge_type"`
-	DynamicEdgeProvider string            `json:"dynamic_edge_provider"`
-	HoldStateSignal     string            `json:"hold_state_signal"`
-	HoldReasonString    string            `json:"hold_reason_string"`
-	ResumeChild         string            `json:"resume_child"`
-	Email               *EmailTemplate    `json:"email"`
-	Children            map[string]string `json:"children"`
-	DefaultChild        string            `json:"default_child"`
-	ExecutionParams     map[string]string `json:"execution_parameters"`
-	Context             map[string]any    `json:"context"`
-	RecoveryPolicy      *DecisionNode     `json:"recovery_policy,omitempty"`
+	Kind                string              `json:"kind"`
+	Name                string              `json:"name"`
+	AutoAdvance         *bool               `json:"auto_advance"`
+	BatchSize           int                 `json:"batch_size"`
+	BatchFlushSeconds   int                 `json:"batch_flush_seconds"`
+	PromptKey           string              `json:"prompt_key"`
+	EdgeType            string              `json:"edge_type"`
+	DynamicEdgeProvider string              `json:"dynamic_edge_provider"`
+	HoldStateSignal     string              `json:"hold_state_signal"`
+	HoldReasonString    string              `json:"hold_reason_string"`
+	ResumeChild         string              `json:"resume_child"`
+	Email               *EmailTemplate      `json:"email"`
+	Annotation          *AnnotationTemplate `json:"annotation"`
+	Children            map[string]string   `json:"children"`
+	DefaultChild        string              `json:"default_child"`
+	ExecutionParams     map[string]string   `json:"execution_parameters"`
+	Context             map[string]any      `json:"context"`
+	RecoveryPolicy      *DecisionNode       `json:"recovery_policy,omitempty"`
 }
 
 var (
@@ -133,11 +143,11 @@ func parseDBRow(dagConfig []byte, hyperParams []byte, prompts []byte) (*ASEConfi
 	return &cfg, nil
 }
 
-// GetConfig returns the ASE configuration for a specific tenant or realm.
+// GetConfig returns the ASE configuration for a specific user.
 // If dagName is empty, it returns nil instead of defaulting.
-// If no tenant-specific or realm-specific config is found in the database,
-// it falls back hierarchically to realm-specific and then global configuration.
-func GetConfig(tenantID, realmID, dagName string) *ASEConfig {
+// If no user-specific config is found in the database,
+// it falls back hierarchically to global configuration (where user_id IS NULL).
+func GetConfig(userID, dagName string) *ASEConfig {
 	ctx := context.Background()
 
 	if dagName == "" {
@@ -148,10 +158,8 @@ func GetConfig(tenantID, realmID, dagName string) *ASEConfig {
 	}
 
 	key := ""
-	if tenantID != "" {
-		key = dagName + "_" + tenantID
-	} else if realmID != "" {
-		key = dagName + "_" + realmID
+	if userID != "" {
+		key = dagName + "_" + userID
 	} else {
 		key = dagName
 	}
@@ -182,46 +190,30 @@ func GetConfig(tenantID, realmID, dagName string) *ASEConfig {
 		return e.Error() == "no rows in result set" || strings.Contains(e.Error(), "no rows")
 	}
 
-	// 1. Try Tenant-specific config
-	if tenantID != "" {
-		uid, parseErr := uuid.Parse(tenantID)
+	// 1. Try User-specific config
+	if userID != "" {
+		uid, parseErr := uuid.Parse(userID)
 		if parseErr == nil {
-			dbRow, err = dbQueries.GetASEConfigByTenant(ctx, database.GetASEConfigByTenantParams{
-				TenantID: pgtype.UUID{Bytes: uid, Valid: true},
-				Name:     dagName,
+			dbRow, err = dbQueries.GetASEConfigByUser(ctx, database.GetASEConfigByUserParams{
+				UserID: pgtype.UUID{Bytes: uid, Valid: true},
+				Name:   dagName,
 			})
 			if err == nil {
 				loaded = true
 			} else if !isNoRows(err) {
 				if logger != nil {
-					logger.Warn("failed to load tenant ASE config from db", "key", key, "error", err)
+					logger.Warn("failed to load user ASE config from db", "key", key, "error", err)
 				}
 				return nil
 			}
 		} else {
 			if logger != nil {
-				logger.Warn("invalid tenant UUID, skipping tenant config", "tenant_id", tenantID, "error", parseErr)
+				logger.Warn("invalid user UUID, skipping user config", "user_id", userID, "error", parseErr)
 			}
 		}
 	}
 
-	// 2. Try Realm-specific config
-	if !loaded && realmID != "" {
-		dbRow, err = dbQueries.GetASEConfigByRealm(ctx, database.GetASEConfigByRealmParams{
-			RealmID: pgtype.Text{String: realmID, Valid: true},
-			Name:    dagName,
-		})
-		if err == nil {
-			loaded = true
-		} else if !isNoRows(err) {
-			if logger != nil {
-				logger.Warn("failed to load realm ASE config from db", "key", key, "error", err)
-			}
-			return nil
-		}
-	}
-
-	// 3. Try Global config
+	// 2. Try Global config
 	if !loaded {
 		dbRow, err = dbQueries.GetASEConfigGlobalByName(ctx, dagName)
 		if err == nil {
@@ -258,20 +250,16 @@ func GetConfig(tenantID, realmID, dagName string) *ASEConfig {
 	return cfg
 }
 
-// InvalidateConfigCache removes the cached configuration for a specific tenant or realm,
+// InvalidateConfigCache removes the cached configuration for a specific user or global config,
 // and publishes a message to Redis Pub/Sub to signal other instances to invalidate their cache.
-func InvalidateConfigCache(tenantID, realmID, dagName string) {
+func InvalidateConfigCache(userID, dagName string) {
 	if dagName == "" {
 		return
 	}
 
-	key := "tenant_" + tenantID + "_" + dagName
-	if tenantID == "" {
-		if realmID != "" {
-			key = "realm_" + realmID + "_" + dagName
-		} else {
-			key = "global_" + dagName
-		}
+	key := "global_" + dagName
+	if userID != "" {
+		key = "user_" + userID + "_" + dagName
 	}
 
 	if configCache != nil {
@@ -287,8 +275,8 @@ func InvalidateConfigCache(tenantID, realmID, dagName string) {
 }
 
 // GetPrompt returns a prompt by key from the given configuration context.
-func GetPrompt(tenantID, realmID, dagName, key string) string {
-	cfg := GetConfig(tenantID, realmID, dagName)
+func GetPrompt(userID, dagName, key string) string {
+	cfg := GetConfig(userID, dagName)
 	if cfg == nil || cfg.Prompts == nil {
 		return ""
 	}
@@ -330,18 +318,12 @@ func listenForConfigUpdates() {
 		}
 
 		// Eagerly reload
-		tenantID := ""
-		realmID := ""
+		userID := ""
 		dagName := ""
 
 		parts := strings.Split(key, "_")
-		if strings.HasPrefix(key, "tenant_") && len(parts) >= 2 {
-			tenantID = parts[1]
-			if len(parts) > 2 {
-				dagName = strings.Join(parts[2:], "_")
-			}
-		} else if strings.HasPrefix(key, "realm_") && len(parts) >= 2 {
-			realmID = parts[1]
+		if strings.HasPrefix(key, "user_") && len(parts) >= 2 {
+			userID = parts[1]
 			if len(parts) > 2 {
 				dagName = strings.Join(parts[2:], "_")
 			}
@@ -352,7 +334,7 @@ func listenForConfigUpdates() {
 		}
 
 		if dagName != "" {
-			GetConfig(tenantID, realmID, dagName)
+			GetConfig(userID, dagName)
 		}
 	}
 }

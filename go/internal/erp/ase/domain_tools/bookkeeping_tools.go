@@ -150,7 +150,7 @@ func (t *BookkeepingTool) mapToAgent(txn database.FignodeStagingTransaction, ses
 		}
 	}
 
-	agent := ase.NewASENode(tenantID, realmID, dagName, map[string]any{"raw_description": desc, "cash_direction": direction, "raw_amount": txn.RawAmount, "domain_tool": "bookkeeping", "session_id": sessionID})
+	agent := ase.NewASENode(tenantID, dagName, map[string]any{"raw_description": desc, "cash_direction": direction, "raw_amount": txn.RawAmount, "domain_tool": "bookkeeping", "session_id": sessionID})
 	agent.NodeID = uuid.UUID(txn.ID.Bytes).String()
 	agent.SetLogger(deps.Logger)
 	agent.Persister = deps.Store

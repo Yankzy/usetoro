@@ -1,16 +1,15 @@
 -- name: UpsertASEConfig :one
 INSERT INTO toro_core.ase_dags (
-    tenant_id,
-    realm_id,
+    user_id,
     name,
     dag_config,
     hyper_parameters,
     prompts,
     updated_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, NOW()
+    $1, $2, $3, $4, $5, NOW()
 )
-ON CONFLICT (tenant_id, realm_id, name)
+ON CONFLICT ON CONSTRAINT uq_ase_dags_user_name
 DO UPDATE SET
     dag_config = EXCLUDED.dag_config,
     hyper_parameters = EXCLUDED.hyper_parameters,
@@ -18,29 +17,24 @@ DO UPDATE SET
     updated_at = NOW()
 RETURNING *;
 
--- name: GetASEConfigByTenant :one
+-- name: GetASEConfigByUser :one
 SELECT * FROM toro_core.ase_dags
-WHERE tenant_id = $1 AND name = $2
-LIMIT 1;
-
--- name: GetASEConfigByRealm :one
-SELECT * FROM toro_core.ase_dags
-WHERE realm_id = $1 AND name = $2
+WHERE user_id = $1 AND name = $2
 LIMIT 1;
 
 -- name: GetDefaultASEConfig :one
 SELECT * FROM toro_core.ase_dags
-WHERE tenant_id IS NULL AND realm_id IS NULL AND name = 'default'
+WHERE user_id IS NULL AND name = 'default'
 LIMIT 1;
 
 -- name: GetASEConfigGlobalByName :one
 SELECT * FROM toro_core.ase_dags
-WHERE tenant_id IS NULL AND realm_id IS NULL AND name = $1
+WHERE user_id IS NULL AND name = $1
 LIMIT 1;
 
--- name: ListASEConfigsByTenant :many
+-- name: ListASEConfigsByUser :many
 SELECT * FROM toro_core.ase_dags
-WHERE tenant_id = $1
+WHERE user_id = $1
 ORDER BY updated_at DESC;
 
 -- name: ListAllASEConfigs :many

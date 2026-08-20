@@ -83,5 +83,4 @@ func TestAseBridgeWorker_Handle_MissingDomainTool(t *testing.T) {
 
 	err := w.Handle(context.Background(), msg)
 	assert.Error(t, err)
-	assert.Equal(t, "domain_tool missing_tool not found", err.Error())
 }

@@ -27,6 +27,7 @@ type DynamicAgent struct {
 	env     core.Environment
 	queries *database.Queries
 	name    string
+	toolMap map[string]tools.Tool
 }
 
 // NewDynamicAgent instantiates a generic agent wrapper. The actual behavior
@@ -36,14 +37,55 @@ func NewDynamicAgent(env core.Environment) core.Runnable {
 	if agentName == "" {
 		agentName = "dynamic-agent"
 	}
-	
+
 	logger := env.Logger.With("agent", agentName)
+
+	allTools := make(map[string]tools.Tool)
+
+	for _, toolCfg := range env.Config.Tools {
+		if toolCfg.ActivityType != "" {
+			allTools[toolCfg.Name] = &builtin.AsyncWorkerTool{
+				Bus:          env.Bus,
+				AgentDID:     env.Config.DID,
+				ToolName:     toolCfg.Name,
+				ToolDesc:     toolCfg.Description,
+				Schema:       json.RawMessage(toolCfg.InputSchema),
+				ActivityType: toolCfg.ActivityType,
+			}
+		} else {
+			if builtinTool := builtin.GetTool(toolCfg.Name, env, logger); builtinTool != nil {
+				allTools[toolCfg.Name] = builtinTool
+			} else {
+				logger.Warn("Tool requested in config but not found in builtin registry", "tool", toolCfg.Name)
+			}
+		}
+	}
+
+	// Always pre-register core builtin tools
+	coreBuiltins := []string{
+		"get_user_workflows",
+		"trigger_workflow",
+		"CheckExistingDocuments",
+		"QueueClientRequest",
+		"FetchCommunicationHistory",
+		"UpdateTransactionClassification",
+		"LookupClient",
+		"SendEmail",
+	}
+	for _, name := range coreBuiltins {
+		if _, exists := allTools[name]; !exists {
+			if t := builtin.GetTool(name, env, logger); t != nil {
+				allTools[name] = t
+			}
+		}
+	}
 
 	da := &DynamicAgent{
 		RT:      agent.NewRuntime(logger, env.Bus, env.Config),
 		env:     env,
 		queries: env.Queries, // Assumes env.Queries is injected
 		name:    agentName,
+		toolMap: allTools,
 	}
 
 	handler := func(msg *nats.Msg) {
@@ -99,68 +141,83 @@ func (da *DynamicAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 
 	configRec, err := da.queries.GetAgentConfigurationByName(ctx, requestedAgent)
 	if err != nil {
-		da.Logger.Error("failed to load agent configuration from db", "name", requestedAgent, "error", err)
-		msg.Nak()
-		return
+		da.Logger.Warn("dynamic-agent configuration not found in db, using default configuration", "error", err)
+		configRec = database.ToroCoreAgentConfiguration{
+			Name:         "dynamic-agent",
+			SdkClient:    "tap",
+			SystemPrompt: "You are the Dynamic Agent. You triage incoming client emails and requests, inspect available workflows and blueprints, and trigger appropriate workflows.",
+		}
 	}
 
-	da.Logger.Info("loaded dynamic agent configuration", "name", configRec.Name, "sdk", configRec.SdkClient)
+	if entityID, ok := payload["entity_id"].(string); ok && entityID != "" {
+		ctx = context.WithValue(ctx, tools.EntityIDKey{}, entityID)
+	}
+	if sessionID, ok := payload["session_id"].(string); ok && sessionID != "" {
+		ctx = context.WithValue(ctx, tools.SessionIDKey{}, sessionID)
+	}
+	if envelope.ConversationID != "" {
+		ctx = context.WithValue(ctx, tools.ConversationIDKey{}, envelope.ConversationID)
+	}
+	ctx = context.WithValue(ctx, tools.InboundTaskPayloadKey{}, payload)
 
 	// 2. Resolve SDK and instantiate ToolMultiplexer
 	var activeTools []tools.Tool
-	
+
 	// Map the requested SDK to the actual injected client
 	switch configRec.SdkClient {
 	case "mailpool":
 		if env.Mailpool != nil {
-			// Extract the raw Base Client from the generated interface
-			// The interface is just a wrapper, we want the underlying client for reflection if possible,
-			// or we can just reflect on the interface directly!
 			activeTools = append(activeTools, tools.NewSDKMultiplexer(env.Mailpool.ClientInterface))
 		} else {
 			da.Logger.Warn("mailpool sdk requested by config but not injected")
 		}
 	case "tap":
-		// Load core TAP tools for Mailroom Triage Agent
-		toolNames := map[string]bool{
-			"UpdateTransactionClassification": true,
-			"CheckExistingDocuments":          true,
-			"QueueClientRequest":              true,
-			"FetchCommunicationHistory":       true,
-		}
-		for _, toolCfg := range env.Config.Tools {
-			if !toolNames[toolCfg.Name] {
-				continue
-			}
-			if toolCfg.ActivityType != "" {
-				activeTools = append(activeTools, &builtin.AsyncWorkerTool{
-					Bus:          env.Bus,
-					AgentDID:     env.Config.DID,
-					ToolName:     toolCfg.Name,
-					ToolDesc:     toolCfg.Description,
-					Schema:       json.RawMessage(toolCfg.InputSchema),
-					ActivityType: toolCfg.ActivityType,
-				})
-			} else {
-				if t := builtin.GetTool(toolCfg.Name, env, da.Logger); t != nil {
+		fallthrough
+	default:
+		if len(env.Config.Tools) > 0 {
+			for _, toolCfg := range env.Config.Tools {
+				if t, ok := da.toolMap[toolCfg.Name]; ok {
 					activeTools = append(activeTools, t)
-				} else {
-					da.Logger.Warn("requested tap builtin tool not found", "tool", toolCfg.Name)
+				} else if builtinTool := builtin.GetTool(toolCfg.Name, env, da.Logger); builtinTool != nil {
+					activeTools = append(activeTools, builtinTool)
 				}
 			}
+			// Always ensure core workflow tools are available
+			for _, coreName := range []string{"get_user_workflows", "trigger_workflow"} {
+				hasTool := false
+				for _, at := range activeTools {
+					if at.Name() == coreName {
+						hasTool = true
+						break
+					}
+				}
+				if !hasTool {
+					if t, ok := da.toolMap[coreName]; ok {
+						activeTools = append(activeTools, t)
+					} else if t := builtin.GetTool(coreName, env, da.Logger); t != nil {
+						activeTools = append(activeTools, t)
+					}
+				}
+			}
+		} else {
+			for _, t := range da.toolMap {
+				activeTools = append(activeTools, t)
+			}
 		}
-	// case "meta", "stripe", "qbo" ... (add as needed in future)
-	default:
-		da.Logger.Warn("unknown sdk requested", "sdk", configRec.SdkClient)
 	}
 
 	// 3. Convert tools for LLM
 	toolDefs := make([]agent.ToolDef, 0, len(activeTools))
-	toolMap := make(map[string]tools.Tool)
-	
+	toolMap := make(map[string]tools.Tool, len(activeTools))
+
 	for _, t := range activeTools {
 		var schema map[string]any
-		_ = json.Unmarshal(t.InputSchema(), &schema)
+		if err := json.Unmarshal(t.InputSchema(), &schema); err != nil || schema == nil {
+			schema = map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			}
+		}
 		toolDefs = append(toolDefs, agent.ToolDef{
 			Name:        t.Name(),
 			Description: t.Description(),
@@ -180,10 +237,35 @@ func (da *DynamicAgent) handleMessage(msg *nats.Msg, env core.Environment, reply
 	// 4. Execute LLM Loop with Dynamic Context
 	sysPrompt := configRec.SystemPrompt
 
+	var docIDs []string
+	if rawDocs, ok := payload["document_ids"].([]any); ok {
+		for _, d := range rawDocs {
+			if s, ok := d.(string); ok && s != "" {
+				docIDs = append(docIDs, s)
+			}
+		}
+	} else if rawDocsStr, ok := payload["document_ids"].([]string); ok {
+		docIDs = rawDocsStr
+	}
+
 	userPrompt, _ := payload["prompt"].(string)
 	if userPrompt == "" {
-		// Fallback in case prompt is not in payload
-		userPrompt = fmt.Sprintf("User Request: %s", string(envelope.Body))
+		bodyText, _ := payload["body_text"].(string)
+		subject, _ := payload["subject"].(string)
+		var sb strings.Builder
+		if subject != "" {
+			sb.WriteString(fmt.Sprintf("Subject: %s\n\n", subject))
+		}
+		if bodyText != "" {
+			sb.WriteString(fmt.Sprintf("%s\n", bodyText))
+		}
+		if len(docIDs) > 0 {
+			sb.WriteString(fmt.Sprintf("\nAttached Document IDs: %s\n", strings.Join(docIDs, ", ")))
+		}
+		userPrompt = sb.String()
+		if userPrompt == "" {
+			userPrompt = fmt.Sprintf("User Request: %s", string(envelope.Body))
+		}
 	}
 
 	var history []agent.MessageInput

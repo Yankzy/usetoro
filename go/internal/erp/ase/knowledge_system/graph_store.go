@@ -15,7 +15,7 @@ import (
 // Fact represents a Layer 1 Ground Truth Authoritative Fact Node in toro_core.enterprise_facts.
 type Fact struct {
 	FactID     uuid.UUID       `json:"fact_id"`
-	RealmID    string          `json:"realm_id"`
+	SessionID  string          `json:"session_id"`
 	Namespace  string          `json:"namespace"`
 	EntityType string          `json:"entity_type"`
 	URI        string          `json:"uri"`
@@ -26,7 +26,7 @@ type Fact struct {
 // Relationship represents a Layer 2 Directional Entity Edge in toro_core.enterprise_relationships.
 type Relationship struct {
 	RelationshipID uuid.UUID `json:"relationship_id"`
-	RealmID        string    `json:"realm_id"`
+	SessionID      string    `json:"session_id"`
 	Namespace      string    `json:"namespace"`
 	FromFactID     uuid.UUID `json:"from_fact_id"`
 	ToFactID       uuid.UUID `json:"to_fact_id"`
@@ -62,7 +62,7 @@ func NewGraphStore(pool *pgxpool.Pool, logger *slog.Logger) *GraphStore {
 // CreateFact inserts a new Layer 1 Ground Truth Fact Node.
 func (gs *GraphStore) CreateFact(
 	ctx context.Context,
-	realmID, namespace, entityType, uri string,
+	sessionID, namespace, entityType, uri string,
 	payload map[string]any,
 ) (*Fact, error) {
 	if namespace == "" {
@@ -74,7 +74,7 @@ func (gs *GraphStore) CreateFact(
 	}
 
 	fact := &Fact{
-		RealmID:    realmID,
+		SessionID:  sessionID,
 		Namespace:  namespace,
 		EntityType: entityType,
 		URI:        uri,
@@ -82,12 +82,14 @@ func (gs *GraphStore) CreateFact(
 	}
 
 	err = gs.pool.QueryRow(ctx, `
-		INSERT INTO toro_core.enterprise_facts (realm_id, namespace, entity_type, uri, payload)
+		INSERT INTO toro_core.enterprise_facts (session_id, namespace, entity_type, uri, payload)
 		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (uri) DO UPDATE SET
-			payload = EXCLUDED.payload
+		ON CONFLICT (session_id, uri) DO UPDATE SET
+			namespace   = EXCLUDED.namespace,
+			entity_type = EXCLUDED.entity_type,
+			payload     = EXCLUDED.payload
 		RETURNING fact_id, created_at`,
-		realmID, namespace, entityType, uri, payloadBytes,
+		sessionID, namespace, entityType, uri, payloadBytes,
 	).Scan(&fact.FactID, &fact.CreatedAt)
 
 	if err != nil {
@@ -98,14 +100,14 @@ func (gs *GraphStore) CreateFact(
 }
 
 // GetFactByURI retrieves a Fact node by its unique URI string.
-func (gs *GraphStore) GetFactByURI(ctx context.Context, realmID, uri string) (*Fact, error) {
+func (gs *GraphStore) GetFactByURI(ctx context.Context, sessionID, uri string) (*Fact, error) {
 	fact := &Fact{}
 	err := gs.pool.QueryRow(ctx, `
-		SELECT fact_id, realm_id, namespace, entity_type, uri, payload, created_at
+		SELECT fact_id, session_id, namespace, entity_type, uri, payload, created_at
 		FROM toro_core.enterprise_facts
-		WHERE realm_id = $1 AND uri = $2`,
-		realmID, uri,
-	).Scan(&fact.FactID, &fact.RealmID, &fact.Namespace, &fact.EntityType, &fact.URI, &fact.Payload, &fact.CreatedAt)
+		WHERE session_id = $1 AND uri = $2`,
+		sessionID, uri,
+	).Scan(&fact.FactID, &fact.SessionID, &fact.Namespace, &fact.EntityType, &fact.URI, &fact.Payload, &fact.CreatedAt)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -121,11 +123,11 @@ func (gs *GraphStore) GetFactByURI(ctx context.Context, realmID, uri string) (*F
 func (gs *GraphStore) GetFactByID(ctx context.Context, factID uuid.UUID) (*Fact, error) {
 	fact := &Fact{}
 	err := gs.pool.QueryRow(ctx, `
-		SELECT fact_id, realm_id, namespace, entity_type, uri, payload, created_at
+		SELECT fact_id, session_id, namespace, entity_type, uri, payload, created_at
 		FROM toro_core.enterprise_facts
 		WHERE fact_id = $1`,
 		factID,
-	).Scan(&fact.FactID, &fact.RealmID, &fact.Namespace, &fact.EntityType, &fact.URI, &fact.Payload, &fact.CreatedAt)
+	).Scan(&fact.FactID, &fact.SessionID, &fact.Namespace, &fact.EntityType, &fact.URI, &fact.Payload, &fact.CreatedAt)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -140,7 +142,7 @@ func (gs *GraphStore) GetFactByID(ctx context.Context, factID uuid.UUID) (*Fact,
 // CreateRelationship inserts or updates a Layer 2 directional relationship edge.
 func (gs *GraphStore) CreateRelationship(
 	ctx context.Context,
-	realmID, namespace string,
+	sessionID, namespace string,
 	fromFactID, toFactID uuid.UUID,
 	relationType string,
 	weight float64,
@@ -153,7 +155,7 @@ func (gs *GraphStore) CreateRelationship(
 	}
 
 	rel := &Relationship{
-		RealmID:      realmID,
+		SessionID:    sessionID,
 		Namespace:    namespace,
 		FromFactID:   fromFactID,
 		ToFactID:     toFactID,
@@ -163,12 +165,12 @@ func (gs *GraphStore) CreateRelationship(
 
 	err := gs.pool.QueryRow(ctx, `
 		INSERT INTO toro_core.enterprise_relationships
-			(realm_id, namespace, from_fact_id, to_fact_id, relation_type, weight)
+			(session_id, namespace, from_fact_id, to_fact_id, relation_type, weight)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (realm_id, namespace, from_fact_id, to_fact_id, relation_type)
+		ON CONFLICT (session_id, namespace, from_fact_id, to_fact_id, relation_type)
 		DO UPDATE SET weight = EXCLUDED.weight
 		RETURNING relationship_id, created_at`,
-		realmID, namespace, fromFactID, toFactID, relationType, weight,
+		sessionID, namespace, fromFactID, toFactID, relationType, weight,
 	).Scan(&rel.RelationshipID, &rel.CreatedAt)
 
 	if err != nil {
@@ -181,8 +183,8 @@ func (gs *GraphStore) CreateRelationship(
 // GetOutboundRelationships fetches all outgoing relationship edges and target facts from a given fact.
 func (gs *GraphStore) GetOutboundRelationships(ctx context.Context, factID uuid.UUID) ([]GraphNeighbor, error) {
 	rows, err := gs.pool.Query(ctx, `
-		SELECT r.relationship_id, r.realm_id, r.namespace, r.from_fact_id, r.to_fact_id, r.relation_type, r.weight, r.created_at,
-		       f.fact_id, f.realm_id, f.namespace, f.entity_type, f.uri, f.payload, f.created_at
+		SELECT r.relationship_id, r.session_id, r.namespace, r.from_fact_id, r.to_fact_id, r.relation_type, r.weight, r.created_at,
+		       f.fact_id, f.session_id, f.namespace, f.entity_type, f.uri, f.payload, f.created_at
 		FROM toro_core.enterprise_relationships r
 		JOIN toro_core.enterprise_facts f ON r.to_fact_id = f.fact_id
 		WHERE r.from_fact_id = $1`,
@@ -198,10 +200,10 @@ func (gs *GraphStore) GetOutboundRelationships(ctx context.Context, factID uuid.
 		var gn GraphNeighbor
 		gn.Direction = "OUTBOUND"
 		if err := rows.Scan(
-			&gn.Relationship.RelationshipID, &gn.Relationship.RealmID, &gn.Relationship.Namespace,
+			&gn.Relationship.RelationshipID, &gn.Relationship.SessionID, &gn.Relationship.Namespace,
 			&gn.Relationship.FromFactID, &gn.Relationship.ToFactID, &gn.Relationship.RelationType,
 			&gn.Relationship.Weight, &gn.Relationship.CreatedAt,
-			&gn.Fact.FactID, &gn.Fact.RealmID, &gn.Fact.Namespace, &gn.Fact.EntityType,
+			&gn.Fact.FactID, &gn.Fact.SessionID, &gn.Fact.Namespace, &gn.Fact.EntityType,
 			&gn.Fact.URI, &gn.Fact.Payload, &gn.Fact.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("graph store scan outbound relationship: %w", err)
@@ -214,8 +216,8 @@ func (gs *GraphStore) GetOutboundRelationships(ctx context.Context, factID uuid.
 // GetInboundRelationships fetches all incoming relationship edges and source facts to a given fact.
 func (gs *GraphStore) GetInboundRelationships(ctx context.Context, factID uuid.UUID) ([]GraphNeighbor, error) {
 	rows, err := gs.pool.Query(ctx, `
-		SELECT r.relationship_id, r.realm_id, r.namespace, r.from_fact_id, r.to_fact_id, r.relation_type, r.weight, r.created_at,
-		       f.fact_id, f.realm_id, f.namespace, f.entity_type, f.uri, f.payload, f.created_at
+		SELECT r.relationship_id, r.session_id, r.namespace, r.from_fact_id, r.to_fact_id, r.relation_type, r.weight, r.created_at,
+		       f.fact_id, f.session_id, f.namespace, f.entity_type, f.uri, f.payload, f.created_at
 		FROM toro_core.enterprise_relationships r
 		JOIN toro_core.enterprise_facts f ON r.from_fact_id = f.fact_id
 		WHERE r.to_fact_id = $1`,
@@ -231,10 +233,10 @@ func (gs *GraphStore) GetInboundRelationships(ctx context.Context, factID uuid.U
 		var gn GraphNeighbor
 		gn.Direction = "INBOUND"
 		if err := rows.Scan(
-			&gn.Relationship.RelationshipID, &gn.Relationship.RealmID, &gn.Relationship.Namespace,
+			&gn.Relationship.RelationshipID, &gn.Relationship.SessionID, &gn.Relationship.Namespace,
 			&gn.Relationship.FromFactID, &gn.Relationship.ToFactID, &gn.Relationship.RelationType,
 			&gn.Relationship.Weight, &gn.Relationship.CreatedAt,
-			&gn.Fact.FactID, &gn.Fact.RealmID, &gn.Fact.Namespace, &gn.Fact.EntityType,
+			&gn.Fact.FactID, &gn.Fact.SessionID, &gn.Fact.Namespace, &gn.Fact.EntityType,
 			&gn.Fact.URI, &gn.Fact.Payload, &gn.Fact.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("graph store scan inbound relationship: %w", err)

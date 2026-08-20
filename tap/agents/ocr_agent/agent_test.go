@@ -1,12 +1,55 @@
 package ocr_agent
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type fakeOCRResultCache struct {
+	values map[string]string
+	getErr error
+	setErr error
+	delErr error
+	setKey string
+	setTTL time.Duration
+	delKey string
+}
+
+func (f *fakeOCRResultCache) Get(_ context.Context, key string) (string, error) {
+	if f.getErr != nil {
+		return "", f.getErr
+	}
+	value, ok := f.values[key]
+	if !ok {
+		return "", redis.Nil
+	}
+	return value, nil
+}
+
+func (f *fakeOCRResultCache) Set(_ context.Context, key, value string, ttl time.Duration) error {
+	f.setKey = key
+	f.setTTL = ttl
+	if f.setErr != nil {
+		return f.setErr
+	}
+	f.values[key] = value
+	return nil
+}
+
+func (f *fakeOCRResultCache) Del(_ context.Context, key string) error {
+	f.delKey = key
+	if f.delErr != nil {
+		return f.delErr
+	}
+	delete(f.values, key)
+	return nil
+}
 
 func TestOCRTaskPayload_Unmarshal(t *testing.T) {
 	payloadJSON := `{
@@ -38,8 +81,6 @@ func TestOCRTaskPayload_Unmarshal(t *testing.T) {
 func TestOCRExtraction_Structure(t *testing.T) {
 	ext := OCRExtraction{
 		DocType:    "invoice",
-		SHA256:     "sha256test",
-		S3Key:      "s3keytest",
 		FileName:   "facture.pdf",
 		Confidence: 0.98,
 		Data: map[string]interface{}{
@@ -59,4 +100,18 @@ func TestOCRExtraction_Structure(t *testing.T) {
 	assert.Equal(t, "facture.pdf", unmarshaled.FileName)
 	assert.Equal(t, 0.98, unmarshaled.Confidence)
 	assert.Equal(t, "Atlas SARL", unmarshaled.Data["vendor_name"])
+}
+
+func TestOCRTaskPayload_GetFileURL(t *testing.T) {
+	p1 := OCRTaskPayload{DocumentURL: "https://s3.amazonaws.com/bucket/doc.pdf"}
+	assert.Equal(t, "https://s3.amazonaws.com/bucket/doc.pdf", p1.GetFileURL())
+
+	p2 := OCRTaskPayload{S3URL: "https://s3.amazonaws.com/bucket/doc.pdf"}
+	assert.Equal(t, "https://s3.amazonaws.com/bucket/doc.pdf", p2.GetFileURL())
+
+	p3 := OCRTaskPayload{ImageURL: "https://s3.amazonaws.com/bucket/img.png"}
+	assert.Equal(t, "https://s3.amazonaws.com/bucket/img.png", p3.GetFileURL())
+
+	p4 := OCRTaskPayload{S3Key: "https://s3.amazonaws.com/bucket/presigned.pdf"}
+	assert.Equal(t, "https://s3.amazonaws.com/bucket/presigned.pdf", p4.GetFileURL())
 }

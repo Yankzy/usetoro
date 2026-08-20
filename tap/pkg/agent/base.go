@@ -111,6 +111,9 @@ func (b *BaseAgent) ExecuteGlobalWorkflow(
 
 		if len(reduceFaults) > 0 {
 			b.Logger.Warn("⚠️ [REDUX] DomainFaults detected, feeding back to LLM", "faults", len(reduceFaults), "attempt", attempt+1)
+			for _, f := range reduceFaults {
+				b.Logger.Warn("- Fault reason", "event_id", f.EventID, "error", f.Error)
+			}
 			faults = reduceFaults
 			continue
 		}

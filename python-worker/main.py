@@ -39,14 +39,12 @@ async def lifespan(app: FastAPI):
     await subscribe_jetstream("worker.inbox.marketing.discover", "marketing_discover_group", handlers.handle_discover_request)
     await subscribe_jetstream("worker.inbox.marketing.verify", "marketing_verify_group", handlers.handle_verify_request)
     
-    # Register Python OCR NATS subscribers (JetStream with core NATS fallback)
-    try:
-        await subscribe_jetstream("worker.inbox.python.ocr", "python_ocr_group", handle_ocr_request)
-        # await subscribe_jetstream("tasks.perception.1.ocr", "perception_ocr_group", handle_ocr_request)
-    except Exception as e:
-        logging.warning(f"JetStream subscription fallback to core NATS: {e}")
-        await nats_subscribe("worker.inbox.python.ocr", handle_ocr_request)
-        # await nats_subscribe("tasks.perception.1.ocr", handle_ocr_request)
+    # Python OCR agent is disabled in favor of the native Go OCR agent
+    # try:
+    #     await subscribe_jetstream("worker.inbox.python.ocr", "python_ocr_group", handle_ocr_request)
+    # except Exception as e:
+    #     logging.warning(f"JetStream subscription fallback to core NATS: {e}")
+    #     await nats_subscribe("worker.inbox.python.ocr", handle_ocr_request)
 
 
     

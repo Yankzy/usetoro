@@ -9,73 +9,431 @@ hyper_parameters:
   domain_tool: "pcm_cash_accounting"
   expected_properties: 2
 
+
 prompts:
   _shared_guardrails: &guardrails |
     ### CONFIDENCE GUARDRAILS
-    - CRITICAL: "Confidence" does NOT mean "how sure are you of your answer". It means "should this transaction automatically progress to the next node of the DAG?".
-    - The system has a strict guardrail: if your top candidate's confidence is < 0.98, the transaction will be placed on HOLD and will NOT progress.
-    - If the transaction is fully compliant and should progress, you MUST set the highest score to >= 0.98.
-    - If you determine the transaction is NON-COMPLIANT (e.g. ambiguous bank charge, missing check slip, missing foreign tax residency cert) and MUST be placed on HOLD, you MUST intentionally set the highest score to < 0.98 (e.g. 0.85).
-    - Because confidence is probability distribution, candidates map MUST contain at least 2 candidates.
-    - EXTREMELY IMPORTANT: When you intentionally set the confidence to < 0.98 to trigger a hold, you MUST write your `reasoning` as a highly detailed DIRECT INSTRUCTION to the email/TAP agent.
+    - Confidence measures confidence in the routing classification, not confidence that the transaction is ready to post.
+    - Automatic routing to a non-HOLD edge requires a highest candidate confidence >= 0.98.
+    - The `candidates` map MUST contain at least 2 distinct values and their confidence values MUST sum to exactly 1.00.
+    - Candidate 1 MUST have the highest confidence. Its reasoning MUST support its value and MUST NOT contradict it.
+    - Never invent a counterparty, invoice, contract, tax treatment, account balance, or relationship from an opaque bank code.
+    - When the description and available context do not establish one non-HOLD category at >= 0.98, select the applicable HOLD edge as candidate 1 with confidence >= 0.98. Put the most plausible operational category second.
+    - HOLD reasoning MUST identify the ambiguity and state the exact evidence needed for resolution.
+    - Return only edge keys explicitly allowed by the active prompt. Never create or combine labels.
 
-  bank_transaction_classifier_prompt:
+
+  bank_transaction_classifier_inflow_prompt:
     - |
-      You are an expert Moroccan PCGM Bank Statement accountant (Compte 5141 - Banque).
-      Analyze the unstructured bank statement description string and use semantic judgment to classify the transaction type:
+      You are a Moroccan senior Expert-Comptable specializing in PCGE bank reconciliation for Account 5141.
+      Every input row is a confirmed bank INFLOW. Classify the economic event that caused the credit into exactly one allowed target edge key.
 
-      STATUTORY CLASSIFICATION GUIDANCE & RULE SPECIFICATIONS:
-      * BANK_FEE_COMMISSION — Bank service charges, account maintenance fees, wire fees, or overdraft interest/agios.
-        Rule: Bank fees (Account 614700) and agios (Account 631100) are subject to a statutory 10% VAT rate (deductible into Account 345520).
-      * TRANSIT_TRANSFER_5115 — Fund transfers between internal bank accounts or cash withdrawals to replenish petty cash box.
-        Rule: Must route through Account 511500 (Virements de fonds) to clear net transfers to exactly 0 MAD across statements.
-      * CHECK_OR_BILL_CLEARING — Bank debits/credits clearing previously issued or received checks (Accounts 5111/5143) or bills of exchange / LCN (Accounts 3425/4415/5520).
-        Rule: Links statement clearing date to uncleared instrument ledger entries.
-      * FOREIGN_VENDOR_OR_RENT — Payments to non-resident foreign software/services vendors or commercial property lease payments.
-        Rule A (Foreign Services): Payments to non-resident foreign entities (AWS, Google Cloud, SaaS) trigger a 10% Retenue à la Source (RAS) tax withholding credited to Account 445800 at payment time.
-        Rule B (Commercial Rent): Lease payments for commercial property trigger a 5% Retenue à la Source (RAS) tax withholding credited to Account 445800 at payment time.
-      * SUPPLIER_PAYMENT_4411 — Direct wire or bank payment to domestic vendors (Account 4411).
-      * CUSTOMER_RECEIPT_3421 — Direct bank deposit or wire receipt from customers (Account 3421).
-      * HOLD_AMBIGUOUS_BANK_LINE — Description is unidentifiable and requires human accountant review or situation memory lookup.
+      INPUT EVIDENCE
+      Use only fields actually supplied for the row, including `transaction_id`, `date`, `amount`, `currency`, `raw_description`, structured counterparty metadata, matched documents, and established entity memory. Treat `raw_description` as evidence, not proof of the final posting account. Never infer an invoice settlement merely because a company name appears.
+
+      CLASSIFICATION PRECEDENCE
+      1. Identify explicit treasury mechanics, reversals, checks, bills, card settlements, cash deposits, and own-account transfers first.
+      2. Then identify explicit financing, capital, shareholder, state, investment, asset-disposal, deposit, and loan-recovery events.
+      3. Then classify customer, supplier-refund, operating-revenue, and other receipts.
+      4. Use a generic category only when no more specific category is supported.
+      5. If evidence does not distinguish settlement, advance, financing, refund, or own-account transfer, select `HOLD_AMBIGUOUS_BANK_INFLOW`.
+
+      ALLOWED TARGET EDGE KEYS
+
+      CUSTOMER AND OPERATING RECEIPTS
+      - `CUSTOMER_INVOICE_RECEIPT_3421`: Explicit settlement of an existing customer invoice or receivable. Indicators include REGLEMENT FACTURE, VIREMENT CLIENT, ENCAISSEMENT CLIENT, or a matched customer open item.
+      - `FOREIGN_CUSTOMER_RECEIPT`: Receipt from a non-resident customer or export client where foreign-receipt controls must be evaluated.
+      - `CUSTOMER_ADVANCE_RECEIPT_4421`: Deposit or advance received before invoicing or delivery. Indicators include ACOMPTE CLIENT, AVANCE COMMANDE, RESERVATION, or matched advance documentation.
+      - `CUSTOMER_RETENTION_RECEIPT_3423`: Release or collection of a customer retention guarantee. Indicators include RETENUE DE GARANTIE, LIBERATION RETENUE, or DECOMPTE DEFINITIF.
+      - `DIRECT_OPERATING_REVENUE_71X`: Explicit operating sale or service income not processed through an existing customer receivable.
+      - `RENTAL_INCOME_RECEIPT`: Rent received by the company from property, equipment, or another asset it leases to a third party.
+
+      REFUNDS AND CLAIMS
+      - `SUPPLIER_REFUND_RECEIPT_341X`: Supplier refund, returned advance, rebate, credit note, overpayment recovery, or vendor reimbursement.
+      - `EXPENSE_REIMBURSEMENT_RECEIPT`: Reimbursement of a company expense by an employee, insurer, partner, or other party when no supplier credit-note treatment applies.
+      - `INSURANCE_CLAIM_RECEIPT`: Claim indemnity or loss compensation received from an insurer.
+
+      STATE RECEIPTS
+      - `STATE_TAX_REFUND_345X`: Tax refund, tax relief, or reimbursement from DGI, TGR, or another public authority, excluding an explicitly identified VAT credit refund.
+      - `VAT_REFUND_RECEIPT_3456`: Explicit reimbursement of a declared VAT credit.
+      - `GOVERNMENT_GRANT_SUBSIDY_RECEIPT`: Investment, operating, or balancing grant or subsidy received from a public body.
+      - `GOVERNMENT_ADVANCE_RECEIPT_1482`: Repayable advance received from the State.
+
+      FINANCING AND EQUITY RECEIPTS
+      - `FINANCING_LOAN_DRAWDOWN_148X`: Proceeds of a medium-term or long-term loan received from a bank or financing institution.
+      - `TREASURY_CREDIT_DRAWDOWN_5530`: Drawdown of a short-term overdraft or treasury credit facility.
+      - `BILL_DISCOUNTING_PROCEEDS_5520`: Bank proceeds from discounting a bill of exchange or commercial paper.
+      - `FACTORING_PROCEEDS`: Advance or settlement received from a factor following assignment of customer receivables.
+      - `BOND_ISSUANCE_RECEIPT_1410`: Cash proceeds from issuing bonds or similar debt securities.
+      - `CAPITAL_CONTRIBUTION_RECEIPT`: Paid-in capital, incorporation contribution, or capital-increase receipt. Do not use for an ordinary shareholder current-account advance.
+      - `SHAREHOLDER_CURRENT_ACCOUNT_RECEIPT_4463`: Funds advanced to the company by a shareholder through a current account without increasing legal capital.
+      - `RELATED_PARTY_RECEIPT`: Receipt from an affiliate, participant, or related party that is neither customer settlement, legal capital, nor shareholder current account.
+      - `BRANCH_HEAD_OFFICE_TRANSFER_IN_160X`: Internal funding received between head office and an establishment or branch of the same entity.
+
+      INVESTMENTS, LOANS AND GUARANTEES
+      - `SHORT_TERM_INVESTMENT_REDEMPTION_350X`: Return of principal from a short-term placement, DAT, treasury bill, bond, or other marketable security.
+      - `LONG_TERM_FINANCIAL_ASSET_DISPOSAL_24_25`: Sale or redemption of a long-term participation, immobilized security, or other financial fixed asset.
+      - `FINANCIAL_INCOME_INTEREST_DIVIDEND_73X`: Interest, coupon, dividend, or other investment yield, excluding repayment of invested principal.
+      - `LOAN_GRANTED_RECOVERY_241X`: Repayment of principal on a loan previously granted by the company to staff, shareholders, affiliates, or another borrower.
+      - `PERSONNEL_ADVANCE_LOAN_RECOVERY_343X`: Recovery of an employee advance, overpayment, or short-term personnel receivable.
+      - `SECURITY_DEPOSIT_REFUNDED_2486`: Return to the company of a deposit or guarantee it previously paid.
+      - `SECURITY_DEPOSIT_RECEIVED_1487`: Deposit or guarantee received by the company that remains repayable to the counterparty.
+
+      ASSET AND OTHER RECEIPTS
+      - `ASSET_DISPOSAL_RECEIPT_3481_751`: Proceeds from disposal of tangible or intangible fixed assets. Do not use for financial securities.
+      - `NON_CURRENT_RECEIPT_75X`: Penalty, damages, donation, recovery of a written-off receivable, or other explicit non-current receipt not covered above.
+      - `OTHER_DEBTOR_RECEIPT_348X`: Settlement from an identified miscellaneous debtor where the underlying receivable is known but has no more specific category.
+
+      TREASURY MECHANICS
+      - `TRANSIT_TRANSFER_IN_5115`: Transfer received from another bank or treasury account belonging to the same legal entity.
+      - `CASH_DEPOSIT_5161`: Deposit of cash from the company's cash account into the bank. Do not use when the source of deposited cash is unexplained.
+      - `CHECK_COLLECTION_5111`: Collection or clearance of a deposited physical cheque.
+      - `BILL_RECEIVABLE_COLLECTION_5113`: Collection of an effet à recevoir, LCN, or bill of exchange.
+      - `CARD_POS_SETTLEMENT_RECEIPT`: Net remittance from a card acquirer, TPE provider, payment gateway, or marketplace for merchant sales.
+      - `OTHER_TREASURY_VALUE_COLLECTION_5118`: Collection of another specifically identified value in transit that is not a cheque or bill.
+      - `BANK_INTEREST_INCOME`: Interest credited directly by the bank on the current account. Use `FINANCIAL_INCOME_INTEREST_DIVIDEND_73X` for investment, security, loan, or DAT yield.
+      - `FX_CONVERSION_INFLOW`: Credit leg of an explicit foreign-exchange purchase, sale, or conversion between company currency accounts.
+      - `REVERSAL_REFUND_CHARGEBACK_RECEIPT`: Reversal of an earlier debit, returned transfer, cancelled card payment, bank correction, or chargeback credited back to the account.
+
+      FALLBACK
+      - `HOLD_AMBIGUOUS_BANK_INFLOW`: Inflow is genuine but its economic cause cannot be established from available evidence, or two non-HOLD categories remain materially plausible.
 
     - *guardrails
 
     - |
-        EXPECTED OUTPUT FORMAT:
-        [
-          {
-            "op": "add",
-            "path": "/rows",
-            "value": {
-              "row_id_1": {
-                "property": "bank_transaction_intent",
-                "candidates": {
-                  "1": { "value": "BANK_FEE_COMMISSION", "confidence": 0.98, "reasoning": "Standard bank commission charges identified." },
-                  "2": { "value": "HOLD_AMBIGUOUS_BANK_LINE", "confidence": 0.02, "reasoning": "Fallback category." }
+      EXPECTED OUTPUT FORMAT
+      Return one JSON Patch operation containing every input row exactly once. Preserve each input row identifier as the key under `value`.
+
+      [
+        {
+          "op": "add",
+          "path": "/rows",
+          "value": {
+            "row_id_1": {
+              "property": "bank_transaction_intent",
+              "candidates": {
+                "1": {
+                  "value": "CUSTOMER_INVOICE_RECEIPT_3421",
+                  "confidence": 0.99,
+                  "reasoning": "The narrative explicitly identifies settlement of customer invoice FAC-2026-184 by the named customer; this classifies the routing intent only, while invoice matching remains downstream."
+                },
+                "2": {
+                  "value": "CUSTOMER_ADVANCE_RECEIPT_4421",
+                  "confidence": 0.01,
+                  "reasoning": "Alternative only if downstream evidence shows the referenced invoice does not exist and the receipt precedes billing."
                 }
               }
             }
           }
-        ]
+        }
+      ]
+
+  bank_transaction_classifier_outflow_prompt:
+    - |
+      You are a Moroccan senior Expert-Comptable specializing in PCGE bank reconciliation for Account 5141.
+      Every input row is a confirmed bank OUTFLOW. Classify the economic event that caused the debit into exactly one allowed target edge key.
+
+      INPUT EVIDENCE
+      Use only fields actually supplied for the row, including `transaction_id`, `date`, `amount`, `currency`, `raw_description`, structured counterparty metadata, matched documents, and established entity memory. Treat `raw_description` as evidence, not proof of the final posting account. A merchant name alone does not prove that a payable, invoice, fixed asset, advance, or direct expense exists.
+
+      CLASSIFICATION PRECEDENCE
+      1. Identify explicit bank fees, interest, treasury movements, reversals, checks, bills, cash withdrawals, card payments, and FX conversions first.
+      2. Then identify explicit tax, customs, payroll, social, financing, equity, investment, fixed-asset, guarantee, and related-party events.
+      3. Then classify supplier, rent, insurance, customer-refund, personnel, and direct operating payments.
+      4. Use a generic category only when no more specific category is supported.
+      5. If evidence does not distinguish invoice settlement, advance, direct expense, financing, investment, or own-account transfer, select `HOLD_AMBIGUOUS_BANK_OUTFLOW`.
+
+      ALLOWED TARGET EDGE KEYS
+
+      SUPPLIERS AND OPERATING PAYMENTS
+      - `SUPPLIER_INVOICE_PAYMENT_4411`: Settlement of an existing domestic operating supplier invoice or payable.
+      - `SUPPLIER_RETENTION_PAYMENT_4413`: Release or payment of a supplier retention guarantee.
+      - `SUPPLIER_ADVANCE_PAYMENT_3411`: Advance or deposit paid to an operating supplier before final invoicing or delivery.
+      - `DIRECT_OPERATING_EXPENSE_61X`: Explicit operating expense paid directly without evidence of an existing supplier payable and with no more specific category below.
+      - `CARD_MERCHANT_PAYMENT`: Company card purchase from a merchant. This identifies the payment rail; document matching and expense or asset determination remain downstream.
+      - `FOREIGN_VENDOR_GOODS_PAYMENT`: Payment to a non-resident supplier for imported merchandise, materials, or physical goods.
+      - `FOREIGN_VENDOR_SERVICES_PAYMENT`: Payment to a non-resident supplier for services, SaaS, licensing, royalties, consulting, advertising, hosting, or other intangible services.
+      - `DOMESTIC_RENTAL_LEASE_PAYMENT`: Rent or lease payment to a Moroccan landlord or lessor for premises, equipment, vehicles, or other leased assets.
+      - `FOREIGN_RENTAL_LEASE_PAYMENT`: Rent or lease payment to a non-resident landlord or lessor.
+      - `INSURANCE_PREMIUM_PAYMENT`: Insurance premium paid to an insurer or broker.
+
+      CUSTOMER REFUNDS
+      - `CUSTOMER_REFUND_CREDIT_NOTE`: Refund paid against a customer credit note, overpayment, cancelled sale, or returned goods or services.
+      - `CUSTOMER_ADVANCE_REFUND_4421`: Repayment of a customer advance or deposit before the related sale is recognized.
+      - `CUSTOMER_DEPOSIT_RETURN`: Return of a separately refundable customer guarantee, security deposit, or consignment deposit.
+
+      PERSONNEL AND SOCIAL PAYMENTS
+      - `PAYROLL_PAYMENT_4432`: Net salaries, wages, payroll batch transfers, bonuses, or remuneration due to personnel.
+      - `PERSONNEL_EXPENSE_REIMBURSEMENT`: Reimbursement to an employee for documented business expenses paid personally.
+      - `PERSONNEL_ADVANCE_DISBURSEMENT_3431`: Short-term salary, travel, mission, or expense advance paid to an employee.
+      - `PERSONNEL_LOAN_DISBURSEMENT`: Formal loan principal disbursed to an employee.
+      - `PERSONNEL_OTHER_PAYMENT_443X`: Other identified personnel creditor settlement that is not payroll, reimbursement, advance, or loan.
+      - `SOCIAL_CONTRIBUTION_PAYMENT_444X`: CNSS, CIMR, AMO, retirement fund, mutual fund, or other social-organization payment.
+
+      STATE, TAX AND CUSTOMS PAYMENTS
+      - `STATE_TAX_PAYMENT_445X`: Settlement of VAT, IS, IR, local tax, professional tax, vehicle tax, registration duty, stamp duty, or another identified state tax liability.
+      - `STATE_TAX_ADVANCE_PAYMENT_3453`: Advance or instalment paid against corporate income tax or another recoverable tax prepayment.
+      - `TAX_WITHHOLDING_REMITTANCE`: Remittance to the State of tax previously withheld from a landlord, supplier, non-resident, employee, shareholder, or other beneficiary.
+      - `CUSTOMS_IMPORT_ADII_PAYMENT`: Customs duty, import VAT, or other amount paid directly to ADII or through an identified customs settlement.
+      - `STATE_PENALTY_FINE_PAYMENT`: Tax penalty, administrative fine, legal fine, late-payment surcharge, or similar state sanction.
+      - `GOVERNMENT_GRANT_RETURN`: Repayment or clawback of a grant or subsidy previously received.
+      - `GOVERNMENT_ADVANCE_REPAYMENT_1482`: Repayment of a financing advance received from the State.
+
+      FIXED-ASSET PAYMENTS
+      - `CAPEX_IMMOBILISATION_PAYMENT`: Direct acquisition or construction payment for a tangible, intangible, or non-value fixed asset.
+      - `CAPEX_ADVANCE_PAYMENT_2397`: Advance paid on an order for a fixed asset before final delivery or invoicing.
+      - `FIXED_ASSET_SUPPLIER_PAYMENT_1486_4481`: Settlement of an existing liability to a fixed-asset supplier.
+
+      FINANCING AND DEBT PAYMENTS
+      - `FINANCING_LOAN_REPAYMENT_148X`: Repayment of a medium-term or long-term borrowing. Route the complete bank debit here even when it combines principal, interest, fees, and insurance.
+      - `TREASURY_CREDIT_REPAYMENT_5530`: Repayment of a short-term treasury credit or overdraft facility.
+      - `BILL_DISCOUNTING_REPAYMENT_5520`: Settlement, recourse debit, or repayment relating to discounted bills.
+      - `BOND_PRINCIPAL_REPAYMENT_4484`: Redemption or repayment of bond principal.
+      - `BOND_COUPON_PAYMENT_4485`: Payment of bond coupons or accrued bond interest.
+      - `OTHER_FINANCING_DEBT_PAYMENT_148X`: Settlement of another identified financing debt not represented by the more specific financing categories.
+
+      EQUITY AND RELATED-PARTY PAYMENTS
+      - `CAPITAL_REPAYMENT_PAYMENT_4461`: Legally authorized repayment or reduction of share capital.
+      - `OWNER_WITHDRAWAL_PAYMENT`: Withdrawal by an individual proprietor from the proprietor's capital or operator account. Do not use for a corporate shareholder current account.
+      - `SHAREHOLDER_CURRENT_ACCOUNT_PAYMENT_3463_4463`: Repayment, withdrawal, or settlement of a shareholder current-account balance.
+      - `DIVIDEND_DISTRIBUTION_PAYMENT_4465`: Dividend or profit distribution paid to shareholders or associates.
+      - `RELATED_PARTY_PAYMENT`: Payment to an affiliate, participant, or related party that is not a supplier settlement, dividend, capital repayment, or shareholder current-account settlement.
+      - `BRANCH_HEAD_OFFICE_TRANSFER_OUT_160X`: Internal funding sent between head office and an establishment or branch of the same entity.
+
+      INVESTMENTS, LOANS AND GUARANTEES
+      - `SHORT_TERM_INVESTMENT_PURCHASE_350X`: Placement of cash into a DAT, treasury bill, bond, share, or other short-term marketable security.
+      - `LONG_TERM_FINANCIAL_ASSET_PURCHASE_24_25`: Acquisition of a participation, immobilized security, or other long-term financial asset.
+      - `LOAN_GRANTED_DISBURSEMENT_241X`: Principal of a loan granted by the company to a non-employee borrower, shareholder, or affiliate.
+      - `SECURITY_DEPOSIT_PAID_2486`: Refundable deposit or guarantee paid by the company.
+      - `SECURITY_DEPOSIT_RETURNED_1487`: Return of a deposit or guarantee previously received by the company.
+      - `OTHER_FINANCIAL_CHARGE_PAYMENT_63X`: Identified financial charge not classified as a bank fee, bank interest, bond coupon, or financing instalment.
+
+      NON-CURRENT AND MISCELLANEOUS PAYMENTS
+      - `NON_CURRENT_PAYMENT_65X`: Explicit non-current payment such as damages, contractual penalties, settlements, losses, or exceptional charges not covered elsewhere.
+      - `SUBSIDY_DONATION_GRANTED_656X_6586`: Grant, donation, charitable payment, gift, or similar amount awarded by the company.
+      - `OTHER_CREDITOR_PAYMENT_448X`: Settlement of an identified miscellaneous creditor where the liability is known but no more specific category applies.
+
+      BANK AND TREASURY MECHANICS
+      - `BANK_FEE_COMMISSION`: Bank service fee, account-maintenance charge, transfer fee, card-acquiring fee, file fee, or commission, excluding interest and agios.
+      - `BANK_INTEREST_AGIOS_EXPENSE`: Debit interest, overdraft interest, agios, or financing interest charged directly by the bank.
+      - `TRANSIT_TRANSFER_OUT_5115`: Transfer sent to another bank or treasury account belonging to the same legal entity.
+      - `CASH_WITHDRAWAL_5161`: Cash withdrawn from the bank for the company's cash account, petty cash, or cash office.
+      - `CHECK_PAYMENT_CLEARING`: Clearance of a cheque issued by the company where the underlying beneficiary or liability still requires reconciliation.
+      - `BILL_PAYABLE_CLEARING_4415`: Settlement of an effet à payer, LCN, or bill of exchange previously recognized as payable.
+      - `FX_CONVERSION_OUTFLOW`: Debit leg of an explicit foreign-exchange purchase, sale, or conversion between company currency accounts.
+      - `OTHER_TREASURY_PAYMENT`: Specifically identified treasury movement that cannot be represented by another treasury edge.
+      - `REVERSAL_RETURN_CHARGEBACK_PAYMENT`: Reversal of an earlier credit, returned customer receipt, rejected incoming transfer, card chargeback, or bank correction debited from the account.
+
+      FALLBACK
+      - `HOLD_AMBIGUOUS_BANK_OUTFLOW`: Outflow is genuine but its economic cause cannot be established from available evidence, or two non-HOLD categories remain materially plausible.
+
+    - *guardrails
+
+    - |
+      EXPECTED OUTPUT FORMAT
+      Return one JSON Patch operation containing every input row exactly once. Preserve each input row identifier as the key under `value`.
+
+      [
+        {
+          "op": "add",
+          "path": "/rows",
+          "value": {
+            "row_id_1": {
+              "property": "bank_transaction_intent",
+              "candidates": {
+                "1": {
+                  "value": "SOCIAL_CONTRIBUTION_PAYMENT_444X",
+                  "confidence": 0.99,
+                  "reasoning": "The debit explicitly identifies a monthly CNSS contribution, which is a social-organization settlement rather than a bank fee or supplier payment."
+                },
+                "2": {
+                  "value": "STATE_TAX_PAYMENT_445X",
+                  "confidence": 0.01,
+                  "reasoning": "Rejected alternative because CNSS is a social-security organization and the narrative does not identify a state tax payment."
+                }
+              }
+            }
+          }
+        }
+      ]
+
+  rent_ras_prompt:
+    - |
+      You are a Moroccan senior Tax Specialist and Expert-Comptable evaluating withholding tax on reconciled domestic rent payments. Apply the Moroccan CGI rules effective on the payment date and route each row to exactly one allowed target edge key. This node evaluates rent withholding only. Input VAT remains a downstream decision.
+
+      INPUT EVIDENCE
+      Use only supplied and reconciled evidence, including `transaction_id`, payment date, amount, currency, bank narrative, lease contract, rent invoice or quittance, landlord identity, landlord residence, legal form and tax regime, payer category, payer turnover for the relevant previously closed financial year, property type, HT amount, VAT amount, gross amount, cumulative annual rent where relevant, prior withholding, and exemption evidence. A landlord name or legal-form suffix in the bank narrative is not proof of tax status.
+
+      ALLOWED TARGET EDGE KEYS
+      - `RENT_RAS_EVALUATED`: Rent withholding is applicable and its regime, taxable base, rate, amount withheld, net payment, and remittance deadline are established from evidence and the effective-dated policy.
+      - `RENT_RAS_NOT_APPLICABLE`: The payment is proven outside the scope of this rent-withholding evaluator, or a documented exemption or non-withholding result applies. This is a concluded tax result, not a fallback for missing evidence.
+      - `HOLD_RENT_POLICY_MISSING`: The evidence is complete but the effective-dated tax policy, payer-threshold table, treaty rule, exemption rule, or rate needed for the payment date is unavailable.
+      - `HOLD_RENT_EVIDENCE_MISSING`: The lease, quittance or invoice, landlord tax status, payer category, turnover evidence, property type, tax base, or exemption proof needed to determine the regime is absent.
+      - `HOLD_RENT_CONFLICT`: Supplied evidence is contradictory, the payment does not match the reconciled lease, the landlord identity conflicts across sources, or domestic and foreign treatment remain inconsistent.
+
+      SCOPE AND REGIME RULES
+      1. Confirm that the payment is rent or lease consideration and identify the leased asset. CGI Article 15 ter covers income from built or unbuilt immovable property and constructions of any kind. A proven lease of equipment, machinery, or vehicles is outside Article 15 ter and may route to `RENT_RAS_NOT_APPLICABLE` for this evaluator.
+      2. Confirm the landlord's residence and tax regime. Do not conflate Article 15 ter professional or corporate rental income with the Article 160 bis withholding regime applicable to rental income paid to a physical person.
+      3. For an Article 15 ter payment to a corporate person subject to IS, evaluate the 5% withholding on the amount excluding VAT only when the payer is legally required to withhold. Covered payer categories include the State and specified public entities, banks, insurers, and companies meeting the effective turnover threshold.
+      4. Apply the statutory phase-in by payment date. For company payers from 1 July 2026, the relevant threshold is prior closed-year turnover excluding VAT of at least MAD 500,000,000. Later dates require the effective-dated threshold table. Do not infer threshold status from company size, brand, or payment amount.
+      5. For a physical-person landlord, use the effective Article 160 bis policy and the documented annual-rent and tax-regime facts. Do not reuse the Article 15 ter corporate 5% rate. If the required annual basis or regime evidence is missing, use `HOLD_RENT_EVIDENCE_MISSING`.
+      6. When withholding applies, calculate it on the legally defined base, reconcile gross rent, VAT, withholding, and bank net payment, and identify any under-withholding or over-withholding. Amounts withheld under Article 157 are remitted before the end of the month following withholding.
+      7. A clear non-withholding or exempt result must cite the factual reason in candidate reasoning. Missing proof never becomes `RENT_RAS_NOT_APPLICABLE`.
+
+      ROUTING DECISION
+      - Select `RENT_RAS_EVALUATED` only when applicability, payee regime, payer obligation, base, rate, calculated withholding, and payment reconciliation are all established.
+      - Select `RENT_RAS_NOT_APPLICABLE` only when non-applicability or exemption is affirmatively proven.
+      - Prefer `HOLD_RENT_EVIDENCE_MISSING` for absent transaction or taxpayer facts, `HOLD_RENT_POLICY_MISSING` for an absent effective legal rule, and `HOLD_RENT_CONFLICT` for inconsistent evidence.
+      - In reasoning, state the applicable CGI regime, payment date, landlord type, payer category, HT base, rate, expected withholding, actual withholding, variance, and exact evidence used. Do not claim the transaction is posting-ready.
+
+    - *guardrails
+
+    - |
+      EXPECTED OUTPUT FORMAT
+      Return one JSON Patch operation containing every input row exactly once. Preserve each input row identifier as the key under `value`.
+
+      [
+        {
+          "op": "add",
+          "path": "/rows",
+          "value": {
+            "row_id_1": {
+              "property": "rent_ras_assessment",
+              "candidates": {
+                "1": {
+                  "value": "RENT_RAS_EVALUATED",
+                  "confidence": 0.99,
+                  "reasoning": "The reconciled July 2026 commercial-property rent is paid to an IS corporate landlord by a threshold-covered company. The Article 15 ter base is MAD 100,000 excluding VAT, the applicable rate is 5%, expected withholding is MAD 5,000, and the bank net payment reconciles to the lease and quittance. Remittance is due before the end of the following month."
+                },
+                "2": {
+                  "value": "HOLD_RENT_EVIDENCE_MISSING",
+                  "confidence": 0.01,
+                  "reasoning": "Rejected because the lease, landlord tax profile, payer threshold evidence, HT base, and payment reconciliation are present and consistent."
+                }
+              }
+            }
+          }
+        }
+      ]
 
   simpl_tva_extractor_prompt:
     - |
-      You are a Moroccan DGI Tax Specialist for Cash-Basis VAT (Régime d'encaissement).
+      You are a Moroccan senior VAT Specialist and Expert-Comptable evaluating input VAT from reconciled purchases and payments for the SIMPL-TVA deduction statement. Apply the Moroccan CGI rules effective on the tax point and route each row to exactly one allowed target edge key.
 
-      STATUTORY CASH-BASIS VAT RULE & GUIDANCE:
-      Under Moroccan cash-basis VAT rules, input VAT becomes deductible ONLY upon actual bank disbursement or deposit date.
-      To qualify for VAT reporting on official tax declarations, the statement line must extract 6 mandatory metadata fields:
-      1. Payment Date — Exact bank clearing date.
-      2. Payment Mode — Method of settlement (Virement, Chèque, Carte, Effet).
-      3. Reference Number — Bank transaction reference, check number, or operation code.
-      4. Counterparty Name — Full legal name of vendor or client.
-      5. 15-digit ICE — The unique 15-digit Identifiant Commun de l'Entreprise assigned to Moroccan entities.
-      6. VAT Breakdown — Clear identification of HT amount, statutory VAT rate (20%, 14%, 10%, 7%, 0%), and VAT amount.
+      INPUT EVIDENCE
+      Use only reconciled source documents and supplied entity data, including `transaction_id`, invoice or debit-note reference, invoice date, supplier identity, tax identifier, ICE, item or service description, HT amount, VAT rate and amount, gross amount, payment date, payment method and references, partial-payment history, customs receipt where applicable, credit notes, entity VAT status, taxable-use evidence, prorata, fixed-asset classification, and effective-dated VAT policy. A bank statement alone is proof of cash movement, not proof of deductible VAT.
 
-      Candidates for property "simpl_tva_status":
-      - SIMPL_TVA_VALID: All 6 mandatory fields present and valid (ICE is valid 15-digit string).
-      - SIMPL_TVA_MISSING_FIELDS: One or more required fields missing from statement line.
-      - SIMPL_TVA_INVALID_ICE: Counterparty ICE is missing or not a valid 15-digit numerical format.
+      ALLOWED TARGET EDGE KEYS
+      - `SIMPL_TVA_VALID`: The input VAT deduction is supported, arithmetically reconciled, legally eligible, within the exercise period, and ready for PCGE account resolution. Partial payment remains this outcome when the currently deductible proportion is computed.
+      - `SIMPL_TVA_NOT_DEDUCTIBLE`: Evidence is sufficient to conclude that no input VAT deduction is legally available. The VAT must be assigned downstream to the expense or asset cost as appropriate.
+      - `SIMPL_TVA_MISSING_FIELDS`: One or more legally required deduction-statement fields or supporting documents is missing, preventing a reliable eligibility decision.
+      - `SIMPL_TVA_INVALID_ICE`: A domestic supplier ICE is legally required but absent, malformed, or inconsistent with the authenticated invoice and supplier record.
+      - `SIMPL_TVA_POLICY_MISSING`: Transaction evidence is complete but the effective rate, exclusion, prorata, recovery-period, or special-regime policy needed for the tax point is unavailable.
+      - `SIMPL_TVA_CONFLICT`: Invoice, payment, supplier, customs, credit-note, arithmetic, or duplicate-claim evidence conflicts and cannot be resolved automatically.
+
+      DOCUMENTARY AND LEGAL TESTS
+      1. Require the invoice, debit note, or customs receipt to identify the beneficiary entity and support the purchase. Do not use a bank narrative as a substitute document.
+      2. For the CGI Article 112 detailed deduction statement, capture all eight indications: invoice reference; supplier name or corporate name; supplier tax identifier; ICE; designation of goods, work, or services; amount excluding tax; VAT amount; and payment method plus payment references.
+      3. Apply the ICE test only where ICE is legally required. Do not reject a qualifying customs import document merely because a foreign supplier has no Moroccan ICE.
+      4. Reconcile HT, rate, VAT, gross amount, credit notes, and payments. Do not hardcode a VAT rate from the bank description. Use the authenticated document and the versioned policy effective on the tax point.
+      5. Under CGI Article 101, the deduction right arises in the month of the customs receipt or partial or full payment of the invoice or debit note in the beneficiary's name. For partial payment, calculate only the eligible paid proportion and retain the unpaid balance for later evaluation.
+      6. Confirm that the deduction is exercised within the statutory one-year period from the month or quarter in which the right arose.
+      7. Determine taxable business use, exclusions, and prorata. Apply the entity's documented deductible proportion under the effective policy. If the transaction is clearly excluded or relates solely to non-deductible use, select `SIMPL_TVA_NOT_DEDUCTIBLE` rather than a HOLD.
+      8. For depreciable goods, confirm fixed-asset recognition and qualifying use under CGI Article 102. Preserve whether deductible VAT belongs to an operating-purchase VAT account or a fixed-asset VAT account for downstream resolution.
+      9. Check duplicate invoices, already-claimed VAT, supplier and invoice mismatches, reversed documents, and payment inconsistencies before selecting a non-HOLD result.
+
+      ROUTING DECISION
+      - Select `SIMPL_TVA_VALID` only when the eight Article 112 indications and the evidence needed for eligibility, timing, arithmetic, and allocation are established.
+      - Select `SIMPL_TVA_NOT_DEDUCTIBLE` only when non-deductibility is an affirmative legal conclusion supported by complete evidence.
+      - Prefer `SIMPL_TVA_MISSING_FIELDS` for absent required fields or source documents, `SIMPL_TVA_INVALID_ICE` for a legally required domestic ICE defect, `SIMPL_TVA_POLICY_MISSING` for absent effective tax logic, and `SIMPL_TVA_CONFLICT` for contradictory or duplicate evidence.
+      - In reasoning, state the tax point, HT, VAT, paid proportion, eligible VAT, non-deductible VAT, prorata, one-year-window result, operating or fixed-asset allocation, and exact evidence or defect. Do not claim the transaction is posting-ready.
+
+    - *guardrails
+
+    - |
+      EXPECTED OUTPUT FORMAT
+      Return one JSON Patch operation containing every input row exactly once. Preserve each input row identifier as the key under `value`.
+
+      [
+        {
+          "op": "add",
+          "path": "/rows",
+          "value": {
+            "row_id_1": {
+              "property": "input_vat_assessment",
+              "candidates": {
+                "1": {
+                  "value": "SIMPL_TVA_VALID",
+                  "confidence": 0.99,
+                  "reasoning": "The authenticated domestic invoice contains all eight Article 112 indications and reconciles to a 50% payment. The deduction right arises in the payment month; only the proportional VAT paid is eligible now, within the one-year exercise period, under the documented entity prorata and operating-purchase allocation."
+                },
+                "2": {
+                  "value": "SIMPL_TVA_MISSING_FIELDS",
+                  "confidence": 0.01,
+                  "reasoning": "Rejected because the source invoice, supplier identifiers, ICE, amounts, designation, and payment references are complete and consistent."
+                }
+              }
+            }
+          }
+        }
+      ]
+
+  foreign_ras_tva_prompt:
+    - |
+      You are a Moroccan Senior Tax Specialist and Expert-Comptable specializing in International Taxation (CGI Art. 12, 15, 104, 115, 154 & Office des Changes Compliance).
+      Analyze reconciled foreign currency transfers, card debits, and vendor evidence categorized under `FOREIGN_VENDOR_SERVICES_PAYMENT` to evaluate international tax compliance and route the transaction to its exact downstream edge key.
+
+      ALLOWED TARGET EDGE KEYS:
+      - `RAS_TVA_EVALUATED`: Transaction complies fully with statutory rules and routes to `pcge_account_resolver` with the foreign tax assessment attached.
+      - `HOLD_RAS_TAX_AMBIGUITY`: Transaction contains tax ambiguity, missing foreign invoice, or missing annual Tax Residency Certificate, routing to `hold_ras_tax_ambiguity`.
+      - `HOLD_OFFICE_DES_CHANGES`: Transaction violates exchange control limits or lacks registered contract backing, routing to `hold_office_des_changes`.
+      - `HOLD_PERMANENT_ESTABLISHMENT`: Foreign vendor local presence exceeds treaty duration thresholds triggering Moroccan IS risk under CGI Art. 12, routing to `hold_permanent_establishment`.
+
+      STATUTORY & REGULATORY COMPLIANCE RULES:
+
+      1. RETENUE À LA SOURCE REGIME (RAS NON-RÉSIDENTS - CGI ART. 15 & DOUBLE TAX TREATIES)
+      - Standard Statutory Rate: 10% withholding tax on non-resident service providers.
+      - Contract Payment Terms: Identify whether contract/invoice dictates Net Payment (requiring gross-up logic by downstream execution engine to Account 445800) or standard Gross Payment.
+      - Double Tax Treaties (DTT / Conventions Fiscales):
+        * A valid foreign Tax Residency Certificate (Certificat de Résidence Fiscale) for the current fiscal year is MANDATORY to apply treaty rates.
+        * Software licenses, technical IP, and copyrights are classified as Royalties (Redevances) and remain subject to non-zero reduced treaty rates (e.g., 5% or 10%).
+        * Complete 0% exemption applies ONLY if the treaty explicitly waives tax on business profits/services AND a valid residency certificate is present.
+
+      2. PERMANENT ESTABLISHMENT RISK (ÉTABLISSEMENT STABLE - CGI ART. 12)
+      - Flag services rendered physically within Morocco by foreign staff or contractors exceeding treaty duration thresholds (e.g., > 90 days or > 183 days depending on treaty). This reclassifies the entity from Art. 15 RAS withholding to full Moroccan Corporate Income Tax (Impôt sur les Sociétés - IS) liabilities.
+
+      3. REVERSE-CHARGE VAT & PRORATA DEDUCTIBILITY (CGI ART. 115 & ART. 104)
+      - Mandatory Auto-liquidation: 20% VAT reverse-charge entry (Credit Account 445500 - TVA collectée auto-liquidée).
+      - VAT Deductibility Prorata Status (CGI Art. 104): Indicate whether the entity applies 100% full deductibility or partial prorata rules to split deductible VAT (Account 345520) from non-deductible VAT expense (Class 6).
+
+      4. FOREIGN EXCHANGE VARIANCE & TRANSFER FEES (PCGM 6331 / 7331)
+      - Identify foreign exchange gains or losses resulting from conversion rate differences between invoice date and bank clearing date.
+      - Separate bank transfer commissions (Frais de transfert non-résidents) and flag statutory 10% banking VAT (Account 345520).
+
+      5. EXCHANGE CONTROL & REPORTING COMPLIANCE (OFFICE DES CHANGES & CGI ART. 154)
+      - Verify compliance with Office des Changes regulations (e.g., E-commerce cap / Dotation Commerce Électronique threshold or registered commercial contract for foreign transfers).
+      - Extract foreign vendor details (Legal Name, Foreign Tax ID, Country, Address) required for the CGI Art. 154 annual statutory declaration.
+
+      EDGE ROUTING DECISION MATRIX:
+
+      Route to `RAS_TVA_EVALUATED` (Set confidence >= 0.98) ONLY IF ALL CRITERIA ARE SATISFIED:
+      1. Foreign vendor invoice or proof of payment clearly identifies counterparty and service nature.
+      2. CGI Art. 15 RAS regime is clear: either standard 10% withholding applies OR a valid fiscal year foreign Tax Residency Certificate is present to justify Double Tax Treaty (DTT) rates.
+      3. Payment terms (Net Gross-Up vs. Gross) are established.
+      4. CGI Art. 115 Reverse-Charge VAT (20% auto-liquidation) and VAT Prorata regime are flagged.
+      5. Foreign vendor identity details are extracted for CGI Art. 154 filing.
+
+      Route to `HOLD_RAS_TAX_AMBIGUITY` as candidate 1 with confidence >= 0.98 IF:
+      1. Missing foreign vendor invoice or missing annual Tax Residency Certificate (Certificat de Résidence Fiscale).
+      2. Ambiguous service classification under Double Tax Treaty (e.g., uncertain whether item is software licensing royalty vs. standard SaaS).
+      3. Ambiguity regarding whether vendor or local company absorbs the withholding tax.
+
+      Route to `HOLD_OFFICE_DES_CHANGES` as candidate 1 with confidence >= 0.98 IF:
+      1. Transfer exceeds Office des Changes authorization caps (Dotation Commerce Électronique) without a registered commercial contract.
+      2. Bank narrative indicates rejection or blocking by the clearing bank's foreign exchange desk.
+
+      Route to `HOLD_PERMANENT_ESTABLISHMENT` as candidate 1 with confidence >= 0.98 IF:
+      1. Foreign contractor/staff physically performed work on-site in Morocco exceeding 90 or 183 cumulative days, triggering CGI Art. 12 IS exposure.
 
     - *guardrails
 
@@ -87,60 +445,384 @@ prompts:
             "path": "/rows",
             "value": {
               "row_id_1": {
-                "property": "simpl_tva_status",
+                "property": "foreign_tax_assessment",
                 "candidates": {
-                  "1": { "value": "SIMPL_TVA_VALID", "confidence": 0.98, "reasoning": "All 6 required DGI fields and valid 15-digit ICE present." },
-                  "2": { "value": "SIMPL_TVA_MISSING_FIELDS", "confidence": 0.02, "reasoning": "Missing field fallback." }
+                  "1": {
+                    "value": "RAS_TVA_EVALUATED",
+                    "confidence": 0.98,
+                    "reasoning": "AWS foreign payment verified with invoice. Standard CGI Art. 15 10% RAS regime established with gross-up payment terms. CGI Art. 115 20% reverse-charge VAT flagged under 100% deductibility regime."
+                  },
+                  "2": {
+                    "value": "HOLD_RAS_TAX_AMBIGUITY",
+                    "confidence": 0.02,
+                    "reasoning": "Fallback edge."
+                  }
                 }
               }
             }
           }
         ]
 
-
 # ====================================================================
-# DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY - BANK CASH ACCOUNTING (5141)
+# DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY - MOROCCAN BANK CASH (5141)
 # ====================================================================
 dag:
-  entry_node: bank_cash_ingress
+  entry_node: direction_router
   nodes:
 
     # ------------------------------------------------------------------
-    # STEP 0: BANK STATEMENT INGRESS ROUTING
+    # STEP 1: CASH DIRECTION ROUTING
     # ------------------------------------------------------------------
-    bank_cash_ingress:
-      name: bank_cash_ingress
+    direction_router:
+      name: direction_router
       batch_flush_seconds: &flush 5
       kind: initial_router
+      execution_parameters:
+        payload_key: cash_direction
       batch_size: &bsize 50
       edge_type: &estatic static
-      execution_parameters:
-        payload_key: raw_description
-      default_child: bank_transaction_classifier
-
-    # ------------------------------------------------------------------
-    # STEP 1: LLM SEMANTIC CLASSIFICATION OF TRANSACTION TYPE
-    # ------------------------------------------------------------------
-    bank_transaction_classifier:
-      name: bank_transaction_classifier
-      batch_flush_seconds: *flush
-      kind: macro_classifier
-      batch_size: *bsize
-      edge_type: *estatic
-      prompt_key: bank_transaction_classifier_prompt
       children:
         debug_terminal: debug_terminal
-      #   BANK_FEE_COMMISSION: bank_fee_agios_splitter
-      #   TRANSIT_TRANSFER_5115: transit_reconciler_node
-      #   CHECK_OR_BILL_CLEARING: pending_instruments_matcher
-      #   FOREIGN_VENDOR_OR_RENT: ras_tax_evaluator
-      #   SUPPLIER_PAYMENT_4411: simpl_tva_extractor
-      #   CUSTOMER_RECEIPT_3421: simpl_tva_extractor
-      #   HOLD_AMBIGUOUS_BANK_LINE: hold_ambiguous_bank_line
-      # default_child: simpl_tva_extractor
+      #   INFLOW: bank_transaction_classifier_inflow
+      #   OUTFLOW: bank_transaction_classifier_outflow
+      # default_child: hold_invalid_cash_direction
 
     # # ------------------------------------------------------------------
-    # # STEP 2A: DETERMINISTIC 10% BANK FEE & AGIOS AUTO-SPLITTER
+    # # STEP 2A: INFLOW INTENT & COUNTERPART CLASSIFICATION
+    # # ------------------------------------------------------------------
+    # bank_transaction_classifier_inflow:
+    #   name: bank_transaction_classifier_inflow
+    #   batch_flush_seconds: *flush
+    #   kind: macro_classifier
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   prompt_key: bank_transaction_classifier_inflow_prompt
+    #   children:
+    #     CUSTOMER_INVOICE_RECEIPT_3421: customer_reconciler
+    #     FOREIGN_CUSTOMER_RECEIPT: customer_reconciler
+    #     CUSTOMER_ADVANCE_RECEIPT_4421: customer_reconciler
+    #     CUSTOMER_RETENTION_RECEIPT_3423: customer_reconciler
+    #     DIRECT_OPERATING_REVENUE_71X: operating_document_reconciler
+    #     RENTAL_INCOME_RECEIPT: operating_document_reconciler
+    #     SUPPLIER_REFUND_RECEIPT_341X: supplier_reconciler
+    #     EXPENSE_REIMBURSEMENT_RECEIPT: operating_document_reconciler
+    #     INSURANCE_CLAIM_RECEIPT: insurance_reconciler
+    #     STATE_TAX_REFUND_345X: state_customs_reconciler
+    #     VAT_REFUND_RECEIPT_3456: state_customs_reconciler
+    #     GOVERNMENT_GRANT_SUBSIDY_RECEIPT: state_customs_reconciler
+    #     GOVERNMENT_ADVANCE_RECEIPT_1482: financing_reconciler
+    #     FINANCING_LOAN_DRAWDOWN_148X: financing_reconciler
+    #     TREASURY_CREDIT_DRAWDOWN_5530: financing_reconciler
+    #     BILL_DISCOUNTING_PROCEEDS_5520: financing_reconciler
+    #     FACTORING_PROCEEDS: financing_reconciler
+    #     BOND_ISSUANCE_RECEIPT_1410: financing_reconciler
+    #     CAPITAL_CONTRIBUTION_RECEIPT: equity_related_party_reconciler
+    #     SHAREHOLDER_CURRENT_ACCOUNT_RECEIPT_4463: equity_related_party_reconciler
+    #     RELATED_PARTY_RECEIPT: equity_related_party_reconciler
+    #     BRANCH_HEAD_OFFICE_TRANSFER_IN_160X: equity_related_party_reconciler
+    #     SHORT_TERM_INVESTMENT_REDEMPTION_350X: financial_asset_reconciler
+    #     LONG_TERM_FINANCIAL_ASSET_DISPOSAL_24_25: financial_asset_reconciler
+    #     FINANCIAL_INCOME_INTEREST_DIVIDEND_73X: financial_asset_reconciler
+    #     LOAN_GRANTED_RECOVERY_241X: financial_asset_reconciler
+    #     PERSONNEL_ADVANCE_LOAN_RECOVERY_343X: personnel_social_reconciler
+    #     SECURITY_DEPOSIT_REFUNDED_2486: deposit_guarantee_reconciler
+    #     SECURITY_DEPOSIT_RECEIVED_1487: deposit_guarantee_reconciler
+    #     ASSET_DISPOSAL_RECEIPT_3481_751: fixed_asset_reconciler
+    #     NON_CURRENT_RECEIPT_75X: non_current_reconciler
+    #     OTHER_DEBTOR_RECEIPT_348X: non_current_reconciler
+    #     TRANSIT_TRANSFER_IN_5115: treasury_reconciler
+    #     CASH_DEPOSIT_5161: treasury_reconciler
+    #     CHECK_COLLECTION_5111: treasury_reconciler
+    #     BILL_RECEIVABLE_COLLECTION_5113: treasury_reconciler
+    #     CARD_POS_SETTLEMENT_RECEIPT: treasury_reconciler
+    #     OTHER_TREASURY_VALUE_COLLECTION_5118: treasury_reconciler
+    #     BANK_INTEREST_INCOME: treasury_reconciler
+    #     FX_CONVERSION_INFLOW: treasury_reconciler
+    #     REVERSAL_REFUND_CHARGEBACK_RECEIPT: treasury_reconciler
+    #     HOLD_AMBIGUOUS_BANK_INFLOW: hold_ambiguous_bank_line
+    #   default_child: hold_ambiguous_bank_line
+
+    # # ------------------------------------------------------------------
+    # # STEP 2B: OUTFLOW INTENT & COUNTERPART CLASSIFICATION
+    # # ------------------------------------------------------------------
+    # bank_transaction_classifier_outflow:
+    #   name: bank_transaction_classifier_outflow
+    #   batch_flush_seconds: *flush
+    #   kind: macro_classifier
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   prompt_key: bank_transaction_classifier_outflow_prompt
+    #   children:
+    #     SUPPLIER_INVOICE_PAYMENT_4411: supplier_reconciler
+    #     SUPPLIER_RETENTION_PAYMENT_4413: supplier_reconciler
+    #     SUPPLIER_ADVANCE_PAYMENT_3411: supplier_reconciler
+    #     DIRECT_OPERATING_EXPENSE_61X: operating_document_reconciler
+    #     CARD_MERCHANT_PAYMENT: operating_document_reconciler
+    #     FOREIGN_VENDOR_GOODS_PAYMENT: supplier_reconciler
+    #     FOREIGN_VENDOR_SERVICES_PAYMENT: supplier_reconciler
+    #     DOMESTIC_RENTAL_LEASE_PAYMENT: supplier_reconciler
+    #     FOREIGN_RENTAL_LEASE_PAYMENT: supplier_reconciler
+    #     INSURANCE_PREMIUM_PAYMENT: insurance_reconciler
+    #     CUSTOMER_REFUND_CREDIT_NOTE: customer_reconciler
+    #     CUSTOMER_ADVANCE_REFUND_4421: customer_reconciler
+    #     CUSTOMER_DEPOSIT_RETURN: customer_reconciler
+    #     PAYROLL_PAYMENT_4432: personnel_social_reconciler
+    #     PERSONNEL_EXPENSE_REIMBURSEMENT: personnel_social_reconciler
+    #     PERSONNEL_ADVANCE_DISBURSEMENT_3431: personnel_social_reconciler
+    #     PERSONNEL_LOAN_DISBURSEMENT: personnel_social_reconciler
+    #     PERSONNEL_OTHER_PAYMENT_443X: personnel_social_reconciler
+    #     SOCIAL_CONTRIBUTION_PAYMENT_444X: personnel_social_reconciler
+    #     STATE_TAX_PAYMENT_445X: state_customs_reconciler
+    #     STATE_TAX_ADVANCE_PAYMENT_3453: state_customs_reconciler
+    #     TAX_WITHHOLDING_REMITTANCE: state_customs_reconciler
+    #     CUSTOMS_IMPORT_ADII_PAYMENT: state_customs_reconciler
+    #     STATE_PENALTY_FINE_PAYMENT: state_customs_reconciler
+    #     GOVERNMENT_GRANT_RETURN: state_customs_reconciler
+    #     GOVERNMENT_ADVANCE_REPAYMENT_1482: financing_reconciler
+    #     CAPEX_IMMOBILISATION_PAYMENT: fixed_asset_reconciler
+    #     CAPEX_ADVANCE_PAYMENT_2397: fixed_asset_reconciler
+    #     FIXED_ASSET_SUPPLIER_PAYMENT_1486_4481: fixed_asset_reconciler
+    #     FINANCING_LOAN_REPAYMENT_148X: financing_reconciler
+    #     TREASURY_CREDIT_REPAYMENT_5530: financing_reconciler
+    #     BILL_DISCOUNTING_REPAYMENT_5520: financing_reconciler
+    #     BOND_PRINCIPAL_REPAYMENT_4484: financing_reconciler
+    #     BOND_COUPON_PAYMENT_4485: financing_reconciler
+    #     OTHER_FINANCING_DEBT_PAYMENT_148X: financing_reconciler
+    #     CAPITAL_REPAYMENT_PAYMENT_4461: equity_related_party_reconciler
+    #     OWNER_WITHDRAWAL_PAYMENT: equity_related_party_reconciler
+    #     SHAREHOLDER_CURRENT_ACCOUNT_PAYMENT_3463_4463: equity_related_party_reconciler
+    #     DIVIDEND_DISTRIBUTION_PAYMENT_4465: equity_related_party_reconciler
+    #     RELATED_PARTY_PAYMENT: equity_related_party_reconciler
+    #     BRANCH_HEAD_OFFICE_TRANSFER_OUT_160X: equity_related_party_reconciler
+    #     SHORT_TERM_INVESTMENT_PURCHASE_350X: financial_asset_reconciler
+    #     LONG_TERM_FINANCIAL_ASSET_PURCHASE_24_25: financial_asset_reconciler
+    #     LOAN_GRANTED_DISBURSEMENT_241X: financial_asset_reconciler
+    #     SECURITY_DEPOSIT_PAID_2486: deposit_guarantee_reconciler
+    #     SECURITY_DEPOSIT_RETURNED_1487: deposit_guarantee_reconciler
+    #     OTHER_FINANCIAL_CHARGE_PAYMENT_63X: financing_reconciler
+    #     NON_CURRENT_PAYMENT_65X: non_current_reconciler
+    #     SUBSIDY_DONATION_GRANTED_656X_6586: non_current_reconciler
+    #     OTHER_CREDITOR_PAYMENT_448X: non_current_reconciler
+    #     BANK_FEE_COMMISSION: treasury_reconciler
+    #     BANK_INTEREST_AGIOS_EXPENSE: treasury_reconciler
+    #     TRANSIT_TRANSFER_OUT_5115: treasury_reconciler
+    #     CASH_WITHDRAWAL_5161: treasury_reconciler
+    #     CHECK_PAYMENT_CLEARING: treasury_reconciler
+    #     BILL_PAYABLE_CLEARING_4415: treasury_reconciler
+    #     FX_CONVERSION_OUTFLOW: treasury_reconciler
+    #     OTHER_TREASURY_PAYMENT: treasury_reconciler
+    #     REVERSAL_RETURN_CHARGEBACK_PAYMENT: treasury_reconciler
+    #     HOLD_AMBIGUOUS_BANK_OUTFLOW: hold_ambiguous_bank_line
+    #   default_child: hold_ambiguous_bank_line
+    # # ------------------------------------------------------------------
+    # # STEP 3: SHARED EVIDENCE & LEDGER RECONCILIATION
+    # # ------------------------------------------------------------------
+    # customer_reconciler:
+    #   name: customer_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: customer
+    #     intent_payload_key: bank_transaction_intent
+    #   children: &reconciliation_edges
+    #     RECONCILIATION_READY: compliance_router
+    #     HOLD_RECONCILIATION_NO_MATCH: hold_reconciliation_no_match
+    #     HOLD_RECONCILIATION_PARTIAL_MATCH: hold_reconciliation_partial_match
+    #     HOLD_RECONCILIATION_CONFLICT: hold_reconciliation_conflict
+    #   default_child: hold_reconciliation_conflict
+
+    # supplier_reconciler:
+    #   name: supplier_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: supplier
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # operating_document_reconciler:
+    #   name: operating_document_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: operating_document
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # personnel_social_reconciler:
+    #   name: personnel_social_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: personnel_social
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # state_customs_reconciler:
+    #   name: state_customs_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: state_customs
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # treasury_reconciler:
+    #   name: treasury_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: treasury
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # financing_reconciler:
+    #   name: financing_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: financing
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # equity_related_party_reconciler:
+    #   name: equity_related_party_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: equity_related_party
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # fixed_asset_reconciler:
+    #   name: fixed_asset_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: fixed_asset
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # financial_asset_reconciler:
+    #   name: financial_asset_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: financial_asset
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # deposit_guarantee_reconciler:
+    #   name: deposit_guarantee_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: deposit_guarantee
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # insurance_reconciler:
+    #   name: insurance_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: insurance
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # non_current_reconciler:
+    #   name: non_current_reconciler
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_evidence_reconciler
+    #     reconciliation_family: non_current
+    #     intent_payload_key: bank_transaction_intent
+    #   children: *reconciliation_edges
+    #   default_child: hold_reconciliation_conflict
+
+    # # ------------------------------------------------------------------
+    # # STEP 4: DETERMINISTIC COMPLIANCE ROUTING
+    # # ------------------------------------------------------------------
+    # compliance_router:
+    #   name: compliance_router
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: bank_compliance_router
+    #     intent_payload_key: bank_transaction_intent
+    #     reconciliation_payload_key: reconciliation_result
+    #     entity_tax_profile_key: entity_tax_profile
+    #     ruleset: MA_PCGE_BANK_5141
+    #   children:
+    #     NO_SPECIAL_COMPLIANCE_REQUIRED: pcge_account_resolver
+    #     INPUT_VAT_EVALUATION_REQUIRED: simpl_tva_extractor
+    #     OUTPUT_VAT_EVALUATION_REQUIRED: output_vat_evaluator
+    #     BANKING_VAT_EVALUATION_REQUIRED: bank_fee_agios_splitter
+    #     FOREIGN_PAYMENT_TAX_EVALUATION_REQUIRED: foreign_ras_tva_evaluator
+    #     RENT_RAS_EVALUATION_REQUIRED: rent_ras_evaluator
+    #     DIVIDEND_RAS_EVALUATION_REQUIRED: dividend_ras_evaluator
+    #     FINANCIAL_INCOME_TPPRF_EVALUATION_REQUIRED: tpprf_tax_evaluator
+    #     CUSTOMS_TAX_EVALUATION_REQUIRED: customs_tax_evaluator
+    #     INSURANCE_TCA_EVALUATION_REQUIRED: insurance_tca_evaluator
+    #     HOLD_COMPLIANCE_POLICY_MISSING: hold_compliance_policy_missing
+    #     HOLD_COMPLIANCE_EVIDENCE_MISSING: hold_compliance_evidence_missing
+    #     HOLD_COMPLIANCE_CONFLICT: hold_compliance_conflict
+    #   default_child: hold_compliance_conflict
+
+    # # ------------------------------------------------------------------
+    # # STEP 5: SPECIALIZED STATUTORY TAX EVALUATION
     # # ------------------------------------------------------------------
     # bank_fee_agios_splitter:
     #   name: bank_fee_agios_splitter
@@ -153,59 +835,37 @@ dag:
     #   children:
     #     SPLIT_SUCCESS: simpl_tva_extractor
     #     HOLD_AMBIGUOUS_FEE: hold_ambiguous_bank_fee
-    #   default_child: simpl_tva_extractor
+    #   default_child: hold_ambiguous_bank_fee
 
-    # # ------------------------------------------------------------------
-    # # STEP 2B: DETERMINISTIC 5115 TRANSIT ACCOUNT ZERO-NETTING
-    # # ------------------------------------------------------------------
-    # transit_reconciler_node:
-    #   name: transit_reconciler_node
+    # foreign_ras_tva_evaluator:
+    #   name: foreign_ras_tva_evaluator
     #   batch_flush_seconds: *flush
-    #   kind: action
+    #   kind: evaluation
     #   batch_size: *bsize
     #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: transit_reconciler
+    #   prompt_key: foreign_ras_tva_prompt
     #   children:
-    #     NETTING_ZERO_MATCH: post_bank_cash_journal
-    #     HOLD_UNMATCHED_TRANSIT: hold_unmatched_transit_pair
-    #   default_child: post_bank_cash_journal
+    #     RAS_TVA_EVALUATED: pcge_account_resolver
+    #     HOLD_RAS_TAX_AMBIGUITY: hold_ras_tax_ambiguity
+    #     HOLD_OFFICE_DES_CHANGES: hold_office_des_changes
+    #     HOLD_PERMANENT_ESTABLISHMENT: hold_permanent_establishment
+    #   default_child: hold_ras_tax_ambiguity
 
-    # # ------------------------------------------------------------------
-    # # STEP 2C: DETERMINISTIC PENDING INSTRUMENTS MATCHER (5111/5143/3425)
-    # # ------------------------------------------------------------------
-    # pending_instruments_matcher:
-    #   name: pending_instruments_matcher
+    # rent_ras_evaluator:
+    #   name: rent_ras_evaluator
     #   batch_flush_seconds: *flush
-    #   kind: action
+    #   kind: evaluation
     #   batch_size: *bsize
     #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: pending_instruments_matcher
+    #   prompt_key: rent_ras_prompt
     #   children:
-    #     MATCH_CLEARED: simpl_tva_extractor
-    #     HOLD_UNMATCHED_INSTRUMENT: hold_unmatched_check_slip
-    #   default_child: simpl_tva_extractor
+    #     RENT_RAS_EVALUATED: simpl_tva_extractor
+    #     RENT_RAS_NOT_APPLICABLE: simpl_tva_extractor
+    #     HOLD_RENT_POLICY_MISSING: hold_compliance_policy_missing
+    #     HOLD_RENT_EVIDENCE_MISSING: hold_compliance_evidence_missing
+    #     HOLD_RENT_CONFLICT: hold_compliance_conflict
+    #   default_child: hold_compliance_conflict
 
-    # # ------------------------------------------------------------------
-    # # STEP 2D: DETERMINISTIC WITHHOLDING TAX EVALUATOR (10%/5% RAS 4458)
-    # # ------------------------------------------------------------------
-    # ras_tax_evaluator:
-    #   name: ras_tax_evaluator
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: ras_tax_evaluator
-    #   children:
-    #     RAS_APPLIED: simpl_tva_extractor
-    #     HOLD_RAS_AMBIGUITY: hold_ras_tax_ambiguity
-    #   default_child: simpl_tva_extractor
-
-    # # ------------------------------------------------------------------
-    # # STEP 3: LLM CASH-BASIS VAT EXTRACTION (SIMPL-TVA 6 FIELDS)
-    # # ------------------------------------------------------------------
     # simpl_tva_extractor:
     #   name: simpl_tva_extractor
     #   batch_flush_seconds: *flush
@@ -214,13 +874,245 @@ dag:
     #   edge_type: *estatic
     #   prompt_key: simpl_tva_extractor_prompt
     #   children:
-    #     SIMPL_TVA_VALID: post_bank_cash_journal
+    #     SIMPL_TVA_VALID: pcge_account_resolver
+    #     SIMPL_TVA_NOT_DEDUCTIBLE: pcge_account_resolver
     #     SIMPL_TVA_MISSING_FIELDS: hold_missing_vat_evidence
     #     SIMPL_TVA_INVALID_ICE: hold_invalid_ice
-    #   default_child: post_bank_cash_journal
+    #     SIMPL_TVA_POLICY_MISSING: hold_compliance_policy_missing
+    #     SIMPL_TVA_CONFLICT: hold_compliance_conflict
+    #   default_child: hold_compliance_conflict
+
+    # output_vat_evaluator:
+    #   name: output_vat_evaluator
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: output_vat_evaluator
+    #     ruleset: MA_OUTPUT_VAT
+    #     intent_payload_key: bank_transaction_intent
+    #     reconciliation_payload_key: reconciliation_result
+    #     entity_tax_profile_key: entity_tax_profile
+    #   children:
+    #     OUTPUT_VAT_EVALUATED: pcge_account_resolver
+    #     OUTPUT_VAT_NOT_APPLICABLE: pcge_account_resolver
+    #     HOLD_OUTPUT_VAT_POLICY_MISSING: hold_compliance_policy_missing
+    #     HOLD_OUTPUT_VAT_EVIDENCE_MISSING: hold_compliance_evidence_missing
+    #     HOLD_OUTPUT_VAT_CONFLICT: hold_compliance_conflict
+    #   default_child: hold_compliance_conflict
+
+    # dividend_ras_evaluator:
+    #   name: dividend_ras_evaluator
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: dividend_ras_evaluator
+    #     ruleset: MA_DIVIDEND_RAS
+    #     reconciliation_payload_key: reconciliation_result
+    #     entity_tax_profile_key: entity_tax_profile
+    #   children:
+    #     DIVIDEND_RAS_EVALUATED: pcge_account_resolver
+    #     DIVIDEND_RAS_NOT_APPLICABLE: pcge_account_resolver
+    #     HOLD_DIVIDEND_RAS_POLICY_MISSING: hold_compliance_policy_missing
+    #     HOLD_DIVIDEND_RAS_EVIDENCE_MISSING: hold_compliance_evidence_missing
+    #     HOLD_DIVIDEND_RAS_CONFLICT: hold_compliance_conflict
+    #   default_child: hold_compliance_conflict
+
+    # tpprf_tax_evaluator:
+    #   name: tpprf_tax_evaluator
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: tpprf_tax_evaluator
+    #     ruleset: MA_TPPRF
+    #     reconciliation_payload_key: reconciliation_result
+    #     entity_tax_profile_key: entity_tax_profile
+    #   children:
+    #     TPPRF_EVALUATED: pcge_account_resolver
+    #     TPPRF_WITHHOLDING_CONFIRMED: pcge_account_resolver
+    #     TPPRF_NOT_APPLICABLE: pcge_account_resolver
+    #     HOLD_TPPRF_POLICY_MISSING: hold_compliance_policy_missing
+    #     HOLD_TPPRF_EVIDENCE_MISSING: hold_compliance_evidence_missing
+    #     HOLD_TPPRF_CONFLICT: hold_compliance_conflict
+    #   default_child: hold_compliance_conflict
+
+    # customs_tax_evaluator:
+    #   name: customs_tax_evaluator
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: customs_tax_evaluator
+    #     ruleset: MA_ADII_IMPORT
+    #     reconciliation_payload_key: reconciliation_result
+    #     entity_tax_profile_key: entity_tax_profile
+    #   children:
+    #     CUSTOMS_TAX_EVALUATED: simpl_tva_extractor
+    #     CUSTOMS_TAX_NOT_APPLICABLE: pcge_account_resolver
+    #     HOLD_CUSTOMS_POLICY_MISSING: hold_compliance_policy_missing
+    #     HOLD_CUSTOMS_EVIDENCE_MISSING: hold_compliance_evidence_missing
+    #     HOLD_CUSTOMS_CONFLICT: hold_compliance_conflict
+    #   default_child: hold_compliance_conflict
+
+    # insurance_tca_evaluator:
+    #   name: insurance_tca_evaluator
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: insurance_tca_evaluator
+    #     ruleset: MA_INSURANCE_TCA
+    #     reconciliation_payload_key: reconciliation_result
+    #     entity_tax_profile_key: entity_tax_profile
+    #   children:
+    #     INSURANCE_TCA_EVALUATED: pcge_account_resolver
+    #     INSURANCE_TCA_INCLUDED_IN_PREMIUM: pcge_account_resolver
+    #     INSURANCE_TCA_NOT_APPLICABLE: pcge_account_resolver
+    #     HOLD_INSURANCE_TCA_POLICY_MISSING: hold_compliance_policy_missing
+    #     HOLD_INSURANCE_TCA_EVIDENCE_MISSING: hold_compliance_evidence_missing
+    #     HOLD_INSURANCE_TCA_CONFLICT: hold_compliance_conflict
+    #   default_child: hold_compliance_conflict
 
     # # ------------------------------------------------------------------
-    # # STEP 4: COMMIT FINAL JOURNAL ENTRY (5141 BANQUE)
+    # # STEP 6: FINAL PCGE COUNTERPART ACCOUNT RESOLUTION
+    # # ------------------------------------------------------------------
+    # pcge_account_resolver:
+    #   name: pcge_account_resolver
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: pcge_account_resolver
+    #     chart_of_accounts: MA_PCGE
+    #     bank_account_code: "5141"
+    #     intent_payload_key: bank_transaction_intent
+    #     reconciliation_payload_key: reconciliation_result
+    #     compliance_payload_key: compliance_result
+    #     entity_account_policy_key: entity_account_policy
+    #   children:
+    #     PCGE_ACCOUNT_RESOLVED: journal_builder
+    #     HOLD_PCGE_ACCOUNT_UNMAPPED: hold_pcge_account_unmapped
+    #     HOLD_PCGE_ACCOUNT_CONFLICT: hold_pcge_account_conflict
+    #     HOLD_PCGE_POSTING_POLICY_MISSING: hold_pcge_posting_policy_missing
+    #   default_child: hold_pcge_account_conflict
+
+    # # ------------------------------------------------------------------
+    # # STEP 7: BUILD IMMUTABLE PCGE JOURNAL DRAFT
+    # # ------------------------------------------------------------------
+    # journal_builder:
+    #   name: journal_builder
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: pcge_journal_builder
+    #     ruleset: MA_PCGE_BANK_5141
+    #     bank_account_code: "5141"
+    #     bank_journal_code_policy_key: bank_journal_code
+    #     transaction_payload_key: normalized_bank_transaction
+    #     intent_payload_key: bank_transaction_intent
+    #     reconciliation_payload_key: reconciliation_result
+    #     compliance_payload_key: compliance_result
+    #     account_resolution_payload_key: pcge_account_resolution
+    #     entity_account_policy_key: entity_account_policy
+    #     accounting_period_policy_key: accounting_period_policy
+    #     currency_policy_key: currency_policy
+    #     output_payload_key: journal_draft
+    #     amount_scale: 2
+    #     balance_tolerance: "0.00"
+    #     require_exact_bank_line_amount: true
+    #     require_bank_line_account: "5141"
+    #     require_source_traceability: true
+    #     require_idempotency_key: true
+    #     idempotency_key_fields:
+    #       - entity_id
+    #       - bank_account_id
+    #       - transaction_id
+    #       - statement_line_sequence
+    #     forbid_suspense_accounts: true
+    #     draft_status: PENDING_VALIDATION
+    #   children:
+    #     JOURNAL_DRAFT_BUILT: journal_validator
+    #     HOLD_JOURNAL_INPUT_MISSING: hold_journal_input_missing
+    #     HOLD_JOURNAL_COMPONENT_UNMAPPED: hold_journal_component_unmapped
+    #     HOLD_JOURNAL_UNBALANCED: hold_journal_unbalanced
+    #     HOLD_JOURNAL_PERIOD_CLOSED: hold_journal_period_closed
+    #     HOLD_JOURNAL_CURRENCY_CONFLICT: hold_journal_currency_conflict
+    #     HOLD_JOURNAL_CONFLICT: hold_journal_conflict
+    #   default_child: hold_journal_conflict
+
+    # # ------------------------------------------------------------------
+    # # STEP 8: INDEPENDENT JOURNAL CONTROL VALIDATION
+    # # ------------------------------------------------------------------
+    # journal_validator:
+    #   name: journal_validator
+    #   batch_flush_seconds: *flush
+    #   kind: action
+    #   batch_size: *bsize
+    #   edge_type: *estatic
+    #   execution_parameters:
+    #     action_provider: pcge_journal_validator
+    #     ruleset: MA_PCGE_BANK_5141
+    #     chart_of_accounts: MA_PCGE
+    #     bank_account_code: "5141"
+    #     transaction_payload_key: normalized_bank_transaction
+    #     reconciliation_payload_key: reconciliation_result
+    #     compliance_payload_key: compliance_result
+    #     account_resolution_payload_key: pcge_account_resolution
+    #     journal_draft_payload_key: journal_draft
+    #     entity_account_policy_key: entity_account_policy
+    #     accounting_period_policy_key: accounting_period_policy
+    #     currency_policy_key: currency_policy
+    #     approval_policy_key: bank_journal_approval_policy
+    #     output_payload_key: journal_validation_result
+    #     amount_scale: 2
+    #     balance_tolerance: "0.00"
+    #     require_draft_status: PENDING_VALIDATION
+    #     require_exactly_one_bank_line: true
+    #     require_bank_line_account: "5141"
+    #     require_bank_direction_match: true
+    #     require_exact_bank_line_amount: true
+    #     require_functional_currency_balance: true
+    #     require_transaction_currency_reconciliation: true
+    #     require_active_postable_accounts: true
+    #     require_component_account_authorization: true
+    #     require_tax_line_provenance: true
+    #     require_third_party_identity: true
+    #     require_open_accounting_period: true
+    #     require_source_document_links: true
+    #     require_source_content_hashes: true
+    #     require_idempotency_key: true
+    #     require_duplicate_lookup: true
+    #     require_independent_validator: true
+    #     allow_self_approval: false
+    #     forbid_suspense_accounts: true
+    #     validated_status: VALIDATED
+    #   children:
+    #     JOURNAL_VALIDATED: post_bank_cash_journal
+    #     HOLD_JOURNAL_SCHEMA_INVALID: hold_journal_schema_invalid
+    #     HOLD_JOURNAL_BANK_LINE_MISMATCH: hold_journal_bank_line_mismatch
+    #     HOLD_JOURNAL_BALANCE_INVALID: hold_journal_unbalanced
+    #     HOLD_JOURNAL_ACCOUNT_INVALID: hold_journal_component_unmapped
+    #     HOLD_JOURNAL_TAX_ALLOCATION_INVALID: hold_journal_tax_allocation_invalid
+    #     HOLD_JOURNAL_PERIOD_INVALID: hold_journal_period_closed
+    #     HOLD_JOURNAL_CURRENCY_INVALID: hold_journal_currency_conflict
+    #     HOLD_JOURNAL_DUPLICATE: hold_journal_duplicate
+    #     HOLD_JOURNAL_TRACEABILITY_INVALID: hold_journal_traceability_invalid
+    #     HOLD_JOURNAL_APPROVAL_REQUIRED: hold_journal_approval_required
+    #     HOLD_JOURNAL_VALIDATION_CONFLICT: hold_journal_validation_conflict
+    #   default_child: hold_journal_validation_conflict
+
+    # # ------------------------------------------------------------------
+    # # STEP 9: COMMIT VALIDATED JOURNAL ENTRY & BANK RECONCILIATION
     # # ------------------------------------------------------------------
     # post_bank_cash_journal:
     #   name: post_bank_cash_journal
@@ -229,17 +1121,374 @@ dag:
     #   batch_size: *bsize
     #   edge_type: *estatic
     #   execution_parameters:
-    #     action_type: emit_resume_signal
-    #   default_child: bank_cash_complete
+    #     action_provider: pcge_bank_journal_committer
+    #     ruleset: MA_PCGE_BANK_5141
+    #     transaction_payload_key: normalized_bank_transaction
+    #     reconciliation_payload_key: reconciliation_result
+    #     journal_draft_payload_key: journal_draft
+    #     journal_validation_payload_key: journal_validation_result
+    #     accounting_period_policy_key: accounting_period_policy
+    #     entity_account_policy_key: entity_account_policy
+    #     output_payload_key: posting_result
+    #     required_draft_status: PENDING_VALIDATION
+    #     required_validation_status: VALIDATED
+    #     require_draft_hash_match: true
+    #     require_policy_version_match: true
+    #     require_open_accounting_period_at_commit: true
+    #     require_idempotency_key: true
+    #     idempotent_replay_requires_hash_match: true
+    #     transaction_isolation: SERIALIZABLE
+    #     lock_scope: ENTITY_BANK_TRANSACTION
+    #     atomic_commit_operations:
+    #       - LOCK_BANK_TRANSACTION
+    #       - VERIFY_NOT_POSTED
+    #       - VERIFY_VALIDATION_AND_POLICY_VERSIONS
+    #       - INSERT_JOURNAL_HEADER
+    #       - INSERT_JOURNAL_LINES
+    #       - INSERT_RECONCILIATION_ALLOCATIONS
+    #       - MARK_BANK_TRANSACTION_RECONCILED
+    #       - INSERT_AUDIT_RECORD
+    #       - INSERT_TRANSACTIONAL_OUTBOX_EVENT
+    #     journal_status_after_commit: POSTED
+    #     bank_transaction_status_after_commit: RECONCILED
+    #     outbox_event_type: ACCOUNTING.BANK_JOURNAL.POSTED
+    #     transient_retry_limit: 3
+    #     transient_retryable_errors:
+    #       - SERIALIZATION_FAILURE
+    #       - DEADLOCK_DETECTED
+    #       - CONNECTION_INTERRUPTED_BEFORE_COMMIT_RESULT
+    #   children:
+    #     POST_COMMITTED: bank_cash_complete
+    #     POST_IDEMPOTENT_REPLAY: bank_cash_complete
+    #     HOLD_POST_VALIDATION_STALE: hold_post_validation_stale
+    #     HOLD_POST_DUPLICATE_CONFLICT: hold_post_duplicate_conflict
+    #     HOLD_POST_PERIOD_CLOSED: hold_journal_period_closed
+    #     HOLD_POST_POLICY_VERSION_CHANGED: hold_post_policy_version_changed
+    #     HOLD_POST_LEDGER_CONFLICT: hold_post_ledger_conflict
+    #     HOLD_POST_RECONCILIATION_CONFLICT: hold_post_reconciliation_conflict
+    #     HOLD_POST_COMMIT_FAILED: hold_post_commit_failed
+    #   default_child: hold_post_commit_failed
+
+    # hold_office_des_changes:
+    #   name: hold_office_des_changes
+    #   kind: terminal
+    #   hold_state_signal: HOLD_OFFICE_DES_CHANGES
+    #   hold_reason_string: "Foreign transfer violates exchange control limits or lacks registered commercial contract."
+    #   annotation:
+    #     tax_rule_code: "Réglementation des Changes / Office des Changes"
+    #     document_required: "Contrat commercial enregistré / Justificatif de dotation commerce électronique"
+    #     instruction: "Vérifier le plafond de la dotation ou transmettre le contrat à la banque intermédiaire pour domiciliation."
+    #     severity: "BLOCKING"
+
+    # hold_permanent_establishment:
+    #   name: hold_permanent_establishment
+    #   kind: terminal
+    #   hold_state_signal: HOLD_PERMANENT_ESTABLISHMENT
+    #   hold_reason_string: "Foreign service provider presence indicates Permanent Establishment risk under CGI Art. 12."
+    #   annotation:
+    #     tax_rule_code: "CGI Art. 12 & Conventions Fiscales (Établissement Stable)"
+    #     document_required: "Relevé de présence chantier/mission & Contrat de prestation"
+    #     instruction: "Évaluer la durée de présence physique au Maroc pour soumettre le prestataire à l'IS local au lieu de la RAS."
+    #     severity: "CRITICAL"
 
     # # ------------------------------------------------------------------
     # # HOLD & TERMINAL STATES
     # # ------------------------------------------------------------------
+    # hold_post_validation_stale:
+    #   name: hold_post_validation_stale
+    #   kind: terminal
+    #   hold_state_signal: HOLD_POST_VALIDATION_STALE
+    #   hold_reason_string: "The validated journal draft changed, expired, or no longer matches the validation record presented for commit."
+    #   annotation:
+    #     document_required: "Current immutable journal draft and a validation result containing the same content hash"
+    #     instruction: "Rerun independent validation against the unchanged current draft before attempting commit."
+    #     severity: "BLOCKING"
+
+    # hold_post_duplicate_conflict:
+    #   name: hold_post_duplicate_conflict
+    #   kind: terminal
+    #   hold_state_signal: HOLD_POST_DUPLICATE_CONFLICT
+    #   hold_reason_string: "The idempotency key already exists, but the persisted journal or reconciliation hash differs from the validated request."
+    #   annotation:
+    #     document_required: "Existing posting, current validated draft, idempotency record, and bank transaction identity"
+    #     instruction: "Investigate the conflicting posting. Do not treat a hash mismatch as an idempotent replay."
+    #     severity: "CRITICAL"
+
+    # hold_post_policy_version_changed:
+    #   name: hold_post_policy_version_changed
+    #   kind: terminal
+    #   hold_state_signal: HOLD_POST_POLICY_VERSION_CHANGED
+    #   hold_reason_string: "An accounting, tax, period, approval, or account-mapping policy changed after journal validation."
+    #   annotation:
+    #     document_required: "Current policy versions and the versions captured by the journal validation record"
+    #     instruction: "Rebuild and revalidate the journal under the current effective policies before posting."
+    #     severity: "BLOCKING"
+
+    # hold_post_ledger_conflict:
+    #   name: hold_post_ledger_conflict
+    #   kind: terminal
+    #   hold_state_signal: HOLD_POST_LEDGER_CONFLICT
+    #   hold_reason_string: "The target ledger rejected the validated journal because account, sequence, period, or concurrent ledger state changed at commit time."
+    #   annotation:
+    #     document_required: "Ledger conflict details, journal draft, account state, journal sequence, and accounting-period state"
+    #     instruction: "Resolve the authoritative ledger conflict, then rebuild and revalidate when any accounting fact changed."
+    #     severity: "BLOCKING"
+
+    # hold_post_reconciliation_conflict:
+    #   name: hold_post_reconciliation_conflict
+    #   kind: terminal
+    #   hold_state_signal: HOLD_POST_RECONCILIATION_CONFLICT
+    #   hold_reason_string: "The bank transaction or reconciliation allocation changed concurrently and cannot be committed with this journal."
+    #   annotation:
+    #     document_required: "Current bank transaction version, reconciliation allocations, and competing workflow or posting records"
+    #     instruction: "Resolve the concurrent reconciliation ownership conflict before rebuilding the journal."
+    #     severity: "BLOCKING"
+
+    # hold_post_commit_failed:
+    #   name: hold_post_commit_failed
+    #   kind: terminal
+    #   hold_state_signal: HOLD_POST_COMMIT_FAILED
+    #   hold_reason_string: "The atomic journal, reconciliation, audit, and outbox transaction failed after the permitted transient retries."
+    #   annotation:
+    #     document_required: "Commit error record, database transaction identifier, retry history, and current idempotency state"
+    #     instruction: "Verify whether the transaction committed before retrying. Resume through the same idempotency key only after commit state is known."
+    #     severity: "CRITICAL"
+
+    # hold_journal_schema_invalid:
+    #   name: hold_journal_schema_invalid
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_SCHEMA_INVALID
+    #   hold_reason_string: "The journal draft does not satisfy the required immutable journal schema or contains incomplete line metadata."
+    #   annotation:
+    #     document_required: "Complete journal header, line identifiers, debit and credit fields, currencies, dates, source references, and draft version"
+    #     instruction: "Regenerate the draft from the canonical builder schema. Do not repair malformed journal lines during validation."
+    #     severity: "BLOCKING"
+
+    # hold_journal_bank_line_mismatch:
+    #   name: hold_journal_bank_line_mismatch
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_BANK_LINE_MISMATCH
+    #   hold_reason_string: "The journal draft has a missing, duplicated, incorrectly directed, or incorrectly valued 5141 bank line."
+    #   annotation:
+    #     document_required: "Normalized bank transaction and complete journal draft"
+    #     instruction: "Rebuild exactly one 5141 line whose debit or credit direction and amount match the normalized bank movement."
+    #     severity: "BLOCKING"
+
+    # hold_journal_tax_allocation_invalid:
+    #   name: hold_journal_tax_allocation_invalid
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_TAX_ALLOCATION_INVALID
+    #   hold_reason_string: "VAT, withholding, customs, insurance tax, or financial-income tax lines do not reconcile to the approved compliance assessment."
+    #   annotation:
+    #     document_required: "Approved compliance result, taxable bases, rates, tax amounts, tax account mappings, and source documents"
+    #     instruction: "Correct the tax allocation at its compliance or account-resolution source, then rebuild the journal."
+    #     severity: "BLOCKING"
+
+    # hold_journal_duplicate:
+    #   name: hold_journal_duplicate
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_DUPLICATE
+    #   hold_reason_string: "The journal idempotency key or bank transaction identity already exists in a draft, committed entry, or reconciliation record."
+    #   annotation:
+    #     document_required: "Existing journal entry, idempotency record, bank transaction identity, and reversal history"
+    #     instruction: "Link to the existing entry or execute the approved reversal workflow. Never create a second posting for the same bank line."
+    #     severity: "BLOCKING"
+
+    # hold_journal_traceability_invalid:
+    #   name: hold_journal_traceability_invalid
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_TRACEABILITY_INVALID
+    #   hold_reason_string: "The journal draft cannot be traced completely to immutable bank, reconciliation, compliance, or source-document evidence."
+    #   annotation:
+    #     document_required: "Source document identifiers, content hashes, bank statement line identity, reconciliation record, and policy versions"
+    #     instruction: "Restore complete lineage and verified content hashes before journal approval or posting."
+    #     severity: "BLOCKING"
+
+    # hold_journal_approval_required:
+    #   name: hold_journal_approval_required
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_APPROVAL_REQUIRED
+    #   hold_reason_string: "The journal satisfies technical controls but requires approval under the entity's amount, risk, exception, or segregation-of-duties policy."
+    #   annotation:
+    #     document_required: "Authorized approval referencing the immutable journal draft hash"
+    #     instruction: "Obtain approval from an authorized reviewer who did not build the draft, then resume validation against the unchanged draft."
+    #     severity: "ACTION_REQUIRED"
+
+    # hold_journal_validation_conflict:
+    #   name: hold_journal_validation_conflict
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_VALIDATION_CONFLICT
+    #   hold_reason_string: "Independent validation controls returned contradictory results or no deterministic validation outcome."
+    #   annotation:
+    #     document_required: "Journal draft, validation report, effective policies, and authoritative control evidence"
+    #     instruction: "Resolve the control conflict and rerun the full validation suite before posting."
+    #     severity: "BLOCKING"
+
+    # hold_journal_input_missing:
+    #   name: hold_journal_input_missing
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_INPUT_MISSING
+    #   hold_reason_string: "The journal draft cannot be constructed because a required normalized transaction, reconciliation, compliance, or account-resolution field is missing."
+    #   annotation:
+    #     document_required: "Normalized bank line, reconciliation allocation, compliance assessment, resolved PCGE accounts, and entity journal policy"
+    #     instruction: "Restore the missing upstream payload and rebuild the journal draft without inferring accounting facts."
+    #     severity: "BLOCKING"
+
+    # hold_journal_component_unmapped:
+    #   name: hold_journal_component_unmapped
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_COMPONENT_UNMAPPED
+    #   hold_reason_string: "At least one reconciled component has no approved PCGE account or analytic allocation."
+    #   annotation:
+    #     document_required: "Complete component-level account mapping for principal, VAT, withholding, fees, interest, exchange differences, and analytic dimensions"
+    #     instruction: "Approve every component mapping before reconstructing the journal draft. Suspense-account substitution is prohibited."
+    #     severity: "BLOCKING"
+
+    # hold_journal_unbalanced:
+    #   name: hold_journal_unbalanced
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_UNBALANCED
+    #   hold_reason_string: "The generated journal draft does not balance exactly at the configured currency precision or does not reconcile to the bank amount."
+    #   annotation:
+    #     document_required: "Complete allocation schedule and source amounts for all journal components"
+    #     instruction: "Resolve rounding, VAT, withholding, fee, foreign-exchange, or residual allocation differences. Do not force-balance the entry."
+    #     severity: "BLOCKING"
+
+    # hold_journal_period_closed:
+    #   name: hold_journal_period_closed
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_PERIOD_CLOSED
+    #   hold_reason_string: "The applicable accounting period is closed or the posting-date policy does not permit this journal date."
+    #   annotation:
+    #     document_required: "Approved accounting calendar, reopening authorization, or next-open-period adjustment policy"
+    #     instruction: "Obtain period authorization or apply the approved adjustment-date policy before rebuilding the draft."
+    #     severity: "BLOCKING"
+
+    # hold_journal_currency_conflict:
+    #   name: hold_journal_currency_conflict
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_CURRENCY_CONFLICT
+    #   hold_reason_string: "Transaction currency, functional currency, exchange rate, or translated journal amounts are missing or inconsistent."
+    #   annotation:
+    #     document_required: "Bank currency, entity functional currency, approved exchange rate source, and foreign-currency reconciliation"
+    #     instruction: "Resolve the currency and exchange-rate evidence, then rebuild both transaction-currency and functional-currency amounts."
+    #     severity: "BLOCKING"
+
+    # hold_journal_conflict:
+    #   name: hold_journal_conflict
+    #   kind: terminal
+    #   hold_state_signal: HOLD_JOURNAL_CONFLICT
+    #   hold_reason_string: "The journal builder received contradictory accounting facts or could not produce one deterministic draft."
+    #   annotation:
+    #     document_required: "Authoritative bank line, source documents, reconciliation result, compliance result, and account-resolution record"
+    #     instruction: "Resolve the conflicting upstream facts before journal construction. Never choose one accounting treatment arbitrarily."
+    #     severity: "BLOCKING"
+
+    # hold_pcge_account_unmapped:
+    #   name: hold_pcge_account_unmapped
+    #   kind: terminal
+    #   hold_state_signal: HOLD_PCGE_ACCOUNT_UNMAPPED
+    #   hold_reason_string: "The reconciled economic event has no approved counterpart account in the entity's PCGE mapping policy."
+    #   annotation:
+    #     document_required: "Entity chart of accounts and approved intent-to-account mapping"
+    #     instruction: "Map the reconciled intent to an authorized posting account without changing the standard 5141 bank-side entry."
+    #     severity: "ACTION_REQUIRED"
+
+    # hold_pcge_account_conflict:
+    #   name: hold_pcge_account_conflict
+    #   kind: terminal
+    #   hold_state_signal: HOLD_PCGE_ACCOUNT_CONFLICT
+    #   hold_reason_string: "More than one PCGE counterpart account remains valid after reconciliation and compliance evaluation."
+    #   annotation:
+    #     document_required: "Authoritative accounting policy, source document, and prior posting history"
+    #     instruction: "Resolve the account conflict and approve exactly one account allocation before journal construction."
+    #     severity: "BLOCKING"
+
+    # hold_pcge_posting_policy_missing:
+    #   name: hold_pcge_posting_policy_missing
+    #   kind: terminal
+    #   hold_state_signal: HOLD_PCGE_POSTING_POLICY_MISSING
+    #   hold_reason_string: "The entity-specific posting policy required to resolve the PCGE account is unavailable or inactive."
+    #   annotation:
+    #     document_required: "Approved entity chart of accounts, account overrides, analytic dimensions, and effective-date policy"
+    #     instruction: "Publish the missing entity posting policy before journal construction."
+    #     severity: "BLOCKING"
+
+    # hold_compliance_policy_missing:
+    #   name: hold_compliance_policy_missing
+    #   kind: terminal
+    #   hold_state_signal: HOLD_COMPLIANCE_POLICY_MISSING
+    #   hold_reason_string: "The entity tax profile or applicable compliance policy is unavailable for this transaction."
+    #   annotation:
+    #     document_required: "Entity tax profile, VAT regime, withholding profile, fiscal period, and applicable exemptions"
+    #     instruction: "Complete or approve the entity compliance configuration before evaluating payment-time tax obligations."
+    #     severity: "BLOCKING"
+
+    # hold_compliance_evidence_missing:
+    #   name: hold_compliance_evidence_missing
+    #   kind: terminal
+    #   hold_state_signal: HOLD_COMPLIANCE_EVIDENCE_MISSING
+    #   hold_reason_string: "The transaction is reconciled, but required tax or regulatory evidence is missing."
+    #   annotation:
+    #     document_required: "Intent-specific invoice, contract, tax receipt, residency certificate, customs declaration, or withholding evidence"
+    #     instruction: "Collect the compliance evidence required by the selected policy before PCGE account resolution."
+    #     severity: "ACTION_REQUIRED"
+
+    # hold_compliance_conflict:
+    #   name: hold_compliance_conflict
+    #   kind: terminal
+    #   hold_state_signal: HOLD_COMPLIANCE_CONFLICT
+    #   hold_reason_string: "The applicable compliance rules produce contradictory treatments or no deterministic routing outcome."
+    #   annotation:
+    #     document_required: "Authoritative tax position, entity policy, and reviewed supporting documents"
+    #     instruction: "Resolve the conflicting VAT, withholding, treaty, customs, or entity-policy treatment before posting."
+    #     severity: "BLOCKING"
+
+    # hold_reconciliation_no_match:
+    #   name: hold_reconciliation_no_match
+    #   kind: terminal
+    #   hold_state_signal: HOLD_RECONCILIATION_NO_MATCH
+    #   hold_reason_string: "No ledger entry or supporting evidence satisfies the reconciliation policy for this bank transaction."
+    #   annotation:
+    #     document_required: "Intent-specific source document or corresponding ledger entry"
+    #     instruction: "Obtain the missing evidence or identify the correct open item before accounting treatment and posting."
+    #     severity: "ACTION_REQUIRED"
+
+    # hold_reconciliation_partial_match:
+    #   name: hold_reconciliation_partial_match
+    #   kind: terminal
+    #   hold_state_signal: HOLD_RECONCILIATION_PARTIAL_MATCH
+    #   hold_reason_string: "Available evidence explains only part of the bank transaction amount or leaves an unresolved residual."
+    #   annotation:
+    #     document_required: "Complete allocation schedule, remaining invoice, credit note, fee, withholding, or exchange-difference evidence"
+    #     instruction: "Resolve the residual amount and produce a complete allocation whose components equal the bank amount."
+    #     severity: "ACTION_REQUIRED"
+
+    # hold_reconciliation_conflict:
+    #   name: hold_reconciliation_conflict
+    #   kind: terminal
+    #   hold_state_signal: HOLD_RECONCILIATION_CONFLICT
+    #   hold_reason_string: "Multiple records match the bank transaction or the available evidence contains contradictory accounting facts."
+    #   annotation:
+    #     document_required: "Authoritative counterparty document and ledger reconciliation history"
+    #     instruction: "Resolve duplicate, contradictory, or already-posted records before allowing the transaction to continue."
+    #     severity: "BLOCKING"
+
+    # hold_invalid_cash_direction:
+    #   name: hold_invalid_cash_direction
+    #   kind: terminal
+    #   hold_state_signal: HOLD_INVALID_CASH_DIRECTION
+    #   hold_reason_string: "Bank transaction direction is missing or is not one of INFLOW or OUTFLOW."
+    #   annotation:
+    #     document_required: "Normalized bank transaction amount and debit/credit indicator"
+    #     instruction: "Correct the bank-line normalization before transaction-intent classification."
+    #     severity: "BLOCKING"
+
     # hold_ambiguous_bank_line:
     #   name: hold_ambiguous_bank_line
     #   kind: terminal
     #   hold_state_signal: HOLD_AMBIGUOUS_BANK_LINE
-    #   hold_reason_string: "Bank statement description is ambiguous and requires human accountant review or situation memory lookup."
+    #   hold_reason_string: "Bank statement description is unidentifiable and requires human accountant review or situation memory lookup."
     #   annotation:
     #     tax_rule_code: "PCGM / Diligence Comptable"
     #     document_required: "Justificatif de dépense / Facture / Contrat"
@@ -252,42 +1501,20 @@ dag:
     #   hold_state_signal: HOLD_AMBIGUOUS_BANK_FEE
     #   hold_reason_string: "Bank fee cannot be split deterministically into 10% VAT and HT charges."
     #   annotation:
-    #     tax_rule_code: "CGI Art. 89 (TVA Bancaire 10%)"
+    #     tax_rule_code: "CGI Art. 89-I-12° (TVA Bancaire 10%)"
     #     document_required: "Avis d'opéré bancaire / Relevé d'agios"
     #     instruction: "Vérifier la décomposition HT et TVA 10% sur l'avis d'opéré bancaire émis par la banque."
     #     severity: "WARNING"
-
-    # hold_unmatched_transit_pair:
-    #   name: hold_unmatched_transit_pair
-    #   kind: terminal
-    #   hold_state_signal: HOLD_UNMATCHED_TRANSIT_PAIR
-    #   hold_reason_string: "Single-sided transit movement in Account 5115 does not have a matching counterpart to clear to 0 MAD."
-    #   annotation:
-    #     tax_rule_code: "PCGM Compte 5115 (Virements de fonds)"
-    #     document_required: "Relevé bancaire du second compte bancaire (compte miroir)"
-    #     instruction: "Rapprocher le virement interne avec le relevé de l'autre compte bancaire pour solder le compte 5115."
-    #     severity: "ACTION_REQUIRED"
-
-    # hold_unmatched_check_slip:
-    #   name: hold_unmatched_check_slip
-    #   kind: terminal
-    #   hold_state_signal: HOLD_UNMATCHED_CHECK_SLIP
-    #   hold_reason_string: "Uncleared check or trade bill cannot be matched against bank statement settlement line."
-    #   annotation:
-    #     tax_rule_code: "PCGM Comptes 5111 / 5143 / 3425"
-    #     document_required: "Bordereau de remise de chèque ou copie LCN"
-    #     instruction: "Lettrer l'encaissement avec le bordereau de remise pour apurer le compte d'effets/chèques à l'encaissement."
-    #     severity: "ACTION_REQUIRED"
 
     # hold_ras_tax_ambiguity:
     #   name: hold_ras_tax_ambiguity
     #   kind: terminal
     #   hold_state_signal: HOLD_RAS_TAX_AMBIGUITY
-    #   hold_reason_string: "Foreign service or rent payment requires tax residency certificate or withholding clarification."
+    #   hold_reason_string: "Foreign service payment requires tax residency certificate or RAS non-résidents tax clarification."
     #   annotation:
-    #     tax_rule_code: "CGI Art. 15 (RAS 10%) / CGI Art. 160 (RAS 5%)"
-    #     document_required: "Certificat de résidence fiscale étranger / Contrat de bail commercial"
-    #     instruction: "Exiger le certificat de résidence fiscale étranger pour justifier l'exonération ou comptabiliser la retenue (Compte 445800)."
+    #     tax_rule_code: "CGI Art. 15 (RAS Non-résidents 10%) & Art. 115 (TVA Auto-liquidation)"
+    #     document_required: "Certificat de résidence fiscale étranger / Facture fournisseur étranger"
+    #     instruction: "Obtenir le certificat de résidence fiscale ou procéder au calcul de la RAS de 10% (Compte 445800) et auto-liquidation TVA 20%."
     #     severity: "ACTION_REQUIRED"
 
     # hold_missing_vat_evidence:
@@ -296,9 +1523,9 @@ dag:
     #   hold_state_signal: HOLD_MISSING_VAT_EVIDENCE
     #   hold_reason_string: "Mandatory SIMPL-TVA cash deduction fields are incomplete."
     #   annotation:
-    #     tax_rule_code: "CGI Art. 125 & SIMPL-TVA (DGI)"
+    #     tax_rule_code: "CGI Art. 112 - état détaillé des déductions TVA"
     #     document_required: "Facture d'achat originale avec mentions légales complètes"
-    #     instruction: "Renseigner les 6 champs obligatoires du tableau de déduction SIMPL-TVA pour valider le droit à déduction."
+    #     instruction: "Renseigner les 8 indications de l'état détaillé des déductions: référence de facture, fournisseur, identifiant fiscal, ICE, désignation, montant HT, TVA et mode/références de paiement."
     #     severity: "ACTION_REQUIRED"
 
     # hold_invalid_ice:
@@ -316,10 +1543,16 @@ dag:
     #   name: bank_cash_complete
     #   kind: terminal
     #   execution_parameters:
-    #     close_status: CLASSIFIED
-
+    #     close_status: POSTED_AND_RECONCILED
+    #     result_payload_key: posting_result
+    #     require_posting_status:
+    #       - POST_COMMITTED
+    #       - POST_IDEMPOTENT_REPLAY
+          
     debug_terminal:
       name: debug_terminal
       batch_size: *bsize
       batch_flush_seconds: *flush
       kind: terminal
+
+

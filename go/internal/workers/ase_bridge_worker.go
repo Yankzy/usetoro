@@ -434,6 +434,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return fmt.Errorf("dag_name is required in workflow config or payload")
 	}
 
+	// Look up domain_tool from DAG config if not provided in task config
 	if domainToolName == "" {
 		if cfg := ase.GetConfig("", dagName); cfg != nil && cfg.HyperParameters.DomainTool != "" {
 			domainToolName = cfg.HyperParameters.DomainTool
@@ -623,7 +624,6 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 	}
 
-	// PCM currently uses the staging session as session_id.
 	// Keep both fields populated even if only session_id reached ASE.
 	if stagingSessionID == "" {
 		stagingSessionID = sessionID

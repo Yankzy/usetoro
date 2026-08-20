@@ -36,9 +36,6 @@ services:
     build:
       context: ../
       dockerfile: container/gate/gate.prod.Dockerfile
-      target: ${GO_BUILD_TARGET:-development}
-    working_dir: /workspace
-    command: ["air", "-c", "/etc/air/gate.toml"]
     restart: always
     ports:
       - "8080:8080"
@@ -63,12 +60,6 @@ services:
         condition: service_healthy
     networks:
       - toro-net
-    volumes:
-      - ../go:/workspace/go
-      - ../tap:/workspace/tap
-      - ./air:/etc/air:ro
-      - go_build_cache:/root/.cache/go-build
-      - go_mod_cache:/go/pkg/mod
 
   python-worker:
     image: yankz/usetoro:python-worker
@@ -96,9 +87,6 @@ services:
     build:
       context: ../
       dockerfile: container/protocol/protocol.prod.Dockerfile
-      target: ${GO_BUILD_TARGET:-development}
-    working_dir: /workspace
-    command: ["air", "-c", "/etc/air/protocol.toml"]
     restart: always
     ports:
       - "9090:9090"
@@ -141,20 +129,12 @@ services:
       - ../tap/workflows:/app/tap/workflows
       - ../go/internal/config/defaults.yml:/app/internal/config/defaults.yml
       - ../go/internal/erp/ase/dags:/app/internal/erp/ase/dags
-      - ../go:/workspace/go
-      - ../tap:/workspace/tap
-      - ./air:/etc/air:ro
-      - go_build_cache:/root/.cache/go-build
-      - go_mod_cache:/go/pkg/mod
 
   sync:
     image: yankz/usetoro:sync
     build:
       context: ../
       dockerfile: container/sync/Dockerfile
-      target: ${GO_BUILD_TARGET:-development}
-    working_dir: /workspace
-    command: ["air", "-c", "/etc/air/sync.toml"]
     restart: always
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -178,12 +158,6 @@ services:
         condition: service_healthy
     networks:
       - toro-net
-    volumes:
-      - ../go:/workspace/go
-      - ../tap:/workspace/tap
-      - ./air:/etc/air:ro
-      - go_build_cache:/root/.cache/go-build
-      - go_mod_cache:/go/pkg/mod
 
   # cdc-worker:
   #   image: yankz/usetoro:cdc-worker
@@ -208,9 +182,6 @@ services:
     build:
       context: ../
       dockerfile: container/ws/ws.prod.Dockerfile
-      target: ${GO_BUILD_TARGET:-development}
-    working_dir: /workspace
-    command: ["air", "-c", "/etc/air/ws.toml"]
     restart: always
     ports:
       - "8081:8080"
@@ -238,12 +209,6 @@ services:
         condition: service_healthy
     networks:
       - toro-net
-    volumes:
-      - ../go:/workspace/go
-      - ../tap:/workspace/tap
-      - ./air:/etc/air:ro
-      - go_build_cache:/root/.cache/go-build
-      - go_mod_cache:/go/pkg/mod
 
   redis:
     image: redis:alpine
@@ -294,9 +259,6 @@ services:
     build:
       context: ../
       dockerfile: container/fignode/fignode.prod.Dockerfile
-      target: ${GO_BUILD_TARGET:-development}
-    working_dir: /workspace
-    command: ["air", "-c", "/etc/air/fignode.toml"]
     restart: always
     ports:
       - "8083:8083"
@@ -320,21 +282,12 @@ services:
         condition: service_healthy
     networks:
       - toro-net
-    volumes:
-      - ../go:/workspace/go
-      - ../tap:/workspace/tap
-      - ./air:/etc/air:ro
-      - go_build_cache:/root/.cache/go-build
-      - go_mod_cache:/go/pkg/mod
 
   graphql:
     image: yankz/usetoro:graphql
     build:
       context: ../
       dockerfile: container/graphql/graphql.prod.Dockerfile
-      target: ${GO_BUILD_TARGET:-development}
-    working_dir: /workspace
-    command: ["air", "-c", "/etc/air/graphql.toml"]
     restart: always
     ports:
       - "8082:8080" # Exposed on host 8082 for debugging, but Nginx uses internal 8080
@@ -365,12 +318,6 @@ services:
         condition: service_healthy
     networks:
       - toro-net
-    volumes:
-      - ../go:/workspace/go
-      - ../tap:/workspace/tap
-      - ./air:/etc/air:ro
-      - go_build_cache:/root/.cache/go-build
-      - go_mod_cache:/go/pkg/mod
 
   nginx:
     image: yankz/usetoro:nginx
@@ -424,8 +371,6 @@ volumes:
   nats_3_data:
   caddy_data:
   caddy_config:
-  go_build_cache:
-  go_mod_cache:
 
 networks:
   toro-net:

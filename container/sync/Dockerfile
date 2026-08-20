@@ -15,7 +15,7 @@ COPY go/cmd/sync ./cmd/sync
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /sync ./cmd/sync/main.go
 
 # Final stage
-FROM alpine:latest AS production
+FROM alpine:latest
 
 WORKDIR /
 
@@ -25,10 +25,3 @@ COPY --from=builder /sync /usr/local/bin/sync
 COPY go/internal/config/defaults.yml /internal/config/defaults.yml
 
 ENTRYPOINT ["sync"]
-
-FROM golang:1.25-alpine AS development
-
-RUN apk add --no-cache ca-certificates git \
-    && go install github.com/air-verse/air@v1.63.0
-
-WORKDIR /workspace

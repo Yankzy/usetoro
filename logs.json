@@ -1,55 +1,877 @@
-{
-    "time": "2026-08-19T05:51:51.866941827Z",
+
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: d23fb366-5404-418d-bacf-8d976ebff9a6 | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.0808
+protocol-1  |   Property Candidates:
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * SUPPLIER_PAYMENT_4411 (confidence: 0.9900) [reasoning: Domestic telecom bill debit: 'Prelevement Maroc Telecom (IAM)' is a supplier/service payment to a local vendor.
+]
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0100) [reasoning: Fallback only.
+]
+protocol-1  |     - initial_router:
+protocol-1  |         * Prelevement Maroc Telecom (IAM) (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Prelevement Maroc Telecom (IAM) [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: SUPPLIER_PAYMENT_4411 [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "-950.00",
+    "raw_description": "Prelevement Maroc Telecom (IAM)",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.074748684Z",
     "level": "INFO",
-    "msg": "DebugWorker",
-    "worker": "debug",
-    "DEBUG_PAYLOAD": {
-        "body": {
-            "complexity": 1,
-            "currency": "",
-            "domain": "workers.debug",
-            "expires_at": 0,
-            "id": "f87dfc41-7518-496f-b925-e419a811295e",
-            "payload": {
-                "data": {
-                    "input": {
-                        "agent_alias": "sarah",
-                        "attachments": [
-                            {
-                                "content_length": 2431,
-                                "content_type": "application/pdf",
-                                "document_id": "6d2f765a-2422-404e-a75d-a94c5a14b7d9",
-                                "name": "releve_bancaire.pdf",
-                                "s3_key": "ca7ebd8a-0d48-4a74-a429-7b764f96f22d-releve_bancaire.pdf",
-                                "sha256": "5e46b256ee01d073e80f779dbd24ff7fc1b1c9cc53717f60d1e2bd7279d6056b"
-                            }
-                        ],
-                        "body_text": "Run PCM Workflow",
-                        "document_ids": [
-                            "6d2f765a-2422-404e-a75d-a94c5a14b7d9"
-                        ],
-                        "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
-                        "external_id": "c7ff8bcb-1fcd-4e7e-af3d-088c775a106e",
-                        "from_handle": "yankz@fignode.com",
-                        "reply_to": "",
-                        "session_id": "c8d416ac-69f2-429c-ac0c-9956e145fe9f",
-                        "subject": "Run payload test",
-                        "to_handle": "sarah@a.usetoro.io"
-                    }
-                },
-                "sig": "",
-                "task_id": "",
-                "ts": 1787118711,
-                "type": "proof.api"
-            },
-            "reward": 0,
-            "workflow_schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"session_id\": { \"type\": \"string\" },\n    \"from_handle\": { \"type\": \"string\" },\n    \"to_handle\": { \"type\": \"string\" },\n    \"entity_id\": { \"type\": \"string\" },\n    \"external_id\": { \"type\": \"string\" },\n    \"reply_to\": { \"type\": \"string\" },\n    \"subject\": { \"type\": \"string\" },\n    \"body_text\": { \"type\": \"string\" },\n    \"agent_alias\": { \"type\": \"string\" },\n    \"document_ids\": {\n      \"type\": \"array\",\n      \"items\": { \"type\": \"string\" }\n    },\n    \"attachments\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"document_id\": { \"type\": \"string\" },\n          \"name\": { \"type\": \"string\" },\n          \"content_type\": { \"type\": \"string\" },\n          \"s3_key\": { \"type\": \"string\" },\n          \"sha256\": { \"type\": \"string\" }\n        }\n      }\n    }\n  }\n}\n"
-        },
-        "cid": "f87dfc41-7518-496f-b925-e419a811295e/debug_worker",
-        "id": "d237c9a5-16aa-4218-9524-321e35bcff98",
-        "perf": "request",
-        "sig": "",
-        "src": "did:toro:orchestrator",
-        "ts": "2026-08-19T05:51:51.864321077Z"
-    }
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.074778753Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "d23fb366-5404-418d-bacf-8d976ebff9a6",
+    "state": "CLASSIFIED"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.075973958Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "7be07a1a-9db9-47bb-9bb8-45672a839a36",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "SUPPLIER_PAYMENT_4411"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.078033363Z",
+    "level": "DEBUG",
+    "msg": "Recorded LLM turn metric",
+    "worker": "llm_telemetry",
+    "model": "gpt-5.4-mini",
+    "input": 1911,
+    "output": 1802
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: 9a61c1ec-8dec-4286-a3cf-75176657dfc4 | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.0808
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Paiement Imprimerie Moderne SARL (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * SUPPLIER_PAYMENT_4411 (confidence: 0.9900) [reasoning: Domestic vendor payment: 'Paiement Imprimerie Moderne SARL' is a direct payment to a supplier.
+]
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0100) [reasoning: Fallback only.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Paiement Imprimerie Moderne SARL [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: SUPPLIER_PAYMENT_4411 [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "-1800.00",
+    "raw_description": "Paiement Imprimerie Moderne SARL",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.078585225Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.078670885Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "9a61c1ec-8dec-4286-a3cf-75176657dfc4",
+    "state": "CLASSIFIED"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: 7be07a1a-9db9-47bb-9bb8-45672a839a36 | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.0808
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Achats Fournitures Marjane Business HQ (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * SUPPLIER_PAYMENT_4411 (confidence: 0.9900) [reasoning: Domestic goods purchase payment: 'Achats Fournitures Marjane Business HQ' indicates payment to a local supplier for office supplies.
+]
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0100) [reasoning: Fallback only.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Achats Fournitures Marjane Business HQ [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: SUPPLIER_PAYMENT_4411 [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "-2400.00",
+    "raw_description": "Achats Fournitures Marjane Business HQ",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.079290037Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.079324692Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "7be07a1a-9db9-47bb-9bb8-45672a839a36",
+    "state": "CLASSIFIED"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.079360128Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "81f8e123-1e51-425f-904b-c46281804d26",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "BANK_FEE_COMMISSION"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: 81f8e123-1e51-425f-904b-c46281804d26 | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.0808
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Frais Tenue de Compte Attijariwafa Bank (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0100) [reasoning: Fallback only.
+]
+protocol-1  |         * BANK_FEE_COMMISSION (confidence: 0.9900) [reasoning: Account maintenance/tenue de compte fee explicitly identified: 'Frais Tenue de Compte Attijariwafa Bank' is a bank service charge.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Frais Tenue de Compte Attijariwafa Bank [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: BANK_FEE_COMMISSION [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "-165.00",
+    "raw_description": "Frais Tenue de Compte Attijariwafa Bank",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.081912811Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.082293712Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "81f8e123-1e51-425f-904b-c46281804d26",
+    "state": "CLASSIFIED"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.082536136Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "ce300020-0337-4aec-a3d6-2d878afb360e",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "CUSTOMER_RECEIPT_3421"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.085309023Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "0ac2862e-e3b7-4ef1-bbee-f6f816c0bf01",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "CUSTOMER_RECEIPT_3421"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: ce300020-0337-4aec-a3d6-2d878afb360e | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.0808
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Virement Client XYZ Industrie SA (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * CUSTOMER_RECEIPT_3421 (confidence: 0.9900) [reasoning: Incoming client transfer: 'Virement Client XYZ Industrie SA' is clearly a customer receipt.
+]
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0100) [reasoning: Fallback only.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Virement Client XYZ Industrie SA [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: CUSTOMER_RECEIPT_3421 [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "42000.00",
+    "raw_description": "Virement Client XYZ Industrie SA",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.085978682Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.086004524Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "ce300020-0337-4aec-a3d6-2d878afb360e",
+    "state": "CLASSIFIED"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.088527384Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "c95234fc-6d90-4956-8dc1-19957955ebf4",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "SUPPLIER_PAYMENT_4411"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: 0ac2862e-e3b7-4ef1-bbee-f6f816c0bf01 | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.0808
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Virement Recu Technopark IT Solutions (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * CUSTOMER_RECEIPT_3421 (confidence: 0.9900) [reasoning: Direct customer bank receipt identified: 'Virement Recu Technopark IT Solutions' is a positive incoming transfer from a likely client/counterparty. Classify as customer receipt.
+]
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0100) [reasoning: Fallback only.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Virement Recu Technopark IT Solutions [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: CUSTOMER_RECEIPT_3421 [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "18500.00",
+    "raw_description": "Virement Recu Technopark IT Solutions",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.090383754Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.090476495Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "0ac2862e-e3b7-4ef1-bbee-f6f816c0bf01",
+    "state": "CLASSIFIED"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.091144312Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "406efb37-f27a-4b97-8862-e2390f389bb5",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "SUPPLIER_PAYMENT_4411"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: c95234fc-6d90-4956-8dc1-19957955ebf4 | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.0808
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Honoraires Cabinet Comptable El Fassi (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0100) [reasoning: Fallback only.
+]
+protocol-1  |         * SUPPLIER_PAYMENT_4411 (confidence: 0.9900) [reasoning: Professional services payment to a domestic provider: 'Honoraires Cabinet Comptable El Fassi' is a bank payment to a local accounting firm.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Honoraires Cabinet Comptable El Fassi [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: SUPPLIER_PAYMENT_4411 [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "-3500.00",
+    "raw_description": "Honoraires Cabinet Comptable El Fassi",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.092657247Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.092831938Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "c95234fc-6d90-4956-8dc1-19957955ebf4",
+    "state": "CLASSIFIED"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.093727432Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "a7e924f5-70a6-4361-af2b-1a8b6af0b99f",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "SUPPLIER_PAYMENT_4411"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: 406efb37-f27a-4b97-8862-e2390f389bb5 | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9900 | Current Entropy: 0.1414
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Prelevement Facture Lydec Casablanca (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0200) [reasoning: Fallback only.
+]
+protocol-1  |         * SUPPLIER_PAYMENT_4411 (confidence: 0.9800) [reasoning: Utility vendor payment by bank debit: 'Prelevement Facture Lydec Casablanca' indicates settlement of a domestic supplier invoice. Classify as supplier payment.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Prelevement Facture Lydec Casablanca [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: SUPPLIER_PAYMENT_4411 [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "-1450.00",
+    "raw_description": "Prelevement Facture Lydec Casablanca",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.095304554Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.095340841Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "406efb37-f27a-4b97-8862-e2390f389bb5",
+    "state": "CLASSIFIED"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.096366099Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "2392f30a-36c1-4075-b0ba-3ec87006e17c",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "BANK_FEE_COMMISSION"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: a7e924f5-70a6-4361-af2b-1a8b6af0b99f | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9900 | Current Entropy: 0.1414
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Paiement CB Station Afriquia Oasis (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * SUPPLIER_PAYMENT_4411 (confidence: 0.9800) [reasoning: Card payment at a fuel station: 'Paiement CB Station Afriquia Oasis' is an ordinary operating expense paid to a domestic merchant, best treated as supplier/merchant payment.
+]
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0200) [reasoning: Fallback only.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Paiement CB Station Afriquia Oasis [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: SUPPLIER_PAYMENT_4411 [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "-850.00",
+    "raw_description": "Paiement CB Station Afriquia Oasis",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.098237581Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.09827249Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "a7e924f5-70a6-4361-af2b-1a8b6af0b99f",
+    "state": "CLASSIFIED"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.09931304Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "43447441-b560-4c7a-a299-85da18e3ee84",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "FOREIGN_VENDOR_OR_RENT"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: 2392f30a-36c1-4075-b0ba-3ec87006e17c | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.9997
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Prelevement Mensuel CNSS (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.9500) [reasoning: Instruction to TAP/email agent: stop automatic posting. Obtain the CNSS debit notice, identify the payroll period, and map the charge to the proper social charges account. Do not book as bank commission or supplier payment until reviewed.
+]
+protocol-1  |         * BANK_FEE_COMMISSION (confidence: 0.9900) [reasoning: Monthly CNSS prélèvement is not a bank service charge; it is a social security direct debit and should not be treated as a bank fee. However, because the only available taxonomy options do not include CNSS/social charges, this line must be held for human review with explicit mapping to the correct expense/account and supporting mandate.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Prelevement Mensuel CNSS [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: BANK_FEE_COMMISSION [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "-6800.00",
+    "raw_description": "Prelevement Mensuel CNSS",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.099356278Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.099382443Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "2392f30a-36c1-4075-b0ba-3ec87006e17c",
+    "state": "CLASSIFIED"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.101272405Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "5347616b-dd6a-4c25-9545-4aadd4bcddb0",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "CUSTOMER_RECEIPT_3421"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: 43447441-b560-4c7a-a299-85da18e3ee84 | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.0808
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Loyer Juil. - Soc. Immobiliere Anfa (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * FOREIGN_VENDOR_OR_RENT (confidence: 0.9900) [reasoning: Commercial rent payment identified: 'Loyer Juil. - Soc. Immobiliere Anfa' is a lease payment for premises. Apply commercial rent treatment and consider the 5% RAS withholding at payment time.
+]
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0100) [reasoning: Fallback only.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Loyer Juil. - Soc. Immobiliere Anfa [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: FOREIGN_VENDOR_OR_RENT [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "-12000.00",
+    "raw_description": "Loyer Juil. - Soc. Immobiliere Anfa",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.10175218Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.101789144Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "43447441-b560-4c7a-a299-85da18e3ee84",
+    "state": "CLASSIFIED"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: 5347616b-dd6a-4c25-9545-4aadd4bcddb0 | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.0808
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Virement Client ABC Construction SARL (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * CUSTOMER_RECEIPT_3421 (confidence: 0.9900) [reasoning: Incoming client transfer: 'Virement Client ABC Construction SARL' is a receipt from a customer and should be posted to customer receivables clearing.
+]
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0100) [reasoning: Fallback only.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Virement Client ABC Construction SARL [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: CUSTOMER_RECEIPT_3421 [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "25000.00",
+    "raw_description": "Virement Client ABC Construction SARL",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.103664348Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.103780943Z",
+    "level": "INFO",
+    "msg": "ase_bridge: agent unblocked",
+    "node_id": "5347616b-dd6a-4c25-9545-4aadd4bcddb0",
+    "state": "CLASSIFIED"
+}
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.104512707Z",
+    "level": "INFO",
+    "msg": "ase_dag: node routing to next DAG stage",
+    "dag_node": "bank_transaction_classifier",
+    "kind": "macro_classifier",
+    "node_id": "68c3dfe5-3a74-4ccd-a583-80a05fe1c0c4",
+    "from": "bank_transaction_classifier",
+    "to": "debug_terminal",
+    "route_key": "SUPPLIER_PAYMENT_4411"
+}
+protocol-1  | 
+protocol-1  | ================================================================================
+protocol-1  | [DEBUG TERMINAL
+] DAG Stage Reached: debug_terminal (Kind: terminal)
+protocol-1  | Batch Size: 1 micro-agent(s)
+protocol-1  | --------------------------------------------------------------------------------
+protocol-1  | Agent #1 | Node ID: 68c3dfe5-3a74-4ccd-a583-80a05fe1c0c4 | Tenant: 91b6ef5e-f280-4e65-a111-c05281bc6833 | Realm: sarah | DAG: pcm_bank_cash_accounting_dag
+protocol-1  |   Current State: ACTIVATING -> Final State: CLASSIFIED
+protocol-1  |   Unified Confidence: 0.9950 | Current Entropy: 0.0808
+protocol-1  |   Property Candidates:
+protocol-1  |     - initial_router:
+protocol-1  |         * Prelevement Facture Orange Maroc SA (confidence: 1.0000) [reasoning: Deterministic routing based on transaction payload key: raw_description
+]
+protocol-1  |     - bank_transaction_intent:
+protocol-1  |         * HOLD_AMBIGUOUS_BANK_LINE (confidence: 0.0100) [reasoning: Fallback only.
+]
+protocol-1  |         * SUPPLIER_PAYMENT_4411 (confidence: 0.9900) [reasoning: Domestic telecom vendor debit: 'Prelevement Facture Orange Maroc SA' is a supplier payment for services rendered to the company.
+]
+protocol-1  |   Execution Trace (3 step(s)):
+protocol-1  |     Step 1: DAG Node: bank_cash_ingress (Kind: initial_router) -> Selected Edge: Prelevement Facture Orange Maroc SA [Timestamp: 2026-08-20T04: 47: 29Z
+]
+protocol-1  |     Step 2: DAG Node: bank_transaction_classifier (Kind: macro_classifier) -> Selected Edge: SUPPLIER_PAYMENT_4411 [Timestamp: 2026-08-20T04: 47: 34Z
+]
+protocol-1  |     Step 3: DAG Node: debug_terminal (Kind: terminal) -> Selected Edge: [Timestamp: 2026-08-20T04: 47: 44Z
+]
+protocol-1  |   Payload: {
+    "account_code": "514100",
+    "cash_direction": "OUTFLOW",
+    "debug_llm_timeout_seconds": 0,
+    "debug_run": false,
+    "debug_start_node": "",
+    "debug_stop_after_node": "",
+    "domain_tool": "pcm_cash_accounting",
+    "entity_id": "a7f28377-579e-442e-b46e-db676f044caa",
+    "raw_amount": "-1200.00",
+    "raw_description": "Prelevement Facture Orange Maroc SA",
+    "realm_id": "sarah",
+    "session_id": "a038f4b0-ef06-4984-a909-20b806fa4c6a",
+    "statement_type": "BANK_STATEMENT"
+}
+protocol-1  | DAG finished
+protocol-1  | ================================================================================
+protocol-1  | {
+    "time": "2026-08-20T04:47:44.106797454Z",
+    "level": "INFO",
+    "msg": "[DEBUG TERMINAL] DAG state printed and micro-agents marked as finished",
+    "dag_node": "debug_terminal",
+    "kind": "terminal",
+    "dag_node": "debug_terminal",
+    "batch_size": 1
 }

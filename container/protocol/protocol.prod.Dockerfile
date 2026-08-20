@@ -16,7 +16,7 @@ COPY go/cmd/protocol ./cmd/protocol
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /protocol ./cmd/protocol/main.go
 
 # Stage 2: Runtime (Go Binary Only)
-FROM alpine:3.19 AS production
+FROM alpine:3.19
 
 RUN apk --no-cache add ca-certificates
 
@@ -36,10 +36,3 @@ COPY --chown=nobody:nobody keys /keys
 COPY --chown=nobody:nobody tap/workflows /app/tap/workflows
 COPY --chown=nobody:nobody go/internal/config/defaults.yml /app/internal/config/defaults.yml
 COPY --chown=nobody:nobody go/internal/erp/ase/dags /app/internal/erp/ase/dags
-
-FROM golang:1.25-alpine AS development
-
-RUN apk add --no-cache ca-certificates git \
-    && go install github.com/air-verse/air@v1.63.0
-
-WORKDIR /workspace

@@ -1,0 +1,523 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  max_llm_retries: 3
+  llm_timeout_seconds: 120
+  batch_flush_seconds: 5
+  active_agent_ttl_minutes: 10
+  lock_ttl_seconds: 30
+  domain_tool: "pcm_cash_accounting"
+  expected_properties: 2
+
+prompts:
+  _shared_guardrails: &guardrails |
+    ### CONFIDENCE GUARDRAILS
+    - CRITICAL: "Confidence" indicates whether this transaction should automatically progress down the DAG topology.
+    - Standard operational flow requires a highest candidate confidence >= 0.98.
+    - If the top candidate's confidence is < 0.98, the pipeline halts and places the line on HOLD.
+    - Non-compliant, ambiguous, or truncated descriptions MUST intentionally receive a top confidence < 0.98 (e.g., 0.80).
+    - The `candidates` map MUST contain at least 2 distinct classification options for valid probability distribution.
+    - When setting confidence < 0.98, write `reasoning` as precise instructions for human accounting review.
+
+
+  bank_transaction_classifier_prompt:
+    - |
+      You are a Moroccan Senior Expert-Comptable (Compte 5141 - Banque, PCGM & CGI Compliance).
+      Analyze the raw bank narrative (`raw_description`) and classify the transaction intent into exactly ONE primary category:
+
+      STATUTORY & OPERATIONAL CLASSIFICATION TAXONOMY:
+
+      1. OPERATIONAL & SERVICES
+      * BANK_FEE_COMMISSION — Bank service charges, monthly maintenance, wire fees, TPE commission, or agios/overdraft interest.
+        - Narrative: FRAIS, COMMISSION, AGIOS, TENUE DE COMPTE, FRAIS DOSSIER, PACK, COMM.
+        - Basis: PCGM 614700 / 631100 (10% VAT under CGI Art. 89-I-12°).
+      * FOREIGN_VENDOR_SERVICES — Payments to non-resident tech/SaaS/service vendors.
+        - Narrative: AWS, GOOGLE, META, ADOBE, LINKEDIN, OVH, MICROSOFT, ZOOM, DEVISE.
+        - Basis: PCGM 614x/613x (10% RAS Non-résidents under CGI Art. 15 & 20% TVA Auto-liquidation under CGI Art. 115).
+      * DOMESTIC_RENTAL_LEASE — Lease payments for commercial real estate or physical equipment to local landlords.
+        - Narrative: LOYER, BAIL COMMERCIAL, LOCATION COMMERCIALE, QUITTANCE DE LOYER.
+        - Basis: PCGM 613100 (Subject to domestic RAS sur loyers under CGI Art. 15 ter).
+      * INSURANCE_PREMIUMS — Insurance policy premiums paid to local insurance brokers or companies.
+        - Narrative: ASSURANCE, PRIME ASSURANCE, AXA, SANLAM, RMA, ALLIANZ, SAHAM, WAFA ASSURANCE.
+        - Basis: PCGM 613400 (Exempt from TVA under CGI Art. 89; subject to Taxe sur les Contrats d'Assurance - TCA).
+      * SUPPLIER_PAYMENT_4411 — Direct wire or debit payments to domestic trade suppliers (operating expenses).
+        - Narrative: VRMT FOURNISSEUR, REGLEMENT FACTURE, LOCAL VENDOR NAME.
+        - Basis: PCGM 441100 (Fournisseurs d'exploitation).
+      * CUSTOMER_RECEIPT_3421 — Direct wire or deposit receipts from commercial domestic clients.
+        - Narrative: VRMT CLIENT, ENCAISSEMENT REGLEMENT, CLIENT DEPOSIT.
+        - Basis: PCGM 342100 (Clients).
+
+      2. BALANCE SHEET, CAPEX & FINANCING
+      * FINANCING_LOAN_REPAYMENT — Bank loan monthly amortizations or principal/interest debits.
+        - Narrative: ECHEANCE EMPRUNT, ANNUITE, AMORTISSEMENT PRÊT, REBOURSEMENT CRÉDIT, CRÉDIT BAIL.
+        - Basis: Split between PCGM 148100 (Principal) and PCGM 631100 (Financial Interest).
+      * CAPEX_IMMOBILISATION — Purchases of fixed assets, capital equipment, or payments to asset vendors.
+        - Narrative: ACHAT IMMOBILISATION, MATERIEL, EQUIPEMENT, VEHICULE, FOURNISSEUR IMMO.
+        - Basis: PCGM 448100 / Classe 2 (Triggers TVA sur immobilisations tracking on SIMPL-TVA).
+      * SHAREHOLDER_EQUITY_TRANSACTIONS — Shareholder current account deposits/draws, capital injections, or dividend payouts.
+        - Narrative: APPORT ASSOCIE, COMPTE COURANT ASSOCIE, CCA, DIVIDENDES, DISTRIBUTION.
+        - Basis: PCGM 446300 (CCA) / 446500 (Dividends - triggers 15% RAS sur dividendes under CGI Art. 158).
+      * FINANCIAL_INCOME_DAT — Yield, interest income, or short-term investment returns earned on term deposits (DAT).
+        - Narrative: INTERETS DAT, PRODUITS FINANCIERS, PLACEMENT, ECHEANCE DAT.
+        - Basis: PCGM 738100 (Triggers 20% TPPRF withholding tax by the bank under CGI Art. 73 & 157).
+
+      3. CLEARING, TAX & SPECIAL PROCEDURES
+      * TRANSIT_TRANSFER_5115 — Internal fund transfers between company bank accounts or ATM cash withdrawals for petty cash.
+        - Narrative: VIREMENT INTERNE, ALIMENTATION CAISSE, RETRAIT ESPECES, VRMT D'UN DE VOS COMPTES.
+        - Basis: PCGM 511500 (Net Zero netting across bank accounts).
+      * CHECK_OR_BILL_CLEARING — Bank settlement of physical checks or trade bills / LCN.
+        - Narrative: CHQ, CHEQUE, REMISE CHQ, LCN, LETTRE DE CHANGE, EFFET, ENCAISSEMENT EFFET.
+        - Basis: PCGM 511100 / 514300 / 342500 / 441500 / 552000.
+      * PAYROLL_AND_SOCIAL — Net salary disbursements, CNSS, CIMR, or mutual insurance payments.
+        - Narrative: SALAIRE, PAIE, CNSS, CIMR, AMO, MUTUELLE, RETRAITE.
+        - Basis: PCGM 443200 (Personnel) / 444x (Organismes sociaux).
+      * STATE_TAX_PAYMENT — Direct telepayments or debit notices for state taxes to DGI or TGR.
+        - Narrative: TELEPAIEMENT DGI, TELEIMPOT, IS, TVA, IR, TAXE PROFESSIONNELLE, DGI SIMPL.
+        - Basis: PCGM 445x (État - Impôts et taxes).
+      * CUSTOMS_IMPORT_ADII — Payments to customs broker (transitaire) or direct payments to Administration des Douanes (ADII).
+        - Narrative: DOUANE, ADII, TRANSITAIRE, DROITS DE DOUANE, TVA IMPORT.
+        - Basis: PCGM 441100 / 445600 (Combines import VAT, customs duties, and transit fees).
+
+      4. FALLBACK
+      * HOLD_AMBIGUOUS_BANK_LINE — Unrecognizable text, truncated codes, or unidentifiable counterparty.
+        - Operational Result: Placed on hold for human review.
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+                "property": "bank_transaction_intent",
+                "candidates": {
+                  "1": { "value": "BANK_FEE_COMMISSION", "confidence": 0.98, "reasoning": "Standard bank commission narrative identified (COMMISSION TENUE DE COMPTE)." },
+                  "2": { "value": "HOLD_AMBIGUOUS_BANK_LINE", "confidence": 0.02, "reasoning": "Fallback category." }
+                }
+              }
+            }
+          }
+        ]
+
+  foreign_ras_tva_prompt:
+    - |
+      You are a Moroccan Senior Tax Specialist and Expert-Comptable specializing in International Taxation (CGI Art. 12, 15, 104, 115, 154 & Office des Changes Compliance).
+      Analyze foreign currency wire transfers, card debits, and vendor metadata categorized under `FOREIGN_VENDOR_SERVICES` to evaluate international tax compliance and route the transaction to its exact downstream edge key.
+
+      ALLOWED TARGET EDGE KEYS:
+      - `RAS_TVA_EVALUATED`: Transaction complies fully with statutory rules and routes directly to `post_bank_cash_journal` (bypassing domestic ICE validation).
+      - `HOLD_RAS_TAX_AMBIGUITY`: Transaction contains tax ambiguity, missing foreign invoice, or missing annual Tax Residency Certificate, routing to `hold_ras_tax_ambiguity`.
+      - `HOLD_OFFICE_DES_CHANGES`: Transaction violates exchange control limits or lacks registered contract backing, routing to `hold_office_des_changes`.
+      - `HOLD_PERMANENT_ESTABLISHMENT`: Foreign vendor local presence exceeds treaty duration thresholds triggering Moroccan IS risk under CGI Art. 12, routing to `hold_permanent_establishment`.
+
+      STATUTORY & REGULATORY COMPLIANCE RULES:
+
+      1. RETENUE À LA SOURCE REGIME (RAS NON-RÉSIDENTS - CGI ART. 15 & DOUBLE TAX TREATIES)
+      - Standard Statutory Rate: 10% withholding tax on non-resident service providers.
+      - Contract Payment Terms: Identify whether contract/invoice dictates Net Payment (requiring gross-up logic by downstream execution engine to Account 445800) or standard Gross Payment.
+      - Double Tax Treaties (DTT / Conventions Fiscales):
+        * A valid foreign Tax Residency Certificate (Certificat de Résidence Fiscale) for the current fiscal year is MANDATORY to apply treaty rates.
+        * Software licenses, technical IP, and copyrights are classified as Royalties (Redevances) and remain subject to non-zero reduced treaty rates (e.g., 5% or 10%).
+        * Complete 0% exemption applies ONLY if the treaty explicitly waives tax on business profits/services AND a valid residency certificate is present.
+
+      2. PERMANENT ESTABLISHMENT RISK (ÉTABLISSEMENT STABLE - CGI ART. 12)
+      - Flag services rendered physically within Morocco by foreign staff or contractors exceeding treaty duration thresholds (e.g., > 90 days or > 183 days depending on treaty). This reclassifies the entity from Art. 15 RAS withholding to full Moroccan Corporate Income Tax (Impôt sur les Sociétés - IS) liabilities.
+
+      3. REVERSE-CHARGE VAT & PRORATA DEDUCTIBILITY (CGI ART. 115 & ART. 104)
+      - Mandatory Auto-liquidation: 20% VAT reverse-charge entry (Credit Account 445500 - TVA collectée auto-liquidée).
+      - VAT Deductibility Prorata Status (CGI Art. 104): Indicate whether the entity applies 100% full deductibility or partial prorata rules to split deductible VAT (Account 345520) from non-deductible VAT expense (Class 6).
+
+      4. FOREIGN EXCHANGE VARIANCE & TRANSFER FEES (PCGM 6331 / 7331)
+      - Identify foreign exchange gains or losses resulting from conversion rate differences between invoice date and bank clearing date.
+      - Separate bank transfer commissions (Frais de transfert non-résidents) and flag statutory 10% banking VAT (Account 345520).
+
+      5. EXCHANGE CONTROL & REPORTING COMPLIANCE (OFFICE DES CHANGES & CGI ART. 154)
+      - Verify compliance with Office des Changes regulations (e.g., E-commerce cap / Dotation Commerce Électronique threshold or registered commercial contract for foreign transfers).
+      - Extract foreign vendor details (Legal Name, Foreign Tax ID, Country, Address) required for the CGI Art. 154 annual statutory declaration.
+
+      EDGE ROUTING DECISION MATRIX:
+
+      Route to `RAS_TVA_EVALUATED` (Set confidence >= 0.98) ONLY IF ALL CRITERIA ARE SATISFIED:
+      1. Foreign vendor invoice or proof of payment clearly identifies counterparty and service nature.
+      2. CGI Art. 15 RAS regime is clear: either standard 10% withholding applies OR a valid fiscal year foreign Tax Residency Certificate is present to justify Double Tax Treaty (DTT) rates.
+      3. Payment terms (Net Gross-Up vs. Gross) are established.
+      4. CGI Art. 115 Reverse-Charge VAT (20% auto-liquidation) and VAT Prorata regime are flagged.
+      5. Foreign vendor identity details are extracted for CGI Art. 154 filing.
+
+      Route to `HOLD_RAS_TAX_AMBIGUITY` (Set confidence < 0.98, e.g., 0.80) IF:
+      1. Missing foreign vendor invoice or missing annual Tax Residency Certificate (Certificat de Résidence Fiscale).
+      2. Ambiguous service classification under Double Tax Treaty (e.g., uncertain whether item is software licensing royalty vs. standard SaaS).
+      3. Ambiguity regarding whether vendor or local company absorbs the withholding tax.
+
+      Route to `HOLD_OFFICE_DES_CHANGES` (Set confidence < 0.98, e.g., 0.80) IF:
+      1. Transfer exceeds Office des Changes authorization caps (Dotation Commerce Électronique) without a registered commercial contract.
+      2. Bank narrative indicates rejection or blocking by the clearing bank's foreign exchange desk.
+
+      Route to `HOLD_PERMANENT_ESTABLISHMENT` (Set confidence < 0.98, e.g., 0.80) IF:
+      1. Foreign contractor/staff physically performed work on-site in Morocco exceeding 90 or 183 cumulative days, triggering CGI Art. 12 IS exposure.
+
+    - *guardrails
+
+    - |
+        EXPECTED OUTPUT FORMAT:
+        [
+          {
+            "op": "add",
+            "path": "/rows",
+            "value": {
+              "row_id_1": {
+                "property": "foreign_tax_assessment",
+                "candidates": {
+                  "1": {
+                    "value": "RAS_TVA_EVALUATED",
+                    "confidence": 0.98,
+                    "reasoning": "AWS foreign payment verified with invoice. Standard CGI Art. 15 10% RAS regime established with gross-up payment terms. CGI Art. 115 20% reverse-charge VAT flagged under 100% deductibility regime."
+                  },
+                  "2": {
+                    "value": "HOLD_RAS_TAX_AMBIGUITY",
+                    "confidence": 0.02,
+                    "reasoning": "Fallback edge."
+                  }
+                }
+              }
+            }
+          }
+        ]
+foreign_ras_tva_prompt (Foreign Vendor Services & CGI Art. 15 / 115)
+
+rent_ras_prompt (Domestic Rent & CGI Art. 15 ter)
+
+simpl_tva_extractor_prompt (Cash-basis SIMPL-TVA 6 mandatory fields)
+
+# ====================================================================
+# DIRECTED ACYCLIC GRAPH (DAG) TOPOLOGY - MOROCCAN BANK CASH (5141)
+# ====================================================================
+dag:
+  entry_node: bank_cash_ingress
+  nodes:
+
+    # ------------------------------------------------------------------
+    # STEP 1: INGRESS & TRIAGE (PARSE RAW BANK LINE & DIRECTION)
+    # ------------------------------------------------------------------
+    bank_cash_ingress:
+      name: bank_cash_ingress
+      batch_flush_seconds: &flush 5
+      kind: initial_router
+      batch_size: &bsize 50
+      edge_type: &estatic static
+      execution_parameters:
+        payload_key: raw_description
+      default_child: bank_transaction_classifier
+
+    # ------------------------------------------------------------------
+    # STEP 2: INTENT & COUNTERPART CLASSIFICATION (MACRO ROUTER)
+    # LLM Prompt Key: bank_transaction_classifier_prompt
+    # ------------------------------------------------------------------
+    bank_transaction_classifier:
+      name: bank_transaction_classifier
+      batch_flush_seconds: *flush
+      kind: macro_classifier
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: bank_transaction_classifier_prompt
+      children:
+        BANK_FEE_COMMISSION: bank_fee_agios_splitter
+        TRANSIT_TRANSFER_5115: transit_reconciler_node
+        CHECK_OR_BILL_CLEARING: pending_instruments_matcher
+        FOREIGN_VENDOR_SERVICES: foreign_ras_tva_evaluator
+        DOMESTIC_RENTAL_LEASE: rent_ras_evaluator
+        INSURANCE_PREMIUMS: post_bank_cash_journal
+        PAYROLL_AND_SOCIAL: payroll_social_reconciler
+        STATE_TAX_PAYMENT: state_tax_reconciler
+        CUSTOMS_IMPORT_ADII: customs_import_reconciler
+        FINANCING_LOAN_REPAYMENT: loan_amortization_splitter
+        CAPEX_IMMOBILISATION: simpl_tva_extractor
+        SHAREHOLDER_EQUITY_TRANSACTIONS: equity_ras_evaluator
+        FINANCIAL_INCOME_DAT: tpprf_tax_evaluator
+        SUPPLIER_PAYMENT_4411: simpl_tva_extractor
+        CUSTOMER_RECEIPT_3421: simpl_tva_extractor
+        HOLD_AMBIGUOUS_BANK_LINE: hold_ambiguous_bank_line
+      default_child: hold_ambiguous_bank_line
+    # ------------------------------------------------------------------
+    # STEP 3: AUXILIARY LEDGER RECONCILIATION & LETTRAGE
+    # ------------------------------------------------------------------
+    transit_reconciler_node:
+      name: transit_reconciler_node
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: transit_reconciler
+      children:
+        NETTING_ZERO_MATCH: post_bank_cash_journal
+        HOLD_UNMATCHED_TRANSIT: hold_unmatched_transit_pair
+      default_child: hold_unmatched_transit_pair
+
+    pending_instruments_matcher:
+      name: pending_instruments_matcher
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: pending_instruments_matcher
+      children:
+        MATCH_CLEARED: simpl_tva_extractor
+        HOLD_UNMATCHED_INSTRUMENT: hold_unmatched_check_slip
+      default_child: hold_unmatched_check_slip
+
+    payroll_social_reconciler:
+      name: payroll_social_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: payroll_social_matcher
+      children:
+        PAYROLL_MATCHED: post_bank_cash_journal
+        HOLD_UNMATCHED_PAYROLL: hold_unmatched_payroll
+      default_child: hold_unmatched_payroll
+
+    state_tax_reconciler:
+      name: state_tax_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: state_tax_matcher
+      children:
+        TAX_PAYMENT_MATCHED: post_bank_cash_journal
+        HOLD_UNMATCHED_TAX: hold_unmatched_tax_payment
+      default_child: hold_unmatched_tax_payment
+
+    # ------------------------------------------------------------------
+    # STEP 4: STATUTORY TAX EVALUATION & CASH-BASIS VAT EXTRACTION
+    # LLM Prompt Keys: foreign_ras_tva_prompt, rent_ras_prompt, simpl_tva_extractor_prompt
+    # ------------------------------------------------------------------
+    bank_fee_agios_splitter:
+      name: bank_fee_agios_splitter
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_fee_splitter
+      children:
+        SPLIT_SUCCESS: simpl_tva_extractor
+        HOLD_AMBIGUOUS_FEE: hold_ambiguous_bank_fee
+      default_child: simpl_tva_extractor
+
+    foreign_ras_tva_evaluator:
+      name: foreign_ras_tva_evaluator
+      batch_flush_seconds: *flush
+      kind: evaluation
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: foreign_ras_tva_prompt
+      children:
+        RAS_TVA_EVALUATED: post_bank_cash_journal
+        HOLD_RAS_TAX_AMBIGUITY: hold_ras_tax_ambiguity
+        HOLD_OFFICE_DES_CHANGES: hold_office_des_changes
+        HOLD_PERMANENT_ESTABLISHMENT: hold_permanent_establishment
+      default_child: hold_ras_tax_ambiguity
+
+    rent_ras_evaluator:
+      name: rent_ras_evaluator
+      batch_flush_seconds: *flush
+      kind: evaluation
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: rent_ras_prompt
+      children:
+        RENT_RAS_EVALUATED: simpl_tva_extractor
+        HOLD_RENT_AMBIGUITY: hold_rent_tax_ambiguity
+      default_child: hold_rent_tax_ambiguity
+
+    simpl_tva_extractor:
+      name: simpl_tva_extractor
+      batch_flush_seconds: *flush
+      kind: evaluation
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: simpl_tva_extractor_prompt
+      children:
+        SIMPL_TVA_VALID: post_bank_cash_journal
+        SIMPL_TVA_MISSING_FIELDS: hold_missing_vat_evidence
+        SIMPL_TVA_INVALID_ICE: hold_invalid_ice
+      default_child: post_bank_cash_journal
+
+    # ------------------------------------------------------------------
+    # STEP 5: COMMIT FINAL JOURNAL ENTRY & BANK RECONCILIATION
+    # ------------------------------------------------------------------
+    post_bank_cash_journal:
+      name: post_bank_cash_journal
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_type: emit_resume_signal
+      default_child: bank_cash_complete
+
+    hold_ras_tax_ambiguity:
+      name: hold_ras_tax_ambiguity
+      kind: terminal
+      hold_state_signal: HOLD_RAS_TAX_AMBIGUITY
+      hold_reason_string: "Foreign service payment requires foreign invoice or fiscal year Tax Residency Certificate."
+      annotation:
+        tax_rule_code: "CGI Art. 15 (RAS 10%) & Art. 115 (TVA Auto-liquidation)"
+        document_required: "Certificat de résidence fiscale étranger / Facture fournisseur étranger"
+        instruction: "Obtenir le certificat de résidence fiscale ou appliquer la RAS de droit commun 10% (Compte 445800) et auto-liquidation TVA 20%."
+        severity: "ACTION_REQUIRED"
+
+    hold_office_des_changes:
+      name: hold_office_des_changes
+      kind: terminal
+      hold_state_signal: HOLD_OFFICE_DES_CHANGES
+      hold_reason_string: "Foreign transfer violates exchange control limits or lacks registered commercial contract."
+      annotation:
+        tax_rule_code: "Réglementation des Changes / Office des Changes"
+        document_required: "Contrat commercial enregistré / Justificatif de dotation commerce électronique"
+        instruction: "Vérifier le plafond de la dotation ou transmettre le contrat à la banque intermédiaire pour domiciliation."
+        severity: "BLOCKING"
+
+    hold_permanent_establishment:
+      name: hold_permanent_establishment
+      kind: terminal
+      hold_state_signal: HOLD_PERMANENT_ESTABLISHMENT
+      hold_reason_string: "Foreign service provider presence indicates Permanent Establishment risk under CGI Art. 12."
+      annotation:
+        tax_rule_code: "CGI Art. 12 & Conventions Fiscales (Établissement Stable)"
+        document_required: "Relevé de présence chantier/mission & Contrat de prestation"
+        instruction: "Évaluer la durée de présence physique au Maroc pour soumettre le prestataire à l'IS local au lieu de la RAS."
+        severity: "CRITICAL"
+
+    # ------------------------------------------------------------------
+    # HOLD & TERMINAL STATES
+    # ------------------------------------------------------------------
+    hold_ambiguous_bank_line:
+      name: hold_ambiguous_bank_line
+      kind: terminal
+      hold_state_signal: HOLD_AMBIGUOUS_BANK_LINE
+      hold_reason_string: "Bank statement description is unidentifiable and requires human accountant review or situation memory lookup."
+      annotation:
+        tax_rule_code: "PCGM / Diligence Comptable"
+        document_required: "Justificatif de dépense / Facture / Contrat"
+        instruction: "Vérifier la nature de l'opération auprès du client et imputer au compte de charge ou de tiers approprié."
+        severity: "ACTION_REQUIRED"
+
+    hold_ambiguous_bank_fee:
+      name: hold_ambiguous_bank_fee
+      kind: terminal
+      hold_state_signal: HOLD_AMBIGUOUS_BANK_FEE
+      hold_reason_string: "Bank fee cannot be split deterministically into 10% VAT and HT charges."
+      annotation:
+        tax_rule_code: "CGI Art. 89-I-12° (TVA Bancaire 10%)"
+        document_required: "Avis d'opéré bancaire / Relevé d'agios"
+        instruction: "Vérifier la décomposition HT et TVA 10% sur l'avis d'opéré bancaire émis par la banque."
+        severity: "WARNING"
+
+    hold_unmatched_transit_pair:
+      name: hold_unmatched_transit_pair
+      kind: terminal
+      hold_state_signal: HOLD_UNMATCHED_TRANSIT_PAIR
+      hold_reason_string: "Single-sided transit movement in Account 5115 does not have a matching counterpart to clear to 0 MAD."
+      annotation:
+        tax_rule_code: "PCGM Compte 5115 (Virements de fonds)"
+        document_required: "Relevé bancaire du second compte bancaire (compte miroir) ou journal de caisse"
+        instruction: "Rapprocher le virement interne avec le relevé de l'autre compte bancaire pour solder le compte 5115."
+        severity: "ACTION_REQUIRED"
+
+    hold_unmatched_check_slip:
+      name: hold_unmatched_check_slip
+      kind: terminal
+      hold_state_signal: HOLD_UNMATCHED_CHECK_SLIP
+      hold_reason_string: "Uncleared check or trade bill cannot be matched against bank statement settlement line."
+      annotation:
+        tax_rule_code: "PCGM Comptes 5111 / 5143 / 3425 / 4415 / 5520"
+        document_required: "Bordereau de remise de chèque ou copie LCN"
+        instruction: "Lettrer l'encaissement avec le bordereau de remise pour apurer le compte d'effets/chèques à l'encaissement."
+        severity: "ACTION_REQUIRED"
+
+    hold_unmatched_payroll:
+      name: hold_unmatched_payroll
+      kind: terminal
+      hold_state_signal: HOLD_UNMATCHED_PAYROLL
+      hold_reason_string: "Net salary or social security payment could not be matched with payroll journal or CNSS bordereau."
+      annotation:
+        tax_rule_code: "PCGM Comptes 4432 / 4441 (CNSS) / 4443 (CIMR)"
+        document_required: "Livre d'intérim/paie du mois, Bordereau CNSS / AVIS DATION"
+        instruction: "Vérifier le montant du virement net de paie ou l'avis de prélèvement CNSS/CIMR."
+        severity: "ACTION_REQUIRED"
+
+    hold_unmatched_tax_payment:
+      name: hold_unmatched_tax_payment
+      kind: terminal
+      hold_state_signal: HOLD_UNMATCHED_TAX_PAYMENT
+      hold_reason_string: "State tax telepayment cannot be matched with filed tax declarations (IS, TVA, IR)."
+      annotation:
+        tax_rule_code: "PCGM Compte 445x / CGI Téléprocédures SIMPL"
+        document_required: "Reçu de télépaiement SIMPL (IS/TVA/IR) ou Avis TGR"
+        instruction: "Rapprocher le prélèvement d'impôt avec le reçu de déclaration émis sur SIMPL-DGI."
+        severity: "ACTION_REQUIRED"
+
+    hold_ras_tax_ambiguity:
+      name: hold_ras_tax_ambiguity
+      kind: terminal
+      hold_state_signal: HOLD_RAS_TAX_AMBIGUITY
+      hold_reason_string: "Foreign service payment requires tax residency certificate or RAS non-résidents tax clarification."
+      annotation:
+        tax_rule_code: "CGI Art. 15 (RAS Non-résidents 10%) & Art. 115 (TVA Auto-liquidation)"
+        document_required: "Certificat de résidence fiscale étranger / Facture fournisseur étranger"
+        instruction: "Obtenir le certificat de résidence fiscale ou procéder au calcul de la RAS de 10% (Compte 445800) et auto-liquidation TVA 20%."
+        severity: "ACTION_REQUIRED"
+
+    hold_rent_tax_ambiguity:
+      name: hold_rent_tax_ambiguity
+      kind: terminal
+      hold_state_signal: HOLD_RENT_TAX_AMBIGUITY
+      hold_reason_string: "Commercial rent payment requires lease contract verification for domestic RAS sur loyers evaluation."
+      annotation:
+        tax_rule_code: "CGI Art. 15 ter (RAS sur Loyers)"
+        document_required: "Contrat de bail commercial / Quittance de loyer"
+        instruction: "Vérifier si le bailleur est une personne physique ou morale pour appliquer le barème ou l'exonération de la RAS sur loyer."
+        severity: "ACTION_REQUIRED"
+
+    hold_missing_vat_evidence:
+      name: hold_missing_vat_evidence
+      kind: terminal
+      hold_state_signal: HOLD_MISSING_VAT_EVIDENCE
+      hold_reason_string: "Mandatory SIMPL-TVA cash deduction fields are incomplete."
+      annotation:
+        tax_rule_code: "CGI Art. 125 & SIMPL-TVA (DGI)"
+        document_required: "Facture d'achat originale avec mentions légales complètes"
+        instruction: "Renseigner les 6 champs obligatoires du tableau de déduction SIMPL-TVA pour valider le droit à déduction."
+        severity: "ACTION_REQUIRED"
+
+    hold_invalid_ice:
+      name: hold_invalid_ice
+      kind: terminal
+      hold_state_signal: HOLD_INVALID_ICE
+      hold_reason_string: "Counterparty 15-digit Identifiant Commun de l'Entreprise (ICE) is missing or invalid."
+      annotation:
+        tax_rule_code: "CGI Art. 125 & 145 (ICE Obligatoire)"
+        document_required: "Facture originale avec ICE 15 chiffres"
+        instruction: "Collecter l'ICE valide auprès du fournisseur pour éviter le rejet du droit à déduction TVA sur SIMPL-TVA."
+        severity: "BLOCKING"
+
+    bank_cash_complete:
+      name: bank_cash_complete
+      kind: terminal
+      execution_parameters:
+        close_status: CLASSIFIED
+    debug_terminal:
+      name: debug_terminal
+      batch_size: *bsize
+      batch_flush_seconds: *flush
+      kind: terminal

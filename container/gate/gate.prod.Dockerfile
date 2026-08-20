@@ -16,7 +16,7 @@ COPY go/cmd/gate ./cmd/gate
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o /gate ./cmd/gate/main.go
 
 # Final stage
-FROM alpine:3.19 AS production
+FROM alpine:3.19
 
 # Install ca-certificates for HTTPS
 RUN apk --no-cache add ca-certificates
@@ -34,10 +34,3 @@ ENTRYPOINT ["gate"]
 
 
 COPY --chown=nobody:nobody keys /keys
-
-FROM golang:1.25-alpine AS development
-
-RUN apk add --no-cache ca-certificates git \
-    && go install github.com/air-verse/air@v1.63.0
-
-WORKDIR /workspace

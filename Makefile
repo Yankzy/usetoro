@@ -239,7 +239,7 @@ nats_consumers:
 
 
 build_prod:
-	GO_BUILD_TARGET=production docker compose -f container/docker-compose.prod.yml build $(if $(RUN_ARGS),$(RUN_ARGS),$(OUR_SERVICES))
+	docker compose -f container/docker-compose.prod.yml build $(if $(RUN_ARGS),$(RUN_ARGS),$(OUR_SERVICES))
 
 
 
@@ -301,11 +301,11 @@ dev_protocol_docker: create_networks
 
 
 start-colima:
-	colima start --cpu 4 --memory 8 --disk 100 --mount-inotify
-	docker context use colima
+# 6 cpu, 10gb mem, 100gb disk, mount-inotify
+	colima start --cpu 6 --memory 10 --disk 100 --mount-inotify && docker context use colima
 
 reset-colima:
-	colima delete && colima start --cpu 4 --memory 8 --disk 100 --mount-inotify
+	colima delete && colima start --cpu 6 --memory 10 --disk 100 --mount-inotify
 
 stop-colima:
 	colima stop

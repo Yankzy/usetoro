@@ -1067,7 +1067,6 @@ func (o *Orchestrator) prepareStepDispatch(ctx context.Context, step WorkflowSte
 		return workflowDispatch{ID: uuid.New(), StepID: step.ID, ConversationID: convID, TargetSubject: inbox, Envelope: acceptBytes}, nil
 	}
 
-	return workflowDispatch{}, nil
 }
 
 func (o *Orchestrator) spawnSubWorkflow(ctx context.Context, step WorkflowStep, parentState *InstanceState, entityID pgtype.UUID, payload []byte) error {

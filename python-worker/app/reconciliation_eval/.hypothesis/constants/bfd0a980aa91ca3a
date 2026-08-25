@@ -1,0 +1,4 @@
+# file: /Users/Yankz/programming/usetoro/python-worker/app/reconciliation_eval/optimizer/diagnostics.py
+# hypothesis_version: 6.151.9
+
+['NOT_SELECTABLE', 'SELECTABLE', 'amount_units', 'bank_allocations', 'bank_item_id', 'book_allocations', 'book_item_id', 'hypothesis_id', 'reason', 'utility']

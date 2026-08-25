@@ -1,0 +1,4 @@
+# file: /Users/Yankz/programming/usetoro/python-worker/app/reconciliation_eval/optimizer/cp_sat.py
+# hypothesis_version: 6.151.9
+
+['ERROR', 'FEASIBLE', 'GLOBALLY_OPTIMAL', 'INFEASIBLE', 'INVALID_INPUT', 'NOT_SELECTED', 'NO_CANDIDATES', 'OPTIMAL', 'amount_units', 'bank_allocations', 'bank_item_id', 'book_allocations', 'book_item_id', 'branches', 'conflicts', 'hypothesis_id', 'reason', 'solution_stability', 'utility', 'wall_time']

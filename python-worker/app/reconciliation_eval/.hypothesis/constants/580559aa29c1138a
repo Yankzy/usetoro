@@ -1,0 +1,4 @@
+# file: /Users/Yankz/programming/usetoro/python-worker/app/reconciliation_eval/agent/reconciliation_agent.py
+# hypothesis_version: 6.151.9
+
+['#', '\'"', '.env', '=', 'ERROR', 'OPENAI_API_KEY', 'call_id', 'container', 'content', 'description', 'diagnostics', 'format', 'function', 'function_call', 'function_call_output', 'gpt-5.4-mini', 'input', 'json_schema', 'model', 'name', 'output', 'parameters', 'proposed_state', 'role', 'schema', 'status', 'strict', 'system', 'text', 'tools', 'type', 'user']

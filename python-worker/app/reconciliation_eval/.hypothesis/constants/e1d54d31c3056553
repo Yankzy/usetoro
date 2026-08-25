@@ -1,0 +1,4 @@
+# file: /Users/Yankz/programming/usetoro/python-worker/app/reconciliation_eval/domain/base.py
+# hypothesis_version: 6.151.9
+
+['BANK_INFLOW', 'BANK_OUTFLOW', 'BANK_STATEMENT_LINE', 'BOOK_BANK_CREDIT', 'BOOK_BANK_DEBIT', 'COUNTERFACTUAL_ONLY', 'INFLOW', 'OPENING_STATE_ITEM', 'OUTFLOW', 'POSTED_BOOK_ITEM', 'SELECTABLE', '^(0|[1-9][0-9]*)$', '^[1-9][0-9]*$']

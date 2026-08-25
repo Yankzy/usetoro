@@ -36,7 +36,7 @@ async def run_multi_account_pipeline(
     evidence_text: str,
     llm_client: openai.AsyncOpenAI,
     currency: str = "MAD",
-    model_name: str = "gpt-5.4-mini",
+    model_name: str = "gpt-5.6-sol",
     use_optimizer: bool = True
 ) -> MultiAccountReconciliationResponse:
     """

@@ -35,7 +35,7 @@ from scenarios.complex_settlements.scenario import (
 )
 
 RUNS = 2
-MODEL_NAME = "gpt-5.4-mini"
+MODEL_NAME = "gpt-5.6-sol"
 
 
 async def run_atlas_construction() -> None:

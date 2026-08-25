@@ -105,8 +105,8 @@ A naive optimizer that simply maximizes the sum of utility scores falls prey to 
 ### The Lexicographic Objective Function
 To make the optimizer immune to LLM semantic errors, we enforce strict, multi-tiered mathematical priorities that are orders of magnitude apart. A lower tier can never overpower a higher tier:
 
-1. **Tier 1 (Maximize Money Cleared - Weight `10,000,000`)**: The absolute truth of accounting. Reconciling $100,000 is always mathematically superior to $99,000.
-2. **Tier 2 (Maximize Items Cleared - Weight `1,000,000`)**: Clutter reduction. If money is tied, clearing 10 open invoices is superior to clearing 1.
+1. **Tier 1 (Maximize Money Cleared - Weight `1,000,000,000`)**: The absolute truth of accounting. Reconciling $100,000 is always mathematically superior to $99,000.
+2. **Tier 2 (Maximize Items Cleared - Weight `100,000`)**: Clutter reduction. If money is tied, clearing 10 open invoices is superior to clearing 1.
 3. **Tier 3 (Consolidation Penalty - Weight `-10,000`)**: Occam's Razor. We subtract a massive penalty for every hypothesis used. This absolutely stops Utility Farming. If two states clear the same money and items, the state with the fewest hypotheses is deemed mathematically simpler and wins.
 4. **Tier 4 (Maximize LLM Utility - Weight `1`)**: The semantic backstop. Only when the math and item counts are a perfect identical tie does the optimizer defer to the LLM's subjective score.
 

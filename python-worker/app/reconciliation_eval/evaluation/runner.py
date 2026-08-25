@@ -54,7 +54,7 @@ async def run_single_eval(
     
     start_time = datetime.now(UTC)
     try:
-        proposal: ProposedState = await run_reconciliation_agent(
+        proposal, plausible_candidates, llm_proposed_hypotheses = await run_reconciliation_agent(
             problem_id=scenario_id,
             currency=currency,
             bank_items=bank_items,
@@ -67,6 +67,8 @@ async def run_single_eval(
     except Exception as e:
         logger.error(f"Agent execution failed: {e}")
         proposal = ProposedState() # Empty fallback
+        plausible_candidates = ""
+        llm_proposed_hypotheses = []
         agent_error = str(e)
         
     latency = (datetime.now(UTC) - start_time).total_seconds()
@@ -99,6 +101,8 @@ async def run_single_eval(
         "model_name": model_name,
         "latency_seconds": latency,
         "agent_error": agent_error,
+        "pre_calculated_candidates": plausible_candidates,
+        "llm_proposed_hypotheses": llm_proposed_hypotheses,
         "final_patch": proposal.model_dump(),
         "deterministic_validation": {
             "is_valid": is_valid,
@@ -118,7 +122,7 @@ async def run_scenario_evaluation(
     evidence: str,
     truth: GroundTruth,
     runs: int = 2,
-    model_name: str = "gpt-5.4-mini",
+    model_name: str = "gpt-5.6-sol",
     runs_dir: Path = Path("logs/runs"),
 ) -> List[dict]:
     """Evaluate one scenario with and without the optimizer and save its report."""
@@ -146,8 +150,7 @@ async def run_scenario_evaluation(
         logger.error(f"Evaluation loop failed: {e}")
         raise
 
-    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    report_path = runs_dir / f"eval_report_{scenario_id}_{timestamp}.json"
+    report_path = runs_dir / f"eval_report_{scenario_id}.json"
 
     with open(report_path, "w") as f:
         json.dump(all_artifacts, f, indent=2)

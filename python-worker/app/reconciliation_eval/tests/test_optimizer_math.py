@@ -60,7 +60,7 @@ def test_exact_one_to_one():
     assert res.status == "OPTIMAL"
     assert len(res.selected_hypotheses) == 1
     assert res.selected_hypotheses[0]["hypothesis_id"] == "H1"
-    assert res.objective_value == 100000990800
+    assert res.objective_value == 10000000090800
 
 
 def test_internal_imbalance():
@@ -96,7 +96,7 @@ def test_double_bank_allocation():
     assert len(res.selected_hypotheses) == 1
     # H1 has higher utility (900 > 800), so it wins the single bank item B1
     assert res.selected_hypotheses[0]["hypothesis_id"] == "H1"
-    assert res.objective_value == 100000990900
+    assert res.objective_value == 10000000090900
 
 
 def test_book_capacity_overflow():
@@ -175,7 +175,7 @@ def test_global_assignment_trap():
     assert "H2" in selected_ids
     assert "H3" in selected_ids
     assert "H1" not in selected_ids
-    assert res.objective_value == 200001981630
+    assert res.objective_value == 20000000181630
 
 
 def test_unresolved_bank_item():

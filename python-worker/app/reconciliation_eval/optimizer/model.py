@@ -89,8 +89,8 @@ def build_cp_model(
     # 2. Maximize total items reconciled (Break ties)
     # 3. Maximize LLM Utility (Semantic tie-breaking)
     
-    W_MONEY = 10_000_000 
-    W_ITEMS = 1_000_000
+    W_MONEY = 1_000_000_000 
+    W_ITEMS = 100_000
     HYPOTHESIS_PENALTY = -10_000
     W_UTILITY = 1
     

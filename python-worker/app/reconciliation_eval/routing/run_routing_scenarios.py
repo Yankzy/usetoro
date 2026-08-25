@@ -228,7 +228,7 @@ async def run_and_report():
                 evidence_text=sc.evidence_text,
                 llm_client=llm_client,
                 currency="MAD",
-                model_name="gpt-5.4-mini",
+                model_name="gpt-5.6-sol",
                 use_optimizer=True
             )
 

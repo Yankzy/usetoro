@@ -17,11 +17,6 @@ OPTIMIZER_TOOL_SCHEMA = {
         "parameters": {
             "type": "object",
             "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": ["OPTIMIZE", "CHECK_PROPOSAL"],
-                    "description": "OPTIMIZE finds the best global configuration. CHECK_PROPOSAL tests if specific hypotheses are jointly feasible."
-                },
                 "hypotheses": {
                     "type": "array",
                     "description": "List of proposed reconciliation groups.",
@@ -59,14 +54,9 @@ OPTIMIZER_TOOL_SCHEMA = {
                         },
                         "required": ["id", "utility", "bank_allocations", "book_allocations"]
                     }
-                },
-                "forced_hypothesis_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Used with CHECK_PROPOSAL to force specific hypotheses."
                 }
             },
-            "required": ["operation", "hypotheses"]
+            "required": ["hypotheses"]
         }
     }
 }
@@ -87,12 +77,12 @@ def execute_optimizer_tool(
         
         req = OptimizerRequest(
             problem_id=problem_id,
-            operation=tool_args.get("operation", "OPTIMIZE"),
+            operation="OPTIMIZE",
             currency=currency,
             bank_items=original_bank_items,
             book_items=original_book_items,
             hypotheses=hypotheses,
-            forced_hypothesis_ids=tool_args.get("forced_hypothesis_ids", []),
+            forced_hypothesis_ids=[],
             solver_options=SolverOptions()
         )
         

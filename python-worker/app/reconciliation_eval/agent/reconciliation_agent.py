@@ -1,12 +1,12 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 from openai import AsyncOpenAI
 
 from domain.bank import BankItem
 from domain.books import BookItem
-from domain.patch import ProposedState
+from domain.patch import ProposedState, ProposedMatchGroup, ExpectedResidual
 from agent.prompt import SYSTEM_PROMPT
 from agent.optimizer_tool import OPTIMIZER_TOOL_SCHEMA, execute_optimizer_tool
 from agent.candidate_generation import generate_plausible_candidates
@@ -48,9 +48,9 @@ async def run_reconciliation_agent(
     bank_items: List[BankItem],
     book_items: List[BookItem],
     scenario_evidence: str,
-    model_name: str = "gpt-5.4-mini",
+    model_name: str = "gpt-5.6-sol",
     max_optimizer_calls: int = 5
-) -> ProposedState:
+) -> Tuple[ProposedState, str, List[dict]]:
     """
     Executes the LLM reasoning loop (Section 40).
     """
@@ -96,6 +96,7 @@ async def run_reconciliation_agent(
     async def request(input_value: List[dict[str, Any]], structured: bool = False) -> Any:
         request_args: dict[str, Any] = {
             "model": model_name,
+            "service_tier": "fast",
             "input": input_value,
         }
         if tools:
@@ -115,6 +116,8 @@ async def run_reconciliation_agent(
             }
         return await client.responses.create(**request_args)
 
+    llm_proposed_hypotheses = []
+
     while calls_made <= max_optimizer_calls:
         logger.info(f"Agent reasoning loop iteration {calls_made}")
         response = await request(input_items)
@@ -127,6 +130,9 @@ async def run_reconciliation_agent(
             for tool_call in tool_calls:
                 try:
                     tool_args = json.loads(tool_call.arguments)
+                    if "hypotheses" in tool_args:
+                        llm_proposed_hypotheses.extend(tool_args["hypotheses"])
+                    
                     logger.info(f"Executing Optimizer Tool... (Call {calls_made})")
                     tool_result_json = execute_optimizer_tool(
                         tool_args=tool_args,
@@ -135,6 +141,33 @@ async def run_reconciliation_agent(
                         original_bank_items=bank_items,
                         original_book_items=book_items,
                     )
+                    
+                    # Auto-terminate on successful optimization
+                    result_dict = json.loads(tool_result_json)
+                    if result_dict.get("status") in ("OPTIMAL", "FEASIBLE"):
+                        logger.info("Optimizer found a valid global state. Auto-terminating LLM loop.")
+                        matches = []
+                        for hyp in result_dict.get("selected_hypotheses", []):
+                            matches.append(ProposedMatchGroup(
+                                group_id=hyp["hypothesis_id"],
+                                bank_allocations=hyp["bank_allocations"],
+                                book_allocations=hyp["book_allocations"]
+                            ))
+                        unresolved = [b["bank_item_id"] for b in result_dict.get("unresolved_bank_items", [])]
+                        residuals = []
+                        for res in result_dict.get("book_residuals", []):
+                            residuals.append(ExpectedResidual(
+                                book_item_id=res["book_item_id"],
+                                residual_amount_units=res["remaining_amount_units"]
+                            ))
+                        
+                        final_state = ProposedState(
+                            matches=matches,
+                            unresolved_bank_ids=unresolved,
+                            expected_book_residuals=residuals
+                        )
+                        return final_state, plausible_candidates, llm_proposed_hypotheses
+                        
                 except Exception as e:
                     logger.error(f"Error parsing tool args: {e}")
                     tool_result_json = json.dumps({
@@ -154,7 +187,7 @@ async def run_reconciliation_agent(
             "content": "You have finished reasoning. Please output the exact final ProposedState JSON.",
         })
         final_response = await request(input_items, structured=True)
-        return ProposedState.model_validate_json(final_response.output_text)
+        return ProposedState.model_validate_json(final_response.output_text), plausible_candidates, llm_proposed_hypotheses
         
     # If we hit the max tool calls limit (Section 40)
     logger.warning("Max optimizer calls exceeded. Forcing termination.")
@@ -164,4 +197,4 @@ async def run_reconciliation_agent(
     })
 
     final_response = await request(input_items, structured=True)
-    return ProposedState.model_validate_json(final_response.output_text)
+    return ProposedState.model_validate_json(final_response.output_text), plausible_candidates, llm_proposed_hypotheses

@@ -16,7 +16,7 @@ async def score_invoice_routing(
     account_metadata: Dict[str, str],  # account_id -> account description/metadata
     evidence_text: str,
     llm_client: openai.AsyncOpenAI,
-    model_name: str = "gpt-5.4-mini"
+    model_name: str = "gpt-5.6-sol"
 ) -> InvoiceRoutingNode:
     """
     Phase 2 Core Function:
@@ -66,6 +66,7 @@ async def score_invoice_routing(
     # 3. Call the LLM
     response = await llm_client.chat.completions.create(
         model=model_name,
+        service_tier="fast",
         messages=[
             {"role": "system", "content": ROUTING_SYSTEM_PROMPT},
             {"role": "user", "content": user_payload}
@@ -89,7 +90,7 @@ async def score_all_invoices(
     account_metadata: Dict[str, str],
     evidence_text: str,
     llm_client: openai.AsyncOpenAI,
-    model_name: str = "gpt-5.4-mini"
+    model_name: str = "gpt-5.6-sol"
 ) -> List[InvoiceRoutingNode]:
     """
     Executes Phase 2 scoring sequentially or concurrently for a batch of nodes.

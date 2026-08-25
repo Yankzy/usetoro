@@ -1,0 +1,25 @@
+name: Bank Reconciliation Resolve Review Item
+version: "1.0"
+description: "Human resolution or dismissal of an ambiguity, policy, or ageing review item."
+trigger_topic: events.accounting.1.bank_reconciliation_resolve_review
+steps:
+  - id: authorize_resolution
+    activity_type: hitl.approval
+    timeout: "86400s"
+    config:
+      scope: "review_item"
+      prompt: "Approve the selected resolution for this reconciliation review queue item."
+      allow_edits: false
+      reject_action: "abort"
+      message_type: "bank_reconciliation_review_resolution"
+
+  - id: resolve_review_item
+    activity_type: workers.accounting.bank_reconciliation.resolve_review
+    depends_on: [authorize_resolution]
+    negotiate: false
+    timeout: "120s"
+    workflow_schema: |
+      {"type":"object","properties":{
+        "entity_id":{"type":"string"},"actor_user_id":{"type":"string"},
+        "review_queue_item_id":{"type":"string"},"resolution":{"type":"string"}
+      },"required":["entity_id","actor_user_id","review_queue_item_id","resolution"]}

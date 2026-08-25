@@ -141,7 +141,7 @@ func (w *DocumentCDCWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		w.logger.Info("DocumentCDCWorker: generated presigned URL for OCR dispatch", "doc_id", docID, "s3_key", s3Key, "presigned_url_value", docURL)
 	}
 
-	callbackTopic := "events.accounting.1.pcm_bookkeeping"
+	callbackTopic := ""
 	taskPayload := map[string]any{
 		"document_id":  docID.String(),
 		"file_name":    fileName,
@@ -162,11 +162,12 @@ func (w *DocumentCDCWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		}
 	}
 
-	// Route Python OCR output through the Knowledge Ingestion Worker.
-	// The ingestion worker will update the document status, run L1/L2/L3
-	// ingestion, and then forward to the original callback topic.
+	// OCR always returns through knowledge ingestion. It forwards beyond document
+	// readiness only when the producer supplied an explicit callback in metadata.
 	taskPayload["final_destination_subject"] = "worker.inbox.go.knowledge_ingest"
-	taskPayload["original_callback_topic"] = callbackTopic
+	if callbackTopic != "" {
+		taskPayload["original_callback_topic"] = callbackTopic
+	}
 
 	if kie != nil && w.nc != nil {
 		if err := kie.DispatchOCR(ctx, w.nc, doc, taskPayload); err != nil {

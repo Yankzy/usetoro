@@ -315,6 +315,8 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 					node.SetThinkFunc(w.buildGenerateChannelDagFunc(channel))
 				} else if node.Kind == "action" && node.ExecutionParams["action_type"] == "emit_resume_signal" {
 					node.SetThinkFunc(w.buildEmitResumeSignalFunc())
+				} else if actionProvider, ok := node.ExecutionParams["action_provider"]; ok && actionProvider != "" {
+					node.SetThinkFunc(w.buildActionProviderThinkFunc(actionProvider))
 				} else if node.EdgeType == "dynamic" {
 					node.SetThinkFunc(classifier.BuildDynamicThinkFunc(node.DynamicEdgeProvider))
 				} else if node.PromptKey != "" {
@@ -628,6 +630,22 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	if stagingSessionID == "" {
 		stagingSessionID = sessionID
 	}
+	results := make([]map[string]interface{}, 0, len(agents))
+	for _, agent := range agents {
+		agent.Mu.RLock()
+		result := map[string]interface{}{
+			"staging_transaction_id": agent.NodeID,
+			"state":                  agent.CurrentState,
+			"hold_reason":            agent.HoldReason,
+			"bank_statement_line_id": agent.Payload["bank_statement_line_id"],
+			"stage2_hash":            agent.Payload["stage2_hash"],
+			"stage2_output":          agent.Payload["stage2_output"],
+			"workflow_id":            agent.Payload["workflow_id"],
+			"workflow_trace_id":      agent.Payload["workflow_trace_id"],
+		}
+		agent.Mu.RUnlock()
+		results = append(results, result)
+	}
 
 	proofData := map[string]interface{}{
 		"status":             "SUCCESS",
@@ -638,6 +656,7 @@ func (w *AseBridgeWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		"dag_name":           dagName,
 		"domain_tool":        domainToolName,
 		"agents_executed":    len(agents),
+		"results":            results,
 	}
 	proofDataBytes, err := json.Marshal(proofData)
 	if err != nil {
@@ -837,6 +856,7 @@ func (w *AseBridgeWorker) buildActionProviderThinkFunc(actionProvider string) as
 		for _, node := range batch {
 			node.Mu.RLock()
 			payload := node.Payload
+			candidates := node.Candidates
 			tenantID := node.TenantID
 			realmID := node.RealmID
 			dagName := node.DagName
@@ -852,6 +872,7 @@ func (w *AseBridgeWorker) buildActionProviderThinkFunc(actionProvider string) as
 				"payload":         payload,
 				"context_updates": ctxUpdates,
 				"action_provider": actionProvider,
+				"candidates":      candidates,
 			}
 			reqBytes, err := json.Marshal(req)
 			if err != nil {

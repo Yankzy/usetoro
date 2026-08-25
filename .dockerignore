@@ -46,6 +46,7 @@ go/.go_cache/
 **/.venv/
 **/__pycache__/
 **/*.pyc
+python-worker/app/reconciliation_eval/
 
 # Local data
 container/postgres/db_data/

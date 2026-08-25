@@ -97,8 +97,7 @@ func (w *PostmarkInboundEmailWorker) Subscriptions() []SubscriptionConfig {
 	_, workerCfg := w.cfg.Workers.GetForWorker(w)
 	activityType := workerCfg.ActivityType
 	if activityType == "" {
-		w.logger.Error("PostmarkInboundEmailWorker: no activity_type configured")
-		return nil
+		activityType = "workers.email.postmark_inbound"
 	}
 
 	subject := workerCfg.Subject
@@ -109,6 +108,9 @@ func (w *PostmarkInboundEmailWorker) Subscriptions() []SubscriptionConfig {
 			w.logger.Error("PostmarkInboundEmailWorker: failed to derive inbox", "activity_type", activityType, "error", err)
 			return nil
 		}
+	}
+	if subject != core.PostmarkInboundEmailSubject {
+		w.logger.Warn("PostmarkInboundEmailWorker: configured subject differs from the production replay route", "configured", subject, "expected", core.PostmarkInboundEmailSubject)
 	}
 
 	group := workerCfg.Group

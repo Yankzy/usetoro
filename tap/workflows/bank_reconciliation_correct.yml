@@ -1,0 +1,29 @@
+name: Bank Reconciliation Correction
+version: "1.0"
+description: "Create a superseding OPEN correction and invalidate every dependent descendant state."
+trigger_topic: events.accounting.1.bank_reconciliation_correct
+steps:
+  - id: authorize_correction
+    activity_type: hitl.approval
+    timeout: "86400s"
+    config:
+      scope: "bank_account"
+      prompt: "Approve correction of the selected closed state and invalidation of its descendant opening chain."
+      allow_edits: false
+      reject_action: "abort"
+      message_type: "bank_reconciliation_correction_review"
+
+  - id: correct_period
+    activity_type: workers.accounting.bank_reconciliation.correct
+    depends_on: [authorize_correction]
+    negotiate: false
+    timeout: "120s"
+    workflow_schema: |
+      {"type":"object","properties":{
+        "entity_id":{"type":"string"},"actor_user_id":{"type":"string"},
+        "realm_id":{"type":"string"},"bank_account_id":{"type":"string"},
+        "period_key":{"type":"string"},"currency":{"type":"string"},
+        "statement_opening_balance":{"type":"string"},"statement_balance":{"type":"string"},"closed_state_id":{"type":"string"},
+        "reason":{"type":"string"},"idempotency_key":{"type":"string"},
+        "memberships":{"type":"array","items":{"type":"object"}}
+      },"required":["entity_id","actor_user_id","realm_id","bank_account_id","period_key","currency","statement_opening_balance","statement_balance","closed_state_id","reason","idempotency_key"]}

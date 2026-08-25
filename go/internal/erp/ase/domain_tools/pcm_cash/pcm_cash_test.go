@@ -147,6 +147,20 @@ func TestTransitAccountZeroNetting(t *testing.T) {
 	}
 }
 
+func TestTransitActionRequestsMatchInsteadOfClaimingReconciliation(t *testing.T) {
+	tool := &PcmBankCashTool{}
+	node := ase.NewASENode("tenant-1", "pcm_bank_cash_accounting_dag", map[string]interface{}{})
+	if err := tool.ExecuteAction(context.Background(), "transit_reconciler", node); err != nil {
+		t.Fatalf("unexpected transit action error: %v", err)
+	}
+	if node.Payload["transit_match_required"] != true {
+		t.Fatal("expected transit action to request a reconciliation match")
+	}
+	if _, claimed := node.Payload["transit_reconciled"]; claimed {
+		t.Fatal("DAG must not claim reconciliation without counterpart evidence")
+	}
+}
+
 func TestRASTaxWithholdingForeignServices(t *testing.T) {
 	// Test 10% Foreign Services RAS (CGI Art. 15)
 	// Foreign SaaS Gross = $1,000.00 USD
@@ -258,5 +272,3 @@ func TestHydrateNodeFromPersistedEnrichment(t *testing.T) {
 		t.Errorf("expected guardrail_status='PASS', got %v", node.Payload["guardrail_status"])
 	}
 }
-
-

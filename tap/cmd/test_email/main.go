@@ -11,10 +11,11 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/Yankzy/usetoro/internal/config"
+	"github.com/Yankzy/usetoro/tap/pkg/core"
 )
 
 const (
-	subject = "worker.inbox.email.postmark_inbound"
+	subject = core.PostmarkInboundEmailSubject
 
 	// Paste the COMPLETE value of NATS_MSG.Data from your ingress JSON log here.
 	// slog serializes []byte as base64, so this must be decoded before publishing.

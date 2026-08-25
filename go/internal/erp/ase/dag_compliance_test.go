@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -302,58 +303,34 @@ func TestDAG_ComplianceRouting_PcmBankCashAccounting(t *testing.T) {
 
 	dag := BuildDAGFromConfig(cfg, logger)
 
-	if cfg.EntryNode != "bank_cash_ingress" {
-		t.Errorf("expected entry_node 'bank_cash_ingress', got '%s'", cfg.EntryNode)
+	if cfg.EntryNode != "direction_router" {
+		t.Errorf("expected entry_node 'direction_router', got '%s'", cfg.EntryNode)
 	}
 
-	entryNode := dag.GetNode("bank_cash_ingress")
+	entryNode := dag.GetNode("direction_router")
 	if entryNode == nil {
-		t.Fatal("bank_cash_ingress node not found in DAG")
+		t.Fatal("direction_router node not found in DAG")
 	}
 
-	classifierNode := dag.GetNode("bank_transaction_classifier")
-	if classifierNode == nil {
-		t.Fatal("bank_transaction_classifier node not found in DAG")
+	for _, nodeID := range []string{"bank_transaction_classifier_inflow", "bank_transaction_classifier_outflow", "stage2_treatment_builder", "proposed_accounting_treatment", "human_review", "hold_unreliable_input", "hold_bank_account_configuration", "hold_account_configuration", "hold_unsupported_treatment"} {
+		if dag.GetNode(nodeID) == nil {
+			t.Fatalf("required Stage-2 node %s not found", nodeID)
+		}
 	}
-
-	feeSplitterNode := dag.GetNode("bank_fee_agios_splitter")
-	if feeSplitterNode == nil {
-		t.Fatal("bank_fee_agios_splitter node not found in DAG")
-	}
-
-	transitNode := dag.GetNode("transit_reconciler_node")
-	if transitNode == nil {
-		t.Fatal("transit_reconciler_node node not found in DAG")
-	}
-
-	rasNode := dag.GetNode("ras_tax_evaluator")
-	if rasNode == nil {
-		t.Fatal("ras_tax_evaluator node not found in DAG")
-	}
-
-	// Verify statutory annotations on holding gates
-	feeHold := dag.GetNode("hold_ambiguous_bank_fee")
-	if feeHold == nil || feeHold.Annotation == nil {
-		t.Fatal("hold_ambiguous_bank_fee missing annotation")
-	}
-	if feeHold.Annotation.TaxRuleCode != "CGI Art. 89 (TVA Bancaire 10%)" {
-		t.Errorf("expected CGI Art. 89, got %s", feeHold.Annotation.TaxRuleCode)
-	}
-
-	transitHold := dag.GetNode("hold_unmatched_transit_pair")
-	if transitHold == nil || transitHold.Annotation == nil {
-		t.Fatal("hold_unmatched_transit_pair missing annotation")
-	}
-	if transitHold.Annotation.TaxRuleCode != "PCGM Compte 5115 (Virements de fonds)" {
-		t.Errorf("expected PCGM Compte 5115, got %s", transitHold.Annotation.TaxRuleCode)
-	}
-
-	iceHold := dag.GetNode("hold_invalid_ice")
-	if iceHold == nil || iceHold.Annotation == nil {
-		t.Fatal("hold_invalid_ice missing annotation")
-	}
-	if iceHold.Annotation.Severity != "BLOCKING" {
-		t.Errorf("expected BLOCKING severity, got %s", iceHold.Annotation.Severity)
+	for nodeID, nodeCfg := range cfg.Nodes {
+		for edge, child := range nodeCfg.Children {
+			if _, ok := cfg.Nodes[child]; !ok {
+				t.Fatalf("node %s edge %s references missing child %s", nodeID, edge, child)
+			}
+		}
+		if nodeCfg.DefaultChild != "" {
+			if _, ok := cfg.Nodes[nodeCfg.DefaultChild]; !ok {
+				t.Fatalf("node %s references missing default child %s", nodeID, nodeCfg.DefaultChild)
+			}
+		}
+		if nodeID == "debug_terminal" || strings.Contains(nodeID, "reconciler") || strings.Contains(nodeID, "posting") {
+			t.Fatalf("Stage-2 DAG contains forbidden terminal responsibility %s", nodeID)
+		}
 	}
 }
 
@@ -384,9 +361,9 @@ func TestDAG_PCMBankCashDAG_HoldAnnotationInjection(t *testing.T) {
 	dag.StartAll()
 	defer dag.StopAll()
 
-	holdFeeNode := dag.GetNode("hold_ambiguous_bank_fee")
-	if holdFeeNode == nil {
-		t.Fatal("hold_ambiguous_bank_fee node not found")
+	holdNode := dag.GetNode("hold_bank_account_configuration")
+	if holdNode == nil {
+		t.Fatal("hold_bank_account_configuration node not found")
 	}
 
 	node := NewASENode("t-bank", "pcm_bank", map[string]any{
@@ -395,31 +372,14 @@ func TestDAG_PCMBankCashDAG_HoldAnnotationInjection(t *testing.T) {
 		"cash_direction":  "OUTFLOW",
 	})
 
-	holdFeeNode.Accept(node)
+	holdNode.Accept(node)
 	time.Sleep(100 * time.Millisecond)
 
-	if node.GetState() != "HOLD_AMBIGUOUS_BANK_FEE" {
-		t.Errorf("expected state HOLD_AMBIGUOUS_BANK_FEE, got %s", node.GetState())
+	if node.GetState() != "HOLD_BANK_ACCOUNT_CONFIGURATION" {
+		t.Errorf("expected state HOLD_BANK_ACCOUNT_CONFIGURATION, got %s", node.GetState())
 	}
-
-	node.Mu.RLock()
-	taxRule, _ := node.Payload["tax_rule_code"].(string)
-	docReq, _ := node.Payload["document_required"].(string)
-	severity, _ := node.Payload["severity"].(string)
-	instruction, _ := node.Payload["instruction"].(string)
-	node.Mu.RUnlock()
-
-	if taxRule != "CGI Art. 89 (TVA Bancaire 10%)" {
-		t.Errorf("expected tax_rule_code %q, got %q", "CGI Art. 89 (TVA Bancaire 10%)", taxRule)
-	}
-	if docReq != "Avis d'opéré bancaire / Relevé d'agios" {
-		t.Errorf("expected document_required 'Avis d'opéré bancaire / Relevé d'agios', got '%s'", docReq)
-	}
-	if severity != "WARNING" {
-		t.Errorf("expected severity 'WARNING', got '%s'", severity)
-	}
-	if instruction == "" {
-		t.Error("expected non-empty instruction in node payload")
+	if !strings.Contains(node.GetHoldReason(), "physical bank account") {
+		t.Fatalf("expected explainable bank configuration hold, got %q", node.GetHoldReason())
 	}
 }
 
@@ -484,6 +444,3 @@ func TestDAG_PCMPettyCashDAG_HoldAnnotationInjection(t *testing.T) {
 		t.Errorf("expected severity 'BLOCKING', got '%s'", severity)
 	}
 }
-
-
-

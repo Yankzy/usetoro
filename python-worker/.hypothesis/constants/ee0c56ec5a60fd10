@@ -1,0 +1,4 @@
+# file: /Users/Yankz/programming/usetoro/python-worker/app/reconciliation_eval/agent/optimizer_tool.py
+# hypothesis_version: 6.151.9
+
+[1000, 'CHECK_PROPOSAL', 'COUNTERFACTUAL_ONLY', 'ERROR', 'OPTIMIZE', 'SELECTABLE', 'amount_units', 'array', 'bank_allocations', 'bank_item_id', 'book_allocations', 'book_item_id', 'description', 'diagnostics', 'eligibility', 'enum', 'function', 'hypotheses', 'id', 'integer', 'items', 'maximum', 'minItems', 'minimum', 'name', 'object', 'operation', 'parameters', 'properties', 'required', 'semantic_rationale', 'status', 'string', 'type', 'utility']

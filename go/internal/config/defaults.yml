@@ -31,6 +31,7 @@ slack_client_secret: ""
 # CDC (Change Data Capture) Configuration
 cdc_enabled: true
 cdc_sync_interval: 1h
+pcm_legacy_export_cron_enabled: false
 
 rule_engine:
   # target_rank defines which consensus result to pick (1 = most frequent)
@@ -835,7 +836,6 @@ virtual_employees:
       - Monitor campaign inboxes in real-time and classify incoming email reply intent (Interested, Objection, OOO, Unsubscribe).
       - Draft rapid, context-aware email responses to handle prospect objections and answer questions.
       - Guide interested prospects to book a meeting or escalate hot opportunities to human sales representatives.
-
 
 
 

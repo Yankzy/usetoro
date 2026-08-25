@@ -1,0 +1,28 @@
+name: Bank Reconciliation Open Revision
+version: "1.0"
+description: "Append a replacement OPEN revision while preserving the earlier snapshot."
+trigger_topic: events.accounting.1.bank_reconciliation_revise
+steps:
+  - id: authorize_revision
+    activity_type: hitl.approval
+    timeout: "86400s"
+    config:
+      scope: "bank_account"
+      prompt: "Approve a new immutable OPEN revision with the updated evidence dispositions."
+      allow_edits: false
+      reject_action: "abort"
+      message_type: "bank_reconciliation_revision_review"
+
+  - id: revise_open_state
+    activity_type: workers.accounting.bank_reconciliation.revise
+    depends_on: [authorize_revision]
+    negotiate: false
+    timeout: "120s"
+    workflow_schema: |
+      {"type":"object","properties":{
+        "entity_id":{"type":"string"},"actor_user_id":{"type":"string"},
+        "realm_id":{"type":"string"},"bank_account_id":{"type":"string"},
+        "period_key":{"type":"string"},"currency":{"type":"string"},
+        "statement_opening_balance":{"type":"string"},"statement_balance":{"type":"string"},"idempotency_key":{"type":"string"},
+        "memberships":{"type":"array","items":{"type":"object"}}
+      },"required":["entity_id","actor_user_id","realm_id","bank_account_id","period_key","currency","statement_opening_balance","statement_balance","idempotency_key"]}

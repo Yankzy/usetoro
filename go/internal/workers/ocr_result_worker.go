@@ -193,18 +193,13 @@ func (w *OCRResultWorker) getLogger() *slog.Logger {
 	return slog.Default().With("worker", "ocr_result")
 }
 
-// forwardToCallback publishes the payload to the original_callback_topic
-// so downstream workers (e.g., pcm_bookkeeping) still receive the OCR result.
+// forwardToCallback publishes only to an explicit producer callback. Document
+// type and workflow selection belong to the Dynamic Agent/blueprint layer.
 func (w *OCRResultWorker) forwardToCallback(payload map[string]any) {
 	logger := w.getLogger()
 	callbackTopic, _ := payload["original_callback_topic"].(string)
 	if callbackTopic == "" || callbackTopic == "worker.inbox.go.knowledge_ingest" {
 		logger.Debug("OCRResultWorker: knowledge ingestion complete, no external callback to forward to")
-		return
-	}
-
-	if strings.Contains(callbackTopic, "pcm_bookkeeping") && !isBankStatementPayload(payload) {
-		logger.Info("OCRResultWorker: skipping callback trigger because document is not a bank statement", "topic", callbackTopic)
 		return
 	}
 

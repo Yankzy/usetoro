@@ -189,6 +189,10 @@ func (w *DocumentWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 }
 
 func (w *DocumentWorker) forwardDuplicateOCR(logger *slog.Logger, existingDoc *know.Document, payload DocumentCreatePayload, callbackTopic string) {
+	if callbackTopic == "" {
+		logger.Debug("DocumentWorker: duplicate OCR is ready; no explicit callback was requested", "doc_id", existingDoc.ID)
+		return
+	}
 	var ocrExtraction map[string]any
 	_ = json.Unmarshal(existingDoc.RawOCRJSON, &ocrExtraction)
 	if ocrExtraction == nil {
@@ -196,11 +200,6 @@ func (w *DocumentWorker) forwardDuplicateOCR(logger *slog.Logger, existingDoc *k
 	}
 	if existingDoc.ExtractedText != "" {
 		ocrExtraction["raw_text"] = existingDoc.ExtractedText
-	}
-
-	if strings.Contains(callbackTopic, "pcm_bookkeeping") && !isBankStatementDoc(existingDoc.DocumentType, ocrExtraction) {
-		logger.Info("DocumentWorker: skipping duplicate document callback trigger because document is not a bank statement", "doc_id", existingDoc.ID, "doc_type", existingDoc.DocumentType, "topic", callbackTopic)
-		return
 	}
 
 	forwardPayload := map[string]any{

@@ -405,7 +405,7 @@ func (kie *KnowledgeIngestionEngine) DispatchOCR(ctx context.Context, nc *nats.C
 		taskPayload["document_url"] = doc.S3URL
 	}
 	if taskPayload["final_destination_subject"] == nil {
-		taskPayload["final_destination_subject"] = "events.accounting.1.pcm_bookkeeping"
+		taskPayload["final_destination_subject"] = "worker.inbox.go.knowledge_ingest"
 	}
 
 	payloadBytes, err := json.Marshal(taskPayload)

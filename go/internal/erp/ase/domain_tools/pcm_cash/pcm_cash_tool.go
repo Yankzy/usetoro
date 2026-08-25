@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/internal/erp/ase"
 	"github.com/Yankzy/usetoro/internal/erp/ase/domain_tools"
+	accountingservice "github.com/Yankzy/usetoro/internal/services/accounting"
 	"github.com/Yankzy/usetoro/internal/services/enrichment"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
 	"github.com/google/uuid"
@@ -36,14 +38,22 @@ func (t *PcmBankCashTool) ExecuteAction(ctx context.Context, actionProvider stri
 		if dirStr == "" {
 			dirStr = "OUTFLOW"
 		}
+		currency, _ := node.Payload["currency"].(string)
+		if currency == "" {
+			currency = "MAD"
+		}
+		accountCode, _ := node.Payload["account_code"].(string)
+		if accountCode == "" {
+			return fmt.Errorf("HOLD_BANK_ACCOUNT_CONFIGURATION: bank ledger account is required")
+		}
 		rawTxn := enrichment.RawTransaction{
 			TransactionID:   node.NodeID,
 			RawDescription:  rawDesc,
 			Amount:          amountTTC,
-			Currency:        "MAD",
+			Currency:        currency,
 			CashDirection:   enrichment.CashDirection(dirStr),
 			TransactionDate: time.Now(),
-			AccountCode:     "514100",
+			AccountCode:     accountCode,
 		}
 		env := eng.EnrichTransaction(ctx, node.RealmID, rawTxn)
 		node.Mu.Lock()
@@ -87,10 +97,11 @@ func (t *PcmBankCashTool) ExecuteAction(ctx context.Context, actionProvider stri
 			node.Mu.Unlock()
 		}
 	case "transit_reconciler":
-		// Deterministic 5115 Transit clearing evaluation
+		// A transaction-level DAG can identify a likely 5115 transfer, but it
+		// cannot reconcile it without the counterpart canonical bank/book line.
 		node.Mu.Lock()
 		node.Payload["transit_account"] = TransitClearingAccount
-		node.Payload["transit_reconciled"] = true
+		node.Payload["transit_match_required"] = true
 		node.Mu.Unlock()
 	case "pending_instruments_matcher":
 		direction, _ := node.Payload["cash_direction"].(string)
@@ -102,6 +113,7 @@ func (t *PcmBankCashTool) ExecuteAction(ctx context.Context, actionProvider stri
 			node.Payload["pending_account"] = pAcc
 			node.Payload["cleared_account"] = cAcc
 			node.Payload["instrument_type"] = string(instType)
+			node.Payload["instrument_match_required"] = true
 			node.Mu.Unlock()
 		}
 	}
@@ -110,13 +122,22 @@ func (t *PcmBankCashTool) ExecuteAction(ctx context.Context, actionProvider stri
 
 func (t *PcmBankCashTool) BuildAgents(ctx context.Context, env core.Envelope, dagName string, deps domain_tools.ToolDependencies) ([]*ase.AutonomousSemanticEngineNode, error) {
 	var payload struct {
-		SessionID              string   `json:"session_id"`
-		EntityID               string   `json:"entity_id"`
-		RealmID                string   `json:"realm_id"`
-		DebugStartNode         string   `json:"debug_start_node"`
-		DebugStopAfterNode     string   `json:"debug_stop_after_node"`
-		DebugTransactionIDs    []string `json:"debug_transaction_ids"`
-		DebugLLMTimeoutSeconds int      `json:"debug_llm_timeout_seconds"`
+		SessionID               string   `json:"session_id"`
+		EntityID                string   `json:"entity_id"`
+		RealmID                 string   `json:"realm_id"`
+		BankAccountID           string   `json:"bank_account_id"`
+		BankLedgerAccountCode   string   `json:"bank_ledger_account_code"`
+		Currency                string   `json:"currency"`
+		SourceDocumentIDs       []string `json:"source_document_ids"`
+		WorkflowID              string   `json:"workflow_id"`
+		WorkflowTraceID         string   `json:"workflow_trace_id"`
+		StatementPeriodKey      string   `json:"statement_period_key"`
+		StatementOpeningBalance string   `json:"statement_opening_balance"`
+		StatementClosingBalance string   `json:"statement_closing_balance"`
+		DebugStartNode          string   `json:"debug_start_node"`
+		DebugStopAfterNode      string   `json:"debug_stop_after_node"`
+		DebugTransactionIDs     []string `json:"debug_transaction_ids"`
+		DebugLLMTimeoutSeconds  int      `json:"debug_llm_timeout_seconds"`
 	}
 	if err := core.UnmarshalTaskPayload(env.Body, &payload); err != nil || payload.SessionID == "" {
 		deps.Logger.Error("pcm_bank_cash_tool: missing or invalid session_id in payload", "error", err)
@@ -199,14 +220,42 @@ func (t *PcmBankCashTool) BuildAgents(ctx context.Context, env core.Envelope, da
 			direction = txn.CashDirection.String
 		}
 
+		canonicalBankLineID := ""
+		operationDate := ""
+		bankDescription := desc
+		if bankLine, lineErr := deps.DB.GetBankStatementLineByStagingTransaction(ctx, txn.ID); lineErr == nil {
+			canonicalBankLineID = uuid.UUID(bankLine.ID.Bytes).String()
+			if bankLine.OperationDate.Valid {
+				operationDate = bankLine.OperationDate.Time.Format("2006-01-02")
+			} else if bankLine.ValueDate.Valid {
+				operationDate = bankLine.ValueDate.Time.Format("2006-01-02")
+			}
+			bankDescription = bankLine.Description
+		}
+		if operationDate == "" && txn.ParsedDate.Valid {
+			operationDate = txn.ParsedDate.Time.Format("2006-01-02")
+		}
+
 		node := ase.NewASENode(tenantID, dagName, map[string]any{
 			"raw_description":           desc,
+			"description":               bankDescription,
 			"cash_direction":            direction,
 			"raw_amount":                txn.RawAmount,
+			"operation_date":            operationDate,
+			"staging_transaction_id":    nodeIDStr,
+			"bank_statement_line_id":    canonicalBankLineID,
 			"domain_tool":               "pcm_cash_accounting",
 			"session_id":                payload.SessionID,
 			"statement_type":            "BANK_STATEMENT",
-			"account_code":              "514100",
+			"bank_account_id":           payload.BankAccountID,
+			"account_code":              payload.BankLedgerAccountCode,
+			"currency":                  payload.Currency,
+			"source_document_ids":       payload.SourceDocumentIDs,
+			"workflow_id":               payload.WorkflowID,
+			"workflow_trace_id":         payload.WorkflowTraceID,
+			"statement_period_key":      payload.StatementPeriodKey,
+			"statement_opening_balance": payload.StatementOpeningBalance,
+			"statement_closing_balance": payload.StatementClosingBalance,
 			"entity_id":                 payload.EntityID,
 			"realm_id":                  realmID,
 			"debug_run":                 debugRun,
@@ -304,16 +353,52 @@ func (t *PcmBankCashTool) ResumeAgent(ctx context.Context, nodeID string, dagNam
 		direction = dbTx.CashDirection.String
 	}
 
+	realmID := ""
+	if session.RealmID.Valid {
+		realmID = session.RealmID.String
+	}
+	bankLineID, bankAccountID, bankCode, currency, operationDate, sourceDocumentID, entityID := "", "", "", "", "", "", ""
+	statementPeriodKey, statementOpening, statementClosing := "", "", ""
+	if deps.DBPool != nil {
+		var rawOCR []byte
+		_ = deps.DBPool.QueryRow(ctx, `SELECT b.id::text, b.bank_account_id::text, ba.ledger_account_code,
+			b.currency, COALESCE(b.operation_date, b.value_date)::text, b.source_document_id::text,
+			COALESCE(u.entity_id::text, ''), d.raw_ocr_json
+			FROM shadow_erp.bank_statement_lines b
+			JOIN shadow_erp.bank_accounts ba ON ba.id = b.bank_account_id
+			JOIN toro_core.documents d ON d.id = b.source_document_id
+			JOIN fignode.staging_transactions st ON st.id = b.source_staging_transaction_id
+			JOIN fignode.staging_sessions ss ON ss.id = st.session_id
+			LEFT JOIN toro_core.users u ON u.id = ss.created_by
+			WHERE st.id = $1`, pgID).Scan(
+			&bankLineID, &bankAccountID, &bankCode, &currency, &operationDate, &sourceDocumentID, &entityID, &rawOCR,
+		)
+		statementPeriodKey, statementOpening, statementClosing = statementContextFromRawOCR(rawOCR)
+	}
+
 	node := ase.NewASENode(tenantID, dagName, map[string]any{
-		"raw_description": desc,
-		"cash_direction":  direction,
-		"raw_amount":      dbTx.RawAmount,
-		"domain_tool":     "pcm_cash_accounting",
-		"session_id":      uuid.UUID(session.ID.Bytes).String(),
-		"statement_type":  "BANK_STATEMENT",
-		"account_code":    "514100",
+		"raw_description":           desc,
+		"description":               desc,
+		"cash_direction":            direction,
+		"raw_amount":                dbTx.RawAmount,
+		"domain_tool":               "pcm_cash_accounting",
+		"session_id":                uuid.UUID(session.ID.Bytes).String(),
+		"statement_type":            "BANK_STATEMENT",
+		"entity_id":                 entityID,
+		"realm_id":                  realmID,
+		"bank_statement_line_id":    bankLineID,
+		"bank_account_id":           bankAccountID,
+		"account_code":              bankCode,
+		"currency":                  currency,
+		"operation_date":            operationDate,
+		"staging_transaction_id":    nodeID,
+		"source_document_ids":       []string{sourceDocumentID},
+		"statement_period_key":      statementPeriodKey,
+		"statement_opening_balance": statementOpening,
+		"statement_closing_balance": statementClosing,
 	})
 	node.NodeID = nodeID
+	node.RealmID = realmID
 	node.SetLogger(deps.Logger)
 	node.Persister = deps.Store
 
@@ -322,8 +407,53 @@ func (t *PcmBankCashTool) ResumeAgent(ctx context.Context, nodeID string, dagNam
 		_ = deps.DBPool.QueryRow(ctx, "SELECT moroccan_enrichment FROM fignode.staging_transactions WHERE id = $1", pgID).Scan(&enrJSON)
 	}
 	hydrateNodeFromPersistedEnrichment(node, dbTx, enrJSON)
+	if len(dbTx.AseExecutionTrace) > 0 {
+		_ = json.Unmarshal(dbTx.AseExecutionTrace, &node.ExecutionTrace)
+		for _, step := range node.ExecutionTrace {
+			if step.PropertyKey != "" && len(step.Candidates) > 0 {
+				node.Candidates[step.PropertyKey] = step.Candidates
+			}
+		}
+	}
 
 	return node, nil
+}
+
+func statementContextFromRawOCR(raw []byte) (periodKey, opening, closing string) {
+	var extraction struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(raw, &extraction) != nil || extraction.Data == nil {
+		return "", "", ""
+	}
+	read := func(keys ...string) string {
+		for _, key := range keys {
+			value, ok := extraction.Data[key]
+			if !ok {
+				continue
+			}
+			var text string
+			if json.Unmarshal(value, &text) == nil {
+				return text
+			}
+			return strings.TrimSpace(string(value))
+		}
+		return ""
+	}
+	end := read("end_date", "period_end", "statement_end_date", "statement_date")
+	for _, layout := range []string{"2006-01-02", "02/01/2006", "02-01-2006", "2/1/2006", "2-1-2006"} {
+		if parsed, err := time.Parse(layout, end); err == nil {
+			periodKey = parsed.Format("2006-01")
+			break
+		}
+	}
+	if value, err := accountingservice.NewReconciliationMoney(read("starting_balance", "opening_balance")); err == nil {
+		opening = value.String()
+	}
+	if value, err := accountingservice.NewReconciliationMoney(read("ending_balance", "closing_balance")); err == nil {
+		closing = value.String()
+	}
+	return periodKey, opening, closing
 }
 
 func (t *PcmBankCashTool) GetBacktrackingInstructions(a *ase.AutonomousSemanticEngineNode, newContext string, traceBytes []byte) (string, string) {

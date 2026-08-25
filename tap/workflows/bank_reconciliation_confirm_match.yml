@@ -1,0 +1,24 @@
+name: Bank Reconciliation Confirm Candidate
+version: "1.0"
+description: "Human confirmation of one generated candidate after ambiguity and ownership checks."
+trigger_topic: events.accounting.1.bank_reconciliation_confirm_match
+steps:
+  - id: authorize_candidate
+    activity_type: hitl.approval
+    timeout: "86400s"
+    config:
+      scope: "match_group"
+      prompt: "Confirm this exact one-to-one candidate."
+      allow_edits: false
+      reject_action: "abort"
+      message_type: "bank_reconciliation_match_review"
+
+  - id: confirm_candidate
+    activity_type: workers.accounting.bank_reconciliation.confirm_match
+    depends_on: [authorize_candidate]
+    negotiate: false
+    timeout: "120s"
+    workflow_schema: |
+      {"type":"object","properties":{
+        "entity_id":{"type":"string"},"actor_user_id":{"type":"string"},"match_group_id":{"type":"string"}
+      },"required":["entity_id","actor_user_id","match_group_id"]}

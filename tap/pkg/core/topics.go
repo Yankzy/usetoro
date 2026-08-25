@@ -7,12 +7,13 @@ import (
 
 // Standard NATS Subject Prefixes
 const (
-	PrefixTasks            = "tasks"   // For task routing
-	PrefixAgents           = "agents"  // For agent inbox
-	PrefixWorkers          = "worker"  // For worker inbox
-	PrefixWorkerActivities = "workers" // For worker activity_type prefix
-	PrefixEvents           = "events"  // For event routing
-	PrefixAlmanac          = "almanac" // For almanac routing
+	PrefixTasks                 = "tasks"   // For task routing
+	PrefixAgents                = "agents"  // For agent inbox
+	PrefixWorkers               = "worker"  // For worker inbox
+	PrefixWorkerActivities      = "workers" // For worker activity_type prefix
+	PrefixEvents                = "events"  // For event routing
+	PrefixAlmanac               = "almanac" // For almanac routing
+	PostmarkInboundEmailSubject = "worker.inbox.email.postmark_inbound"
 )
 
 // --- Task Routing ---

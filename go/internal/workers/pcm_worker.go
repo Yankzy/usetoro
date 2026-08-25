@@ -23,10 +23,25 @@ import (
 )
 
 type PcmWorker struct {
-	db     *database.Queries
-	logger *slog.Logger
-	cfg    *config.Config
-	nc     *nats.Conn
+	db                 *database.Queries
+	bankAccountLookup  pcmBankAccountLookup
+	statementLineStore pcmStatementLineStore
+	logger             *slog.Logger
+	cfg                *config.Config
+	nc                 *nats.Conn
+}
+
+// PcmBankAccountContext is carried through the workflow so downstream stages
+// never need to infer a different bank account from a staging row.
+type PcmBankAccountContext struct {
+	BankAccountID           string
+	LedgerAccountCode       string
+	Currency                string
+	SourceDocumentIDs       []string
+	CanonicalBankLineIDs    []string
+	StatementPeriodKey      string
+	StatementOpeningBalance string
+	StatementClosingBalance string
 }
 
 func init() {
@@ -144,16 +159,19 @@ type PcmOCRExtraction struct {
 // as migration compatibility for callers that have not yet adopted
 // document_readiness.
 type PcmInboundMessage struct {
-	EntityID       string `json:"entity_id,omitempty"`
-	SessionID      string `json:"session_id"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	ExternalID     string `json:"external_id"`
-	FromHandle     string `json:"from_handle"`
-	ToHandle       string `json:"to_handle"`
-	ReplyTo        string `json:"reply_to"`
-	Subject        string `json:"subject"`
-	BodyText       string `json:"body_text"`
-	AgentAlias     string `json:"agent_alias"`
+	EntityID        string `json:"entity_id,omitempty"`
+	DocumentID      string `json:"document_id,omitempty"`
+	SessionID       string `json:"session_id"`
+	ConversationID  string `json:"conversation_id,omitempty"`
+	ExternalID      string `json:"external_id"`
+	FromHandle      string `json:"from_handle"`
+	ToHandle        string `json:"to_handle"`
+	ReplyTo         string `json:"reply_to"`
+	Subject         string `json:"subject"`
+	BodyText        string `json:"body_text"`
+	AgentAlias      string `json:"agent_alias"`
+	WorkflowID      string `json:"workflow_id,omitempty"`
+	WorkflowTraceID string `json:"workflow_trace_id,omitempty"`
 
 	DocumentIDs      []string           `json:"document_ids,omitempty"`
 	Attachments      []PcmAttachment    `json:"attachments,omitempty"`
@@ -178,9 +196,9 @@ type PcmInboundMessage struct {
 //	    v
 //	pcm_worker
 //	    |
-//	    | normalized transactions
+//	    | normalized transactions with canonical document provenance
 //	    v
-//	staging_transactions
+//	staging_transactions + shadow_erp.bank_statement_lines
 //
 // PcmWorker deliberately does not perform document readiness checks or query
 // the document store. Those responsibilities belong to document_readiness.
@@ -215,7 +233,9 @@ func (w *PcmWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 			"error", err,
 			"session_id", conversationSessionID,
 		)
-
+		if reqEnv.Performative == core.REQUEST {
+			return w.publishStatementHold(msg, reqEnv, inbound, entityID, realmID, conversationSessionID, "HOLD_UNRELIABLE_INPUT", fmt.Sprintf("cannot decode canonical statement evidence: %v", err))
+		}
 		return fmt.Errorf("pcm: decode OCR documents: %w", err)
 	}
 
@@ -249,20 +269,34 @@ func (w *PcmWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		return nil
 	}
 
+	bankContext, err := w.resolveBankAccountContext(ctx, realmID, documents)
+	if err != nil {
+		if code := pcmHoldCode(err); code != "" && reqEnv.Performative == core.REQUEST {
+			return w.publishStatementHold(msg, reqEnv, inbound, entityID, realmID, conversationSessionID, code, err.Error())
+		}
+		return err
+	}
+
 	stagingSessionID,
 		stagingSessionIDStr,
 		fileName,
+		canonicalBankLineIDs,
 		err := w.ingestStagingSession(
 		ctx,
 		&inbound,
 		documents,
+		bankContext,
 		entityID,
 		realmID,
 		conversationSessionID,
 	)
 	if err != nil {
+		if code := pcmHoldCode(err); code != "" && reqEnv.Performative == core.REQUEST {
+			return w.publishStatementHold(msg, reqEnv, inbound, entityID, realmID, conversationSessionID, code, err.Error())
+		}
 		return err
 	}
+	bankContext.CanonicalBankLineIDs = canonicalBankLineIDs
 
 	return w.publishOutflowResult(
 		&inbound,
@@ -274,7 +308,38 @@ func (w *PcmWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 		conversationSessionID,
 		realmID,
 		fileName,
+		bankContext,
 	)
+}
+
+func pcmHoldCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	start := strings.Index(message, "HOLD_")
+	if start < 0 {
+		return ""
+	}
+	code := message[start:]
+	if end := strings.IndexAny(code, ": "); end >= 0 {
+		code = code[:end]
+	}
+	return code
+}
+
+func (w *PcmWorker) publishStatementHold(msg *nats.Msg, request core.Envelope, inbound PcmInboundMessage, entityID pgtype.UUID, realmID, sessionID, code, reason string) error {
+	return publishWorkflowResult(w.nc, msg.Reply, request, "pcm_statement_hold", map[string]interface{}{
+		"route":             1,
+		"status":            code,
+		"hold_reason":       reason,
+		"entity_id":         uuidFromPG(entityID),
+		"realm_id":          realmID,
+		"session_id":        sessionID,
+		"workflow_id":       inbound.WorkflowID,
+		"workflow_trace_id": inbound.WorkflowTraceID,
+		"document_ids":      inbound.DocumentIDs,
+	})
 }
 
 // parseInboundMessage supports:
@@ -347,6 +412,7 @@ func (w *PcmWorker) parseInboundMessage(
 func isRecognizedPCMInbound(inbound PcmInboundMessage) bool {
 	return inbound.SessionID != "" ||
 		inbound.EntityID != "" ||
+		inbound.DocumentID != "" ||
 		inbound.FromHandle != "" ||
 		inbound.ToHandle != "" ||
 		len(inbound.DocumentIDs) > 0 ||
@@ -591,6 +657,7 @@ func (w *PcmWorker) extractOCRDocuments(
 		documents = append(
 			documents,
 			PcmParsedDocument{
+				DocumentID:    legacyDocumentID(inbound, index),
 				Type:          extraction.DocType,
 				FileName:      extraction.FileName,
 				Data:          extraction.Data,
@@ -609,6 +676,7 @@ func (w *PcmWorker) extractOCRDocuments(
 		documents = append(
 			documents,
 			PcmParsedDocument{
+				DocumentID:    legacyDocumentID(inbound, 0),
 				Type:          extraction.DocType,
 				FileName:      extraction.FileName,
 				Data:          extraction.Data,
@@ -672,10 +740,7 @@ func parseReadyDocument(
 	if extraction.DocType == "" || extraction.Data == nil {
 		var raw map[string]interface{}
 
-		if err := json.Unmarshal(
-			readyDocument.RawOCRJSON,
-			&raw,
-		); err != nil {
+		if err := decodeJSONMapUseNumber(readyDocument.RawOCRJSON, &raw); err != nil {
 			return PcmParsedDocument{}, fmt.Errorf(
 				"decode generic OCR payload for document %q: %w",
 				readyDocument.DocumentID,
@@ -825,12 +890,13 @@ func extractTransactionMaps(
 	}
 }
 
-// ingestStagingSession creates the PCM cleanup/staging session and inserts all
-// bank statement transactions.
+// ingestStagingSession creates the PCM cleanup/staging session and inserts each
+// staging transaction together with its idempotent canonical bank line.
 func (w *PcmWorker) ingestStagingSession(
 	ctx context.Context,
 	inbound *PcmInboundMessage,
 	documents []PcmParsedDocument,
+	bankContext PcmBankAccountContext,
 	entityID pgtype.UUID,
 	realmID string,
 	conversationSessionID string,
@@ -838,6 +904,7 @@ func (w *PcmWorker) ingestStagingSession(
 	pgtype.UUID,
 	string,
 	string,
+	[]string,
 	error,
 ) {
 	const outflowIs = "NEGATIVE"
@@ -860,6 +927,7 @@ func (w *PcmWorker) ingestStagingSession(
 		return pgtype.UUID{},
 			"",
 			"",
+			nil,
 			fmt.Errorf(
 				"pcm: bank statement contains no usable transactions",
 			)
@@ -885,23 +953,33 @@ func (w *PcmWorker) ingestStagingSession(
 		return pgtype.UUID{},
 			"",
 			fileName,
+			nil,
 			fmt.Errorf("pcm: database unavailable")
 	}
 
-	cleanupSession, err := w.db.CreateCleanupSession(
+	canonicalLines, err := prepareCanonicalBankStatementLines(realmID, documents, bankContext)
+	if err != nil {
+		return pgtype.UUID{}, "", fileName, nil, err
+	}
+	if replaySession, replayLineIDs, found, replayErr := w.findCanonicalStatementReplay(ctx, canonicalLines); replayErr != nil {
+		return pgtype.UUID{}, "", fileName, nil, replayErr
+	} else if found {
+		return replaySession, uuid.UUID(replaySession.Bytes).String(), fileName, replayLineIDs, nil
+	}
+
+	intakeKey := statementIntakeKey(realmID, bankContext.BankAccountID, bankContext.SourceDocumentIDs)
+	cleanupSession, err := w.db.CreateOrGetStatementIntakeSession(
 		ctx,
-		database.CreateCleanupSessionParams{
+		database.CreateOrGetStatementIntakeSessionParams{
+			RealmID:   pgtype.Text{String: realmID, Valid: realmID != ""},
 			CreatedBy: pgUserID,
 			FileName: pgtype.Text{
 				String: fileName,
 				Valid:  fileName != "",
 			},
-			RowCount: int32(totalRowCount),
-			RealmID: pgtype.Text{
-				String: realmID,
-				Valid:  realmID != "",
-			},
-			OutflowIs: outflowIs,
+			RowCount:              int32(totalRowCount),
+			OutflowIs:             outflowIs,
+			SourceDocumentSetHash: pgtype.Text{String: intakeKey, Valid: true},
 		},
 	)
 	if err != nil {
@@ -914,6 +992,7 @@ func (w *PcmWorker) ingestStagingSession(
 		return pgtype.UUID{},
 			"",
 			fileName,
+			nil,
 			fmt.Errorf(
 				"pcm: create cleanup session: %w",
 				err,
@@ -924,6 +1003,7 @@ func (w *PcmWorker) ingestStagingSession(
 		return pgtype.UUID{},
 			"",
 			fileName,
+			nil,
 			fmt.Errorf(
 				"pcm: cleanup session returned invalid ID",
 			)
@@ -935,6 +1015,8 @@ func (w *PcmWorker) ingestStagingSession(
 	).String()
 
 	rowIndex := int32(0)
+	canonicalIndex := 0
+	canonicalBankLineIDs := make([]string, 0, len(canonicalLines))
 
 	for _, document := range documents {
 		if !isBankStatementType(document.Type) {
@@ -966,15 +1048,14 @@ func (w *PcmWorker) ingestStagingSession(
 				transactionType,
 			)
 
-			_, err := w.db.InsertCleanupRow(
+			stagingTransactionID, err := w.db.CreateOrGetStatementIntakeRow(
 				ctx,
-				database.InsertCleanupRowParams{
+				database.CreateOrGetStatementIntakeRowParams{
 					SessionID: stagingSessionID,
 					RowIndex: pgtype.Int4{
 						Int32: rowIndex,
 						Valid: true,
 					},
-					SourceType: "BankStatement",
 					RawDescription: pgtype.Text{
 						String: description,
 						Valid:  description != "",
@@ -983,10 +1064,6 @@ func (w *PcmWorker) ingestStagingSession(
 					RawDate: pgtype.Text{
 						String: transactionDate,
 						Valid:  transactionDate != "",
-					},
-					Status: pgtype.Text{
-						String: "PENDING",
-						Valid:  true,
 					},
 				},
 			)
@@ -1002,12 +1079,25 @@ func (w *PcmWorker) ingestStagingSession(
 				return pgtype.UUID{},
 					"",
 					fileName,
+					nil,
 					fmt.Errorf(
 						"pcm: insert staging transaction row %d: %w",
 						rowIndex,
 						err,
 					)
 			}
+
+			if canonicalIndex >= len(canonicalLines) {
+				return pgtype.UUID{}, "", fileName, nil, fmt.Errorf("pcm: canonical statement line count diverged from staging rows")
+			}
+			canonicalLine := canonicalLines[canonicalIndex]
+			canonicalLine.SourceStagingTransactionID = stagingTransactionID
+			canonicalID, err := w.persistCanonicalBankStatementLine(ctx, canonicalLine)
+			if err != nil {
+				return pgtype.UUID{}, "", fileName, nil, err
+			}
+			canonicalBankLineIDs = append(canonicalBankLineIDs, canonicalID)
+			canonicalIndex++
 
 			rowIndex++
 		}
@@ -1024,6 +1114,7 @@ func (w *PcmWorker) ingestStagingSession(
 	return stagingSessionID,
 		stagingSessionIDStr,
 		fileName,
+		canonicalBankLineIDs,
 		nil
 }
 
@@ -1166,6 +1257,7 @@ func (w *PcmWorker) publishOutflowResult(
 	conversationSessionID string,
 	realmID string,
 	fileName string,
+	bankContext PcmBankAccountContext,
 ) error {
 	entityIDStr := uuid.UUID(
 		entityID.Bytes,
@@ -1186,8 +1278,18 @@ func (w *PcmWorker) publishOutflowResult(
 			"staging_session_id":      stagingSessionIDStr,
 			"conversation_session_id": conversationSessionID,
 
-			"entity_id": entityIDStr,
-			"realm_id":  realmID,
+			"entity_id":                 entityIDStr,
+			"realm_id":                  realmID,
+			"bank_account_id":           bankContext.BankAccountID,
+			"bank_ledger_account_code":  bankContext.LedgerAccountCode,
+			"currency":                  bankContext.Currency,
+			"source_document_ids":       bankContext.SourceDocumentIDs,
+			"canonical_bank_line_ids":   bankContext.CanonicalBankLineIDs,
+			"statement_period_key":      bankContext.StatementPeriodKey,
+			"statement_opening_balance": bankContext.StatementOpeningBalance,
+			"statement_closing_balance": bankContext.StatementClosingBalance,
+			"workflow_id":               inbound.WorkflowID,
+			"workflow_trace_id":         inbound.WorkflowTraceID,
 
 			"from_handle": inbound.FromHandle,
 			"to_handle":   inbound.ToHandle,
@@ -1259,15 +1361,25 @@ func (w *PcmWorker) publishOutflowResult(
 
 	// Non-orchestrated compatibility path.
 	payload := map[string]interface{}{
-		"upload_id":  stagingSessionIDStr,
-		"session_id": stagingSessionIDStr,
-		"filename":   fileName,
-		"entity_id":  entityIDStr,
-		"domain":     "accounting",
-		"task_type":  "pcm_bookkeeping",
-		"realm_id":   realmID,
-		"outflow_is": "NEGATIVE",
-		"documents":  documents,
+		"upload_id":                 stagingSessionIDStr,
+		"session_id":                stagingSessionIDStr,
+		"filename":                  fileName,
+		"entity_id":                 entityIDStr,
+		"domain":                    "accounting",
+		"task_type":                 "pcm_bookkeeping",
+		"realm_id":                  realmID,
+		"bank_account_id":           bankContext.BankAccountID,
+		"bank_ledger_account_code":  bankContext.LedgerAccountCode,
+		"currency":                  bankContext.Currency,
+		"source_document_ids":       bankContext.SourceDocumentIDs,
+		"canonical_bank_line_ids":   bankContext.CanonicalBankLineIDs,
+		"statement_period_key":      bankContext.StatementPeriodKey,
+		"statement_opening_balance": bankContext.StatementOpeningBalance,
+		"statement_closing_balance": bankContext.StatementClosingBalance,
+		"workflow_id":               inbound.WorkflowID,
+		"workflow_trace_id":         inbound.WorkflowTraceID,
+		"outflow_is":                "NEGATIVE",
+		"documents":                 documents,
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -1337,10 +1449,20 @@ func (w *PcmWorker) publishOutflowResult(
 
 	// Final compatibility fallback to ase_bridge.
 	ocrPayload := map[string]interface{}{
-		"entity_id":  entityIDStr,
-		"realm_id":   realmID,
-		"session_id": stagingSessionIDStr,
-		"documents":  documents,
+		"entity_id":                 entityIDStr,
+		"realm_id":                  realmID,
+		"session_id":                stagingSessionIDStr,
+		"bank_account_id":           bankContext.BankAccountID,
+		"bank_ledger_account_code":  bankContext.LedgerAccountCode,
+		"currency":                  bankContext.Currency,
+		"source_document_ids":       bankContext.SourceDocumentIDs,
+		"canonical_bank_line_ids":   bankContext.CanonicalBankLineIDs,
+		"statement_period_key":      bankContext.StatementPeriodKey,
+		"statement_opening_balance": bankContext.StatementOpeningBalance,
+		"statement_closing_balance": bankContext.StatementClosingBalance,
+		"workflow_id":               inbound.WorkflowID,
+		"workflow_trace_id":         inbound.WorkflowTraceID,
+		"documents":                 documents,
 	}
 
 	env := core.Envelope{
@@ -1424,9 +1546,11 @@ func (w *PcmWorker) sendSkipProofToOrchestrator(
 	}
 
 	proofData := map[string]interface{}{
+		"route":             1,
 		"session_id":        sessionIDStr,
 		"realm_id":          realmID,
-		"status":            "SKIPPED_NO_BANK_STATEMENT",
+		"status":            "HOLD_NO_BANK_STATEMENT",
+		"hold_reason":       "workflow input contains no bank statement",
 		"document_verified": inbound.DocumentVerified,
 		"document_count":    len(inbound.Documents),
 		"documents":         inbound.Documents,

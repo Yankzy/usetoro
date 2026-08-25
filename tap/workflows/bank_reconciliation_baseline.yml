@@ -1,0 +1,28 @@
+name: Bank Reconciliation Migrated Baseline
+version: "1.0"
+description: "Create the first accountant-authorized immutable baseline for one physical bank account."
+trigger_topic: events.accounting.1.bank_reconciliation_baseline
+steps:
+  - id: authorize_baseline
+    activity_type: hitl.approval
+    timeout: "86400s"
+    config:
+      scope: "bank_account"
+      prompt: "Approve the migrated bank/book opening balances and all referenced outstanding evidence."
+      allow_edits: false
+      reject_action: "abort"
+      message_type: "bank_reconciliation_baseline_review"
+
+  - id: create_baseline
+    activity_type: workers.accounting.bank_reconciliation.baseline
+    depends_on: [authorize_baseline]
+    negotiate: false
+    timeout: "120s"
+    workflow_schema: |
+      {"type":"object","properties":{
+        "entity_id":{"type":"string"},"actor_user_id":{"type":"string"},
+        "realm_id":{"type":"string"},"bank_account_id":{"type":"string"},
+        "period_key":{"type":"string"},"currency":{"type":"string"},
+        "statement_balance":{"type":"string"},"book_balance":{"type":"string"},
+        "idempotency_key":{"type":"string"},"memberships":{"type":"array","items":{"type":"object"}}
+      },"required":["entity_id","actor_user_id","realm_id","bank_account_id","period_key","currency","statement_balance","book_balance","idempotency_key"]}

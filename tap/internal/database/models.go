@@ -102,19 +102,20 @@ type FignodeOrderReconciliation struct {
 }
 
 type FignodeStagingSession struct {
-	ID              pgtype.UUID
-	RealmID         pgtype.Text
-	Kind            string
-	CreatedBy       pgtype.UUID
-	FileName        pgtype.Text
-	RowCount        int32
-	Status          string
-	BankAccountID   pgtype.UUID
-	IsAmbiguous     bool
-	AmbiguityReason pgtype.Text
-	OutflowIs       string
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	ID                    pgtype.UUID
+	RealmID               pgtype.Text
+	Kind                  string
+	CreatedBy             pgtype.UUID
+	FileName              pgtype.Text
+	RowCount              int32
+	Status                string
+	BankAccountID         pgtype.UUID
+	IsAmbiguous           bool
+	AmbiguityReason       pgtype.Text
+	OutflowIs             string
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SourceDocumentSetHash pgtype.Text
 }
 
 type FignodeStagingTransaction struct {
@@ -165,6 +166,14 @@ type FignodeStagingTransaction struct {
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
 	MoroccanEnrichment    []byte
+	Stage2Proposals       []byte
+	Stage2CurrentHash     pgtype.Text
+	Stage2Outcome         pgtype.Text
+	Stage2ReviewStatus    string
+	Stage2ApprovedPayload []byte
+	Stage2ApprovedHash    pgtype.Text
+	Stage2ReviewedBy      pgtype.UUID
+	Stage2ReviewedAt      pgtype.Timestamptz
 }
 
 type FignodeVendorAlias struct {
@@ -369,6 +378,71 @@ type ShadowErpBankAccount struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type ShadowErpBankReconciliationState struct {
+	ID                      pgtype.UUID
+	RealmID                 string
+	BankAccountID           pgtype.UUID
+	PeriodKey               string
+	Revision                int32
+	PreviousStateID         pgtype.UUID
+	SupersedesStateID       pgtype.UUID
+	StateKind               string
+	IdempotencyKey          string
+	RequestHash             string
+	Status                  string
+	Currency                string
+	StatementOpeningBalance pgtype.Numeric
+	BookOpeningBalance      pgtype.Numeric
+	BankStatementBalance    pgtype.Numeric
+	BookBankBalance         pgtype.Numeric
+	OutstandingBookInflows  pgtype.Numeric
+	OutstandingBookOutflows pgtype.Numeric
+	OutstandingBankNet      pgtype.Numeric
+	ExpectedBankBalance     pgtype.Numeric
+	Difference              pgtype.Numeric
+	StateHash               string
+	CreatedBy               pgtype.UUID
+	CreatedAt               pgtype.Timestamptz
+}
+
+type ShadowErpBankReconciliationStateInvalidation struct {
+	ID        pgtype.UUID
+	StateID   pgtype.UUID
+	Reason    string
+	CreatedBy pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+type ShadowErpBankReconciliationStateMembership struct {
+	ID                         pgtype.UUID
+	StateID                    pgtype.UUID
+	BankStatementLineID        pgtype.UUID
+	JournalLineID              pgtype.UUID
+	Disposition                string
+	ReconciliationMatchGroupID pgtype.UUID
+	CarryForward               bool
+	ReviewReason               pgtype.Text
+	CreatedAt                  pgtype.Timestamptz
+}
+
+type ShadowErpBankStatementLine struct {
+	ID                         pgtype.UUID
+	RealmID                    string
+	BankAccountID              pgtype.UUID
+	SourceDocumentID           pgtype.UUID
+	LineIndex                  int32
+	ExternalReference          pgtype.Text
+	OperationDate              pgtype.Date
+	ValueDate                  pgtype.Date
+	Direction                  string
+	Amount                     pgtype.Numeric
+	Currency                   string
+	Description                string
+	CounterpartyName           pgtype.Text
+	SourceStagingTransactionID pgtype.UUID
+	CreatedAt                  pgtype.Timestamptz
+}
+
 type ShadowErpBill struct {
 	ID          pgtype.UUID
 	ErpID       string
@@ -498,6 +572,37 @@ type ShadowErpJournal struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+type ShadowErpJournalEntry struct {
+	ID                         pgtype.UUID
+	RealmID                    string
+	JournalID                  pgtype.UUID
+	EntryDate                  pgtype.Date
+	Currency                   string
+	PieceReference             string
+	Label                      string
+	SourceBankStatementLineID  pgtype.UUID
+	SourceStagingTransactionID pgtype.UUID
+	SourceTreatmentPayload     []byte
+	SourceTreatmentHash        pgtype.Text
+	SourceWorkflowTraceID      pgtype.Text
+	ApprovedBy                 pgtype.UUID
+	ApprovedAt                 pgtype.Timestamptz
+	Status                     string
+	CreatedAt                  pgtype.Timestamptz
+}
+
+type ShadowErpJournalLine struct {
+	ID                   pgtype.UUID
+	JournalEntryID       pgtype.UUID
+	LineIndex            int32
+	AccountID            pgtype.UUID
+	AuxiliaryAccountCode pgtype.Text
+	Label                string
+	Debit                pgtype.Numeric
+	Credit               pgtype.Numeric
+	CreatedAt            pgtype.Timestamptz
+}
+
 type ShadowErpPayment struct {
 	ID                 pgtype.UUID
 	ErpID              string
@@ -532,6 +637,63 @@ type ShadowErpPurchase struct {
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
 	DeletedAt       pgtype.Timestamptz
+}
+
+type ShadowErpReconciliationMatchGroup struct {
+	ID                pgtype.UUID
+	IdempotencyKey    string
+	RequestHash       string
+	RealmID           string
+	BankAccountID     pgtype.UUID
+	Currency          string
+	ItemType          string
+	Direction         string
+	Amount            pgtype.Numeric
+	BankReferenceDate pgtype.Date
+	BookReferenceDate pgtype.Date
+	PolicyMaxDays     int32
+	PolicySnapshot    []byte
+	EvidenceRanking   []byte
+	Status            string
+	CreatedBy         pgtype.UUID
+	CreatedByKind     string
+	CreatedAt         pgtype.Timestamptz
+	ConfirmedBy       pgtype.UUID
+	ConfirmedAt       pgtype.Timestamptz
+}
+
+type ShadowErpReconciliationMatchMember struct {
+	ID                  pgtype.UUID
+	MatchGroupID        pgtype.UUID
+	BankStatementLineID pgtype.UUID
+	JournalLineID       pgtype.UUID
+	CreatedAt           pgtype.Timestamptz
+}
+
+type ShadowErpReconciliationMatchWindow struct {
+	ID         pgtype.UUID
+	RealmID    string
+	ItemType   string
+	MaxDays    int32
+	AgeingDays int32
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type ShadowErpReconciliationReviewQueue struct {
+	ID                  pgtype.UUID
+	DedupeKey           string
+	RealmID             string
+	BankAccountID       pgtype.UUID
+	BankStatementLineID pgtype.UUID
+	JournalLineID       pgtype.UUID
+	MatchGroupID        pgtype.UUID
+	Reason              string
+	PolicySnapshot      []byte
+	Status              string
+	ResolvedBy          pgtype.UUID
+	ResolvedAt          pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
 }
 
 type ShadowErpReconciliationTask struct {
@@ -615,6 +777,23 @@ type ShadowErpSalesReceipt struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	DeletedAt          pgtype.Timestamptz
+}
+
+type ShadowErpStage2TreatmentAccountMapping struct {
+	ID        pgtype.UUID
+	RealmID   string
+	Intent    string
+	AccountID pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type ShadowErpTreasuryAccountMapping struct {
+	ID           pgtype.UUID
+	RealmID      string
+	TreasuryRole string
+	AccountID    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
 }
 
 type ShadowErpVatRule struct {

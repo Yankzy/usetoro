@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
 
 	"github.com/nats-io/nats.go"
 
@@ -41,7 +41,11 @@ func NewPcmExportCronWorker(deps Dependencies) *PcmExportCronWorker {
 }
 
 func (w *PcmExportCronWorker) Init(ctx context.Context) error {
-	w.logger.Info("PcmExportCronWorker initialized")
+	if w.cfg == nil || !w.cfg.PcmLegacyExportCronEnabled {
+		w.logger.Info("PcmExportCronWorker disabled; canonical journal export is deferred")
+		return nil
+	}
+	w.logger.Warn("PcmExportCronWorker enabled for legacy compatibility")
 	go w.runLoop(ctx)
 	return nil
 }
@@ -248,31 +252,31 @@ func (w *PcmExportCronWorker) exportSession(ctx context.Context, session databas
 
 	csvData := strings.Join(csvLines, "\r\n")
 	base64Data := base64.StdEncoding.EncodeToString([]byte(csvData))
-	
+
 	payload := map[string]interface{}{
 		"session_id": session.ID.String(),
 		"attachments": []map[string]interface{}{
 			{
-				"Name":         "Bank_Reconciliation_Export.csv",
-				"ContentType":  "text/csv",
-				"Content":      base64Data, 
+				"Name":        "Bank_Reconciliation_Export.csv",
+				"ContentType": "text/csv",
+				"Content":     base64Data,
 			},
 		},
 	}
-	
+
 	if session.UserEmail.Valid {
 		payload["to_handle"] = session.UserEmail.String
 	}
 
 	payloadBytes, _ := json.Marshal(payload)
 	envPayload := map[string]interface{}{
-		"id":             "cron_" + session.ID.String(),
+		"id":              "cron_" + session.ID.String(),
 		"conversation_id": session.ID.String(),
-		"performative":   "request",
-		"body":           json.RawMessage(payloadBytes),
+		"performative":    "request",
+		"body":            json.RawMessage(payloadBytes),
 	}
 	envBytes, _ := json.Marshal(envPayload)
-	
+
 	if err := w.nc.Publish("worker.inbox.pcm_export", envBytes); err != nil {
 		return fmt.Errorf("publish to pcm_export: %w", err)
 	}
@@ -333,7 +337,6 @@ func extractAuxAccount(desc string, counterparty string, direction string, accou
 	}
 
 	code = strings.TrimPrefix(code, "CLIENT")
-
 
 	if len(code) > 8 {
 		code = code[:8]

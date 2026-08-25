@@ -16,13 +16,14 @@ import (
 
 // ActionRequest is the payload sent from the ASE bridge to action providers
 type ActionRequest struct {
-	NodeID         string                 `json:"node_id"`
-	TenantID       string                 `json:"tenant_id"`
-	RealmID        string                 `json:"realm_id"`
-	DagName        string                 `json:"dag_name"`
-	Payload        map[string]interface{} `json:"payload"`
-	ContextUpdates []string               `json:"context_updates"`
-	ActionProvider string                 `json:"action_provider"`
+	NodeID         string                                `json:"node_id"`
+	TenantID       string                                `json:"tenant_id"`
+	RealmID        string                                `json:"realm_id"`
+	DagName        string                                `json:"dag_name"`
+	Payload        map[string]interface{}                `json:"payload"`
+	ContextUpdates []string                              `json:"context_updates"`
+	ActionProvider string                                `json:"action_provider"`
+	Candidates     map[string][]ase.ProbabilityCandidate `json:"candidates,omitempty"`
 }
 
 // ActionResponse is the response sent back to the ASE bridge

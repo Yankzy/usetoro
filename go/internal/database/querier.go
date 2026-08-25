@@ -16,6 +16,7 @@ type Querier interface {
 	AdjustAccuracyScore(ctx context.Context, arg AdjustAccuracyScoreParams) error
 	ApproveCleanupRow(ctx context.Context, id pgtype.UUID) (ApproveCleanupRowRow, error)
 	ApproveProposedTransaction(ctx context.Context, arg ApproveProposedTransactionParams) (FignodeStagingTransaction, error)
+	ApproveStage2Proposal(ctx context.Context, arg ApproveStage2ProposalParams) (FignodeStagingTransaction, error)
 	BulkApproveByVendor(ctx context.Context, arg BulkApproveByVendorParams) ([]pgtype.UUID, error)
 	// =========================================================================
 	// Status Updates (Legacy endpoints mapped to new schema)
@@ -26,11 +27,14 @@ type Querier interface {
 	// =========================================================================
 	ComputeAllTimeLeaderboard(ctx context.Context) ([]ComputeAllTimeLeaderboardRow, error)
 	ComputePeriodLeaderboard(ctx context.Context, since pgtype.Timestamptz) ([]ComputePeriodLeaderboardRow, error)
+	ConfirmReconciliationMatchGroup(ctx context.Context, arg ConfirmReconciliationMatchGroupParams) (ShadowErpReconciliationMatchGroup, error)
 	CountEnrichedTransactionsBySession(ctx context.Context, sessionID pgtype.UUID) (int64, error)
 	CountEntities(ctx context.Context) (int64, error)
 	CountSessionRows(ctx context.Context, arg CountSessionRowsParams) (int64, error)
 	CreateAgentConfiguration(ctx context.Context, arg CreateAgentConfigurationParams) (ToroCoreAgentConfiguration, error)
 	CreateAttribution(ctx context.Context, arg CreateAttributionParams) (MarketingAttribution, error)
+	CreateBankReconciliationState(ctx context.Context, arg CreateBankReconciliationStateParams) (ShadowErpBankReconciliationState, error)
+	CreateBankReconciliationStateMembership(ctx context.Context, arg CreateBankReconciliationStateMembershipParams) (ShadowErpBankReconciliationStateMembership, error)
 	CreateCanonicalVendor(ctx context.Context, arg CreateCanonicalVendorParams) (FignodeCanonicalVendor, error)
 	// =========================================================================
 	// Cleanup Mode Queries (now stored in fignode schema)
@@ -48,15 +52,22 @@ type Querier interface {
 	CreateEnterpriseDomain(ctx context.Context, arg CreateEnterpriseDomainParams) (ToroCoreEnterpriseDomain, error)
 	CreateEntity(ctx context.Context, arg CreateEntityParams) (pgtype.UUID, error)
 	CreateFact(ctx context.Context, arg CreateFactParams) (CreateFactRow, error)
+	CreateJournalEntry(ctx context.Context, arg CreateJournalEntryParams) (ShadowErpJournalEntry, error)
+	CreateJournalLine(ctx context.Context, arg CreateJournalLineParams) (ShadowErpJournalLine, error)
 	CreateLeadForm(ctx context.Context, arg CreateLeadFormParams) (MarketingLeadForm, error)
 	CreateMarketingList(ctx context.Context, arg CreateMarketingListParams) (MarketingList, error)
 	CreateMasterMerchant(ctx context.Context, arg CreateMasterMerchantParams) (FignodeMasterMerchant, error)
 	CreateMasterPattern(ctx context.Context, arg CreateMasterPatternParams) (FignodeMasterPattern, error)
 	CreateMemoryRule(ctx context.Context, arg CreateMemoryRuleParams) error
 	CreateMerchantMultilingualAlias(ctx context.Context, arg CreateMerchantMultilingualAliasParams) (CreateMerchantMultilingualAliasRow, error)
+	CreateOrGetStatementIntakeRow(ctx context.Context, arg CreateOrGetStatementIntakeRowParams) (pgtype.UUID, error)
+	CreateOrGetStatementIntakeSession(ctx context.Context, arg CreateOrGetStatementIntakeSessionParams) (FignodeStagingSession, error)
 	CreateOrGetWorkflow(ctx context.Context, arg CreateOrGetWorkflowParams) (ToroCoreWorkflow, error)
 	// session_id must point at a per-realm SYSTEM session (see GetOrCreateSystemSession).
 	CreateProposedTransaction(ctx context.Context, arg CreateProposedTransactionParams) (FignodeStagingTransaction, error)
+	CreateReconciliationMatchGroup(ctx context.Context, arg CreateReconciliationMatchGroupParams) (ShadowErpReconciliationMatchGroup, error)
+	CreateReconciliationMatchMember(ctx context.Context, arg CreateReconciliationMatchMemberParams) (ShadowErpReconciliationMatchMember, error)
+	CreateReconciliationReviewQueueItem(ctx context.Context, arg CreateReconciliationReviewQueueItemParams) (ShadowErpReconciliationReviewQueue, error)
 	CreateReconciliationTask(ctx context.Context, arg CreateReconciliationTaskParams) (ShadowErpReconciliationTask, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error
 	CreateRelationship(ctx context.Context, arg CreateRelationshipParams) (CreateRelationshipRow, error)
@@ -85,6 +96,7 @@ type Querier interface {
 	GetAccountByERPID(ctx context.Context, arg GetAccountByERPIDParams) (ShadowErpAccount, error)
 	GetAccountByID(ctx context.Context, id pgtype.UUID) (ShadowErpAccount, error)
 	GetAccountByName(ctx context.Context, arg GetAccountByNameParams) (ShadowErpAccount, error)
+	GetAccountByRealmAndCode(ctx context.Context, arg GetAccountByRealmAndCodeParams) (ShadowErpAccount, error)
 	GetAccountsByRealm(ctx context.Context, realmID string) ([]ShadowErpAccount, error)
 	GetAccountsUpdatedSince(ctx context.Context, arg GetAccountsUpdatedSinceParams) ([]ShadowErpAccount, error)
 	GetActiveAccountsByRealm(ctx context.Context, realmID string) ([]GetActiveAccountsByRealmRow, error)
@@ -95,6 +107,7 @@ type Querier interface {
 	GetActiveRuleGroupsByRealm(ctx context.Context, realmID string) ([]ShadowErpRuleGroup, error)
 	GetActiveSessionByParticipant(ctx context.Context, arg GetActiveSessionByParticipantParams) (ToroCoreConversationSession, error)
 	GetActiveSessions(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreConversationSession, error)
+	GetActiveUserInEntity(ctx context.Context, arg GetActiveUserInEntityParams) (ToroCoreUser, error)
 	GetActiveWorkflowsByEntityID(ctx context.Context, entityID pgtype.UUID) ([]ToroCoreWorkflow, error)
 	GetAgentConfigurationByName(ctx context.Context, name string) (ToroCoreAgentConfiguration, error)
 	GetAiCorrectionByRawInput(ctx context.Context, arg GetAiCorrectionByRawInputParams) (GetAiCorrectionByRawInputRow, error)
@@ -116,6 +129,10 @@ type Querier interface {
 	GetBankAccountName(ctx context.Context, id pgtype.UUID) (string, error)
 	GetBankAccounts(ctx context.Context) ([]string, error)
 	GetBankAccountsByRealm(ctx context.Context, realmID string) ([]ShadowErpBankAccount, error)
+	GetBankJournalForRealm(ctx context.Context, realmID string) (ShadowErpJournal, error)
+	GetBankReconciliationStateByIdempotencyKey(ctx context.Context, arg GetBankReconciliationStateByIdempotencyKeyParams) (ShadowErpBankReconciliationState, error)
+	GetBankStatementLineByDocumentIndex(ctx context.Context, arg GetBankStatementLineByDocumentIndexParams) (ShadowErpBankStatementLine, error)
+	GetBankStatementLineByStagingTransaction(ctx context.Context, sourceStagingTransactionID pgtype.UUID) (ShadowErpBankStatementLine, error)
 	GetBillByERPID(ctx context.Context, arg GetBillByERPIDParams) (ShadowErpBill, error)
 	GetBlueprintByName(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
 	GetBlueprintByNameOrTriggerTopic(ctx context.Context, name string) (ToroCoreWorkflowBlueprint, error)
@@ -217,8 +234,12 @@ type Querier interface {
 	// =========================================================================
 	GetInitialEnrichedTransactionsByRealm(ctx context.Context, realmID pgtype.Text) ([]FignodeStagingTransaction, error)
 	GetInvoiceByERPID(ctx context.Context, arg GetInvoiceByERPIDParams) (ShadowErpInvoice, error)
+	GetJournalEntryByBankStatementLine(ctx context.Context, sourceBankStatementLineID pgtype.UUID) (ShadowErpJournalEntry, error)
 	GetJournalsByRealm(ctx context.Context, realmID string) ([]ShadowErpJournal, error)
 	GetLLMPricingModel(ctx context.Context, model string) (ToroCoreLlmPricingModel, error)
+	GetLatestBankReconciliationState(ctx context.Context, arg GetLatestBankReconciliationStateParams) (ShadowErpBankReconciliationState, error)
+	GetLatestBankReconciliationStateBeforeOrAt(ctx context.Context, arg GetLatestBankReconciliationStateBeforeOrAtParams) (ShadowErpBankReconciliationState, error)
+	GetLatestClosedBankReconciliationStateBefore(ctx context.Context, arg GetLatestClosedBankReconciliationStateBeforeParams) (ShadowErpBankReconciliationState, error)
 	GetLatestLeaderboardSnapshot(ctx context.Context, period string) (GetLatestLeaderboardSnapshotRow, error)
 	GetListRevenueMetrics(ctx context.Context, listID pgtype.UUID) ([]GetListRevenueMetricsRow, error)
 	GetMasterMerchantByExactPattern(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error)
@@ -266,6 +287,8 @@ type Querier interface {
 	GetRecentConversations(ctx context.Context, arg GetRecentConversationsParams) ([]ToroCoreConversation, error)
 	GetRecentConversationsByHandle(ctx context.Context, arg GetRecentConversationsByHandleParams) ([]ToroCoreConversation, error)
 	GetRecentCorrections(ctx context.Context, arg GetRecentCorrectionsParams) ([]ShadowErpAiCorrection, error)
+	GetReconciliationMatchGroupByIdempotencyKey(ctx context.Context, idempotencyKey string) (ShadowErpReconciliationMatchGroup, error)
+	GetReconciliationMatchWindow(ctx context.Context, arg GetReconciliationMatchWindowParams) (ShadowErpReconciliationMatchWindow, error)
 	GetReconciliationTaskByEmailThreadID(ctx context.Context, emailThreadID pgtype.Text) (ShadowErpReconciliationTask, error)
 	GetRefreshToken(ctx context.Context, tokenHash string) (ToroCoreRefreshToken, error)
 	GetRuleAuditLogsByTransaction(ctx context.Context, transactionID pgtype.UUID) ([]ShadowErpRuleAuditLog, error)
@@ -278,6 +301,7 @@ type Querier interface {
 	GetSessionSummary(ctx context.Context, sessionID pgtype.UUID) (GetSessionSummaryRow, error)
 	GetSlackTenantMappingByTeamID(ctx context.Context, slackTeamID string) (ToroCoreSlackTenantMapping, error)
 	GetSlackTenantMappingByTenantID(ctx context.Context, tenantID pgtype.UUID) (ToroCoreSlackTenantMapping, error)
+	GetStage2TreatmentAccountMapping(ctx context.Context, arg GetStage2TreatmentAccountMappingParams) (GetStage2TreatmentAccountMappingRow, error)
 	// =========================================================================
 	// QBO Sync Worker
 	// =========================================================================
@@ -297,6 +321,7 @@ type Querier interface {
 	GetTenantSettings(ctx context.Context, tenantID pgtype.UUID) (MarketingTenantSetting, error)
 	GetThreadMappingByEmailMessageID(ctx context.Context, emailLatestMessageID string) (ToroCoreToroThreadsMapping, error)
 	GetThreadMappingBySlackTS(ctx context.Context, arg GetThreadMappingBySlackTSParams) (ToroCoreToroThreadsMapping, error)
+	GetTreasuryAccountMapping(ctx context.Context, arg GetTreasuryAccountMappingParams) (ShadowErpTreasuryAccountMapping, error)
 	// =========================================================================
 	// Transaction Proposal & Audit
 	// =========================================================================
@@ -341,6 +366,10 @@ type Querier interface {
 	HasProspectInteracted(ctx context.Context, arg HasProspectInteractedParams) (bool, error)
 	IncrementEmailAccountSendCount(ctx context.Context, id pgtype.UUID) error
 	IncrementEmployeeCleared(ctx context.Context, userID pgtype.UUID) error
+	// Canonical statement evidence is immutable. A replay of the same source
+	// document therefore leaves the existing line untouched and lets the caller
+	// verify that the normalized evidence is identical.
+	InsertBankStatementLine(ctx context.Context, arg InsertBankStatementLineParams) (int64, error)
 	InsertCleanupRow(ctx context.Context, arg InsertCleanupRowParams) (pgtype.UUID, error)
 	InsertClientRequestOutbox(ctx context.Context, arg InsertClientRequestOutboxParams) error
 	InsertConversationSession(ctx context.Context, arg InsertConversationSessionParams) (ToroCoreConversationSession, error)
@@ -358,20 +387,31 @@ type Querier interface {
 	// Skip: Record a skip
 	// =========================================================================
 	InsertSkip(ctx context.Context, id pgtype.UUID) error
+	InvalidateBankReconciliationState(ctx context.Context, arg InvalidateBankReconciliationStateParams) (ShadowErpBankReconciliationStateInvalidation, error)
 	ListASEConfigsByUser(ctx context.Context, userID pgtype.UUID) ([]ToroCoreAseDag, error)
 	ListASEDagVersions(ctx context.Context, dagID pgtype.UUID) ([]ListASEDagVersionsRow, error)
 	ListActiveNonResidentForeignProviders(ctx context.Context) ([]ListActiveNonResidentForeignProvidersRow, error)
 	ListAgentConfigurations(ctx context.Context) ([]ToroCoreAgentConfiguration, error)
 	ListAllASEConfigs(ctx context.Context) ([]ToroCoreAseDag, error)
 	ListAllMultilingualAliases(ctx context.Context) ([]ListAllMultilingualAliasesRow, error)
+	// Values are normalized by the caller and compared without separators or case.
+	// The resolver must hold rather than select when this returns zero or multiple rows.
+	ListBankAccountsByNormalizedIdentifiers(ctx context.Context, arg ListBankAccountsByNormalizedIdentifiersParams) ([]ShadowErpBankAccount, error)
+	ListBankReconciliationStateMemberships(ctx context.Context, stateID pgtype.UUID) ([]ShadowErpBankReconciliationStateMembership, error)
+	ListBankStatementLinesByDocument(ctx context.Context, sourceDocumentID pgtype.UUID) ([]ShadowErpBankStatementLine, error)
 	// Returns CSV sessions for a realm (when realm_id is provided) OR CSV sessions created by a user
 	// (when realm_id is NULL). Excludes SYSTEM/PLAID sessions which are not user-facing.
 	ListCleanupSessions(ctx context.Context, arg ListCleanupSessionsParams) ([]ListCleanupSessionsRow, error)
 	ListFactsBySessionAndNamespace(ctx context.Context, arg ListFactsBySessionAndNamespaceParams) ([]ListFactsBySessionAndNamespaceRow, error)
 	ListForeignServiceRunningTotalsForTenantPeriod(ctx context.Context, arg ListForeignServiceRunningTotalsForTenantPeriodParams) ([]ListForeignServiceRunningTotalsForTenantPeriodRow, error)
+	ListJournalLinesByEntry(ctx context.Context, journalEntryID pgtype.UUID) ([]ShadowErpJournalLine, error)
+	ListOpenReconciliationReviewQueue(ctx context.Context, arg ListOpenReconciliationReviewQueueParams) ([]ShadowErpReconciliationReviewQueue, error)
 	ListPendingDocuments(ctx context.Context, limit int32) ([]ListPendingDocumentsRow, error)
 	ListRelationshipsFromFact(ctx context.Context, fromFactID pgtype.UUID) ([]ListRelationshipsFromFactRow, error)
 	ListRelationshipsToFact(ctx context.Context, toFactID pgtype.UUID) ([]ListRelationshipsToFactRow, error)
+	ListUnmatchedBankJournalLines(ctx context.Context, arg ListUnmatchedBankJournalLinesParams) ([]ListUnmatchedBankJournalLinesRow, error)
+	ListUnmatchedBankStatementLines(ctx context.Context, arg ListUnmatchedBankStatementLinesParams) ([]ShadowErpBankStatementLine, error)
+	ListUsableClosedStateDescendants(ctx context.Context, previousStateID pgtype.UUID) ([]ListUsableClosedStateDescendantsRow, error)
 	ListUsersWithVCOO(ctx context.Context) ([]ListUsersWithVCOORow, error)
 	LogBulkBurn(ctx context.Context, arg LogBulkBurnParams) (ToroCoreWalletTransaction, error)
 	LogEmailEvent(ctx context.Context, arg LogEmailEventParams) error
@@ -387,14 +427,18 @@ type Querier interface {
 	MarkStagingTransactionSynced(ctx context.Context, arg MarkStagingTransactionSyncedParams) error
 	MarkStagingTransactionTransferHold(ctx context.Context, id pgtype.UUID) error
 	OverrideCleanupRow(ctx context.Context, arg OverrideCleanupRowParams) (OverrideCleanupRowRow, error)
+	PersistStage2Proposal(ctx context.Context, arg PersistStage2ProposalParams) (FignodeStagingTransaction, error)
 	// =========================================================================
 	// AI Corrections
 	// =========================================================================
 	RecordAICorrection(ctx context.Context, arg RecordAICorrectionParams) error
 	RejectCleanupRow(ctx context.Context, id pgtype.UUID) error
+	RejectStage2Proposal(ctx context.Context, arg RejectStage2ProposalParams) (FignodeStagingTransaction, error)
 	ResetStaleStreaks(ctx context.Context) error
 	ResetTodayCleared(ctx context.Context) error
 	ResolveAgentByAliasAndDomain(ctx context.Context, arg ResolveAgentByAliasAndDomainParams) (ResolveAgentByAliasAndDomainRow, error)
+	ResolveReconciliationReviewQueueItem(ctx context.Context, arg ResolveReconciliationReviewQueueItemParams) (ShadowErpReconciliationReviewQueue, error)
+	ResolveReviewQueueForMatchGroup(ctx context.Context, arg ResolveReviewQueueForMatchGroupParams) (int64, error)
 	SaveConversationSessionMessage(ctx context.Context, arg SaveConversationSessionMessageParams) error
 	SaveInboundConversation(ctx context.Context, arg SaveInboundConversationParams) error
 	SearchAttachables(ctx context.Context, arg SearchAttachablesParams) ([]ShadowErpAttachable, error)

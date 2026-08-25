@@ -48,12 +48,12 @@ func TestDocumentReadinessWorker_NoDocuments(t *testing.T) {
 		ID:             "env-123",
 		ConversationID: "conv-123",
 		Performative:   core.REQUEST,
-		Body:           []byte(`{"payload":{"session_id":"sess-1"}}`),
+		Body:           []byte(`{"payload":{"data":{"input":{"session_id":"sess-1"}}}}`),
 	}
 	data, err := json.Marshal(env)
 	require.NoError(t, err)
 
 	msg := &nats.Msg{Data: data}
 	err = worker.Handle(context.Background(), msg)
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "NATS connection unavailable")
 }

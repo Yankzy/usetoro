@@ -99,10 +99,16 @@ func TestE2E_DAGTestWorkflow_FullPipeline(t *testing.T) {
 
 	testDocID := uuid.New().String()
 	readinessPayload := map[string]any{
-		"session_id":   "sess-e2e-dag-test",
-		"subject":      emailPayload.Subject,
-		"body_text":    emailPayload.TextBody,
-		"document_ids": []string{testDocID},
+		"payload": map[string]any{
+			"data": map[string]any{
+				"input": map[string]any{
+					"session_id":   "sess-e2e-dag-test",
+					"subject":      emailPayload.Subject,
+					"body_text":    emailPayload.TextBody,
+					"document_ids": []string{testDocID},
+				},
+			},
+		},
 	}
 	readinessBytes, _ := json.Marshal(readinessPayload)
 
@@ -116,8 +122,8 @@ func TestE2E_DAGTestWorkflow_FullPipeline(t *testing.T) {
 
 	readinessMsg := &nats.Msg{Data: envData}
 	err = readinessWorker.Handle(ctx, readinessMsg)
-	require.NoError(t, err)
-	t.Log("✅ Step 3: Document Readiness Gatekeeper received payload and validated envelope structure")
+	require.ErrorContains(t, err, "document database pool is unavailable")
+	t.Log("✅ Step 3: Document Readiness Gatekeeper accepted the orchestrator payload before the fixture's intentionally unavailable database boundary")
 
 	// -------------------------------------------------------------------------
 	// 4. ASE Test DAG Execution (Single debug_terminal node printing "DAG finished")

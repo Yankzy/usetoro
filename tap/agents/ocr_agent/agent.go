@@ -404,15 +404,21 @@ func (a *OCRAgent) extractDocumentUsingLLM(ctx context.Context, task core.TaskDe
 		"data": {
 			"bank_name": "ATTIJARIWAFA BANK",
 			"account_number": "007810000012345678901234",
+			"rib": "007810000012345678901234",
+			"iban": "MA64007810000012345678901234",
+			"currency": "MAD",
 			"statement_date": "31/07/2026",
 			"start_date": "01/07/2026",
-			"end_date": "31/07/2026"
+			"end_date": "31/07/2026",
 			"starting_balance": 150000,
 			"ending_balance": 204385,
 			"transactions": {
 				"1": {
 					"date": "02/07/2026",
+					"value_date": "03/07/2026",
 					"description": "Loyer Juil. - Soc. Immobiliere Anfa",
+					"reference": "VIR-2026-07-001",
+					"counterparty_name": "Soc. Immobiliere Anfa",
 					"amount": 12000,
 					"type": "debit"
 				},

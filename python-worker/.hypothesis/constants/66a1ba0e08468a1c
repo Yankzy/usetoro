@@ -1,0 +1,4 @@
+# file: /Users/Yankz/programming/usetoro/python-worker/app/reconciliation_eval/optimizer/validation.py
+# hypothesis_version: 6.151.9
+
+['DUPLICATE_BANK_IDS', 'DUPLICATE_BOOK_IDS', 'FEASIBLE', 'INVALID_INPUT', 'VALIDATION_PASSED']

@@ -65,6 +65,9 @@ type Config struct {
 	// CDC (Change Data Capture) Config
 	CDCEnabled      bool          `mapstructure:"cdc_enabled"`
 	CDCSyncInterval time.Duration `mapstructure:"cdc_sync_interval"`
+	// Legacy staging-row export is intentionally off; canonical journals are the
+	// only future export source after the reconciliation path is accepted.
+	PcmLegacyExportCronEnabled bool `mapstructure:"pcm_legacy_export_cron_enabled"`
 
 	// Stripe Config
 	StripeSecretKey      string `mapstructure:"stripe_secret_key"`

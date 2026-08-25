@@ -482,138 +482,139 @@ dag:
       batch_size: &bsize 50
       edge_type: &estatic static
       children:
+        INFLOW: bank_transaction_classifier_inflow
+        OUTFLOW: bank_transaction_classifier_outflow
+      default_child: hold_invalid_cash_direction
+
+
+    # ------------------------------------------------------------------
+    # STEP 2A: INFLOW INTENT & COUNTERPART CLASSIFICATION
+    # ------------------------------------------------------------------
+    bank_transaction_classifier_inflow:
+      name: bank_transaction_classifier_inflow
+      batch_flush_seconds: *flush
+      kind: macro_classifier
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: bank_transaction_classifier_inflow_prompt
+      children:
+        CUSTOMER_INVOICE_RECEIPT_3421: customer_reconciler
+        FOREIGN_CUSTOMER_RECEIPT: customer_reconciler
+        CUSTOMER_ADVANCE_RECEIPT_4421: customer_reconciler
+        CUSTOMER_RETENTION_RECEIPT_3423: customer_reconciler
+        DIRECT_OPERATING_REVENUE_71X: operating_document_reconciler
+        RENTAL_INCOME_RECEIPT: operating_document_reconciler
+        SUPPLIER_REFUND_RECEIPT_341X: supplier_reconciler
+        EXPENSE_REIMBURSEMENT_RECEIPT: operating_document_reconciler
+        INSURANCE_CLAIM_RECEIPT: insurance_reconciler
+        STATE_TAX_REFUND_345X: state_customs_reconciler
+        VAT_REFUND_RECEIPT_3456: state_customs_reconciler
+        GOVERNMENT_GRANT_SUBSIDY_RECEIPT: state_customs_reconciler
+        GOVERNMENT_ADVANCE_RECEIPT_1482: financing_reconciler
+        FINANCING_LOAN_DRAWDOWN_148X: financing_reconciler
+        TREASURY_CREDIT_DRAWDOWN_5530: financing_reconciler
+        BILL_DISCOUNTING_PROCEEDS_5520: financing_reconciler
+        FACTORING_PROCEEDS: financing_reconciler
+        BOND_ISSUANCE_RECEIPT_1410: financing_reconciler
+        CAPITAL_CONTRIBUTION_RECEIPT: equity_related_party_reconciler
+        SHAREHOLDER_CURRENT_ACCOUNT_RECEIPT_4463: equity_related_party_reconciler
+        RELATED_PARTY_RECEIPT: equity_related_party_reconciler
+        BRANCH_HEAD_OFFICE_TRANSFER_IN_160X: equity_related_party_reconciler
+        SHORT_TERM_INVESTMENT_REDEMPTION_350X: financial_asset_reconciler
+        LONG_TERM_FINANCIAL_ASSET_DISPOSAL_24_25: financial_asset_reconciler
+        FINANCIAL_INCOME_INTEREST_DIVIDEND_73X: financial_asset_reconciler
+        LOAN_GRANTED_RECOVERY_241X: financial_asset_reconciler
+        PERSONNEL_ADVANCE_LOAN_RECOVERY_343X: personnel_social_reconciler
+        SECURITY_DEPOSIT_REFUNDED_2486: deposit_guarantee_reconciler
+        SECURITY_DEPOSIT_RECEIVED_1487: deposit_guarantee_reconciler
+        ASSET_DISPOSAL_RECEIPT_3481_751: fixed_asset_reconciler
+        NON_CURRENT_RECEIPT_75X: non_current_reconciler
+        OTHER_DEBTOR_RECEIPT_348X: non_current_reconciler
+        TRANSIT_TRANSFER_IN_5115: treasury_reconciler
+        CASH_DEPOSIT_5161: treasury_reconciler
+        CHECK_COLLECTION_5111: treasury_reconciler
+        BILL_RECEIVABLE_COLLECTION_5113: treasury_reconciler
+        CARD_POS_SETTLEMENT_RECEIPT: treasury_reconciler
+        OTHER_TREASURY_VALUE_COLLECTION_5118: treasury_reconciler
+        BANK_INTEREST_INCOME: treasury_reconciler
+        FX_CONVERSION_INFLOW: treasury_reconciler
+        REVERSAL_REFUND_CHARGEBACK_RECEIPT: treasury_reconciler
+        HOLD_AMBIGUOUS_BANK_INFLOW: hold_ambiguous_bank_line
+      default_child: hold_ambiguous_bank_line
+
+    # ------------------------------------------------------------------
+    # STEP 2B: OUTFLOW INTENT & COUNTERPART CLASSIFICATION
+    # ------------------------------------------------------------------
+    bank_transaction_classifier_outflow:
+      name: bank_transaction_classifier_outflow
+      batch_flush_seconds: *flush
+      kind: macro_classifier
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: bank_transaction_classifier_outflow_prompt
+      children:
         debug_terminal: debug_terminal
-      #   INFLOW: bank_transaction_classifier_inflow
-      #   OUTFLOW: bank_transaction_classifier_outflow
-      # default_child: hold_invalid_cash_direction
-
-    # # ------------------------------------------------------------------
-    # # STEP 2A: INFLOW INTENT & COUNTERPART CLASSIFICATION
-    # # ------------------------------------------------------------------
-    # bank_transaction_classifier_inflow:
-    #   name: bank_transaction_classifier_inflow
-    #   batch_flush_seconds: *flush
-    #   kind: macro_classifier
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   prompt_key: bank_transaction_classifier_inflow_prompt
-    #   children:
-    #     CUSTOMER_INVOICE_RECEIPT_3421: customer_reconciler
-    #     FOREIGN_CUSTOMER_RECEIPT: customer_reconciler
-    #     CUSTOMER_ADVANCE_RECEIPT_4421: customer_reconciler
-    #     CUSTOMER_RETENTION_RECEIPT_3423: customer_reconciler
-    #     DIRECT_OPERATING_REVENUE_71X: operating_document_reconciler
-    #     RENTAL_INCOME_RECEIPT: operating_document_reconciler
-    #     SUPPLIER_REFUND_RECEIPT_341X: supplier_reconciler
-    #     EXPENSE_REIMBURSEMENT_RECEIPT: operating_document_reconciler
-    #     INSURANCE_CLAIM_RECEIPT: insurance_reconciler
-    #     STATE_TAX_REFUND_345X: state_customs_reconciler
-    #     VAT_REFUND_RECEIPT_3456: state_customs_reconciler
-    #     GOVERNMENT_GRANT_SUBSIDY_RECEIPT: state_customs_reconciler
-    #     GOVERNMENT_ADVANCE_RECEIPT_1482: financing_reconciler
-    #     FINANCING_LOAN_DRAWDOWN_148X: financing_reconciler
-    #     TREASURY_CREDIT_DRAWDOWN_5530: financing_reconciler
-    #     BILL_DISCOUNTING_PROCEEDS_5520: financing_reconciler
-    #     FACTORING_PROCEEDS: financing_reconciler
-    #     BOND_ISSUANCE_RECEIPT_1410: financing_reconciler
-    #     CAPITAL_CONTRIBUTION_RECEIPT: equity_related_party_reconciler
-    #     SHAREHOLDER_CURRENT_ACCOUNT_RECEIPT_4463: equity_related_party_reconciler
-    #     RELATED_PARTY_RECEIPT: equity_related_party_reconciler
-    #     BRANCH_HEAD_OFFICE_TRANSFER_IN_160X: equity_related_party_reconciler
-    #     SHORT_TERM_INVESTMENT_REDEMPTION_350X: financial_asset_reconciler
-    #     LONG_TERM_FINANCIAL_ASSET_DISPOSAL_24_25: financial_asset_reconciler
-    #     FINANCIAL_INCOME_INTEREST_DIVIDEND_73X: financial_asset_reconciler
-    #     LOAN_GRANTED_RECOVERY_241X: financial_asset_reconciler
-    #     PERSONNEL_ADVANCE_LOAN_RECOVERY_343X: personnel_social_reconciler
-    #     SECURITY_DEPOSIT_REFUNDED_2486: deposit_guarantee_reconciler
-    #     SECURITY_DEPOSIT_RECEIVED_1487: deposit_guarantee_reconciler
-    #     ASSET_DISPOSAL_RECEIPT_3481_751: fixed_asset_reconciler
-    #     NON_CURRENT_RECEIPT_75X: non_current_reconciler
-    #     OTHER_DEBTOR_RECEIPT_348X: non_current_reconciler
-    #     TRANSIT_TRANSFER_IN_5115: treasury_reconciler
-    #     CASH_DEPOSIT_5161: treasury_reconciler
-    #     CHECK_COLLECTION_5111: treasury_reconciler
-    #     BILL_RECEIVABLE_COLLECTION_5113: treasury_reconciler
-    #     CARD_POS_SETTLEMENT_RECEIPT: treasury_reconciler
-    #     OTHER_TREASURY_VALUE_COLLECTION_5118: treasury_reconciler
-    #     BANK_INTEREST_INCOME: treasury_reconciler
-    #     FX_CONVERSION_INFLOW: treasury_reconciler
-    #     REVERSAL_REFUND_CHARGEBACK_RECEIPT: treasury_reconciler
-    #     HOLD_AMBIGUOUS_BANK_INFLOW: hold_ambiguous_bank_line
-    #   default_child: hold_ambiguous_bank_line
-
-    # # ------------------------------------------------------------------
-    # # STEP 2B: OUTFLOW INTENT & COUNTERPART CLASSIFICATION
-    # # ------------------------------------------------------------------
-    # bank_transaction_classifier_outflow:
-    #   name: bank_transaction_classifier_outflow
-    #   batch_flush_seconds: *flush
-    #   kind: macro_classifier
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   prompt_key: bank_transaction_classifier_outflow_prompt
-    #   children:
-    #     SUPPLIER_INVOICE_PAYMENT_4411: supplier_reconciler
-    #     SUPPLIER_RETENTION_PAYMENT_4413: supplier_reconciler
-    #     SUPPLIER_ADVANCE_PAYMENT_3411: supplier_reconciler
-    #     DIRECT_OPERATING_EXPENSE_61X: operating_document_reconciler
-    #     CARD_MERCHANT_PAYMENT: operating_document_reconciler
-    #     FOREIGN_VENDOR_GOODS_PAYMENT: supplier_reconciler
-    #     FOREIGN_VENDOR_SERVICES_PAYMENT: supplier_reconciler
-    #     DOMESTIC_RENTAL_LEASE_PAYMENT: supplier_reconciler
-    #     FOREIGN_RENTAL_LEASE_PAYMENT: supplier_reconciler
-    #     INSURANCE_PREMIUM_PAYMENT: insurance_reconciler
-    #     CUSTOMER_REFUND_CREDIT_NOTE: customer_reconciler
-    #     CUSTOMER_ADVANCE_REFUND_4421: customer_reconciler
-    #     CUSTOMER_DEPOSIT_RETURN: customer_reconciler
-    #     PAYROLL_PAYMENT_4432: personnel_social_reconciler
-    #     PERSONNEL_EXPENSE_REIMBURSEMENT: personnel_social_reconciler
-    #     PERSONNEL_ADVANCE_DISBURSEMENT_3431: personnel_social_reconciler
-    #     PERSONNEL_LOAN_DISBURSEMENT: personnel_social_reconciler
-    #     PERSONNEL_OTHER_PAYMENT_443X: personnel_social_reconciler
-    #     SOCIAL_CONTRIBUTION_PAYMENT_444X: personnel_social_reconciler
-    #     STATE_TAX_PAYMENT_445X: state_customs_reconciler
-    #     STATE_TAX_ADVANCE_PAYMENT_3453: state_customs_reconciler
-    #     TAX_WITHHOLDING_REMITTANCE: state_customs_reconciler
-    #     CUSTOMS_IMPORT_ADII_PAYMENT: state_customs_reconciler
-    #     STATE_PENALTY_FINE_PAYMENT: state_customs_reconciler
-    #     GOVERNMENT_GRANT_RETURN: state_customs_reconciler
-    #     GOVERNMENT_ADVANCE_REPAYMENT_1482: financing_reconciler
-    #     CAPEX_IMMOBILISATION_PAYMENT: fixed_asset_reconciler
-    #     CAPEX_ADVANCE_PAYMENT_2397: fixed_asset_reconciler
-    #     FIXED_ASSET_SUPPLIER_PAYMENT_1486_4481: fixed_asset_reconciler
-    #     FINANCING_LOAN_REPAYMENT_148X: financing_reconciler
-    #     TREASURY_CREDIT_REPAYMENT_5530: financing_reconciler
-    #     BILL_DISCOUNTING_REPAYMENT_5520: financing_reconciler
-    #     BOND_PRINCIPAL_REPAYMENT_4484: financing_reconciler
-    #     BOND_COUPON_PAYMENT_4485: financing_reconciler
-    #     OTHER_FINANCING_DEBT_PAYMENT_148X: financing_reconciler
-    #     CAPITAL_REPAYMENT_PAYMENT_4461: equity_related_party_reconciler
-    #     OWNER_WITHDRAWAL_PAYMENT: equity_related_party_reconciler
-    #     SHAREHOLDER_CURRENT_ACCOUNT_PAYMENT_3463_4463: equity_related_party_reconciler
-    #     DIVIDEND_DISTRIBUTION_PAYMENT_4465: equity_related_party_reconciler
-    #     RELATED_PARTY_PAYMENT: equity_related_party_reconciler
-    #     BRANCH_HEAD_OFFICE_TRANSFER_OUT_160X: equity_related_party_reconciler
-    #     SHORT_TERM_INVESTMENT_PURCHASE_350X: financial_asset_reconciler
-    #     LONG_TERM_FINANCIAL_ASSET_PURCHASE_24_25: financial_asset_reconciler
-    #     LOAN_GRANTED_DISBURSEMENT_241X: financial_asset_reconciler
-    #     SECURITY_DEPOSIT_PAID_2486: deposit_guarantee_reconciler
-    #     SECURITY_DEPOSIT_RETURNED_1487: deposit_guarantee_reconciler
-    #     OTHER_FINANCIAL_CHARGE_PAYMENT_63X: financing_reconciler
-    #     NON_CURRENT_PAYMENT_65X: non_current_reconciler
-    #     SUBSIDY_DONATION_GRANTED_656X_6586: non_current_reconciler
-    #     OTHER_CREDITOR_PAYMENT_448X: non_current_reconciler
-    #     BANK_FEE_COMMISSION: treasury_reconciler
-    #     BANK_INTEREST_AGIOS_EXPENSE: treasury_reconciler
-    #     TRANSIT_TRANSFER_OUT_5115: treasury_reconciler
-    #     CASH_WITHDRAWAL_5161: treasury_reconciler
-    #     CHECK_PAYMENT_CLEARING: treasury_reconciler
-    #     BILL_PAYABLE_CLEARING_4415: treasury_reconciler
-    #     FX_CONVERSION_OUTFLOW: treasury_reconciler
-    #     OTHER_TREASURY_PAYMENT: treasury_reconciler
-    #     REVERSAL_RETURN_CHARGEBACK_PAYMENT: treasury_reconciler
-    #     HOLD_AMBIGUOUS_BANK_OUTFLOW: hold_ambiguous_bank_line
-    #   default_child: hold_ambiguous_bank_line
+      #   SUPPLIER_INVOICE_PAYMENT_4411: supplier_reconciler
+      #   SUPPLIER_RETENTION_PAYMENT_4413: supplier_reconciler
+      #   SUPPLIER_ADVANCE_PAYMENT_3411: supplier_reconciler
+      #   DIRECT_OPERATING_EXPENSE_61X: operating_document_reconciler
+      #   CARD_MERCHANT_PAYMENT: operating_document_reconciler
+      #   FOREIGN_VENDOR_GOODS_PAYMENT: supplier_reconciler
+      #   FOREIGN_VENDOR_SERVICES_PAYMENT: supplier_reconciler
+      #   DOMESTIC_RENTAL_LEASE_PAYMENT: supplier_reconciler
+      #   FOREIGN_RENTAL_LEASE_PAYMENT: supplier_reconciler
+      #   INSURANCE_PREMIUM_PAYMENT: insurance_reconciler
+      #   CUSTOMER_REFUND_CREDIT_NOTE: customer_reconciler
+      #   CUSTOMER_ADVANCE_REFUND_4421: customer_reconciler
+      #   CUSTOMER_DEPOSIT_RETURN: customer_reconciler
+      #   PAYROLL_PAYMENT_4432: personnel_social_reconciler
+      #   PERSONNEL_EXPENSE_REIMBURSEMENT: personnel_social_reconciler
+      #   PERSONNEL_ADVANCE_DISBURSEMENT_3431: personnel_social_reconciler
+      #   PERSONNEL_LOAN_DISBURSEMENT: personnel_social_reconciler
+      #   PERSONNEL_OTHER_PAYMENT_443X: personnel_social_reconciler
+      #   SOCIAL_CONTRIBUTION_PAYMENT_444X: personnel_social_reconciler
+      #   STATE_TAX_PAYMENT_445X: state_customs_reconciler
+      #   STATE_TAX_ADVANCE_PAYMENT_3453: state_customs_reconciler
+      #   TAX_WITHHOLDING_REMITTANCE: state_customs_reconciler
+      #   CUSTOMS_IMPORT_ADII_PAYMENT: state_customs_reconciler
+      #   STATE_PENALTY_FINE_PAYMENT: state_customs_reconciler
+      #   GOVERNMENT_GRANT_RETURN: state_customs_reconciler
+      #   GOVERNMENT_ADVANCE_REPAYMENT_1482: financing_reconciler
+      #   CAPEX_IMMOBILISATION_PAYMENT: fixed_asset_reconciler
+      #   CAPEX_ADVANCE_PAYMENT_2397: fixed_asset_reconciler
+      #   FIXED_ASSET_SUPPLIER_PAYMENT_1486_4481: fixed_asset_reconciler
+      #   FINANCING_LOAN_REPAYMENT_148X: financing_reconciler
+      #   TREASURY_CREDIT_REPAYMENT_5530: financing_reconciler
+      #   BILL_DISCOUNTING_REPAYMENT_5520: financing_reconciler
+      #   BOND_PRINCIPAL_REPAYMENT_4484: financing_reconciler
+      #   BOND_COUPON_PAYMENT_4485: financing_reconciler
+      #   OTHER_FINANCING_DEBT_PAYMENT_148X: financing_reconciler
+      #   CAPITAL_REPAYMENT_PAYMENT_4461: equity_related_party_reconciler
+      #   OWNER_WITHDRAWAL_PAYMENT: equity_related_party_reconciler
+      #   SHAREHOLDER_CURRENT_ACCOUNT_PAYMENT_3463_4463: equity_related_party_reconciler
+      #   DIVIDEND_DISTRIBUTION_PAYMENT_4465: equity_related_party_reconciler
+      #   RELATED_PARTY_PAYMENT: equity_related_party_reconciler
+      #   BRANCH_HEAD_OFFICE_TRANSFER_OUT_160X: equity_related_party_reconciler
+      #   SHORT_TERM_INVESTMENT_PURCHASE_350X: financial_asset_reconciler
+      #   LONG_TERM_FINANCIAL_ASSET_PURCHASE_24_25: financial_asset_reconciler
+      #   LOAN_GRANTED_DISBURSEMENT_241X: financial_asset_reconciler
+      #   SECURITY_DEPOSIT_PAID_2486: deposit_guarantee_reconciler
+      #   SECURITY_DEPOSIT_RETURNED_1487: deposit_guarantee_reconciler
+      #   OTHER_FINANCIAL_CHARGE_PAYMENT_63X: financing_reconciler
+      #   NON_CURRENT_PAYMENT_65X: non_current_reconciler
+      #   SUBSIDY_DONATION_GRANTED_656X_6586: non_current_reconciler
+      #   OTHER_CREDITOR_PAYMENT_448X: non_current_reconciler
+      #   BANK_FEE_COMMISSION: treasury_reconciler
+      #   BANK_INTEREST_AGIOS_EXPENSE: treasury_reconciler
+      #   TRANSIT_TRANSFER_OUT_5115: treasury_reconciler
+      #   CASH_WITHDRAWAL_5161: treasury_reconciler
+      #   CHECK_PAYMENT_CLEARING: treasury_reconciler
+      #   BILL_PAYABLE_CLEARING_4415: treasury_reconciler
+      #   FX_CONVERSION_OUTFLOW: treasury_reconciler
+      #   OTHER_TREASURY_PAYMENT: treasury_reconciler
+      #   REVERSAL_RETURN_CHARGEBACK_PAYMENT: treasury_reconciler
+      #   HOLD_AMBIGUOUS_BANK_OUTFLOW: hold_ambiguous_bank_line
+      # default_child: hold_ambiguous_bank_line
     # # ------------------------------------------------------------------
     # # STEP 3: SHARED EVIDENCE & LEDGER RECONCILIATION
     # # ------------------------------------------------------------------

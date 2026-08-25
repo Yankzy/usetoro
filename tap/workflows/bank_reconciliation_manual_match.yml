@@ -1,0 +1,29 @@
+name: Bank Reconciliation Manual Grouped Match
+version: "1.0"
+description: "Human-created 1:N or N:1 match with exact canonical totals and member uniqueness."
+trigger_topic: events.accounting.1.bank_reconciliation_manual_match
+steps:
+  - id: authorize_grouped_match
+    activity_type: hitl.approval
+    timeout: "86400s"
+    config:
+      scope: "match_group"
+      prompt: "Approve this exact grouped match of canonical bank and bank-ledger lines."
+      allow_edits: false
+      reject_action: "abort"
+      message_type: "bank_reconciliation_grouped_match_review"
+
+  - id: create_grouped_match
+    activity_type: workers.accounting.bank_reconciliation.manual_match
+    depends_on: [authorize_grouped_match]
+    negotiate: false
+    timeout: "120s"
+    workflow_schema: |
+      {"type":"object","properties":{
+        "entity_id":{"type":"string"},"actor_user_id":{"type":"string"},
+        "realm_id":{"type":"string"},"bank_account_id":{"type":"string"},
+        "currency":{"type":"string"},"item_type":{"type":"string"},
+        "bank_statement_line_ids":{"type":"array","items":{"type":"string"}},
+        "journal_line_ids":{"type":"array","items":{"type":"string"}},
+        "idempotency_key":{"type":"string"}
+      },"required":["entity_id","actor_user_id","realm_id","bank_account_id","currency","item_type","bank_statement_line_ids","journal_line_ids","idempotency_key"]}

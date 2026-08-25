@@ -1538,6 +1538,20 @@ func (o *Orchestrator) handleWorkflowResume(msg *nats.Msg) {
 	// ── HITL resume path ────────────────────────────────────────────────────
 	// A hitl.* gate was approved or rejected by the human.
 	if state.SuspensionKind == SuspensionKindHITL {
+		actorID, actorErr := uuid.Parse(req.ActorUserID)
+		if actorErr != nil {
+			o.logger.Warn("Orchestrator: HITL resume requires actor_user_id", "instance_id", req.InstanceID, "error", actorErr)
+			msg.Term()
+			return
+		}
+		var actorActive bool
+		if err := o.dbPool.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM toro_core.users WHERE id = $1 AND entity_id = $2 AND is_active = TRUE
+		)`, actorID, wf.EntityID).Scan(&actorActive); err != nil || !actorActive {
+			o.logger.Warn("Orchestrator: HITL actor is not active in workflow entity", "instance_id", req.InstanceID, "actor_user_id", req.ActorUserID)
+			msg.Term()
+			return
+		}
 		if req.Action == "rejected" {
 			// Resolve reject_action from the step config (default: abort).
 			rejectAction := "abort"
@@ -1588,9 +1602,10 @@ func (o *Orchestrator) handleWorkflowResume(msg *nats.Msg) {
 		state.SuspensionKind = ""
 		// Record the approval itself as the HITL step's proof.
 		approvalProof, _ := json.Marshal(map[string]interface{}{
-			"action": "approved",
-			"edits":  req.Edits,
-			"reason": req.Reason,
+			"action":        "approved",
+			"actor_user_id": req.ActorUserID,
+			"edits":         req.Edits,
+			"reason":        req.Reason,
 		})
 		state.Variables[stepID] = approvalProof
 		state.LastProof = approvalProof
@@ -1990,6 +2005,16 @@ func buildStepPayload(step WorkflowStep, state InstanceState, fallback []byte) [
 	unwrapped := unwrapStepPayload(payload)
 	if step.WorkflowSchema != "" {
 		unwrapped = reshapePayloadToSchema(step.WorkflowSchema, step.RBACPolicy, unwrapped, state)
+		var scoped map[string]json.RawMessage
+		if json.Unmarshal(unwrapped, &scoped) == nil {
+			if gjson.Get(step.WorkflowSchema, "properties.workflow_id").Exists() && len(state.InstancePath) > 0 {
+				scoped["workflow_id"], _ = json.Marshal(state.InstancePath[len(state.InstancePath)-1])
+			}
+			if gjson.Get(step.WorkflowSchema, "properties.workflow_trace_id").Exists() && len(state.InstancePath) > 0 {
+				scoped["workflow_trace_id"], _ = json.Marshal(strings.Join(state.InstancePath, "/"))
+			}
+			unwrapped, _ = json.Marshal(scoped)
+		}
 	}
 	raw := wrapPayloadWithConfig(step, unwrapped)
 	proof := core.Proof{
@@ -2334,6 +2359,9 @@ type WorkflowResumeRequest struct {
 	// HITL-specific fields.
 	// Action must be "approved" or "rejected" for hitl.* gate steps.
 	Action string `json:"action,omitempty"`
+	// ActorUserID is mandatory for HITL approve/reject and is verified as an
+	// active user in the workflow's entity before state changes are accepted.
+	ActorUserID string `json:"actor_user_id,omitempty"`
 	// Edits carries the human's overrides for completed step outputs.
 	// Keys are step IDs; values are JSON-encoded override objects.
 	// Only respected when Action == "approved" and the suspended step was a hitl.* gate.

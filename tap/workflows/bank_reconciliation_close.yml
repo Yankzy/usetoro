@@ -1,0 +1,26 @@
+name: Bank Reconciliation Close
+version: "1.0"
+description: "Explicit human-authorized close; never invoked by inbound PCM processing."
+trigger_topic: events.accounting.1.bank_reconciliation_close
+steps:
+  - id: authorize_close
+    activity_type: hitl.approval
+    timeout: "86400s"
+    config:
+      scope: "bank_account"
+      prompt: "Approve immutable close of the exact balanced OPEN state and its carry-forward evidence."
+      allow_edits: false
+      reject_action: "abort"
+      message_type: "bank_reconciliation_close_review"
+
+  - id: close_period
+    activity_type: workers.accounting.bank_reconciliation.close
+    depends_on: [authorize_close]
+    negotiate: false
+    timeout: "120s"
+    workflow_schema: |
+      {"type":"object","properties":{
+        "entity_id":{"type":"string"},"actor_user_id":{"type":"string"},
+        "realm_id":{"type":"string"},"bank_account_id":{"type":"string"},
+        "period_key":{"type":"string"},"idempotency_key":{"type":"string"},"expected_state_hash":{"type":"string"}
+      },"required":["entity_id","actor_user_id","realm_id","bank_account_id","period_key","idempotency_key","expected_state_hash"]}

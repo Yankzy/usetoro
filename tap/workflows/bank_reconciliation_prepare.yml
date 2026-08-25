@@ -1,0 +1,38 @@
+name: Bank Reconciliation Preparation
+version: "1.0"
+description: "Derive an OPEN period from the latest usable close, carry unresolved references, and generate reviewable 1:1 candidates."
+trigger_topic: events.accounting.1.bank_reconciliation_prepare
+steps:
+  - id: authorize_preparation
+    activity_type: hitl.approval
+    timeout: "86400s"
+    config:
+      scope: "bank_account"
+      prompt: "Approve preparation of this statement period from its usable predecessor."
+      allow_edits: false
+      reject_action: "abort"
+      message_type: "bank_reconciliation_prepare_review"
+
+  - id: prepare_period
+    activity_type: workers.accounting.bank_reconciliation.prepare
+    depends_on: [authorize_preparation]
+    negotiate: false
+    timeout: "120s"
+    workflow_schema: |
+      {"type":"object","properties":{
+        "entity_id":{"type":"string"},"actor_user_id":{"type":"string"},
+        "realm_id":{"type":"string"},"bank_account_id":{"type":"string"},
+        "period_key":{"type":"string"},"currency":{"type":"string"},
+        "statement_opening_balance":{"type":"string"},"statement_balance":{"type":"string"},"idempotency_key":{"type":"string"},
+        "memberships":{"type":"array","items":{"type":"object"}}
+      },"required":["entity_id","actor_user_id","realm_id","bank_account_id","period_key","currency","statement_opening_balance","statement_balance","idempotency_key"]}
+
+  - id: generate_matches
+    activity_type: workers.accounting.bank_reconciliation.generate_matches
+    depends_on: [prepare_period]
+    negotiate: false
+    timeout: "120s"
+    workflow_schema: |
+      {"type":"object","properties":{
+        "realm_id":{"type":"string"},"bank_account_id":{"type":"string"},"as_of":{"type":"string","format":"date-time"}
+      },"required":["realm_id","bank_account_id"]}

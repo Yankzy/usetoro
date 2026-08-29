@@ -1,128 +1,112 @@
-from typing import List, Tuple, Dict
-from reconciliation_prod.domain.bank import BankItem
-from reconciliation_prod.domain.book import BookItem
-from reconciliation_prod.domain.state import ProposedState
-from reconciliation_prod.reconciliation.validation import DIRECTION_COMPATIBILITY_MAP
+"""
+Deterministic Pre-solve Validation.
 
-def validate_proposal(
-    original_bank_items: List[BankItem],
-    original_book_items: List[BookItem],
-    proposal: ProposedState
-) -> Tuple[bool, List[str]]:
+This module validates the `OptimizerRequest` before it is passed to the CP-SAT
+engine, ensuring that hypotheses do not violate structural accounting invariants.
+"""
+from .protocol import OptimizerRequest, OptimizerResponse
+from reconciliation_prod.domain.base import Direction
+
+# Section 15: Explicit compatibility mapping
+# Adjust depending on the precise direction enums used by the core systems.
+DIRECTION_COMPATIBILITY_MAP = {
+    (Direction.OUTFLOW, Direction.OUTFLOW),
+    (Direction.INFLOW, Direction.INFLOW),
+    (Direction.BANK_OUTFLOW, Direction.BOOK_BANK_CREDIT),
+    (Direction.BANK_INFLOW, Direction.BOOK_BANK_DEBIT)
+}
+
+def validate_optimizer_request(req: OptimizerRequest) -> OptimizerResponse:
     """
-    Independently verifies all accounting invariants of the final proposed state.
-    Returns (True, []) if perfectly valid.
-    Returns (False, [error_messages]) if any invariant is violated.
+    Performs deterministic pre-solve validation to verify hypothesis legality.
+    
+    Checks for:
+    - Unique Canonical IDs
+    - Unknown Object References (Referential Integrity)
+    - Internal Monetary Conservation (Bank amounts == Book amounts)
+    - Currency Compatibility
+    - Direction Compatibility (Using DIRECTION_COMPATIBILITY_MAP)
+    - Complete Bank Consumption (No partial bank matching allowed)
+    - Pre-solve Book Capacity limits
+    
+    Args:
+        req (OptimizerRequest): The incoming request payload.
+        
+    Returns:
+        OptimizerResponse: An INVALID_INPUT response containing a list of 
+                           diagnostics if validation fails. Otherwise, returns
+                           a FEASIBLE pseudo-status to proceed.
     """
-    errors = []
-    
-    # 1. Fast Lookups & Canonical Existence (Section 16 / 42)
-    bank_map = {b.id: b for b in original_bank_items}
-    book_map = {j.id: j for j in original_book_items}
-    
-    # Check for hallucinated or missing IDs
-    proposed_bank_ids = set()
-    for match in proposal.matches:
-        for b_alloc in match.bank_allocations:
-            if b_alloc.bank_item_id not in bank_map:
-                errors.append(f"HALLUCINATED_BANK_ID: {b_alloc.bank_item_id} in match {match.group_id}")
-            proposed_bank_ids.add(b_alloc.bank_item_id)
-            
-    proposed_book_ids = set()
-    for match in proposal.matches:
-        for j_alloc in match.book_allocations:
-            if j_alloc.book_item_id not in book_map:
-                errors.append(f"HALLUCINATED_BOOK_ID: {j_alloc.book_item_id} in match {match.group_id}")
-            proposed_book_ids.add(j_alloc.book_item_id)
-            
-    for u_id in proposal.unresolved_bank_ids:
-        if u_id not in bank_map:
-            errors.append(f"HALLUCINATED_UNRESOLVED_BANK_ID: {u_id}")
+    diagnostics = []
 
-    if errors:
-        return False, errors  # Stop early if referential integrity is broken
-
-    # 2. Bank Exclusivity & Complete Coverage (Sections 7, 11, 42)
-    all_original_bank_ids = set(bank_map.keys())
-    unresolved_ids = set(proposal.unresolved_bank_ids)
+    # 1. Unique Canonical IDs
+    bank_ids = [b.id for b in req.bank_items]
+    book_ids = [j.id for j in req.book_items]
+    hyp_ids = [h.id for h in req.hypotheses]
     
-    # Check overlap (a bank item cannot be both matched and unresolved)
-    overlap = proposed_bank_ids.intersection(unresolved_ids)
-    if overlap:
-        errors.append(f"BANK_EXCLUSIVITY_VIOLATION: Items both matched and unresolved: {overlap}")
+    if len(bank_ids) != len(set(bank_ids)):
+        diagnostics.append("DUPLICATE_BANK_IDS")
+    if len(book_ids) != len(set(book_ids)):
+        diagnostics.append("DUPLICATE_BOOK_IDS")
+    if len(hyp_ids) != len(set(hyp_ids)):
+        diagnostics.append("DUPLICATE_HYPOTHESIS_IDS")
+
+    # Fast lookups
+    bank_map = {b.id: b for b in req.bank_items}
+    book_map = {j.id: j for j in req.book_items}
+
+    # 2. Hypothesis Validations
+    for hyp in req.hypotheses:
+        # A. Canonical Reference Existence (Section 16)
+        missing_banks = [a.bank_item_id for a in hyp.bank_allocations if a.bank_item_id not in bank_map]
+        missing_books = [a.book_item_id for a in hyp.book_allocations if a.book_item_id not in book_map]
         
-    # Check missing (every bank item must have exactly one disposition)
-    missing = all_original_bank_ids - (proposed_bank_ids.union(unresolved_ids))
-    if missing:
-        errors.append(f"MISSING_BANK_DISPOSITION: Items neither matched nor unresolved: {missing}")
+        if missing_banks or missing_books:
+            diagnostics.append(f"UNKNOWN_OBJECT_REFERENCE in hypothesis {hyp.id}: Banks={missing_banks}, Books={missing_books}")
+            continue # Skip further checks for this hypothesis to avoid KeyErrors
 
-    # Track capacities and consumptions
-    book_consumptions: Dict[str, int] = {j.id: 0 for j in original_book_items}
-    bank_match_count: Dict[str, int] = {b.id: 0 for b in original_bank_items}
+        # B. Internal Monetary Conservation (Section 9)
+        if hyp.total_bank_allocation_int != hyp.total_book_allocation_int:
+            diagnostics.append(f"IMBALANCED_HYPOTHESIS in {hyp.id}: Bank={hyp.total_bank_allocation_int}, Book={hyp.total_book_allocation_int}")
 
-    # 3. Match-level Invariants
-    for match in proposal.matches:
-        match_bank_sum = 0
-        match_book_sum = 0
-        match_currencies = set()
-        
-        # Validate Bank Allocations
-        for b_alloc in match.bank_allocations:
-            b_id = b_alloc.bank_item_id
-            bank_item = bank_map[b_id]
-            
-            match_bank_sum += b_alloc.amount_int
-            bank_match_count[b_id] += 1
-            match_currencies.add(bank_item.currency)
-            
-            # Complete consumption rule (Section 7)
-            if b_alloc.amount_int != bank_item.amount_int:
-                errors.append(f"PARTIAL_BANK_CONSUMPTION: Match {match.group_id}, Bank {b_id} allocated {b_alloc.amount_int} but requires {bank_item.amount_int}")
+        # Extract referenced objects for deeper checks
+        ref_banks = [bank_map[a.bank_item_id] for a in hyp.bank_allocations]
+        ref_books = [book_map[a.book_item_id] for a in hyp.book_allocations]
 
-        # Validate Book Allocations
-        for j_alloc in match.book_allocations:
-            j_id = j_alloc.book_item_id
-            book_item = book_map[j_id]
-            
-            match_book_sum += j_alloc.amount_int
-            book_consumptions[j_id] += j_alloc.amount_int
-            match_currencies.add(book_item.currency)
+        # C. Currency Compatibility (Section 14)
+        currencies = {item.currency for item in ref_banks + ref_books}
+        if len(currencies) > 1:
+            diagnostics.append(f"CURRENCY_MISMATCH in hypothesis {hyp.id}: {currencies}")
 
-            # Direction Compatibility (Section 15, 42)
-            for b_alloc in match.bank_allocations:
-                bank_item = bank_map[b_alloc.bank_item_id]
+        # D. Direction Compatibility (Section 15)
+        for bank_item in ref_banks:
+            for book_item in ref_books:
                 pair = (bank_item.direction, book_item.direction)
                 if pair not in DIRECTION_COMPATIBILITY_MAP:
-                    errors.append(f"DIRECTION_INCOMPATIBILITY: Match {match.group_id}, {pair}")
+                    diagnostics.append(f"DIRECTION_INCOMPATIBILITY in {hyp.id}: {pair}")
 
-        # Monetary Conservation (Section 9, 42)
-        if match_bank_sum != match_book_sum:
-            errors.append(f"MONETARY_IMBALANCE: Match {match.group_id} Bank Sum = {match_bank_sum} != Book Sum = {match_book_sum}")
-            
-        # Currency Compatibility (Section 14, 42)
-        if len(match_currencies) > 1:
-            errors.append(f"CURRENCY_MISMATCH: Match {match.group_id} mixes currencies {match_currencies}")
+        # E. Bank Complete Consumption (Section 7)
+        for alloc in hyp.bank_allocations:
+            bank_item = bank_map[alloc.bank_item_id]
+            if alloc.amount_int != bank_item.amount_int:
+                diagnostics.append(f"PARTIAL_BANK_CONSUMPTION in {hyp.id}: Bank {bank_item.id} capacity {bank_item.amount_int} != alloc {alloc.amount_int}")
 
-    # 4. Bank Multiple Consumption Check
-    multiple_banks = [b_id for b_id, count in bank_match_count.items() if count > 1]
-    if multiple_banks:
-        errors.append(f"BANK_DOUBLE_CONSUMPTION: {multiple_banks}")
+        # F. Book Capacity per Hypothesis (Section 12 - Pre-solve subset)
+        for alloc in hyp.book_allocations:
+            book_item = book_map[alloc.book_item_id]
+            if alloc.amount_int > book_item.remaining_amount_int:
+                diagnostics.append(f"BOOK_CAPACITY_OVERFLOW in {hyp.id}: Book {book_item.id} capacity {book_item.remaining_amount_int} < alloc {alloc.amount_int}")
 
-    # 5. Book Capacity Invariant (Section 12, 42)
-    for j_id, consumed in book_consumptions.items():
-        capacity = book_map[j_id].remaining_amount_int
-        if consumed > capacity:
-            errors.append(f"BOOK_CAPACITY_OVERFLOW: Item {j_id} capacity {capacity} but consumed {consumed}")
+    # 3. Forced Constraints Validation (Section 22)
+    for f_id in req.forced_hypothesis_ids:
+        if f_id not in set(hyp_ids):
+            diagnostics.append(f"UNKNOWN_FORCED_HYPOTHESIS: {f_id}")
 
-    # 6. LLM Claimed Residuals Check (Section 42 - optional strictness)
-    for residual_obj in proposal.expected_book_residuals:
-        j_id = residual_obj.book_item_id
-        claimed_residual_str = residual_obj.residual_amount_units
-        if j_id in book_map:
-            actual_residual = book_map[j_id].remaining_amount_int - book_consumptions.get(j_id, 0)
-            claimed_residual = int(claimed_residual_str)
-            if actual_residual != claimed_residual:
-                errors.append(f"RESIDUAL_MISMATCH: Item {j_id} LLM claims {claimed_residual} but math yields {actual_residual}")
+    if diagnostics:
+        return OptimizerResponse(
+            status="INVALID_INPUT",
+            diagnostics=diagnostics
+        )
 
-    is_valid = len(errors) == 0
-    return is_valid, errors
+    # Return a pseudo-status to indicate validation passed
+    return OptimizerResponse(status="FEASIBLE", diagnostics=["VALIDATION_PASSED"])

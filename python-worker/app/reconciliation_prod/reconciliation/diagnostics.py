@@ -1,5 +1,8 @@
 """
-Counterfactual analysis and deep rejection diagnostics (Sections 31 & 32).
+Rejection Diagnostics and Counterfactual Analysis.
+
+This module provides the logic to mathematically explain *why* the CP-SAT optimizer
+rejected a plausible hypothesis proposed by the Semantic Engine.
 """
 from typing import List, Set, Dict
 from ortools.sat.python import cp_model
@@ -12,8 +15,20 @@ def analyze_rejected_hypotheses(
     best_selected_ids: Set[str]
 ) -> List[Dict]:
     """
-    For materially competitive rejected hypotheses, forces them to be selected 
-    to calculate the counterfactual objective delta and determine the rejection reason.
+    Computes counterfactual diagnostics for rejected hypotheses.
+    
+    For materially competitive rejected hypotheses, this function forces them to be 
+    selected (`x_h == 1`) in a secondary CP-SAT pass to calculate the counterfactual 
+    objective delta and mathematically prove the reason for rejection (e.g., lower 
+    global objective, or direct constraint violation).
+    
+    Args:
+        req (OptimizerRequest): The original problem request.
+        best_objective (int): The maximum objective value of the primary solve.
+        best_selected_ids (Set[str]): The IDs of hypotheses in the primary optimal set.
+        
+    Returns:
+        List[Dict]: A list of rejected hypothesis summaries with their counterfactual diagnostics.
     """
     diagnostics = []
     

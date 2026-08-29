@@ -9,18 +9,28 @@ Startup:
   uvicorn main:app --host 0.0.0.0 --port 8000
 """
 
+import sys
+import os
+# Ensure app/ directory is on sys.path for submodule imports (e.g. reconciliation_prod)
+_app_dir = os.path.join(os.path.dirname(__file__), "app")
+if _app_dir not in sys.path:
+    sys.path.insert(0, _app_dir)
+
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from openai import AsyncOpenAI
 
 from app.config import DATABASE_URL, NATS_URL
 from app.database import init_pool, close_pool
 from app.errors import StripeAPIError, NATSPublishError
-from app.nats_client import connect as nats_connect, close as nats_close, subscribe_jetstream, subscribe as nats_subscribe
+from app.nats_client import connect as nats_connect, close as nats_close, subscribe_jetstream, subscribe as nats_subscribe, get_nc
 from app.marketing import handlers
 from app.openai.ocr import handle_ocr_request
+from app.reconciliation_prod.reconciliation_worker import handle_reconciliation_request
+from app.reconciliation_prod.routing_worker import handle_routing_request
 from app.routes import router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -38,21 +48,18 @@ async def lifespan(app: FastAPI):
     await subscribe_jetstream("worker.inbox.marketing.analyze", "marketing_analyze_group", handlers.handle_analyze_request)
     await subscribe_jetstream("worker.inbox.marketing.discover", "marketing_discover_group", handlers.handle_discover_request)
     await subscribe_jetstream("worker.inbox.marketing.verify", "marketing_verify_group", handlers.handle_verify_request)
-    
-    # Python OCR agent is disabled in favor of the native Go OCR agent
-    # try:
-    #     await subscribe_jetstream("worker.inbox.python.ocr", "python_ocr_group", handle_ocr_request)
-    # except Exception as e:
-    #     logging.warning(f"JetStream subscription fallback to core NATS: {e}")
-    #     await nats_subscribe("worker.inbox.python.ocr", handle_ocr_request)
 
+    # Register Reconciliation & Routing NATS subscribers
+    await subscribe_jetstream("worker.inbox.reconciliation", "reconciliation_group", handle_reconciliation_request)
+    await subscribe_jetstream("worker.inbox.routing", "routing_group", handle_routing_request)
 
-    
     logging.info("Stripe Integration Microservice started")
     yield
+    print("🛑 [PYTHON-WORKER] Shutting down...", flush=True)
     logging.info("Shutting down...")
     await close_pool()
     await nats_close()
+    print("🛑 [PYTHON-WORKER] Shutdown complete", flush=True)
     logging.info("Shutdown complete")
 
 

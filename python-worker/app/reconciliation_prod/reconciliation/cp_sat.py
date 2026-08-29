@@ -1,10 +1,14 @@
 """
-Execution and result extraction logic for the CP-SAT Optimizer.
+CP-SAT Global Optimizer Orchestration.
+
+This module provides the primary entry point for solving the reconciliation 
+problem. It orchestrates validation, model building, solving, and the extraction 
+of results, diagnostics, and alternatives.
 """
 
 from ortools.sat.python import cp_model
 from reconciliation_prod.reconciliation.protocol import OptimizerRequest, OptimizerResponse
-from reconciliation_prod.reconciliation.optimizer_validation import validate_optimizer_request
+from reconciliation_prod.reconciliation.validation import validate_optimizer_request
 from reconciliation_prod.reconciliation.model import build_cp_model
 from reconciliation_prod.reconciliation.alternatives import find_alternatives_and_stability
 from reconciliation_prod.reconciliation.diagnostics import analyze_rejected_hypotheses
@@ -12,9 +16,22 @@ from reconciliation_prod.reconciliation.diagnostics import analyze_rejected_hypo
 
 def solve_reconciliation(req: OptimizerRequest) -> OptimizerResponse:
     """
-    Primary entry point for the Global Optimizer tool.
-    Validates the request, builds the CP-SAT model, solves it, 
-    and translates raw boolean variables into the domain response.
+    Primary entry point for the Global Optimizer.
+    
+    This function performs the following orchestration lifecycle:
+    1. Deterministic Input Validation
+    2. Builds the strict CP-SAT optimization model
+    3. Solves for the globally optimal configuration
+    4. Extracts selected/rejected hypotheses and unallocated residuals
+    5. Computes counterfactuals and deep diagnostics (Phase 3)
+    6. Discovers alternative stable states.
+    
+    Args:
+        req (OptimizerRequest): The requested reconciliation problem.
+        
+    Returns:
+        OptimizerResponse: The fully resolved state, complete with diagnostics 
+                           and alternatives, ready to be presented to the user.
     """
     # 1. Deterministic Input Validation (Section 27)
     val_resp = validate_optimizer_request(req)
@@ -102,21 +119,6 @@ def solve_reconciliation(req: OptimizerRequest) -> OptimizerResponse:
                 "consumed_amount_units": str(consumed),
                 "remaining_amount_units": str(starting - consumed)
             })
-
-    return OptimizerResponse(
-        status=str_status,
-        objective_value=objective_val,
-        selected_hypotheses=selected_hypotheses,
-        rejected_hypotheses=rejected_hypotheses,
-        unresolved_bank_items=unresolved_bank_items,
-        book_residuals=book_residuals,
-        solver_stats={
-            "wall_time": solver.WallTime(),
-            "conflicts": solver.NumConflicts(),
-            "branches": solver.NumBranches()
-        }
-    )
-
 
     best_selected_ids = {h["hypothesis_id"] for h in selected_hypotheses}
 

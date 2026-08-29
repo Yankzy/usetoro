@@ -1,5 +1,8 @@
 """
-Alternative global configuration search and stability classification (Sections 33 & 34).
+Alternative Configurations and Solution Stability Analysis.
+
+This module uses No-Good cuts to find alternative global configurations that 
+are mathematically competitive with the primary optimal solution.
 """
 from typing import List, Tuple, Set, Dict
 from ortools.sat.python import cp_model
@@ -12,8 +15,24 @@ def find_alternatives_and_stability(
     best_selected_ids: Set[str]
 ) -> Tuple[List[Dict], str]:
     """
-    Finds up to K alternative global configurations within the allowed objective gap.
-    Returns the alternatives list and the solution stability classification.
+    Finds alternative global configurations within the allowed objective gap.
+    
+    This function iteratively bans previously found configurations using boolean OR
+    constraints (No-Good cuts) and re-solves. It classifies the stability of the 
+    problem based on the existence of these alternatives.
+    
+    Stability Classifications:
+    - UNIQUE: No other valid global configurations exist.
+    - STABLE: Other configurations exist, but their objective value is significantly lower.
+    - AMBIGUOUS: Another configuration exists within a highly competitive objective gap.
+    
+    Args:
+        req (OptimizerRequest): The original problem request.
+        best_objective (int): The objective value of the primary optimal solution.
+        best_selected_ids (Set[str]): The set of hypothesis IDs chosen in the primary solution.
+        
+    Returns:
+        Tuple[List[Dict], str]: A list of alternative configurations and the stability classification.
     """
     alternatives = []
     gap = req.solver_options.alternative_objective_gap

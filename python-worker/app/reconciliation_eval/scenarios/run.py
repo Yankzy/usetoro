@@ -95,6 +95,15 @@ SCENARIOS: dict[str, Callable[[], Awaitable[None]]] = {
 
 
 def main() -> None:
+    from pathlib import Path
+    runs_dir = Path("logs/runs")
+    if runs_dir.exists():
+        for f in runs_dir.glob("eval_report_*.json"):
+            try:
+                f.unlink()
+            except Exception as e:
+                print(f"Failed to delete {f}: {e}")
+
     scenario_id = sys.argv[1] if len(sys.argv) > 1 else None
     
     if scenario_id is not None:

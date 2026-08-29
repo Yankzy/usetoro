@@ -1,5 +1,8 @@
 """
 Mathematical Formulation of the Bank Reconciliation Problem using OR-Tools CP-SAT.
+
+This module is responsible for translating the `OptimizerRequest` into a strict 
+Constraint Programming (CP) model, defining the objective function and hard invariants.
 """
 
 from ortools.sat.python import cp_model
@@ -13,10 +16,19 @@ def build_cp_model(
     """
     Constructs the global exact reconciliation optimization problem.
     
+    Applies Bank Exclusivity (each bank item matched at most once) and Book Capacity
+    (sum of partial matches cannot exceed remaining book balance) constraints.
+    It builds a lexicographic objective function prioritizing monetary clearance
+    over the semantic LLM utility score.
+    
+    Args:
+        req (OptimizerRequest): The complete problem context containing hypotheses.
+        
     Returns:
-        model: The instantiated CP-SAT model.
-        x_vars: Mapping from hypothesis ID to its boolean decision variable (x_h).
-        u_vars: Mapping from bank item ID to its unresolved boolean variable (u_b).
+        Tuple[cp_model.CpModel, Dict[str, cp_model.IntVar], Dict[str, cp_model.IntVar]]:
+            - model: The instantiated CP-SAT model.
+            - x_vars: Mapping from hypothesis ID to its boolean decision variable (x_h).
+            - u_vars: Mapping from bank item ID to its unresolved boolean variable (u_b).
     """
     model = cp_model.CpModel()
 
@@ -89,8 +101,8 @@ def build_cp_model(
     # 2. Maximize total items reconciled (Break ties)
     # 3. Maximize LLM Utility (Semantic tie-breaking)
     
-    W_MONEY = 10_000_000 
-    W_ITEMS = 1_000_000
+    W_MONEY = 1_000_000_000 
+    W_ITEMS = 100_000
     HYPOTHESIS_PENALTY = -10_000
     W_UTILITY = 1
     

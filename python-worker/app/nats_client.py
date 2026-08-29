@@ -10,6 +10,11 @@ _nc: NATS | None = None
 logger = logging.getLogger(__name__)
 
 
+def get_nc() -> NATS | None:
+    global _nc
+    return _nc
+
+
 async def connect(nats_url: str) -> None:
     global _nc
     servers = nats_url.split(",")

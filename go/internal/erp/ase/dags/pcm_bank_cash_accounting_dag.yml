@@ -553,1007 +553,999 @@ dag:
       edge_type: *estatic
       prompt_key: bank_transaction_classifier_outflow_prompt
       children:
-        debug_terminal: debug_terminal
-      #   SUPPLIER_INVOICE_PAYMENT_4411: supplier_reconciler
-      #   SUPPLIER_RETENTION_PAYMENT_4413: supplier_reconciler
-      #   SUPPLIER_ADVANCE_PAYMENT_3411: supplier_reconciler
-      #   DIRECT_OPERATING_EXPENSE_61X: operating_document_reconciler
-      #   CARD_MERCHANT_PAYMENT: operating_document_reconciler
-      #   FOREIGN_VENDOR_GOODS_PAYMENT: supplier_reconciler
-      #   FOREIGN_VENDOR_SERVICES_PAYMENT: supplier_reconciler
-      #   DOMESTIC_RENTAL_LEASE_PAYMENT: supplier_reconciler
-      #   FOREIGN_RENTAL_LEASE_PAYMENT: supplier_reconciler
-      #   INSURANCE_PREMIUM_PAYMENT: insurance_reconciler
-      #   CUSTOMER_REFUND_CREDIT_NOTE: customer_reconciler
-      #   CUSTOMER_ADVANCE_REFUND_4421: customer_reconciler
-      #   CUSTOMER_DEPOSIT_RETURN: customer_reconciler
-      #   PAYROLL_PAYMENT_4432: personnel_social_reconciler
-      #   PERSONNEL_EXPENSE_REIMBURSEMENT: personnel_social_reconciler
-      #   PERSONNEL_ADVANCE_DISBURSEMENT_3431: personnel_social_reconciler
-      #   PERSONNEL_LOAN_DISBURSEMENT: personnel_social_reconciler
-      #   PERSONNEL_OTHER_PAYMENT_443X: personnel_social_reconciler
-      #   SOCIAL_CONTRIBUTION_PAYMENT_444X: personnel_social_reconciler
-      #   STATE_TAX_PAYMENT_445X: state_customs_reconciler
-      #   STATE_TAX_ADVANCE_PAYMENT_3453: state_customs_reconciler
-      #   TAX_WITHHOLDING_REMITTANCE: state_customs_reconciler
-      #   CUSTOMS_IMPORT_ADII_PAYMENT: state_customs_reconciler
-      #   STATE_PENALTY_FINE_PAYMENT: state_customs_reconciler
-      #   GOVERNMENT_GRANT_RETURN: state_customs_reconciler
-      #   GOVERNMENT_ADVANCE_REPAYMENT_1482: financing_reconciler
-      #   CAPEX_IMMOBILISATION_PAYMENT: fixed_asset_reconciler
-      #   CAPEX_ADVANCE_PAYMENT_2397: fixed_asset_reconciler
-      #   FIXED_ASSET_SUPPLIER_PAYMENT_1486_4481: fixed_asset_reconciler
-      #   FINANCING_LOAN_REPAYMENT_148X: financing_reconciler
-      #   TREASURY_CREDIT_REPAYMENT_5530: financing_reconciler
-      #   BILL_DISCOUNTING_REPAYMENT_5520: financing_reconciler
-      #   BOND_PRINCIPAL_REPAYMENT_4484: financing_reconciler
-      #   BOND_COUPON_PAYMENT_4485: financing_reconciler
-      #   OTHER_FINANCING_DEBT_PAYMENT_148X: financing_reconciler
-      #   CAPITAL_REPAYMENT_PAYMENT_4461: equity_related_party_reconciler
-      #   OWNER_WITHDRAWAL_PAYMENT: equity_related_party_reconciler
-      #   SHAREHOLDER_CURRENT_ACCOUNT_PAYMENT_3463_4463: equity_related_party_reconciler
-      #   DIVIDEND_DISTRIBUTION_PAYMENT_4465: equity_related_party_reconciler
-      #   RELATED_PARTY_PAYMENT: equity_related_party_reconciler
-      #   BRANCH_HEAD_OFFICE_TRANSFER_OUT_160X: equity_related_party_reconciler
-      #   SHORT_TERM_INVESTMENT_PURCHASE_350X: financial_asset_reconciler
-      #   LONG_TERM_FINANCIAL_ASSET_PURCHASE_24_25: financial_asset_reconciler
-      #   LOAN_GRANTED_DISBURSEMENT_241X: financial_asset_reconciler
-      #   SECURITY_DEPOSIT_PAID_2486: deposit_guarantee_reconciler
-      #   SECURITY_DEPOSIT_RETURNED_1487: deposit_guarantee_reconciler
-      #   OTHER_FINANCIAL_CHARGE_PAYMENT_63X: financing_reconciler
-      #   NON_CURRENT_PAYMENT_65X: non_current_reconciler
-      #   SUBSIDY_DONATION_GRANTED_656X_6586: non_current_reconciler
-      #   OTHER_CREDITOR_PAYMENT_448X: non_current_reconciler
-      #   BANK_FEE_COMMISSION: treasury_reconciler
-      #   BANK_INTEREST_AGIOS_EXPENSE: treasury_reconciler
-      #   TRANSIT_TRANSFER_OUT_5115: treasury_reconciler
-      #   CASH_WITHDRAWAL_5161: treasury_reconciler
-      #   CHECK_PAYMENT_CLEARING: treasury_reconciler
-      #   BILL_PAYABLE_CLEARING_4415: treasury_reconciler
-      #   FX_CONVERSION_OUTFLOW: treasury_reconciler
-      #   OTHER_TREASURY_PAYMENT: treasury_reconciler
-      #   REVERSAL_RETURN_CHARGEBACK_PAYMENT: treasury_reconciler
-      #   HOLD_AMBIGUOUS_BANK_OUTFLOW: hold_ambiguous_bank_line
-      # default_child: hold_ambiguous_bank_line
-    # # ------------------------------------------------------------------
-    # # STEP 3: SHARED EVIDENCE & LEDGER RECONCILIATION
-    # # ------------------------------------------------------------------
-    # customer_reconciler:
-    #   name: customer_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: customer
-    #     intent_payload_key: bank_transaction_intent
-    #   children: &reconciliation_edges
-    #     RECONCILIATION_READY: compliance_router
-    #     HOLD_RECONCILIATION_NO_MATCH: hold_reconciliation_no_match
-    #     HOLD_RECONCILIATION_PARTIAL_MATCH: hold_reconciliation_partial_match
-    #     HOLD_RECONCILIATION_CONFLICT: hold_reconciliation_conflict
-    #   default_child: hold_reconciliation_conflict
-
-    # supplier_reconciler:
-    #   name: supplier_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: supplier
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # operating_document_reconciler:
-    #   name: operating_document_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: operating_document
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # personnel_social_reconciler:
-    #   name: personnel_social_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: personnel_social
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # state_customs_reconciler:
-    #   name: state_customs_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: state_customs
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # treasury_reconciler:
-    #   name: treasury_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: treasury
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # financing_reconciler:
-    #   name: financing_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: financing
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # equity_related_party_reconciler:
-    #   name: equity_related_party_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: equity_related_party
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # fixed_asset_reconciler:
-    #   name: fixed_asset_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: fixed_asset
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # financial_asset_reconciler:
-    #   name: financial_asset_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: financial_asset
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # deposit_guarantee_reconciler:
-    #   name: deposit_guarantee_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: deposit_guarantee
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # insurance_reconciler:
-    #   name: insurance_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: insurance
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # non_current_reconciler:
-    #   name: non_current_reconciler
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_evidence_reconciler
-    #     reconciliation_family: non_current
-    #     intent_payload_key: bank_transaction_intent
-    #   children: *reconciliation_edges
-    #   default_child: hold_reconciliation_conflict
-
-    # # ------------------------------------------------------------------
-    # # STEP 4: DETERMINISTIC COMPLIANCE ROUTING
-    # # ------------------------------------------------------------------
-    # compliance_router:
-    #   name: compliance_router
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_compliance_router
-    #     intent_payload_key: bank_transaction_intent
-    #     reconciliation_payload_key: reconciliation_result
-    #     entity_tax_profile_key: entity_tax_profile
-    #     ruleset: MA_PCGE_BANK_5141
-    #   children:
-    #     NO_SPECIAL_COMPLIANCE_REQUIRED: pcge_account_resolver
-    #     INPUT_VAT_EVALUATION_REQUIRED: simpl_tva_extractor
-    #     OUTPUT_VAT_EVALUATION_REQUIRED: output_vat_evaluator
-    #     BANKING_VAT_EVALUATION_REQUIRED: bank_fee_agios_splitter
-    #     FOREIGN_PAYMENT_TAX_EVALUATION_REQUIRED: foreign_ras_tva_evaluator
-    #     RENT_RAS_EVALUATION_REQUIRED: rent_ras_evaluator
-    #     DIVIDEND_RAS_EVALUATION_REQUIRED: dividend_ras_evaluator
-    #     FINANCIAL_INCOME_TPPRF_EVALUATION_REQUIRED: tpprf_tax_evaluator
-    #     CUSTOMS_TAX_EVALUATION_REQUIRED: customs_tax_evaluator
-    #     INSURANCE_TCA_EVALUATION_REQUIRED: insurance_tca_evaluator
-    #     HOLD_COMPLIANCE_POLICY_MISSING: hold_compliance_policy_missing
-    #     HOLD_COMPLIANCE_EVIDENCE_MISSING: hold_compliance_evidence_missing
-    #     HOLD_COMPLIANCE_CONFLICT: hold_compliance_conflict
-    #   default_child: hold_compliance_conflict
-
-    # # ------------------------------------------------------------------
-    # # STEP 5: SPECIALIZED STATUTORY TAX EVALUATION
-    # # ------------------------------------------------------------------
-    # bank_fee_agios_splitter:
-    #   name: bank_fee_agios_splitter
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: bank_fee_splitter
-    #   children:
-    #     SPLIT_SUCCESS: simpl_tva_extractor
-    #     HOLD_AMBIGUOUS_FEE: hold_ambiguous_bank_fee
-    #   default_child: hold_ambiguous_bank_fee
-
-    # foreign_ras_tva_evaluator:
-    #   name: foreign_ras_tva_evaluator
-    #   batch_flush_seconds: *flush
-    #   kind: evaluation
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   prompt_key: foreign_ras_tva_prompt
-    #   children:
-    #     RAS_TVA_EVALUATED: pcge_account_resolver
-    #     HOLD_RAS_TAX_AMBIGUITY: hold_ras_tax_ambiguity
-    #     HOLD_OFFICE_DES_CHANGES: hold_office_des_changes
-    #     HOLD_PERMANENT_ESTABLISHMENT: hold_permanent_establishment
-    #   default_child: hold_ras_tax_ambiguity
-
-    # rent_ras_evaluator:
-    #   name: rent_ras_evaluator
-    #   batch_flush_seconds: *flush
-    #   kind: evaluation
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   prompt_key: rent_ras_prompt
-    #   children:
-    #     RENT_RAS_EVALUATED: simpl_tva_extractor
-    #     RENT_RAS_NOT_APPLICABLE: simpl_tva_extractor
-    #     HOLD_RENT_POLICY_MISSING: hold_compliance_policy_missing
-    #     HOLD_RENT_EVIDENCE_MISSING: hold_compliance_evidence_missing
-    #     HOLD_RENT_CONFLICT: hold_compliance_conflict
-    #   default_child: hold_compliance_conflict
-
-    # simpl_tva_extractor:
-    #   name: simpl_tva_extractor
-    #   batch_flush_seconds: *flush
-    #   kind: evaluation
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   prompt_key: simpl_tva_extractor_prompt
-    #   children:
-    #     SIMPL_TVA_VALID: pcge_account_resolver
-    #     SIMPL_TVA_NOT_DEDUCTIBLE: pcge_account_resolver
-    #     SIMPL_TVA_MISSING_FIELDS: hold_missing_vat_evidence
-    #     SIMPL_TVA_INVALID_ICE: hold_invalid_ice
-    #     SIMPL_TVA_POLICY_MISSING: hold_compliance_policy_missing
-    #     SIMPL_TVA_CONFLICT: hold_compliance_conflict
-    #   default_child: hold_compliance_conflict
-
-    # output_vat_evaluator:
-    #   name: output_vat_evaluator
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: output_vat_evaluator
-    #     ruleset: MA_OUTPUT_VAT
-    #     intent_payload_key: bank_transaction_intent
-    #     reconciliation_payload_key: reconciliation_result
-    #     entity_tax_profile_key: entity_tax_profile
-    #   children:
-    #     OUTPUT_VAT_EVALUATED: pcge_account_resolver
-    #     OUTPUT_VAT_NOT_APPLICABLE: pcge_account_resolver
-    #     HOLD_OUTPUT_VAT_POLICY_MISSING: hold_compliance_policy_missing
-    #     HOLD_OUTPUT_VAT_EVIDENCE_MISSING: hold_compliance_evidence_missing
-    #     HOLD_OUTPUT_VAT_CONFLICT: hold_compliance_conflict
-    #   default_child: hold_compliance_conflict
-
-    # dividend_ras_evaluator:
-    #   name: dividend_ras_evaluator
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: dividend_ras_evaluator
-    #     ruleset: MA_DIVIDEND_RAS
-    #     reconciliation_payload_key: reconciliation_result
-    #     entity_tax_profile_key: entity_tax_profile
-    #   children:
-    #     DIVIDEND_RAS_EVALUATED: pcge_account_resolver
-    #     DIVIDEND_RAS_NOT_APPLICABLE: pcge_account_resolver
-    #     HOLD_DIVIDEND_RAS_POLICY_MISSING: hold_compliance_policy_missing
-    #     HOLD_DIVIDEND_RAS_EVIDENCE_MISSING: hold_compliance_evidence_missing
-    #     HOLD_DIVIDEND_RAS_CONFLICT: hold_compliance_conflict
-    #   default_child: hold_compliance_conflict
-
-    # tpprf_tax_evaluator:
-    #   name: tpprf_tax_evaluator
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: tpprf_tax_evaluator
-    #     ruleset: MA_TPPRF
-    #     reconciliation_payload_key: reconciliation_result
-    #     entity_tax_profile_key: entity_tax_profile
-    #   children:
-    #     TPPRF_EVALUATED: pcge_account_resolver
-    #     TPPRF_WITHHOLDING_CONFIRMED: pcge_account_resolver
-    #     TPPRF_NOT_APPLICABLE: pcge_account_resolver
-    #     HOLD_TPPRF_POLICY_MISSING: hold_compliance_policy_missing
-    #     HOLD_TPPRF_EVIDENCE_MISSING: hold_compliance_evidence_missing
-    #     HOLD_TPPRF_CONFLICT: hold_compliance_conflict
-    #   default_child: hold_compliance_conflict
-
-    # customs_tax_evaluator:
-    #   name: customs_tax_evaluator
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: customs_tax_evaluator
-    #     ruleset: MA_ADII_IMPORT
-    #     reconciliation_payload_key: reconciliation_result
-    #     entity_tax_profile_key: entity_tax_profile
-    #   children:
-    #     CUSTOMS_TAX_EVALUATED: simpl_tva_extractor
-    #     CUSTOMS_TAX_NOT_APPLICABLE: pcge_account_resolver
-    #     HOLD_CUSTOMS_POLICY_MISSING: hold_compliance_policy_missing
-    #     HOLD_CUSTOMS_EVIDENCE_MISSING: hold_compliance_evidence_missing
-    #     HOLD_CUSTOMS_CONFLICT: hold_compliance_conflict
-    #   default_child: hold_compliance_conflict
-
-    # insurance_tca_evaluator:
-    #   name: insurance_tca_evaluator
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: insurance_tca_evaluator
-    #     ruleset: MA_INSURANCE_TCA
-    #     reconciliation_payload_key: reconciliation_result
-    #     entity_tax_profile_key: entity_tax_profile
-    #   children:
-    #     INSURANCE_TCA_EVALUATED: pcge_account_resolver
-    #     INSURANCE_TCA_INCLUDED_IN_PREMIUM: pcge_account_resolver
-    #     INSURANCE_TCA_NOT_APPLICABLE: pcge_account_resolver
-    #     HOLD_INSURANCE_TCA_POLICY_MISSING: hold_compliance_policy_missing
-    #     HOLD_INSURANCE_TCA_EVIDENCE_MISSING: hold_compliance_evidence_missing
-    #     HOLD_INSURANCE_TCA_CONFLICT: hold_compliance_conflict
-    #   default_child: hold_compliance_conflict
-
-    # # ------------------------------------------------------------------
-    # # STEP 6: FINAL PCGE COUNTERPART ACCOUNT RESOLUTION
-    # # ------------------------------------------------------------------
-    # pcge_account_resolver:
-    #   name: pcge_account_resolver
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: pcge_account_resolver
-    #     chart_of_accounts: MA_PCGE
-    #     bank_account_code: "5141"
-    #     intent_payload_key: bank_transaction_intent
-    #     reconciliation_payload_key: reconciliation_result
-    #     compliance_payload_key: compliance_result
-    #     entity_account_policy_key: entity_account_policy
-    #   children:
-    #     PCGE_ACCOUNT_RESOLVED: journal_builder
-    #     HOLD_PCGE_ACCOUNT_UNMAPPED: hold_pcge_account_unmapped
-    #     HOLD_PCGE_ACCOUNT_CONFLICT: hold_pcge_account_conflict
-    #     HOLD_PCGE_POSTING_POLICY_MISSING: hold_pcge_posting_policy_missing
-    #   default_child: hold_pcge_account_conflict
-
-    # # ------------------------------------------------------------------
-    # # STEP 7: BUILD IMMUTABLE PCGE JOURNAL DRAFT
-    # # ------------------------------------------------------------------
-    # journal_builder:
-    #   name: journal_builder
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: pcge_journal_builder
-    #     ruleset: MA_PCGE_BANK_5141
-    #     bank_account_code: "5141"
-    #     bank_journal_code_policy_key: bank_journal_code
-    #     transaction_payload_key: normalized_bank_transaction
-    #     intent_payload_key: bank_transaction_intent
-    #     reconciliation_payload_key: reconciliation_result
-    #     compliance_payload_key: compliance_result
-    #     account_resolution_payload_key: pcge_account_resolution
-    #     entity_account_policy_key: entity_account_policy
-    #     accounting_period_policy_key: accounting_period_policy
-    #     currency_policy_key: currency_policy
-    #     output_payload_key: journal_draft
-    #     amount_scale: 2
-    #     balance_tolerance: "0.00"
-    #     require_exact_bank_line_amount: true
-    #     require_bank_line_account: "5141"
-    #     require_source_traceability: true
-    #     require_idempotency_key: true
-    #     idempotency_key_fields:
-    #       - entity_id
-    #       - bank_account_id
-    #       - transaction_id
-    #       - statement_line_sequence
-    #     forbid_suspense_accounts: true
-    #     draft_status: PENDING_VALIDATION
-    #   children:
-    #     JOURNAL_DRAFT_BUILT: journal_validator
-    #     HOLD_JOURNAL_INPUT_MISSING: hold_journal_input_missing
-    #     HOLD_JOURNAL_COMPONENT_UNMAPPED: hold_journal_component_unmapped
-    #     HOLD_JOURNAL_UNBALANCED: hold_journal_unbalanced
-    #     HOLD_JOURNAL_PERIOD_CLOSED: hold_journal_period_closed
-    #     HOLD_JOURNAL_CURRENCY_CONFLICT: hold_journal_currency_conflict
-    #     HOLD_JOURNAL_CONFLICT: hold_journal_conflict
-    #   default_child: hold_journal_conflict
-
-    # # ------------------------------------------------------------------
-    # # STEP 8: INDEPENDENT JOURNAL CONTROL VALIDATION
-    # # ------------------------------------------------------------------
-    # journal_validator:
-    #   name: journal_validator
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: pcge_journal_validator
-    #     ruleset: MA_PCGE_BANK_5141
-    #     chart_of_accounts: MA_PCGE
-    #     bank_account_code: "5141"
-    #     transaction_payload_key: normalized_bank_transaction
-    #     reconciliation_payload_key: reconciliation_result
-    #     compliance_payload_key: compliance_result
-    #     account_resolution_payload_key: pcge_account_resolution
-    #     journal_draft_payload_key: journal_draft
-    #     entity_account_policy_key: entity_account_policy
-    #     accounting_period_policy_key: accounting_period_policy
-    #     currency_policy_key: currency_policy
-    #     approval_policy_key: bank_journal_approval_policy
-    #     output_payload_key: journal_validation_result
-    #     amount_scale: 2
-    #     balance_tolerance: "0.00"
-    #     require_draft_status: PENDING_VALIDATION
-    #     require_exactly_one_bank_line: true
-    #     require_bank_line_account: "5141"
-    #     require_bank_direction_match: true
-    #     require_exact_bank_line_amount: true
-    #     require_functional_currency_balance: true
-    #     require_transaction_currency_reconciliation: true
-    #     require_active_postable_accounts: true
-    #     require_component_account_authorization: true
-    #     require_tax_line_provenance: true
-    #     require_third_party_identity: true
-    #     require_open_accounting_period: true
-    #     require_source_document_links: true
-    #     require_source_content_hashes: true
-    #     require_idempotency_key: true
-    #     require_duplicate_lookup: true
-    #     require_independent_validator: true
-    #     allow_self_approval: false
-    #     forbid_suspense_accounts: true
-    #     validated_status: VALIDATED
-    #   children:
-    #     JOURNAL_VALIDATED: post_bank_cash_journal
-    #     HOLD_JOURNAL_SCHEMA_INVALID: hold_journal_schema_invalid
-    #     HOLD_JOURNAL_BANK_LINE_MISMATCH: hold_journal_bank_line_mismatch
-    #     HOLD_JOURNAL_BALANCE_INVALID: hold_journal_unbalanced
-    #     HOLD_JOURNAL_ACCOUNT_INVALID: hold_journal_component_unmapped
-    #     HOLD_JOURNAL_TAX_ALLOCATION_INVALID: hold_journal_tax_allocation_invalid
-    #     HOLD_JOURNAL_PERIOD_INVALID: hold_journal_period_closed
-    #     HOLD_JOURNAL_CURRENCY_INVALID: hold_journal_currency_conflict
-    #     HOLD_JOURNAL_DUPLICATE: hold_journal_duplicate
-    #     HOLD_JOURNAL_TRACEABILITY_INVALID: hold_journal_traceability_invalid
-    #     HOLD_JOURNAL_APPROVAL_REQUIRED: hold_journal_approval_required
-    #     HOLD_JOURNAL_VALIDATION_CONFLICT: hold_journal_validation_conflict
-    #   default_child: hold_journal_validation_conflict
-
-    # # ------------------------------------------------------------------
-    # # STEP 9: COMMIT VALIDATED JOURNAL ENTRY & BANK RECONCILIATION
-    # # ------------------------------------------------------------------
-    # post_bank_cash_journal:
-    #   name: post_bank_cash_journal
-    #   batch_flush_seconds: *flush
-    #   kind: action
-    #   batch_size: *bsize
-    #   edge_type: *estatic
-    #   execution_parameters:
-    #     action_provider: pcge_bank_journal_committer
-    #     ruleset: MA_PCGE_BANK_5141
-    #     transaction_payload_key: normalized_bank_transaction
-    #     reconciliation_payload_key: reconciliation_result
-    #     journal_draft_payload_key: journal_draft
-    #     journal_validation_payload_key: journal_validation_result
-    #     accounting_period_policy_key: accounting_period_policy
-    #     entity_account_policy_key: entity_account_policy
-    #     output_payload_key: posting_result
-    #     required_draft_status: PENDING_VALIDATION
-    #     required_validation_status: VALIDATED
-    #     require_draft_hash_match: true
-    #     require_policy_version_match: true
-    #     require_open_accounting_period_at_commit: true
-    #     require_idempotency_key: true
-    #     idempotent_replay_requires_hash_match: true
-    #     transaction_isolation: SERIALIZABLE
-    #     lock_scope: ENTITY_BANK_TRANSACTION
-    #     atomic_commit_operations:
-    #       - LOCK_BANK_TRANSACTION
-    #       - VERIFY_NOT_POSTED
-    #       - VERIFY_VALIDATION_AND_POLICY_VERSIONS
-    #       - INSERT_JOURNAL_HEADER
-    #       - INSERT_JOURNAL_LINES
-    #       - INSERT_RECONCILIATION_ALLOCATIONS
-    #       - MARK_BANK_TRANSACTION_RECONCILED
-    #       - INSERT_AUDIT_RECORD
-    #       - INSERT_TRANSACTIONAL_OUTBOX_EVENT
-    #     journal_status_after_commit: POSTED
-    #     bank_transaction_status_after_commit: RECONCILED
-    #     outbox_event_type: ACCOUNTING.BANK_JOURNAL.POSTED
-    #     transient_retry_limit: 3
-    #     transient_retryable_errors:
-    #       - SERIALIZATION_FAILURE
-    #       - DEADLOCK_DETECTED
-    #       - CONNECTION_INTERRUPTED_BEFORE_COMMIT_RESULT
-    #   children:
-    #     POST_COMMITTED: bank_cash_complete
-    #     POST_IDEMPOTENT_REPLAY: bank_cash_complete
-    #     HOLD_POST_VALIDATION_STALE: hold_post_validation_stale
-    #     HOLD_POST_DUPLICATE_CONFLICT: hold_post_duplicate_conflict
-    #     HOLD_POST_PERIOD_CLOSED: hold_journal_period_closed
-    #     HOLD_POST_POLICY_VERSION_CHANGED: hold_post_policy_version_changed
-    #     HOLD_POST_LEDGER_CONFLICT: hold_post_ledger_conflict
-    #     HOLD_POST_RECONCILIATION_CONFLICT: hold_post_reconciliation_conflict
-    #     HOLD_POST_COMMIT_FAILED: hold_post_commit_failed
-    #   default_child: hold_post_commit_failed
-
-    # hold_office_des_changes:
-    #   name: hold_office_des_changes
-    #   kind: terminal
-    #   hold_state_signal: HOLD_OFFICE_DES_CHANGES
-    #   hold_reason_string: "Foreign transfer violates exchange control limits or lacks registered commercial contract."
-    #   annotation:
-    #     tax_rule_code: "Réglementation des Changes / Office des Changes"
-    #     document_required: "Contrat commercial enregistré / Justificatif de dotation commerce électronique"
-    #     instruction: "Vérifier le plafond de la dotation ou transmettre le contrat à la banque intermédiaire pour domiciliation."
-    #     severity: "BLOCKING"
-
-    # hold_permanent_establishment:
-    #   name: hold_permanent_establishment
-    #   kind: terminal
-    #   hold_state_signal: HOLD_PERMANENT_ESTABLISHMENT
-    #   hold_reason_string: "Foreign service provider presence indicates Permanent Establishment risk under CGI Art. 12."
-    #   annotation:
-    #     tax_rule_code: "CGI Art. 12 & Conventions Fiscales (Établissement Stable)"
-    #     document_required: "Relevé de présence chantier/mission & Contrat de prestation"
-    #     instruction: "Évaluer la durée de présence physique au Maroc pour soumettre le prestataire à l'IS local au lieu de la RAS."
-    #     severity: "CRITICAL"
-
-    # # ------------------------------------------------------------------
-    # # HOLD & TERMINAL STATES
-    # # ------------------------------------------------------------------
-    # hold_post_validation_stale:
-    #   name: hold_post_validation_stale
-    #   kind: terminal
-    #   hold_state_signal: HOLD_POST_VALIDATION_STALE
-    #   hold_reason_string: "The validated journal draft changed, expired, or no longer matches the validation record presented for commit."
-    #   annotation:
-    #     document_required: "Current immutable journal draft and a validation result containing the same content hash"
-    #     instruction: "Rerun independent validation against the unchanged current draft before attempting commit."
-    #     severity: "BLOCKING"
-
-    # hold_post_duplicate_conflict:
-    #   name: hold_post_duplicate_conflict
-    #   kind: terminal
-    #   hold_state_signal: HOLD_POST_DUPLICATE_CONFLICT
-    #   hold_reason_string: "The idempotency key already exists, but the persisted journal or reconciliation hash differs from the validated request."
-    #   annotation:
-    #     document_required: "Existing posting, current validated draft, idempotency record, and bank transaction identity"
-    #     instruction: "Investigate the conflicting posting. Do not treat a hash mismatch as an idempotent replay."
-    #     severity: "CRITICAL"
-
-    # hold_post_policy_version_changed:
-    #   name: hold_post_policy_version_changed
-    #   kind: terminal
-    #   hold_state_signal: HOLD_POST_POLICY_VERSION_CHANGED
-    #   hold_reason_string: "An accounting, tax, period, approval, or account-mapping policy changed after journal validation."
-    #   annotation:
-    #     document_required: "Current policy versions and the versions captured by the journal validation record"
-    #     instruction: "Rebuild and revalidate the journal under the current effective policies before posting."
-    #     severity: "BLOCKING"
-
-    # hold_post_ledger_conflict:
-    #   name: hold_post_ledger_conflict
-    #   kind: terminal
-    #   hold_state_signal: HOLD_POST_LEDGER_CONFLICT
-    #   hold_reason_string: "The target ledger rejected the validated journal because account, sequence, period, or concurrent ledger state changed at commit time."
-    #   annotation:
-    #     document_required: "Ledger conflict details, journal draft, account state, journal sequence, and accounting-period state"
-    #     instruction: "Resolve the authoritative ledger conflict, then rebuild and revalidate when any accounting fact changed."
-    #     severity: "BLOCKING"
-
-    # hold_post_reconciliation_conflict:
-    #   name: hold_post_reconciliation_conflict
-    #   kind: terminal
-    #   hold_state_signal: HOLD_POST_RECONCILIATION_CONFLICT
-    #   hold_reason_string: "The bank transaction or reconciliation allocation changed concurrently and cannot be committed with this journal."
-    #   annotation:
-    #     document_required: "Current bank transaction version, reconciliation allocations, and competing workflow or posting records"
-    #     instruction: "Resolve the concurrent reconciliation ownership conflict before rebuilding the journal."
-    #     severity: "BLOCKING"
-
-    # hold_post_commit_failed:
-    #   name: hold_post_commit_failed
-    #   kind: terminal
-    #   hold_state_signal: HOLD_POST_COMMIT_FAILED
-    #   hold_reason_string: "The atomic journal, reconciliation, audit, and outbox transaction failed after the permitted transient retries."
-    #   annotation:
-    #     document_required: "Commit error record, database transaction identifier, retry history, and current idempotency state"
-    #     instruction: "Verify whether the transaction committed before retrying. Resume through the same idempotency key only after commit state is known."
-    #     severity: "CRITICAL"
-
-    # hold_journal_schema_invalid:
-    #   name: hold_journal_schema_invalid
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_SCHEMA_INVALID
-    #   hold_reason_string: "The journal draft does not satisfy the required immutable journal schema or contains incomplete line metadata."
-    #   annotation:
-    #     document_required: "Complete journal header, line identifiers, debit and credit fields, currencies, dates, source references, and draft version"
-    #     instruction: "Regenerate the draft from the canonical builder schema. Do not repair malformed journal lines during validation."
-    #     severity: "BLOCKING"
-
-    # hold_journal_bank_line_mismatch:
-    #   name: hold_journal_bank_line_mismatch
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_BANK_LINE_MISMATCH
-    #   hold_reason_string: "The journal draft has a missing, duplicated, incorrectly directed, or incorrectly valued 5141 bank line."
-    #   annotation:
-    #     document_required: "Normalized bank transaction and complete journal draft"
-    #     instruction: "Rebuild exactly one 5141 line whose debit or credit direction and amount match the normalized bank movement."
-    #     severity: "BLOCKING"
-
-    # hold_journal_tax_allocation_invalid:
-    #   name: hold_journal_tax_allocation_invalid
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_TAX_ALLOCATION_INVALID
-    #   hold_reason_string: "VAT, withholding, customs, insurance tax, or financial-income tax lines do not reconcile to the approved compliance assessment."
-    #   annotation:
-    #     document_required: "Approved compliance result, taxable bases, rates, tax amounts, tax account mappings, and source documents"
-    #     instruction: "Correct the tax allocation at its compliance or account-resolution source, then rebuild the journal."
-    #     severity: "BLOCKING"
-
-    # hold_journal_duplicate:
-    #   name: hold_journal_duplicate
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_DUPLICATE
-    #   hold_reason_string: "The journal idempotency key or bank transaction identity already exists in a draft, committed entry, or reconciliation record."
-    #   annotation:
-    #     document_required: "Existing journal entry, idempotency record, bank transaction identity, and reversal history"
-    #     instruction: "Link to the existing entry or execute the approved reversal workflow. Never create a second posting for the same bank line."
-    #     severity: "BLOCKING"
-
-    # hold_journal_traceability_invalid:
-    #   name: hold_journal_traceability_invalid
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_TRACEABILITY_INVALID
-    #   hold_reason_string: "The journal draft cannot be traced completely to immutable bank, reconciliation, compliance, or source-document evidence."
-    #   annotation:
-    #     document_required: "Source document identifiers, content hashes, bank statement line identity, reconciliation record, and policy versions"
-    #     instruction: "Restore complete lineage and verified content hashes before journal approval or posting."
-    #     severity: "BLOCKING"
-
-    # hold_journal_approval_required:
-    #   name: hold_journal_approval_required
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_APPROVAL_REQUIRED
-    #   hold_reason_string: "The journal satisfies technical controls but requires approval under the entity's amount, risk, exception, or segregation-of-duties policy."
-    #   annotation:
-    #     document_required: "Authorized approval referencing the immutable journal draft hash"
-    #     instruction: "Obtain approval from an authorized reviewer who did not build the draft, then resume validation against the unchanged draft."
-    #     severity: "ACTION_REQUIRED"
-
-    # hold_journal_validation_conflict:
-    #   name: hold_journal_validation_conflict
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_VALIDATION_CONFLICT
-    #   hold_reason_string: "Independent validation controls returned contradictory results or no deterministic validation outcome."
-    #   annotation:
-    #     document_required: "Journal draft, validation report, effective policies, and authoritative control evidence"
-    #     instruction: "Resolve the control conflict and rerun the full validation suite before posting."
-    #     severity: "BLOCKING"
-
-    # hold_journal_input_missing:
-    #   name: hold_journal_input_missing
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_INPUT_MISSING
-    #   hold_reason_string: "The journal draft cannot be constructed because a required normalized transaction, reconciliation, compliance, or account-resolution field is missing."
-    #   annotation:
-    #     document_required: "Normalized bank line, reconciliation allocation, compliance assessment, resolved PCGE accounts, and entity journal policy"
-    #     instruction: "Restore the missing upstream payload and rebuild the journal draft without inferring accounting facts."
-    #     severity: "BLOCKING"
-
-    # hold_journal_component_unmapped:
-    #   name: hold_journal_component_unmapped
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_COMPONENT_UNMAPPED
-    #   hold_reason_string: "At least one reconciled component has no approved PCGE account or analytic allocation."
-    #   annotation:
-    #     document_required: "Complete component-level account mapping for principal, VAT, withholding, fees, interest, exchange differences, and analytic dimensions"
-    #     instruction: "Approve every component mapping before reconstructing the journal draft. Suspense-account substitution is prohibited."
-    #     severity: "BLOCKING"
-
-    # hold_journal_unbalanced:
-    #   name: hold_journal_unbalanced
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_UNBALANCED
-    #   hold_reason_string: "The generated journal draft does not balance exactly at the configured currency precision or does not reconcile to the bank amount."
-    #   annotation:
-    #     document_required: "Complete allocation schedule and source amounts for all journal components"
-    #     instruction: "Resolve rounding, VAT, withholding, fee, foreign-exchange, or residual allocation differences. Do not force-balance the entry."
-    #     severity: "BLOCKING"
-
-    # hold_journal_period_closed:
-    #   name: hold_journal_period_closed
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_PERIOD_CLOSED
-    #   hold_reason_string: "The applicable accounting period is closed or the posting-date policy does not permit this journal date."
-    #   annotation:
-    #     document_required: "Approved accounting calendar, reopening authorization, or next-open-period adjustment policy"
-    #     instruction: "Obtain period authorization or apply the approved adjustment-date policy before rebuilding the draft."
-    #     severity: "BLOCKING"
-
-    # hold_journal_currency_conflict:
-    #   name: hold_journal_currency_conflict
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_CURRENCY_CONFLICT
-    #   hold_reason_string: "Transaction currency, functional currency, exchange rate, or translated journal amounts are missing or inconsistent."
-    #   annotation:
-    #     document_required: "Bank currency, entity functional currency, approved exchange rate source, and foreign-currency reconciliation"
-    #     instruction: "Resolve the currency and exchange-rate evidence, then rebuild both transaction-currency and functional-currency amounts."
-    #     severity: "BLOCKING"
-
-    # hold_journal_conflict:
-    #   name: hold_journal_conflict
-    #   kind: terminal
-    #   hold_state_signal: HOLD_JOURNAL_CONFLICT
-    #   hold_reason_string: "The journal builder received contradictory accounting facts or could not produce one deterministic draft."
-    #   annotation:
-    #     document_required: "Authoritative bank line, source documents, reconciliation result, compliance result, and account-resolution record"
-    #     instruction: "Resolve the conflicting upstream facts before journal construction. Never choose one accounting treatment arbitrarily."
-    #     severity: "BLOCKING"
-
-    # hold_pcge_account_unmapped:
-    #   name: hold_pcge_account_unmapped
-    #   kind: terminal
-    #   hold_state_signal: HOLD_PCGE_ACCOUNT_UNMAPPED
-    #   hold_reason_string: "The reconciled economic event has no approved counterpart account in the entity's PCGE mapping policy."
-    #   annotation:
-    #     document_required: "Entity chart of accounts and approved intent-to-account mapping"
-    #     instruction: "Map the reconciled intent to an authorized posting account without changing the standard 5141 bank-side entry."
-    #     severity: "ACTION_REQUIRED"
-
-    # hold_pcge_account_conflict:
-    #   name: hold_pcge_account_conflict
-    #   kind: terminal
-    #   hold_state_signal: HOLD_PCGE_ACCOUNT_CONFLICT
-    #   hold_reason_string: "More than one PCGE counterpart account remains valid after reconciliation and compliance evaluation."
-    #   annotation:
-    #     document_required: "Authoritative accounting policy, source document, and prior posting history"
-    #     instruction: "Resolve the account conflict and approve exactly one account allocation before journal construction."
-    #     severity: "BLOCKING"
-
-    # hold_pcge_posting_policy_missing:
-    #   name: hold_pcge_posting_policy_missing
-    #   kind: terminal
-    #   hold_state_signal: HOLD_PCGE_POSTING_POLICY_MISSING
-    #   hold_reason_string: "The entity-specific posting policy required to resolve the PCGE account is unavailable or inactive."
-    #   annotation:
-    #     document_required: "Approved entity chart of accounts, account overrides, analytic dimensions, and effective-date policy"
-    #     instruction: "Publish the missing entity posting policy before journal construction."
-    #     severity: "BLOCKING"
-
-    # hold_compliance_policy_missing:
-    #   name: hold_compliance_policy_missing
-    #   kind: terminal
-    #   hold_state_signal: HOLD_COMPLIANCE_POLICY_MISSING
-    #   hold_reason_string: "The entity tax profile or applicable compliance policy is unavailable for this transaction."
-    #   annotation:
-    #     document_required: "Entity tax profile, VAT regime, withholding profile, fiscal period, and applicable exemptions"
-    #     instruction: "Complete or approve the entity compliance configuration before evaluating payment-time tax obligations."
-    #     severity: "BLOCKING"
-
-    # hold_compliance_evidence_missing:
-    #   name: hold_compliance_evidence_missing
-    #   kind: terminal
-    #   hold_state_signal: HOLD_COMPLIANCE_EVIDENCE_MISSING
-    #   hold_reason_string: "The transaction is reconciled, but required tax or regulatory evidence is missing."
-    #   annotation:
-    #     document_required: "Intent-specific invoice, contract, tax receipt, residency certificate, customs declaration, or withholding evidence"
-    #     instruction: "Collect the compliance evidence required by the selected policy before PCGE account resolution."
-    #     severity: "ACTION_REQUIRED"
-
-    # hold_compliance_conflict:
-    #   name: hold_compliance_conflict
-    #   kind: terminal
-    #   hold_state_signal: HOLD_COMPLIANCE_CONFLICT
-    #   hold_reason_string: "The applicable compliance rules produce contradictory treatments or no deterministic routing outcome."
-    #   annotation:
-    #     document_required: "Authoritative tax position, entity policy, and reviewed supporting documents"
-    #     instruction: "Resolve the conflicting VAT, withholding, treaty, customs, or entity-policy treatment before posting."
-    #     severity: "BLOCKING"
-
-    # hold_reconciliation_no_match:
-    #   name: hold_reconciliation_no_match
-    #   kind: terminal
-    #   hold_state_signal: HOLD_RECONCILIATION_NO_MATCH
-    #   hold_reason_string: "No ledger entry or supporting evidence satisfies the reconciliation policy for this bank transaction."
-    #   annotation:
-    #     document_required: "Intent-specific source document or corresponding ledger entry"
-    #     instruction: "Obtain the missing evidence or identify the correct open item before accounting treatment and posting."
-    #     severity: "ACTION_REQUIRED"
-
-    # hold_reconciliation_partial_match:
-    #   name: hold_reconciliation_partial_match
-    #   kind: terminal
-    #   hold_state_signal: HOLD_RECONCILIATION_PARTIAL_MATCH
-    #   hold_reason_string: "Available evidence explains only part of the bank transaction amount or leaves an unresolved residual."
-    #   annotation:
-    #     document_required: "Complete allocation schedule, remaining invoice, credit note, fee, withholding, or exchange-difference evidence"
-    #     instruction: "Resolve the residual amount and produce a complete allocation whose components equal the bank amount."
-    #     severity: "ACTION_REQUIRED"
-
-    # hold_reconciliation_conflict:
-    #   name: hold_reconciliation_conflict
-    #   kind: terminal
-    #   hold_state_signal: HOLD_RECONCILIATION_CONFLICT
-    #   hold_reason_string: "Multiple records match the bank transaction or the available evidence contains contradictory accounting facts."
-    #   annotation:
-    #     document_required: "Authoritative counterparty document and ledger reconciliation history"
-    #     instruction: "Resolve duplicate, contradictory, or already-posted records before allowing the transaction to continue."
-    #     severity: "BLOCKING"
-
-    # hold_invalid_cash_direction:
-    #   name: hold_invalid_cash_direction
-    #   kind: terminal
-    #   hold_state_signal: HOLD_INVALID_CASH_DIRECTION
-    #   hold_reason_string: "Bank transaction direction is missing or is not one of INFLOW or OUTFLOW."
-    #   annotation:
-    #     document_required: "Normalized bank transaction amount and debit/credit indicator"
-    #     instruction: "Correct the bank-line normalization before transaction-intent classification."
-    #     severity: "BLOCKING"
-
-    # hold_ambiguous_bank_line:
-    #   name: hold_ambiguous_bank_line
-    #   kind: terminal
-    #   hold_state_signal: HOLD_AMBIGUOUS_BANK_LINE
-    #   hold_reason_string: "Bank statement description is unidentifiable and requires human accountant review or situation memory lookup."
-    #   annotation:
-    #     tax_rule_code: "PCGM / Diligence Comptable"
-    #     document_required: "Justificatif de dépense / Facture / Contrat"
-    #     instruction: "Vérifier la nature de l'opération auprès du client et imputer au compte de charge ou de tiers approprié."
-    #     severity: "ACTION_REQUIRED"
-
-    # hold_ambiguous_bank_fee:
-    #   name: hold_ambiguous_bank_fee
-    #   kind: terminal
-    #   hold_state_signal: HOLD_AMBIGUOUS_BANK_FEE
-    #   hold_reason_string: "Bank fee cannot be split deterministically into 10% VAT and HT charges."
-    #   annotation:
-    #     tax_rule_code: "CGI Art. 89-I-12° (TVA Bancaire 10%)"
-    #     document_required: "Avis d'opéré bancaire / Relevé d'agios"
-    #     instruction: "Vérifier la décomposition HT et TVA 10% sur l'avis d'opéré bancaire émis par la banque."
-    #     severity: "WARNING"
-
-    # hold_ras_tax_ambiguity:
-    #   name: hold_ras_tax_ambiguity
-    #   kind: terminal
-    #   hold_state_signal: HOLD_RAS_TAX_AMBIGUITY
-    #   hold_reason_string: "Foreign service payment requires tax residency certificate or RAS non-résidents tax clarification."
-    #   annotation:
-    #     tax_rule_code: "CGI Art. 15 (RAS Non-résidents 10%) & Art. 115 (TVA Auto-liquidation)"
-    #     document_required: "Certificat de résidence fiscale étranger / Facture fournisseur étranger"
-    #     instruction: "Obtenir le certificat de résidence fiscale ou procéder au calcul de la RAS de 10% (Compte 445800) et auto-liquidation TVA 20%."
-    #     severity: "ACTION_REQUIRED"
-
-    # hold_missing_vat_evidence:
-    #   name: hold_missing_vat_evidence
-    #   kind: terminal
-    #   hold_state_signal: HOLD_MISSING_VAT_EVIDENCE
-    #   hold_reason_string: "Mandatory SIMPL-TVA cash deduction fields are incomplete."
-    #   annotation:
-    #     tax_rule_code: "CGI Art. 112 - état détaillé des déductions TVA"
-    #     document_required: "Facture d'achat originale avec mentions légales complètes"
-    #     instruction: "Renseigner les 8 indications de l'état détaillé des déductions: référence de facture, fournisseur, identifiant fiscal, ICE, désignation, montant HT, TVA et mode/références de paiement."
-    #     severity: "ACTION_REQUIRED"
-
-    # hold_invalid_ice:
-    #   name: hold_invalid_ice
-    #   kind: terminal
-    #   hold_state_signal: HOLD_INVALID_ICE
-    #   hold_reason_string: "Counterparty 15-digit Identifiant Commun de l'Entreprise (ICE) is missing or invalid."
-    #   annotation:
-    #     tax_rule_code: "CGI Art. 125 & 145 (ICE Obligatoire)"
-    #     document_required: "Facture originale avec ICE 15 chiffres"
-    #     instruction: "Collecter l'ICE valide auprès du fournisseur pour éviter le rejet du droit à déduction TVA sur SIMPL-TVA."
-    #     severity: "BLOCKING"
-
-    # bank_cash_complete:
-    #   name: bank_cash_complete
-    #   kind: terminal
-    #   execution_parameters:
-    #     close_status: POSTED_AND_RECONCILED
-    #     result_payload_key: posting_result
-    #     require_posting_status:
-    #       - POST_COMMITTED
-    #       - POST_IDEMPOTENT_REPLAY
-          
-    debug_terminal:
-      name: debug_terminal
-      batch_size: *bsize
+        SUPPLIER_INVOICE_PAYMENT_4411: supplier_reconciler
+        SUPPLIER_RETENTION_PAYMENT_4413: supplier_reconciler
+        SUPPLIER_ADVANCE_PAYMENT_3411: supplier_reconciler
+        DIRECT_OPERATING_EXPENSE_61X: operating_document_reconciler
+        CARD_MERCHANT_PAYMENT: operating_document_reconciler
+        FOREIGN_VENDOR_GOODS_PAYMENT: supplier_reconciler
+        FOREIGN_VENDOR_SERVICES_PAYMENT: supplier_reconciler
+        DOMESTIC_RENTAL_LEASE_PAYMENT: supplier_reconciler
+        FOREIGN_RENTAL_LEASE_PAYMENT: supplier_reconciler
+        INSURANCE_PREMIUM_PAYMENT: insurance_reconciler
+        CUSTOMER_REFUND_CREDIT_NOTE: customer_reconciler
+        CUSTOMER_ADVANCE_REFUND_4421: customer_reconciler
+        CUSTOMER_DEPOSIT_RETURN: customer_reconciler
+        PAYROLL_PAYMENT_4432: personnel_social_reconciler
+        PERSONNEL_EXPENSE_REIMBURSEMENT: personnel_social_reconciler
+        PERSONNEL_ADVANCE_DISBURSEMENT_3431: personnel_social_reconciler
+        PERSONNEL_LOAN_DISBURSEMENT: personnel_social_reconciler
+        PERSONNEL_OTHER_PAYMENT_443X: personnel_social_reconciler
+        SOCIAL_CONTRIBUTION_PAYMENT_444X: personnel_social_reconciler
+        STATE_TAX_PAYMENT_445X: state_customs_reconciler
+        STATE_TAX_ADVANCE_PAYMENT_3453: state_customs_reconciler
+        TAX_WITHHOLDING_REMITTANCE: state_customs_reconciler
+        CUSTOMS_IMPORT_ADII_PAYMENT: state_customs_reconciler
+        STATE_PENALTY_FINE_PAYMENT: state_customs_reconciler
+        GOVERNMENT_GRANT_RETURN: state_customs_reconciler
+        GOVERNMENT_ADVANCE_REPAYMENT_1482: financing_reconciler
+        CAPEX_IMMOBILISATION_PAYMENT: fixed_asset_reconciler
+        CAPEX_ADVANCE_PAYMENT_2397: fixed_asset_reconciler
+        FIXED_ASSET_SUPPLIER_PAYMENT_1486_4481: fixed_asset_reconciler
+        FINANCING_LOAN_REPAYMENT_148X: financing_reconciler
+        TREASURY_CREDIT_REPAYMENT_5530: financing_reconciler
+        BILL_DISCOUNTING_REPAYMENT_5520: financing_reconciler
+        BOND_PRINCIPAL_REPAYMENT_4484: financing_reconciler
+        BOND_COUPON_PAYMENT_4485: financing_reconciler
+        OTHER_FINANCING_DEBT_PAYMENT_148X: financing_reconciler
+        CAPITAL_REPAYMENT_PAYMENT_4461: equity_related_party_reconciler
+        OWNER_WITHDRAWAL_PAYMENT: equity_related_party_reconciler
+        SHAREHOLDER_CURRENT_ACCOUNT_PAYMENT_3463_4463: equity_related_party_reconciler
+        DIVIDEND_DISTRIBUTION_PAYMENT_4465: equity_related_party_reconciler
+        RELATED_PARTY_PAYMENT: equity_related_party_reconciler
+        BRANCH_HEAD_OFFICE_TRANSFER_OUT_160X: equity_related_party_reconciler
+        SHORT_TERM_INVESTMENT_PURCHASE_350X: financial_asset_reconciler
+        LONG_TERM_FINANCIAL_ASSET_PURCHASE_24_25: financial_asset_reconciler
+        LOAN_GRANTED_DISBURSEMENT_241X: financial_asset_reconciler
+        SECURITY_DEPOSIT_PAID_2486: deposit_guarantee_reconciler
+        SECURITY_DEPOSIT_RETURNED_1487: deposit_guarantee_reconciler
+        OTHER_FINANCIAL_CHARGE_PAYMENT_63X: financing_reconciler
+        NON_CURRENT_PAYMENT_65X: non_current_reconciler
+        SUBSIDY_DONATION_GRANTED_656X_6586: non_current_reconciler
+        OTHER_CREDITOR_PAYMENT_448X: non_current_reconciler
+        BANK_FEE_COMMISSION: treasury_reconciler
+        BANK_INTEREST_AGIOS_EXPENSE: treasury_reconciler
+        TRANSIT_TRANSFER_OUT_5115: treasury_reconciler
+        CASH_WITHDRAWAL_5161: treasury_reconciler
+        CHECK_PAYMENT_CLEARING: treasury_reconciler
+        BILL_PAYABLE_CLEARING_4415: treasury_reconciler
+        FX_CONVERSION_OUTFLOW: treasury_reconciler
+        OTHER_TREASURY_PAYMENT: treasury_reconciler
+        REVERSAL_RETURN_CHARGEBACK_PAYMENT: treasury_reconciler
+        HOLD_AMBIGUOUS_BANK_OUTFLOW: hold_ambiguous_bank_line
+      default_child: hold_ambiguous_bank_line
+    # ------------------------------------------------------------------
+    # STEP 3: SHARED EVIDENCE & LEDGER RECONCILIATION
+    # ------------------------------------------------------------------
+    customer_reconciler:
+      name: customer_reconciler
       batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: customer
+        intent_payload_key: bank_transaction_intent
+      children: &reconciliation_edges
+        RECONCILIATION_READY: compliance_router
+        HOLD_RECONCILIATION_NO_MATCH: hold_reconciliation_no_match
+        HOLD_RECONCILIATION_PARTIAL_MATCH: hold_reconciliation_partial_match
+        HOLD_RECONCILIATION_CONFLICT: hold_reconciliation_conflict
+      default_child: hold_reconciliation_conflict
+
+    supplier_reconciler:
+      name: supplier_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: supplier
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    operating_document_reconciler:
+      name: operating_document_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: operating_document
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    personnel_social_reconciler:
+      name: personnel_social_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: personnel_social
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    state_customs_reconciler:
+      name: state_customs_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: state_customs
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    treasury_reconciler:
+      name: treasury_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: treasury
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    financing_reconciler:
+      name: financing_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: financing
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    equity_related_party_reconciler:
+      name: equity_related_party_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: equity_related_party
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    fixed_asset_reconciler:
+      name: fixed_asset_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: fixed_asset
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    financial_asset_reconciler:
+      name: financial_asset_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: financial_asset
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    deposit_guarantee_reconciler:
+      name: deposit_guarantee_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: deposit_guarantee
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    insurance_reconciler:
+      name: insurance_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: insurance
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    non_current_reconciler:
+      name: non_current_reconciler
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_evidence_reconciler
+        reconciliation_family: non_current
+        intent_payload_key: bank_transaction_intent
+      children: *reconciliation_edges
+      default_child: hold_reconciliation_conflict
+
+    # ------------------------------------------------------------------
+    # STEP 4: DETERMINISTIC COMPLIANCE ROUTING
+    # ------------------------------------------------------------------
+    compliance_router:
+      name: compliance_router
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_compliance_router
+        intent_payload_key: bank_transaction_intent
+        reconciliation_payload_key: reconciliation_result
+        entity_tax_profile_key: entity_tax_profile
+        ruleset: MA_PCGE_BANK_5141
+      children:
+        NO_SPECIAL_COMPLIANCE_REQUIRED: pcge_account_resolver
+        INPUT_VAT_EVALUATION_REQUIRED: simpl_tva_extractor
+        OUTPUT_VAT_EVALUATION_REQUIRED: output_vat_evaluator
+        BANKING_VAT_EVALUATION_REQUIRED: bank_fee_agios_splitter
+        FOREIGN_PAYMENT_TAX_EVALUATION_REQUIRED: foreign_ras_tva_evaluator
+        RENT_RAS_EVALUATION_REQUIRED: rent_ras_evaluator
+        DIVIDEND_RAS_EVALUATION_REQUIRED: dividend_ras_evaluator
+        FINANCIAL_INCOME_TPPRF_EVALUATION_REQUIRED: tpprf_tax_evaluator
+        CUSTOMS_TAX_EVALUATION_REQUIRED: customs_tax_evaluator
+        INSURANCE_TCA_EVALUATION_REQUIRED: insurance_tca_evaluator
+        HOLD_COMPLIANCE_POLICY_MISSING: hold_compliance_policy_missing
+        HOLD_COMPLIANCE_EVIDENCE_MISSING: hold_compliance_evidence_missing
+        HOLD_COMPLIANCE_CONFLICT: hold_compliance_conflict
+      default_child: hold_compliance_conflict
+
+    # ------------------------------------------------------------------
+    # STEP 5: SPECIALIZED STATUTORY TAX EVALUATION
+    # ------------------------------------------------------------------
+    bank_fee_agios_splitter:
+      name: bank_fee_agios_splitter
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: bank_fee_splitter
+      children:
+        SPLIT_SUCCESS: simpl_tva_extractor
+        HOLD_AMBIGUOUS_FEE: hold_ambiguous_bank_fee
+      default_child: hold_ambiguous_bank_fee
+
+    foreign_ras_tva_evaluator:
+      name: foreign_ras_tva_evaluator
+      batch_flush_seconds: *flush
+      kind: evaluation
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: foreign_ras_tva_prompt
+      children:
+        RAS_TVA_EVALUATED: pcge_account_resolver
+        HOLD_RAS_TAX_AMBIGUITY: hold_ras_tax_ambiguity
+        HOLD_OFFICE_DES_CHANGES: hold_office_des_changes
+        HOLD_PERMANENT_ESTABLISHMENT: hold_permanent_establishment
+      default_child: hold_ras_tax_ambiguity
+
+    rent_ras_evaluator:
+      name: rent_ras_evaluator
+      batch_flush_seconds: *flush
+      kind: evaluation
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: rent_ras_prompt
+      children:
+        RENT_RAS_EVALUATED: simpl_tva_extractor
+        RENT_RAS_NOT_APPLICABLE: simpl_tva_extractor
+        HOLD_RENT_POLICY_MISSING: hold_compliance_policy_missing
+        HOLD_RENT_EVIDENCE_MISSING: hold_compliance_evidence_missing
+        HOLD_RENT_CONFLICT: hold_compliance_conflict
+      default_child: hold_compliance_conflict
+
+    simpl_tva_extractor:
+      name: simpl_tva_extractor
+      batch_flush_seconds: *flush
+      kind: evaluation
+      batch_size: *bsize
+      edge_type: *estatic
+      prompt_key: simpl_tva_extractor_prompt
+      children:
+        SIMPL_TVA_VALID: pcge_account_resolver
+        SIMPL_TVA_NOT_DEDUCTIBLE: pcge_account_resolver
+        SIMPL_TVA_MISSING_FIELDS: hold_missing_vat_evidence
+        SIMPL_TVA_INVALID_ICE: hold_invalid_ice
+        SIMPL_TVA_POLICY_MISSING: hold_compliance_policy_missing
+        SIMPL_TVA_CONFLICT: hold_compliance_conflict
+      default_child: hold_compliance_conflict
+
+    output_vat_evaluator:
+      name: output_vat_evaluator
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: output_vat_evaluator
+        ruleset: MA_OUTPUT_VAT
+        intent_payload_key: bank_transaction_intent
+        reconciliation_payload_key: reconciliation_result
+        entity_tax_profile_key: entity_tax_profile
+      children:
+        OUTPUT_VAT_EVALUATED: pcge_account_resolver
+        OUTPUT_VAT_NOT_APPLICABLE: pcge_account_resolver
+        HOLD_OUTPUT_VAT_POLICY_MISSING: hold_compliance_policy_missing
+        HOLD_OUTPUT_VAT_EVIDENCE_MISSING: hold_compliance_evidence_missing
+        HOLD_OUTPUT_VAT_CONFLICT: hold_compliance_conflict
+      default_child: hold_compliance_conflict
+
+    dividend_ras_evaluator:
+      name: dividend_ras_evaluator
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: dividend_ras_evaluator
+        ruleset: MA_DIVIDEND_RAS
+        reconciliation_payload_key: reconciliation_result
+        entity_tax_profile_key: entity_tax_profile
+      children:
+        DIVIDEND_RAS_EVALUATED: pcge_account_resolver
+        DIVIDEND_RAS_NOT_APPLICABLE: pcge_account_resolver
+        HOLD_DIVIDEND_RAS_POLICY_MISSING: hold_compliance_policy_missing
+        HOLD_DIVIDEND_RAS_EVIDENCE_MISSING: hold_compliance_evidence_missing
+        HOLD_DIVIDEND_RAS_CONFLICT: hold_compliance_conflict
+      default_child: hold_compliance_conflict
+
+    tpprf_tax_evaluator:
+      name: tpprf_tax_evaluator
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: tpprf_tax_evaluator
+        ruleset: MA_TPPRF
+        reconciliation_payload_key: reconciliation_result
+        entity_tax_profile_key: entity_tax_profile
+      children:
+        TPPRF_EVALUATED: pcge_account_resolver
+        TPPRF_WITHHOLDING_CONFIRMED: pcge_account_resolver
+        TPPRF_NOT_APPLICABLE: pcge_account_resolver
+        HOLD_TPPRF_POLICY_MISSING: hold_compliance_policy_missing
+        HOLD_TPPRF_EVIDENCE_MISSING: hold_compliance_evidence_missing
+        HOLD_TPPRF_CONFLICT: hold_compliance_conflict
+      default_child: hold_compliance_conflict
+
+    customs_tax_evaluator:
+      name: customs_tax_evaluator
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: customs_tax_evaluator
+        ruleset: MA_ADII_IMPORT
+        reconciliation_payload_key: reconciliation_result
+        entity_tax_profile_key: entity_tax_profile
+      children:
+        CUSTOMS_TAX_EVALUATED: simpl_tva_extractor
+        CUSTOMS_TAX_NOT_APPLICABLE: pcge_account_resolver
+        HOLD_CUSTOMS_POLICY_MISSING: hold_compliance_policy_missing
+        HOLD_CUSTOMS_EVIDENCE_MISSING: hold_compliance_evidence_missing
+        HOLD_CUSTOMS_CONFLICT: hold_compliance_conflict
+      default_child: hold_compliance_conflict
+
+    insurance_tca_evaluator:
+      name: insurance_tca_evaluator
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: insurance_tca_evaluator
+        ruleset: MA_INSURANCE_TCA
+        reconciliation_payload_key: reconciliation_result
+        entity_tax_profile_key: entity_tax_profile
+      children:
+        INSURANCE_TCA_EVALUATED: pcge_account_resolver
+        INSURANCE_TCA_INCLUDED_IN_PREMIUM: pcge_account_resolver
+        INSURANCE_TCA_NOT_APPLICABLE: pcge_account_resolver
+        HOLD_INSURANCE_TCA_POLICY_MISSING: hold_compliance_policy_missing
+        HOLD_INSURANCE_TCA_EVIDENCE_MISSING: hold_compliance_evidence_missing
+        HOLD_INSURANCE_TCA_CONFLICT: hold_compliance_conflict
+      default_child: hold_compliance_conflict
+
+    # ------------------------------------------------------------------
+    # STEP 6: FINAL PCGE COUNTERPART ACCOUNT RESOLUTION
+    # ------------------------------------------------------------------
+    pcge_account_resolver:
+      name: pcge_account_resolver
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: pcge_account_resolver
+        chart_of_accounts: MA_PCGE
+        bank_account_code: "5141"
+        intent_payload_key: bank_transaction_intent
+        reconciliation_payload_key: reconciliation_result
+        compliance_payload_key: compliance_result
+        entity_account_policy_key: entity_account_policy
+      children:
+        PCGE_ACCOUNT_RESOLVED: journal_builder
+        HOLD_PCGE_ACCOUNT_UNMAPPED: hold_pcge_account_unmapped
+        HOLD_PCGE_ACCOUNT_CONFLICT: hold_pcge_account_conflict
+        HOLD_PCGE_POSTING_POLICY_MISSING: hold_pcge_posting_policy_missing
+      default_child: hold_pcge_account_conflict
+
+    # ------------------------------------------------------------------
+    # STEP 7: BUILD IMMUTABLE PCGE JOURNAL DRAFT
+    # ------------------------------------------------------------------
+    journal_builder:
+      name: journal_builder
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: pcge_journal_builder
+        ruleset: MA_PCGE_BANK_5141
+        bank_account_code: "5141"
+        bank_journal_code_policy_key: bank_journal_code
+        transaction_payload_key: normalized_bank_transaction
+        intent_payload_key: bank_transaction_intent
+        reconciliation_payload_key: reconciliation_result
+        compliance_payload_key: compliance_result
+        account_resolution_payload_key: pcge_account_resolution
+        entity_account_policy_key: entity_account_policy
+        accounting_period_policy_key: accounting_period_policy
+        currency_policy_key: currency_policy
+        output_payload_key: journal_draft
+        amount_scale: 2
+        balance_tolerance: "0.00"
+        require_exact_bank_line_amount: true
+        require_bank_line_account: "5141"
+        require_source_traceability: true
+        require_idempotency_key: true
+        idempotency_key_fields:
+          - entity_id
+          - bank_account_id
+          - transaction_id
+          - statement_line_sequence
+        forbid_suspense_accounts: true
+        draft_status: PENDING_VALIDATION
+      children:
+        JOURNAL_DRAFT_BUILT: journal_validator
+        HOLD_JOURNAL_INPUT_MISSING: hold_journal_input_missing
+        HOLD_JOURNAL_COMPONENT_UNMAPPED: hold_journal_component_unmapped
+        HOLD_JOURNAL_UNBALANCED: hold_journal_unbalanced
+        HOLD_JOURNAL_PERIOD_CLOSED: hold_journal_period_closed
+        HOLD_JOURNAL_CURRENCY_CONFLICT: hold_journal_currency_conflict
+        HOLD_JOURNAL_CONFLICT: hold_journal_conflict
+      default_child: hold_journal_conflict
+
+    # ------------------------------------------------------------------
+    # STEP 8: INDEPENDENT JOURNAL CONTROL VALIDATION
+    # ------------------------------------------------------------------
+    journal_validator:
+      name: journal_validator
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: pcge_journal_validator
+        ruleset: MA_PCGE_BANK_5141
+        chart_of_accounts: MA_PCGE
+        bank_account_code: "5141"
+        transaction_payload_key: normalized_bank_transaction
+        reconciliation_payload_key: reconciliation_result
+        compliance_payload_key: compliance_result
+        account_resolution_payload_key: pcge_account_resolution
+        journal_draft_payload_key: journal_draft
+        entity_account_policy_key: entity_account_policy
+        accounting_period_policy_key: accounting_period_policy
+        currency_policy_key: currency_policy
+        approval_policy_key: bank_journal_approval_policy
+        output_payload_key: journal_validation_result
+        amount_scale: 2
+        balance_tolerance: "0.00"
+        require_draft_status: PENDING_VALIDATION
+        require_exactly_one_bank_line: true
+        require_bank_line_account: "5141"
+        require_bank_direction_match: true
+        require_exact_bank_line_amount: true
+        require_functional_currency_balance: true
+        require_transaction_currency_reconciliation: true
+        require_active_postable_accounts: true
+        require_component_account_authorization: true
+        require_tax_line_provenance: true
+        require_third_party_identity: true
+        require_open_accounting_period: true
+        require_source_document_links: true
+        require_source_content_hashes: true
+        require_idempotency_key: true
+        require_duplicate_lookup: true
+        require_independent_validator: true
+        allow_self_approval: false
+        forbid_suspense_accounts: true
+        validated_status: VALIDATED
+      children:
+        JOURNAL_VALIDATED: post_bank_cash_journal
+        HOLD_JOURNAL_SCHEMA_INVALID: hold_journal_schema_invalid
+        HOLD_JOURNAL_BANK_LINE_MISMATCH: hold_journal_bank_line_mismatch
+        HOLD_JOURNAL_BALANCE_INVALID: hold_journal_unbalanced
+        HOLD_JOURNAL_ACCOUNT_INVALID: hold_journal_component_unmapped
+        HOLD_JOURNAL_TAX_ALLOCATION_INVALID: hold_journal_tax_allocation_invalid
+        HOLD_JOURNAL_PERIOD_INVALID: hold_journal_period_closed
+        HOLD_JOURNAL_CURRENCY_INVALID: hold_journal_currency_conflict
+        HOLD_JOURNAL_DUPLICATE: hold_journal_duplicate
+        HOLD_JOURNAL_TRACEABILITY_INVALID: hold_journal_traceability_invalid
+        HOLD_JOURNAL_APPROVAL_REQUIRED: hold_journal_approval_required
+        HOLD_JOURNAL_VALIDATION_CONFLICT: hold_journal_validation_conflict
+      default_child: hold_journal_validation_conflict
+
+    # ------------------------------------------------------------------
+    # STEP 9: COMMIT VALIDATED JOURNAL ENTRY & BANK RECONCILIATION
+    # ------------------------------------------------------------------
+    post_bank_cash_journal:
+      name: post_bank_cash_journal
+      batch_flush_seconds: *flush
+      kind: action
+      batch_size: *bsize
+      edge_type: *estatic
+      execution_parameters:
+        action_provider: pcge_bank_journal_committer
+        ruleset: MA_PCGE_BANK_5141
+        transaction_payload_key: normalized_bank_transaction
+        reconciliation_payload_key: reconciliation_result
+        journal_draft_payload_key: journal_draft
+        journal_validation_payload_key: journal_validation_result
+        accounting_period_policy_key: accounting_period_policy
+        entity_account_policy_key: entity_account_policy
+        output_payload_key: posting_result
+        required_draft_status: PENDING_VALIDATION
+        required_validation_status: VALIDATED
+        require_draft_hash_match: true
+        require_policy_version_match: true
+        require_open_accounting_period_at_commit: true
+        require_idempotency_key: true
+        idempotent_replay_requires_hash_match: true
+        transaction_isolation: SERIALIZABLE
+        lock_scope: ENTITY_BANK_TRANSACTION
+        atomic_commit_operations:
+          - LOCK_BANK_TRANSACTION
+          - VERIFY_NOT_POSTED
+          - VERIFY_VALIDATION_AND_POLICY_VERSIONS
+          - INSERT_JOURNAL_HEADER
+          - INSERT_JOURNAL_LINES
+          - INSERT_RECONCILIATION_ALLOCATIONS
+          - MARK_BANK_TRANSACTION_RECONCILED
+          - INSERT_AUDIT_RECORD
+          - INSERT_TRANSACTIONAL_OUTBOX_EVENT
+        journal_status_after_commit: POSTED
+        bank_transaction_status_after_commit: RECONCILED
+        outbox_event_type: ACCOUNTING.BANK_JOURNAL.POSTED
+        transient_retry_limit: 3
+        transient_retryable_errors:
+          - SERIALIZATION_FAILURE
+          - DEADLOCK_DETECTED
+          - CONNECTION_INTERRUPTED_BEFORE_COMMIT_RESULT
+      children:
+        POST_COMMITTED: bank_cash_complete
+        POST_IDEMPOTENT_REPLAY: bank_cash_complete
+        HOLD_POST_VALIDATION_STALE: hold_post_validation_stale
+        HOLD_POST_DUPLICATE_CONFLICT: hold_post_duplicate_conflict
+        HOLD_POST_PERIOD_CLOSED: hold_journal_period_closed
+        HOLD_POST_POLICY_VERSION_CHANGED: hold_post_policy_version_changed
+        HOLD_POST_LEDGER_CONFLICT: hold_post_ledger_conflict
+        HOLD_POST_RECONCILIATION_CONFLICT: hold_post_reconciliation_conflict
+        HOLD_POST_COMMIT_FAILED: hold_post_commit_failed
+      default_child: hold_post_commit_failed
+
+    hold_office_des_changes:
+      name: hold_office_des_changes
       kind: terminal
+      hold_state_signal: HOLD_OFFICE_DES_CHANGES
+      hold_reason_string: "Foreign transfer violates exchange control limits or lacks registered commercial contract."
+      annotation:
+        tax_rule_code: "Réglementation des Changes / Office des Changes"
+        document_required: "Contrat commercial enregistré / Justificatif de dotation commerce électronique"
+        instruction: "Vérifier le plafond de la dotation ou transmettre le contrat à la banque intermédiaire pour domiciliation."
+        severity: "BLOCKING"
 
+    hold_permanent_establishment:
+      name: hold_permanent_establishment
+      kind: terminal
+      hold_state_signal: HOLD_PERMANENT_ESTABLISHMENT
+      hold_reason_string: "Foreign service provider presence indicates Permanent Establishment risk under CGI Art. 12."
+      annotation:
+        tax_rule_code: "CGI Art. 12 & Conventions Fiscales (Établissement Stable)"
+        document_required: "Relevé de présence chantier/mission & Contrat de prestation"
+        instruction: "Évaluer la durée de présence physique au Maroc pour soumettre le prestataire à l'IS local au lieu de la RAS."
+        severity: "CRITICAL"
 
+    # ------------------------------------------------------------------
+    # HOLD & TERMINAL STATES
+    # ------------------------------------------------------------------
+    hold_post_validation_stale:
+      name: hold_post_validation_stale
+      kind: terminal
+      hold_state_signal: HOLD_POST_VALIDATION_STALE
+      hold_reason_string: "The validated journal draft changed, expired, or no longer matches the validation record presented for commit."
+      annotation:
+        document_required: "Current immutable journal draft and a validation result containing the same content hash"
+        instruction: "Rerun independent validation against the unchanged current draft before attempting commit."
+        severity: "BLOCKING"
+
+    hold_post_duplicate_conflict:
+      name: hold_post_duplicate_conflict
+      kind: terminal
+      hold_state_signal: HOLD_POST_DUPLICATE_CONFLICT
+      hold_reason_string: "The idempotency key already exists, but the persisted journal or reconciliation hash differs from the validated request."
+      annotation:
+        document_required: "Existing posting, current validated draft, idempotency record, and bank transaction identity"
+        instruction: "Investigate the conflicting posting. Do not treat a hash mismatch as an idempotent replay."
+        severity: "CRITICAL"
+
+    hold_post_policy_version_changed:
+      name: hold_post_policy_version_changed
+      kind: terminal
+      hold_state_signal: HOLD_POST_POLICY_VERSION_CHANGED
+      hold_reason_string: "An accounting, tax, period, approval, or account-mapping policy changed after journal validation."
+      annotation:
+        document_required: "Current policy versions and the versions captured by the journal validation record"
+        instruction: "Rebuild and revalidate the journal under the current effective policies before posting."
+        severity: "BLOCKING"
+
+    hold_post_ledger_conflict:
+      name: hold_post_ledger_conflict
+      kind: terminal
+      hold_state_signal: HOLD_POST_LEDGER_CONFLICT
+      hold_reason_string: "The target ledger rejected the validated journal because account, sequence, period, or concurrent ledger state changed at commit time."
+      annotation:
+        document_required: "Ledger conflict details, journal draft, account state, journal sequence, and accounting-period state"
+        instruction: "Resolve the authoritative ledger conflict, then rebuild and revalidate when any accounting fact changed."
+        severity: "BLOCKING"
+
+    hold_post_reconciliation_conflict:
+      name: hold_post_reconciliation_conflict
+      kind: terminal
+      hold_state_signal: HOLD_POST_RECONCILIATION_CONFLICT
+      hold_reason_string: "The bank transaction or reconciliation allocation changed concurrently and cannot be committed with this journal."
+      annotation:
+        document_required: "Current bank transaction version, reconciliation allocations, and competing workflow or posting records"
+        instruction: "Resolve the concurrent reconciliation ownership conflict before rebuilding the journal."
+        severity: "BLOCKING"
+
+    hold_post_commit_failed:
+      name: hold_post_commit_failed
+      kind: terminal
+      hold_state_signal: HOLD_POST_COMMIT_FAILED
+      hold_reason_string: "The atomic journal, reconciliation, audit, and outbox transaction failed after the permitted transient retries."
+      annotation:
+        document_required: "Commit error record, database transaction identifier, retry history, and current idempotency state"
+        instruction: "Verify whether the transaction committed before retrying. Resume through the same idempotency key only after commit state is known."
+        severity: "CRITICAL"
+
+    hold_journal_schema_invalid:
+      name: hold_journal_schema_invalid
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_SCHEMA_INVALID
+      hold_reason_string: "The journal draft does not satisfy the required immutable journal schema or contains incomplete line metadata."
+      annotation:
+        document_required: "Complete journal header, line identifiers, debit and credit fields, currencies, dates, source references, and draft version"
+        instruction: "Regenerate the draft from the canonical builder schema. Do not repair malformed journal lines during validation."
+        severity: "BLOCKING"
+
+    hold_journal_bank_line_mismatch:
+      name: hold_journal_bank_line_mismatch
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_BANK_LINE_MISMATCH
+      hold_reason_string: "The journal draft has a missing, duplicated, incorrectly directed, or incorrectly valued 5141 bank line."
+      annotation:
+        document_required: "Normalized bank transaction and complete journal draft"
+        instruction: "Rebuild exactly one 5141 line whose debit or credit direction and amount match the normalized bank movement."
+        severity: "BLOCKING"
+
+    hold_journal_tax_allocation_invalid:
+      name: hold_journal_tax_allocation_invalid
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_TAX_ALLOCATION_INVALID
+      hold_reason_string: "VAT, withholding, customs, insurance tax, or financial-income tax lines do not reconcile to the approved compliance assessment."
+      annotation:
+        document_required: "Approved compliance result, taxable bases, rates, tax amounts, tax account mappings, and source documents"
+        instruction: "Correct the tax allocation at its compliance or account-resolution source, then rebuild the journal."
+        severity: "BLOCKING"
+
+    hold_journal_duplicate:
+      name: hold_journal_duplicate
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_DUPLICATE
+      hold_reason_string: "The journal idempotency key or bank transaction identity already exists in a draft, committed entry, or reconciliation record."
+      annotation:
+        document_required: "Existing journal entry, idempotency record, bank transaction identity, and reversal history"
+        instruction: "Link to the existing entry or execute the approved reversal workflow. Never create a second posting for the same bank line."
+        severity: "BLOCKING"
+
+    hold_journal_traceability_invalid:
+      name: hold_journal_traceability_invalid
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_TRACEABILITY_INVALID
+      hold_reason_string: "The journal draft cannot be traced completely to immutable bank, reconciliation, compliance, or source-document evidence."
+      annotation:
+        document_required: "Source document identifiers, content hashes, bank statement line identity, reconciliation record, and policy versions"
+        instruction: "Restore complete lineage and verified content hashes before journal approval or posting."
+        severity: "BLOCKING"
+
+    hold_journal_approval_required:
+      name: hold_journal_approval_required
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_APPROVAL_REQUIRED
+      hold_reason_string: "The journal satisfies technical controls but requires approval under the entity's amount, risk, exception, or segregation-of-duties policy."
+      annotation:
+        document_required: "Authorized approval referencing the immutable journal draft hash"
+        instruction: "Obtain approval from an authorized reviewer who did not build the draft, then resume validation against the unchanged draft."
+        severity: "ACTION_REQUIRED"
+
+    hold_journal_validation_conflict:
+      name: hold_journal_validation_conflict
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_VALIDATION_CONFLICT
+      hold_reason_string: "Independent validation controls returned contradictory results or no deterministic validation outcome."
+      annotation:
+        document_required: "Journal draft, validation report, effective policies, and authoritative control evidence"
+        instruction: "Resolve the control conflict and rerun the full validation suite before posting."
+        severity: "BLOCKING"
+
+    hold_journal_input_missing:
+      name: hold_journal_input_missing
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_INPUT_MISSING
+      hold_reason_string: "The journal draft cannot be constructed because a required normalized transaction, reconciliation, compliance, or account-resolution field is missing."
+      annotation:
+        document_required: "Normalized bank line, reconciliation allocation, compliance assessment, resolved PCGE accounts, and entity journal policy"
+        instruction: "Restore the missing upstream payload and rebuild the journal draft without inferring accounting facts."
+        severity: "BLOCKING"
+
+    hold_journal_component_unmapped:
+      name: hold_journal_component_unmapped
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_COMPONENT_UNMAPPED
+      hold_reason_string: "At least one reconciled component has no approved PCGE account or analytic allocation."
+      annotation:
+        document_required: "Complete component-level account mapping for principal, VAT, withholding, fees, interest, exchange differences, and analytic dimensions"
+        instruction: "Approve every component mapping before reconstructing the journal draft. Suspense-account substitution is prohibited."
+        severity: "BLOCKING"
+
+    hold_journal_unbalanced:
+      name: hold_journal_unbalanced
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_UNBALANCED
+      hold_reason_string: "The generated journal draft does not balance exactly at the configured currency precision or does not reconcile to the bank amount."
+      annotation:
+        document_required: "Complete allocation schedule and source amounts for all journal components"
+        instruction: "Resolve rounding, VAT, withholding, fee, foreign-exchange, or residual allocation differences. Do not force-balance the entry."
+        severity: "BLOCKING"
+
+    hold_journal_period_closed:
+      name: hold_journal_period_closed
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_PERIOD_CLOSED
+      hold_reason_string: "The applicable accounting period is closed or the posting-date policy does not permit this journal date."
+      annotation:
+        document_required: "Approved accounting calendar, reopening authorization, or next-open-period adjustment policy"
+        instruction: "Obtain period authorization or apply the approved adjustment-date policy before rebuilding the draft."
+        severity: "BLOCKING"
+
+    hold_journal_currency_conflict:
+      name: hold_journal_currency_conflict
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_CURRENCY_CONFLICT
+      hold_reason_string: "Transaction currency, functional currency, exchange rate, or translated journal amounts are missing or inconsistent."
+      annotation:
+        document_required: "Bank currency, entity functional currency, approved exchange rate source, and foreign-currency reconciliation"
+        instruction: "Resolve the currency and exchange-rate evidence, then rebuild both transaction-currency and functional-currency amounts."
+        severity: "BLOCKING"
+
+    hold_journal_conflict:
+      name: hold_journal_conflict
+      kind: terminal
+      hold_state_signal: HOLD_JOURNAL_CONFLICT
+      hold_reason_string: "The journal builder received contradictory accounting facts or could not produce one deterministic draft."
+      annotation:
+        document_required: "Authoritative bank line, source documents, reconciliation result, compliance result, and account-resolution record"
+        instruction: "Resolve the conflicting upstream facts before journal construction. Never choose one accounting treatment arbitrarily."
+        severity: "BLOCKING"
+
+    hold_pcge_account_unmapped:
+      name: hold_pcge_account_unmapped
+      kind: terminal
+      hold_state_signal: HOLD_PCGE_ACCOUNT_UNMAPPED
+      hold_reason_string: "The reconciled economic event has no approved counterpart account in the entity's PCGE mapping policy."
+      annotation:
+        document_required: "Entity chart of accounts and approved intent-to-account mapping"
+        instruction: "Map the reconciled intent to an authorized posting account without changing the standard 5141 bank-side entry."
+        severity: "ACTION_REQUIRED"
+
+    hold_pcge_account_conflict:
+      name: hold_pcge_account_conflict
+      kind: terminal
+      hold_state_signal: HOLD_PCGE_ACCOUNT_CONFLICT
+      hold_reason_string: "More than one PCGE counterpart account remains valid after reconciliation and compliance evaluation."
+      annotation:
+        document_required: "Authoritative accounting policy, source document, and prior posting history"
+        instruction: "Resolve the account conflict and approve exactly one account allocation before journal construction."
+        severity: "BLOCKING"
+
+    hold_pcge_posting_policy_missing:
+      name: hold_pcge_posting_policy_missing
+      kind: terminal
+      hold_state_signal: HOLD_PCGE_POSTING_POLICY_MISSING
+      hold_reason_string: "The entity-specific posting policy required to resolve the PCGE account is unavailable or inactive."
+      annotation:
+        document_required: "Approved entity chart of accounts, account overrides, analytic dimensions, and effective-date policy"
+        instruction: "Publish the missing entity posting policy before journal construction."
+        severity: "BLOCKING"
+
+    hold_compliance_policy_missing:
+      name: hold_compliance_policy_missing
+      kind: terminal
+      hold_state_signal: HOLD_COMPLIANCE_POLICY_MISSING
+      hold_reason_string: "The entity tax profile or applicable compliance policy is unavailable for this transaction."
+      annotation:
+        document_required: "Entity tax profile, VAT regime, withholding profile, fiscal period, and applicable exemptions"
+        instruction: "Complete or approve the entity compliance configuration before evaluating payment-time tax obligations."
+        severity: "BLOCKING"
+
+    hold_compliance_evidence_missing:
+      name: hold_compliance_evidence_missing
+      kind: terminal
+      hold_state_signal: HOLD_COMPLIANCE_EVIDENCE_MISSING
+      hold_reason_string: "The transaction is reconciled, but required tax or regulatory evidence is missing."
+      annotation:
+        document_required: "Intent-specific invoice, contract, tax receipt, residency certificate, customs declaration, or withholding evidence"
+        instruction: "Collect the compliance evidence required by the selected policy before PCGE account resolution."
+        severity: "ACTION_REQUIRED"
+
+    hold_compliance_conflict:
+      name: hold_compliance_conflict
+      kind: terminal
+      hold_state_signal: HOLD_COMPLIANCE_CONFLICT
+      hold_reason_string: "The applicable compliance rules produce contradictory treatments or no deterministic routing outcome."
+      annotation:
+        document_required: "Authoritative tax position, entity policy, and reviewed supporting documents"
+        instruction: "Resolve the conflicting VAT, withholding, treaty, customs, or entity-policy treatment before posting."
+        severity: "BLOCKING"
+
+    hold_reconciliation_no_match:
+      name: hold_reconciliation_no_match
+      kind: terminal
+      hold_state_signal: HOLD_RECONCILIATION_NO_MATCH
+      hold_reason_string: "No ledger entry or supporting evidence satisfies the reconciliation policy for this bank transaction."
+      annotation:
+        document_required: "Intent-specific source document or corresponding ledger entry"
+        instruction: "Obtain the missing evidence or identify the correct open item before accounting treatment and posting."
+        severity: "ACTION_REQUIRED"
+
+    hold_reconciliation_partial_match:
+      name: hold_reconciliation_partial_match
+      kind: terminal
+      hold_state_signal: HOLD_RECONCILIATION_PARTIAL_MATCH
+      hold_reason_string: "Available evidence explains only part of the bank transaction amount or leaves an unresolved residual."
+      annotation:
+        document_required: "Complete allocation schedule, remaining invoice, credit note, fee, withholding, or exchange-difference evidence"
+        instruction: "Resolve the residual amount and produce a complete allocation whose components equal the bank amount."
+        severity: "ACTION_REQUIRED"
+
+    hold_reconciliation_conflict:
+      name: hold_reconciliation_conflict
+      kind: terminal
+      hold_state_signal: HOLD_RECONCILIATION_CONFLICT
+      hold_reason_string: "Multiple records match the bank transaction or the available evidence contains contradictory accounting facts."
+      annotation:
+        document_required: "Authoritative counterparty document and ledger reconciliation history"
+        instruction: "Resolve duplicate, contradictory, or already-posted records before allowing the transaction to continue."
+        severity: "BLOCKING"
+
+    hold_invalid_cash_direction:
+      name: hold_invalid_cash_direction
+      kind: terminal
+      hold_state_signal: HOLD_INVALID_CASH_DIRECTION
+      hold_reason_string: "Bank transaction direction is missing or is not one of INFLOW or OUTFLOW."
+      annotation:
+        document_required: "Normalized bank transaction amount and debit/credit indicator"
+        instruction: "Correct the bank-line normalization before transaction-intent classification."
+        severity: "BLOCKING"
+
+    hold_ambiguous_bank_line:
+      name: hold_ambiguous_bank_line
+      kind: terminal
+      hold_state_signal: HOLD_AMBIGUOUS_BANK_LINE
+      hold_reason_string: "Bank statement description is unidentifiable and requires human accountant review or situation memory lookup."
+      annotation:
+        tax_rule_code: "PCGM / Diligence Comptable"
+        document_required: "Justificatif de dépense / Facture / Contrat"
+        instruction: "Vérifier la nature de l'opération auprès du client et imputer au compte de charge ou de tiers approprié."
+        severity: "ACTION_REQUIRED"
+
+    hold_ambiguous_bank_fee:
+      name: hold_ambiguous_bank_fee
+      kind: terminal
+      hold_state_signal: HOLD_AMBIGUOUS_BANK_FEE
+      hold_reason_string: "Bank fee cannot be split deterministically into 10% VAT and HT charges."
+      annotation:
+        tax_rule_code: "CGI Art. 89-I-12° (TVA Bancaire 10%)"
+        document_required: "Avis d'opéré bancaire / Relevé d'agios"
+        instruction: "Vérifier la décomposition HT et TVA 10% sur l'avis d'opéré bancaire émis par la banque."
+        severity: "WARNING"
+
+    hold_ras_tax_ambiguity:
+      name: hold_ras_tax_ambiguity
+      kind: terminal
+      hold_state_signal: HOLD_RAS_TAX_AMBIGUITY
+      hold_reason_string: "Foreign service payment requires tax residency certificate or RAS non-résidents tax clarification."
+      annotation:
+        tax_rule_code: "CGI Art. 15 (RAS Non-résidents 10%) & Art. 115 (TVA Auto-liquidation)"
+        document_required: "Certificat de résidence fiscale étranger / Facture fournisseur étranger"
+        instruction: "Obtenir le certificat de résidence fiscale ou procéder au calcul de la RAS de 10% (Compte 445800) et auto-liquidation TVA 20%."
+        severity: "ACTION_REQUIRED"
+
+    hold_missing_vat_evidence:
+      name: hold_missing_vat_evidence
+      kind: terminal
+      hold_state_signal: HOLD_MISSING_VAT_EVIDENCE
+      hold_reason_string: "Mandatory SIMPL-TVA cash deduction fields are incomplete."
+      annotation:
+        tax_rule_code: "CGI Art. 112 - état détaillé des déductions TVA"
+        document_required: "Facture d'achat originale avec mentions légales complètes"
+        instruction: "Renseigner les 8 indications de l'état détaillé des déductions: référence de facture, fournisseur, identifiant fiscal, ICE, désignation, montant HT, TVA et mode/références de paiement."
+        severity: "ACTION_REQUIRED"
+
+    hold_invalid_ice:
+      name: hold_invalid_ice
+      kind: terminal
+      hold_state_signal: HOLD_INVALID_ICE
+      hold_reason_string: "Counterparty 15-digit Identifiant Commun de l'Entreprise (ICE) is missing or invalid."
+      annotation:
+        tax_rule_code: "CGI Art. 125 & 145 (ICE Obligatoire)"
+        document_required: "Facture originale avec ICE 15 chiffres"
+        instruction: "Collecter l'ICE valide auprès du fournisseur pour éviter le rejet du droit à déduction TVA sur SIMPL-TVA."
+        severity: "BLOCKING"
+
+    bank_cash_complete:
+      name: bank_cash_complete
+      kind: terminal
+      execution_parameters:
+        close_status: POSTED_AND_RECONCILED
+        result_payload_key: posting_result
+        require_posting_status:
+          - POST_COMMITTED
+          - POST_IDEMPOTENT_REPLAY
+          

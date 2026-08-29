@@ -30,8 +30,9 @@ func TestActionProviderWorkers_Handle(t *testing.T) {
 	assert.Len(t, sub1List, 1)
 	assert.Equal(t, "worker.inbox.action.reclassify_to_de_minimis_expense_account", sub1List[0].Subject)
 
-	// Subscribe to the action subject to receive the request
-	actionSub, err := nc.SubscribeSync("worker.inbox.action.reclassify_to_de_minimis_expense_account")
+	// Subscribe to a unique test subject to receive the request
+	testActionSub := nats.NewInbox()
+	actionSub, err := nc.SubscribeSync(testActionSub)
 	assert.NoError(t, err)
 	defer actionSub.Unsubscribe()
 
@@ -51,7 +52,7 @@ func TestActionProviderWorkers_Handle(t *testing.T) {
 	reqBytes, _ := json.Marshal(req)
 
 	// Publish the request from our client
-	err = nc.PublishRequest("worker.inbox.action.reclassify_to_de_minimis_expense_account", replyInbox, reqBytes)
+	err = nc.PublishRequest(testActionSub, replyInbox, reqBytes)
 	assert.NoError(t, err)
 
 	// Receive it as the worker would
@@ -76,7 +77,8 @@ func TestActionProviderWorkers_Handle(t *testing.T) {
 
 	// 2. Test InterBankTransferCollapseWorker
 	w2 := &InterBankTransferCollapseWorker{logger: logger}
-	actionSub2, err := nc.SubscribeSync("worker.inbox.action.inter_bank_transfer_collapse")
+	testActionSub2 := nats.NewInbox()
+	actionSub2, err := nc.SubscribeSync(testActionSub2)
 	assert.NoError(t, err)
 	defer actionSub2.Unsubscribe()
 
@@ -85,7 +87,7 @@ func TestActionProviderWorkers_Handle(t *testing.T) {
 	assert.NoError(t, err)
 	defer replySub2.Unsubscribe()
 
-	err = nc.PublishRequest("worker.inbox.action.inter_bank_transfer_collapse", replyInbox2, reqBytes)
+	err = nc.PublishRequest(testActionSub2, replyInbox2, reqBytes)
 	assert.NoError(t, err)
 
 	msg2, err := actionSub2.NextMsg(2 * time.Second)

@@ -220,6 +220,7 @@ rebuild_all:
 
 
 rebuild:
+	colima start
 	@if [ -n "$(RUN_ARGS)" ]; then \
 		$(MAKE) down && $(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) build $(RUN_ARGS) && $(MAKE) up; \
 	else \

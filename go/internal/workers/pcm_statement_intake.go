@@ -434,7 +434,7 @@ func (w *PcmWorker) persistCanonicalBankStatementLine(ctx context.Context, line 
 	if err != nil {
 		return "", fmt.Errorf("pcm: load canonical bank line for document %s index %d: %w", uuid.UUID(line.SourceDocumentID.Bytes), line.LineIndex, err)
 	}
-	if !canonicalLineMatches(existing, line) {
+	if !canonicalObservedLineMatches(existing, line) {
 		return "", fmt.Errorf("HOLD_CANONICAL_BANK_LINE_CONFLICT: document %s line %d was already ingested with different canonical evidence", uuid.UUID(line.SourceDocumentID.Bytes), line.LineIndex)
 	}
 	return uuid.UUID(existing.ID.Bytes).String(), nil

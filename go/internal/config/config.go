@@ -89,8 +89,9 @@ type Config struct {
 	NATS NATSConfig `mapstructure:"nats"`
 
 	// Agents Config
-	Agents  []core.AgentConfig `mapstructure:"agents"`
-	Workers WorkerSubjects     `mapstructure:"workers"`
+	Agents           []core.AgentConfig            `mapstructure:"agents"`
+	AgentsByActivity map[string]*core.AgentConfig  `mapstructure:"-"`
+	Workers          WorkerSubjects                `mapstructure:"workers"`
 
 	// Rule Engine
 	RuleEngine RuleEngineConfig `mapstructure:"rule_engine"`
@@ -371,6 +372,14 @@ func Unmarshal(v *viper.Viper) (*Config, error) {
 	var c Config
 	if err := v.Unmarshal(&c); err != nil {
 		return nil, fmt.Errorf("failed to parse config into struct: %w", err)
+	}
+
+	c.AgentsByActivity = make(map[string]*core.AgentConfig)
+	for i := range c.Agents {
+		a := &c.Agents[i]
+		if a.ActivityType != "" {
+			c.AgentsByActivity[a.ActivityType] = a
+		}
 	}
 
 	// Validation and post-processing

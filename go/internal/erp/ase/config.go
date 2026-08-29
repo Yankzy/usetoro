@@ -91,6 +91,36 @@ type DAGNodeConfig struct {
 	RecoveryPolicy      *DecisionNode       `json:"recovery_policy,omitempty"`
 }
 
+// UnmarshalJSON custom unmarshals DAGNodeConfig, ensuring execution_parameters values
+// of any JSON type (scalars, booleans, arrays, nested maps) are coerced to string values.
+func (n *DAGNodeConfig) UnmarshalJSON(data []byte) error {
+	type Alias DAGNodeConfig
+	aux := struct {
+		ExecutionParams map[string]any `json:"execution_parameters"`
+		*Alias
+	}{
+		Alias: (*Alias)(n),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.ExecutionParams != nil {
+		n.ExecutionParams = make(map[string]string, len(aux.ExecutionParams))
+		for k, v := range aux.ExecutionParams {
+			switch val := v.(type) {
+			case string:
+				n.ExecutionParams[k] = val
+			case nil:
+				n.ExecutionParams[k] = ""
+			default:
+				b, _ := json.Marshal(val)
+				n.ExecutionParams[k] = string(b)
+			}
+		}
+	}
+	return nil
+}
+
 var (
 	dbQueries      *database.Queries
 	redisClient    *redis.Client

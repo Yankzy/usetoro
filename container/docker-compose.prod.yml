@@ -73,7 +73,10 @@ services:
       STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY}
       DATABASE_URL: ${DATABASE_URL}
       NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       PGOPTIONS: "-c search_path=toro_core,shadow_erp,fignode,public"
+    volumes:
+      - ../python-worker:/app
     depends_on:
       torodb:
         condition: service_healthy

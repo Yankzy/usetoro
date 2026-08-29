@@ -358,13 +358,16 @@ CREATE INDEX idx_reconciliation_states_account_period ON shadow_erp.bank_reconci
 CREATE INDEX idx_reconciliation_memberships_state ON shadow_erp.bank_reconciliation_state_memberships(state_id);
 CREATE INDEX idx_reconciliation_review_queue_open ON shadow_erp.reconciliation_review_queue(realm_id, bank_account_id, created_at) WHERE status = 'OPEN';
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.prevent_immutable_reconciliation_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
     RAISE EXCEPTION '% records are immutable; create a new reconciliation state or correction event', TG_TABLE_NAME;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.validate_treasury_account_mapping_realm()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -380,7 +383,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.validate_journal_entry_bank_line_realm()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -400,7 +405,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.validate_stage2_proposal_transition()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -443,7 +450,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.validate_journal_line_integrity()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -458,7 +467,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.validate_balanced_journal_entry()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -503,7 +514,9 @@ BEGIN
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.validate_reconciliation_state_realm()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -528,7 +541,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.validate_reconciliation_match_member_scope()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -559,7 +574,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.validate_reconciliation_match_confirmation()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -610,7 +627,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.validate_reconciliation_membership_scope()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -659,7 +678,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION shadow_erp.prevent_closed_match_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -673,6 +694,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER treasury_account_mappings_same_realm
 BEFORE INSERT OR UPDATE ON shadow_erp.treasury_account_mappings

@@ -536,6 +536,11 @@ workers:
     subject: worker.inbox.ase_bridge
     group: ase-orchestrator-group
 
+  ase_lightweight_bridge:
+    activity_type: workers.ase_lightweight_bridge
+    subject: worker.inbox.ase_lightweight_bridge
+    group: ase-lightweight-bridge-group
+
   ase_resolution:
     activity_type: workers.ase_resolution
     subject: ""

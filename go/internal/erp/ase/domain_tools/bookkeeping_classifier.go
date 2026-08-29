@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 
+	"github.com/Yankzy/usetoro/internal/config"
 	"github.com/Yankzy/usetoro/internal/database"
 	"github.com/Yankzy/usetoro/tap/pkg/agent"
 	"github.com/Yankzy/usetoro/tap/pkg/core"
@@ -429,12 +430,19 @@ func (cs *BookkeepingClassifier) dispatchViaNATS(ctx context.Context, systemProm
 		"required": ["rows"]
 	}`
 
+	model := ""
+	if globalCfg := config.GetGlobal(); globalCfg != nil {
+		if agentCfg, ok := globalCfg.AgentsByActivity["agents.accounting.batch_categorization"]; ok {
+			model = agentCfg.Model
+		}
+	}
+
 	taskDef := core.TaskDefinition{
 		ID:             uuid.New().String(),
 		Domain:         "agents.accounting.batch_categorization",
 		Payload:        json.RawMessage(b),
 		SystemPrompt:   systemPrompt,
-		Model:          "gpt-5.4-mini",
+		Model:          model,
 		WorkflowSchema: workflowSchema,
 	}
 

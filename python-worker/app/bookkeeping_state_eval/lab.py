@@ -111,6 +111,8 @@ from bookkeeping_state_eval.scenarios.temporal import (
     VerifyOp,
     StepSummary,
 )
+from bookkeeping_state_eval.operator.agent import BookkeepingOperator
+from bookkeeping_state_eval.operator.workbench import BookkeepingWorkbench
 from bookkeeping_state_eval.domain.evidence import (
     BookItemEvidenceAssertion,
     BookItemEvidenceInvalidation,
@@ -322,10 +324,25 @@ class BookkeepingLab(cmd.Cmd):
         scenario_name: str | None = None,
         debug: bool = False,
         semantic_provider: str = "deterministic",
+        operator: bool = False,
+        operator_model: str | None = None,
     ) -> None:
         super().__init__()
         self.debug = debug
         self.semantic_provider = semantic_provider
+        self.operator_enabled = operator
+        self.operator_model = operator_model
+        self.workbench = BookkeepingWorkbench(
+            scenario_name=scenario_name,
+            semantic_provider=semantic_provider,
+            debug=debug,
+        )
+        self.operator: BookkeepingOperator | None = None
+        if self.operator_enabled:
+            self.operator = BookkeepingOperator(
+                workbench=self.workbench,
+                model_name=self.operator_model,
+            )
         self.session_counter = 0
         self.last_result: SessionResult | None = None
         self.last_reconciliation_result: ReconciliationResult | None = None
@@ -349,6 +366,40 @@ class BookkeepingLab(cmd.Cmd):
             self._load_scenario_internal(scenario_name)
         else:
             self._load_demo_internal()
+
+    def _sync_to_workbench(self) -> None:
+        if not hasattr(self, "workbench"):
+            return
+        self.workbench.state = self.state
+        self.workbench.repository = self.repository
+        self.workbench.company_id = self.company_id
+        self.workbench.session_counter = self.session_counter
+        self.workbench.last_result = self.last_result
+        self.workbench.last_reconciliation_result = self.last_reconciliation_result
+        self.workbench.last_recon_plan = self.last_recon_plan
+        self.workbench.active_scenario = self.active_scenario
+        self.workbench.active_scenario_name = self.active_scenario_name
+        self.workbench.active_challenge = self.active_challenge
+        self.workbench.active_temporal_challenge = self.active_temporal_challenge
+        self.workbench.temporal_step_index = self.temporal_step_index
+        self.workbench.temporal_step_history = self.temporal_step_history
+
+    def _sync_from_workbench(self) -> None:
+        if not hasattr(self, "workbench"):
+            return
+        self.state = self.workbench.state
+        self.repository = self.workbench.repository
+        self.company_id = self.workbench.company_id
+        self.session_counter = self.workbench.session_counter
+        self.last_result = self.workbench.last_result
+        self.last_reconciliation_result = self.workbench.last_reconciliation_result
+        self.last_recon_plan = self.workbench.last_recon_plan
+        self.active_scenario = self.workbench.active_scenario
+        self.active_scenario_name = self.workbench.active_scenario_name
+        self.active_challenge = self.workbench.active_challenge
+        self.active_temporal_challenge = self.workbench.active_temporal_challenge
+        self.temporal_step_index = self.workbench.temporal_step_index
+        self.temporal_step_history = self.workbench.temporal_step_history
 
     # ------------------------------------------------------------------
     # Internal Loading Helpers
@@ -384,6 +435,7 @@ class BookkeepingLab(cmd.Cmd):
         self.active_scenario_name = None
         self.active_challenge = None
         self.active_temporal_challenge = None
+        self._sync_to_workbench()
 
     def _load_scenario_internal(
         self,
@@ -429,6 +481,7 @@ class BookkeepingLab(cmd.Cmd):
         self.active_scenario = scenario
         self.active_challenge = None
         self.active_temporal_challenge = None
+        self._sync_to_workbench()
 
     # ------------------------------------------------------------------
     # Mutation & State Lifecycle Boundaries
@@ -485,6 +538,7 @@ class BookkeepingLab(cmd.Cmd):
         print(f"Added {desc}.")
         print(f"Persistence: P{prev_p} -> P{new_p}")
         print(f"Fresh inspection state: S{self.state.revision}")
+        self._sync_to_workbench()
 
     def _apply_transition_command(
         self,
@@ -536,6 +590,7 @@ class BookkeepingLab(cmd.Cmd):
         print(f"Applied {desc}.")
         print(f"Persistence: P{prev_p} -> P{new_p}")
         print(f"Fresh inspection state: S{self.state.revision}")
+        self._sync_to_workbench()
         return True
 
     # ------------------------------------------------------------------
@@ -571,6 +626,10 @@ class BookkeepingLab(cmd.Cmd):
             line = "invalidate_reconciliation" + (sep + arg if sep else "")
         elif cmd_name == "set-policy":
             line = "set_policy" + (sep + arg if sep else "")
+        elif cmd_name == "clear-chat":
+            line = "clear_chat" + (sep + arg if sep else "")
+        elif cmd_name == "operator-trace":
+            line = "operator_trace" + (sep + arg if sep else "")
 
         try:
             return super().onecmd(line)
@@ -929,6 +988,7 @@ class BookkeepingLab(cmd.Cmd):
         print(f"reconciliation: {recon_status}")
         print()
         print(f"final persistence revision: P{result.final_persistence_revision}")
+        self._sync_to_workbench()
 
     def do_close(self, arg: str) -> None:
         """Close current hydrated BookkeepingState."""
@@ -937,6 +997,7 @@ class BookkeepingLab(cmd.Cmd):
         else:
             self.state.close()
             print("Inspection state closed. Use `rehydrate` to reopen.")
+        self._sync_to_workbench()
 
     def do_rehydrate(self, arg: str) -> None:
         """Create a fresh BookkeepingState from durable artifacts."""
@@ -948,6 +1009,7 @@ class BookkeepingLab(cmd.Cmd):
             company_id=self.company_id,
             session_id=f"lab-inspection-{self.session_counter}",
         )
+        self._sync_to_workbench()
         print(
             f"Hydrated fresh state S{self.state.revision} from "
             f"persistence revision P{self.state.persistence_revision}."
@@ -2030,6 +2092,59 @@ class BookkeepingLab(cmd.Cmd):
             self.debug = not self.debug
             print(f"Debug mode {'ON' if self.debug else 'OFF'}.")
 
+    def default(self, line: str) -> None:
+        """Fallback handler for natural language input or unrecognized commands."""
+        line = line.strip()
+        if not line:
+            return
+        if self.operator_enabled and self.operator is not None:
+            try:
+                self._sync_to_workbench()
+                print("\nToro Operator is thinking...")
+                reply = self.operator.handle_message(line)
+                self._sync_from_workbench()
+                print(f"\nToro:\n{reply}\n")
+            except Exception as exc:
+                if self.debug:
+                    import traceback
+                    traceback.print_exc()
+                print(f"\nOperator error: {exc}\n")
+        else:
+            print(
+                f"*** Unknown command: '{line}'. Type 'help' for available commands, "
+                "or run with --operator for natural-language assistance."
+            )
+
+    def do_operator(self, arg: str) -> None:
+        """Send a natural-language query to the Toro Bookkeeping Operator."""
+        if not self.operator:
+            self.operator = BookkeepingOperator(
+                workbench=self.workbench,
+                model_name=self.operator_model,
+            )
+            self.operator_enabled = True
+        self.default(arg)
+
+    def do_clear_chat(self, arg: str) -> None:
+        """Clear conversational history of the Bookkeeping Operator."""
+        if self.operator:
+            self.operator.clear_chat()
+            print("Operator conversational memory cleared.")
+        else:
+            print("Operator is not active.")
+
+    def do_operator_trace(self, arg: str) -> None:
+        """Toggle detailed tool call tracing for the Bookkeeping Operator."""
+        if not self.operator:
+            self.operator = BookkeepingOperator(
+                workbench=self.workbench,
+                model_name=self.operator_model,
+            )
+            self.operator_enabled = True
+        self.operator.trace_enabled = not self.operator.trace_enabled
+        status = "ON" if self.operator.trace_enabled else "OFF"
+        print(f"Operator detailed tracing is now {status}.")
+
     def do_quit(self, arg: str) -> bool:
         """Exit the lab."""
         if self.state is not None and not self.state.is_closed:
@@ -2071,6 +2186,17 @@ def main() -> None:
         action="store_true",
         help="Execute one session run immediately and exit",
     )
+    parser.add_argument(
+        "--operator",
+        action="store_true",
+        help="Enable natural-language Operator LLM assistant",
+    )
+    parser.add_argument(
+        "--operator-model",
+        type=str,
+        default=None,
+        help="Model name for the Operator LLM (default: gpt-5.6-luna)",
+    )
     args = parser.parse_args()
 
     if args.scenario and args.scenario not in SCENARIOS_MAP:
@@ -2084,6 +2210,8 @@ def main() -> None:
         scenario_name=args.scenario,
         debug=args.debug,
         semantic_provider=args.semantic_provider,
+        operator=args.operator,
+        operator_model=args.operator_model,
     )
     provider_info = (
         "LLM (model: gpt-5.6-luna)"
@@ -2099,6 +2227,9 @@ def main() -> None:
     else:
         print(f"Active scenario: default demo ({lab.company_id})")
     print(f"Semantic provider: {provider_info}")
+    if args.operator:
+        op_model = args.operator_model or "gpt-5.6-luna"
+        print(f"Operator: ENABLED ({op_model}) - ask natural language questions directly.")
     print()
 
     if args.run:

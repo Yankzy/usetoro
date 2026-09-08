@@ -1,0 +1,45 @@
+### **General Bookkeeping Roles**
+* **Bookkeeper:** Manages a company's day-to-day financial records, including purchases, sales, receipts, and payments.
+* **Full-Charge Bookkeeper:** Handles all bookkeeping duties for a company up to preparing financial statements for an accountant.
+* **Bookkeeping Clerk:** Performs routine tasks like data entry and recording financial transactions under supervision.
+* **General Ledger Bookkeeper:** Maintains the company's main accounting record (the general ledger) by posting and reconciling transactions.
+* **Accounting Clerk:** Supports the accounting department with various data entry and record-keeping tasks.
+* **Accounting Assistant:** Provides administrative and entry-level bookkeeping support to accountants.
+* **Accounting Associate:** A junior role focused on processing transactions and assisting with financial report preparation.
+* **Finance Clerk:** Performs basic clerical tasks within the finance department, such as filing, data entry, and processing documents.
+* **Financial Record Keeper:** Responsible for creating, maintaining, and organizing a company's financial documents and records.
+
+### **Specialized Roles: Accounts Payable (A/P)**
+* **Accounts Payable Specialist:** Manages the entire process of paying a company's bills and invoices.
+* **A/P Clerk:** Handles the clerical aspects of accounts payable, such as data entry and processing invoices for payment.
+* **Accounts Payable Coordinator:** Organizes and oversees the accounts payable process to ensure timely and accurate payments.
+* **Accounts Payable Assistant:** Supports the A/P department by processing invoices and assisting with payment runs.
+* **Payables Clerk:** A clerk focused specifically on processing and recording outgoing payments and invoices.
+* **Vendor Payables Specialist:** Manages financial relationships and payments specifically with the company's suppliers and vendors.
+* **Invoice Processing Clerk:** Focuses on the specific task of entering, verifying, and processing incoming supplier invoices.
+* **Expense Clerk:** Tracks and processes employee expense reports for reimbursement.
+
+### **Specialized Roles: Accounts Receivable (A/R)**
+* **Accounts Receivable Specialist:** Manages the process of invoicing customers and ensuring the company receives payment.
+* **A/R Clerk:** Handles clerical A/R tasks, such as creating invoices and recording customer payments.
+* **Accounts Receivable Coordinator:** Oversees the A/R process, tracking outstanding invoices and coordinating collection efforts.
+* **Billing Specialist:** Creates and sends accurate and timely invoices to customers for goods or services.
+* **Billing Clerk:** A role focused on the administrative tasks of generating and distributing customer bills.
+* **Billing and Collections Specialist:** Handles both invoicing customers and following up on overdue accounts to collect payment.
+* **Collections Clerk:** Contacts customers to collect payment on past-due invoices.
+* **Credit and Collections Specialist:** Evaluates customer creditworthiness and manages the collection of outstanding debts.
+
+### **Specialized Roles: Payroll**
+* **Payroll Clerk:** Collects employee timekeeping data and performs data entry to help process payroll.
+* **Payroll Specialist:** Manages all aspects of employee compensation, ensuring accurate and timely paychecks and tax compliance.
+* **Payroll Processor:** Focuses on the technical execution of calculating and distributing employee pay.
+* **Payroll Administrator:** Oversees the payroll system, manages compliance, and ensures payroll policies are followed.
+* **Payroll Assistant:** Provides administrative support to the payroll department, helping with data entry and record-keeping.
+* **Time and Attendance Clerk:** Tracks employee work hours, overtime, and leave to ensure accurate payroll calculations.
+
+### **Roles with Broader or Overlapping Duties**
+* **Office Manager:** Manages daily office operations, which often includes handling bookkeeping tasks in smaller companies.
+* **Administrative Assistant:** Provides general office support, which may include light bookkeeping like expense tracking or invoicing.
+* **Project Accountant:** Tracks costs and revenues for specific projects, blending bookkeeping with basic accounting analysis.
+* **Audit Clerk:** Verifies the accuracy of financial records and transactions in preparation for an audit.
+* **Reconciliation Specialist:** Focuses on comparing different financial records (e.g., bank statements and general ledger) to find and correct discrepancies.

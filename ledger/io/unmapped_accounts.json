@@ -1,0 +1,432 @@
+[
+  {
+    "code": "0131",
+    "name": "Reopening Inventory Accounts",
+    "parent_code": "013"
+  },
+  {
+    "code": "0134",
+    "name": "Reopening Receivables Accounts",
+    "parent_code": "013"
+  },
+  {
+    "code": "0135",
+    "name": "Reopening Securities and Investment Equities Accounts",
+    "parent_code": "013"
+  },
+  {
+    "code": "0137",
+    "name": "Reopening Conversion Differences – Assets (Current Elements)",
+    "parent_code": "013"
+  },
+  {
+    "code": "0139",
+    "name": "Reopening Provisions for Depreciation of Current Asset Accounts",
+    "parent_code": "013"
+  },
+  {
+    "code": "0144",
+    "name": "Reopening Current Liability Debt Accounts",
+    "parent_code": "014"
+  },
+  {
+    "code": "0145",
+    "name": "Reopening Other Provisions for Risks and Expenses Accounts",
+    "parent_code": "014"
+  },
+  {
+    "code": "0147",
+    "name": "Reopening Conversion Differences – Liabilities (Current Elements)",
+    "parent_code": "014"
+  },
+  {
+    "code": "0151",
+    "name": "Reopening Cash Accounts – Assets",
+    "parent_code": "015"
+  },
+  {
+    "code": "0155",
+    "name": "Reopening Cash Accounts – Liabilities",
+    "parent_code": "015"
+  },
+  {
+    "code": "0159",
+    "name": "Reopening Provisions for Depreciation of Cash Accounts",
+    "parent_code": "015"
+  },
+  {
+    "code": "0111",
+    "name": "Reopening Equity Accounts",
+    "parent_code": "01"
+  },
+  {
+    "code": "0113",
+    "name": "Reopening Equity Equivalent Accounts",
+    "parent_code": "01"
+  },
+  {
+    "code": "0114",
+    "name": "Reopening Financing Liabilities Accounts",
+    "parent_code": "01"
+  },
+  {
+    "code": "0115",
+    "name": "Reopening Long-Term Provisions for Risks and Expenses Accounts",
+    "parent_code": "01"
+  },
+  {
+    "code": "0116",
+    "name": "Reopening Intercompany and Branch Liaison Accounts",
+    "parent_code": "01"
+  },
+  {
+    "code": "0117",
+    "name": "Reopening Conversion Differences – Liabilities",
+    "parent_code": "01"
+  },
+  {
+    "code": "0121",
+    "name": "Reopening Intangible Asset Accounts",
+    "parent_code": "01"
+  },
+  {
+    "code": "0122",
+    "name": "Reopening Intangible Asset Accounts",
+    "parent_code": "01"
+  },
+  {
+    "code": "0123",
+    "name": "Reopening Tangible Asset Accounts",
+    "parent_code": "01"
+  },
+  {
+    "code": "0127",
+    "name": "Reopening Conversion Differences – Assets",
+    "parent_code": "01"
+  },
+  {
+    "code": "0128",
+    "name": "Reopening Depreciation Accounts of Fixed Assets",
+    "parent_code": "01"
+  },
+  {
+    "code": "0129",
+    "name": "Reopening Provisions for Depreciation of Fixed Asset Accounts",
+    "parent_code": "01"
+  },
+  {
+    "code": "0124/0125",
+    "name": "Reopening Financial Asset Accounts",
+    "parent_code": "01"
+  },
+  {
+    "code": "0231",
+    "name": "Closing Inventory Accounts",
+    "parent_code": "023"
+  },
+  {
+    "code": "0234",
+    "name": "Closing Receivables Accounts",
+    "parent_code": "023"
+  },
+  {
+    "code": "0235",
+    "name": "Closing Securities and Investment Equities Accounts",
+    "parent_code": "023"
+  },
+  {
+    "code": "0237",
+    "name": "Closing Conversion Differences – Assets (Current Elements)",
+    "parent_code": "023"
+  },
+  {
+    "code": "0239",
+    "name": "Closing Provisions for Depreciation of Current Asset Accounts",
+    "parent_code": "023"
+  },
+  {
+    "code": "0244",
+    "name": "Closing Current Liability Debt Accounts",
+    "parent_code": "024"
+  },
+  {
+    "code": "0245",
+    "name": "Closing Other Provisions for Risks and Expenses Accounts",
+    "parent_code": "024"
+  },
+  {
+    "code": "0247",
+    "name": "Closing Conversion Differences – Liabilities (Current Elements)",
+    "parent_code": "024"
+  },
+  {
+    "code": "0251",
+    "name": "Closing Cash Accounts – Assets",
+    "parent_code": "025"
+  },
+  {
+    "code": "0255",
+    "name": "Closing Cash Accounts – Liabilities",
+    "parent_code": "025"
+  },
+  {
+    "code": "0259",
+    "name": "Closing Provisions for Depreciation of Cash Accounts",
+    "parent_code": "025"
+  },
+  {
+    "code": "0211",
+    "name": "Closing Equity Accounts",
+    "parent_code": "02"
+  },
+  {
+    "code": "0213",
+    "name": "Closing Equity Equivalent Accounts",
+    "parent_code": "02"
+  },
+  {
+    "code": "0214",
+    "name": "Closing Financing Liabilities Accounts",
+    "parent_code": "02"
+  },
+  {
+    "code": "0215",
+    "name": "Closing Long-Term Provisions for Risks and Expenses Accounts",
+    "parent_code": "02"
+  },
+  {
+    "code": "0216",
+    "name": "Closing Intercompany and Branch Liaison Accounts",
+    "parent_code": "02"
+  },
+  {
+    "code": "0217",
+    "name": "Closing Conversion Differences – Liabilities",
+    "parent_code": "02"
+  },
+  {
+    "code": "0221",
+    "name": "Closing Intangible Asset Accounts",
+    "parent_code": "02"
+  },
+  {
+    "code": "0222",
+    "name": "Closing Intangible Asset Accounts",
+    "parent_code": "02"
+  },
+  {
+    "code": "0223",
+    "name": "Closing Tangible Asset Accounts",
+    "parent_code": "02"
+  },
+  {
+    "code": "0227",
+    "name": "Closing Conversion Differences – Assets",
+    "parent_code": "02"
+  },
+  {
+    "code": "0228",
+    "name": "Closing Depreciation Accounts of Fixed Assets",
+    "parent_code": "02"
+  },
+  {
+    "code": "0229",
+    "name": "Closing Provisions for Depreciation of Fixed Asset Accounts",
+    "parent_code": "02"
+  },
+  {
+    "code": "0224/0225",
+    "name": "Closing Financial Asset Accounts",
+    "parent_code": "02"
+  },
+  {
+    "code": "0311",
+    "name": "Debit Transactions Pending Settlement",
+    "parent_code": "031"
+  },
+  {
+    "code": "0319",
+    "name": "Counterpart of Transactions Pending Settlement",
+    "parent_code": "031"
+  },
+  {
+    "code": "0331",
+    "name": "Credit Transactions Pending Settlement",
+    "parent_code": "033"
+  },
+  {
+    "code": "0339",
+    "name": "Counterpart of Transactions Pending Settlement",
+    "parent_code": "033"
+  },
+  {
+    "code": "0351",
+    "name": "Countervalue of Foreign Currencies – Inflows",
+    "parent_code": "035"
+  },
+  {
+    "code": "0359",
+    "name": "Counterpart of Foreign Currencies – Inflows",
+    "parent_code": "035"
+  },
+  {
+    "code": "0361",
+    "name": "Countervalue of Foreign Currencies – Outflows",
+    "parent_code": "036"
+  },
+  {
+    "code": "0369",
+    "name": "Counterpart of Foreign Currencies – Outflows",
+    "parent_code": "036"
+  },
+  {
+    "code": "0381",
+    "name": "Followed Statistical Transactions",
+    "parent_code": "038"
+  },
+  {
+    "code": "0389",
+    "name": "Counterpart of Followed Statistical Transactions",
+    "parent_code": "038"
+  },
+  {
+    "code": "0411",
+    "name": "Guarantees, Sureties and Guarantees Given",
+    "parent_code": "041"
+  },
+  {
+    "code": "0419",
+    "name": "Debtors for Given Guarantees and Sureties",
+    "parent_code": "041"
+  },
+  {
+    "code": "0431",
+    "name": "Commitments Regarding Pensions and Similar Obligations",
+    "parent_code": "043"
+  },
+  {
+    "code": "0439",
+    "name": "Debtors for Commitments Regarding Pensions and Similar Obligations",
+    "parent_code": "043"
+  },
+  {
+    "code": "0451",
+    "name": "Negotiable Instruments under Endorsement of the Company",
+    "parent_code": "045"
+  },
+  {
+    "code": "0459",
+    "name": "Debtors for Negotiable Instruments under Endorsement of the Company",
+    "parent_code": "045"
+  },
+  {
+    "code": "0461",
+    "name": "Loans Granted Not Yet Disbursed",
+    "parent_code": "046"
+  },
+  {
+    "code": "0469",
+    "name": "Debtors for Loans Granted Not Yet Disbursed",
+    "parent_code": "046"
+  },
+  {
+    "code": "0481",
+    "name": "Other Given Commitments",
+    "parent_code": "048"
+  },
+  {
+    "code": "0489",
+    "name": "Debtors for Other Given Commitments",
+    "parent_code": "048"
+  },
+  {
+    "code": "0511",
+    "name": "Guarantees, Sureties and Guarantees Received",
+    "parent_code": "051"
+  },
+  {
+    "code": "0519",
+    "name": "Creditors for Guarantees, Sureties and Guarantees Received",
+    "parent_code": "051"
+  },
+  {
+    "code": "0551",
+    "name": "Assets Held as Guarantee by the Company",
+    "parent_code": "055"
+  },
+  {
+    "code": "0559",
+    "name": "Creditors for Assets Held as Guarantee by the Company",
+    "parent_code": "055"
+  },
+  {
+    "code": "0561",
+    "name": "Loans Not Yet Collected",
+    "parent_code": "056"
+  },
+  {
+    "code": "0569",
+    "name": "Creditors for Commitments Not Yet Collected",
+    "parent_code": "056"
+  },
+  {
+    "code": "0571",
+    "name": "Unused Amount of Authorized Overdrafts",
+    "parent_code": "057"
+  },
+  {
+    "code": "0572",
+    "name": "Unused Discount Ceiling",
+    "parent_code": "057"
+  },
+  {
+    "code": "0579",
+    "name": "Creditors for Commitments Received on Cash",
+    "parent_code": "057"
+  },
+  {
+    "code": "0581",
+    "name": "Other Received Commitments",
+    "parent_code": "058"
+  },
+  {
+    "code": "0589",
+    "name": "Creditors for Other Received Commitments",
+    "parent_code": "058"
+  },
+  {
+    "code": "0611",
+    "name": "Remaining Lease Payments",
+    "parent_code": "061"
+  },
+  {
+    "code": "0619",
+    "name": "Debtors for Remaining Lease Payments",
+    "parent_code": "061"
+  },
+  {
+    "code": "0651",
+    "name": "Commitments Received for Use in Lease",
+    "parent_code": "065"
+  },
+  {
+    "code": "0659",
+    "name": "Creditors for Commitments Received for Use in Lease",
+    "parent_code": "065"
+  },
+  {
+    "code": "0811",
+    "name": "Other Special Accounts",
+    "parent_code": "081"
+  },
+  {
+    "code": "0819",
+    "name": "Counterpart of Other Special Accounts",
+    "parent_code": "081"
+  },
+  {
+    "code": "Class 1",
+    "name": "PERMANENT FINANCING ACCOUNTS",
+    "parent_code": ""
+  }
+]

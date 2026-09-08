@@ -64,13 +64,11 @@ from bookkeeping_state_eval.routing.scorer import (
 
 
 def _make_mock_client(response_dict: dict[str, Any]) -> AsyncMock:
-    """Create a mock AsyncOpenAI client returning a given dictionary as JSON completion."""
+    """Create a mock AsyncOpenAI client returning a given dictionary as JSON response."""
     mock_client = AsyncMock()
-    mock_completion = MagicMock()
-    mock_choice = MagicMock()
-    mock_choice.message.content = json.dumps(response_dict)
-    mock_completion.choices = [mock_choice]
-    mock_client.chat.completions.create.return_value = mock_completion
+    mock_response = MagicMock()
+    mock_response.output_text = json.dumps(response_dict)
+    mock_client.responses.create.return_value = mock_response
     return mock_client
 
 
@@ -172,7 +170,7 @@ class TestRoutingLlmProvider:
         assert response.scores[0].score == 1000
         assert "singleton" in response.scores[0].rationale.lower()
         # Verify no network call was made
-        assert client.chat.completions.create.call_count == 0
+        assert client.responses.create.call_count == 0
 
     def test_routing_unknown_account_id_raises(self) -> None:
         """Requirement B: LLM returns account ID not in feasible candidates -> fail-fast."""
@@ -442,10 +440,10 @@ class TestReconciliationLlmProvider:
         assessments = provider.score_candidates([cand1, cand2], view)
         assert len(assessments) == 2
 
-        # Verify exactly ONE call was made to chat completions for unique pairs
-        assert client.chat.completions.create.call_count == 1
-        call_kwargs = client.chat.completions.create.call_args[1]
-        user_msg = call_kwargs["messages"][1]["content"]
+        # Verify exactly ONE call was made to responses API for unique pairs
+        assert client.responses.create.call_count == 1
+        call_kwargs = client.responses.create.call_args[1]
+        user_msg = call_kwargs["input"][1]["content"]
 
         # Prompt must contain pairs without candidate topology/packaging
         assert "BankItem b1 <-> BookItem j1" in user_msg

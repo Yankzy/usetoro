@@ -11,12 +11,6 @@ from bookkeeping_state_eval.reconciliation.candidate_generation import (
     DefaultReconciliationScorer,
     ReconciliationSemanticScoreProvider,
 )
-from bookkeeping_state_eval.reconciliation.llm_scorer import (
-    LlmReconciliationSemanticScoreProvider,
-)
-from bookkeeping_state_eval.routing.llm_scorer import (
-    LlmRoutingSemanticScoreProvider,
-)
 from bookkeeping_state_eval.routing.scorer import (
     RoutingSemanticScoreProvider,
     ZeroRoutingSemanticScoreProvider,
@@ -35,6 +29,9 @@ def create_routing_semantic_provider(
     """
     resolved_mode = mode if mode is not None else get_semantic_provider_mode("deterministic")
     if resolved_mode == "llm":
+        from bookkeeping_state_eval.routing.llm_scorer import (
+            LlmRoutingSemanticScoreProvider,
+        )
         return LlmRoutingSemanticScoreProvider(
             llm_client=client,
             model_name=model_name or get_model_name("gpt-5.6-luna"),
@@ -54,6 +51,9 @@ def create_reconciliation_semantic_provider(
     """
     resolved_mode = mode if mode is not None else get_semantic_provider_mode("deterministic")
     if resolved_mode == "llm":
+        from bookkeeping_state_eval.reconciliation.llm_scorer import (
+            LlmReconciliationSemanticScoreProvider,
+        )
         return LlmReconciliationSemanticScoreProvider(
             llm_client=client,
             model_name=model_name or get_model_name("gpt-5.6-luna"),

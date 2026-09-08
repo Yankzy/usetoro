@@ -180,17 +180,24 @@ class LlmReconciliationSemanticScoreProvider:
 
         for attempt in range(1, self._max_retries + 1):
             try:
-                response = await client.chat.completions.create(
+                response = await client.responses.create(
                     model=self._model_name,
                     service_tier="fast",
-                    messages=[
+                    input=[
                         {"role": "system", "content": RECONCILIATION_SEMANTIC_SYSTEM_PROMPT},
                         {"role": "user", "content": user_payload},
                     ],
-                    response_format={"type": "json_object"},
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": "reconciliation_score_response",
+                            "schema": LlmReconciliationScoreResponse.model_json_schema(),
+                            "strict": False,
+                        }
+                    },
                 )
 
-                content = response.choices[0].message.content
+                content = response.output_text
                 if not content:
                     raise ReconciliationSemanticScoringError(
                         "LLM returned empty content for reconciliation pair scoring"

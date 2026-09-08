@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from itertools import combinations
 import re
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from bookkeeping_state_eval.domain.enums import (
     AllocationSupport,
@@ -25,7 +25,12 @@ from bookkeeping_state_eval.domain.reconciliations import (
     BankAllocation,
     BookAllocation,
 )
-from bookkeeping_state_eval.reconciliation.models import ReconciliationCandidate
+from bookkeeping_state_eval.reconciliation.models import (
+    CounterpartyRelation,
+    PairwiseSemanticObservation,
+    ReconciliationCandidate,
+    ReferenceRelation,
+)
 from bookkeeping_state_eval.reconciliation.validation import (
     validate_candidate_allocations,
 )
@@ -39,18 +44,32 @@ from bookkeeping_state_eval.reconciliation.view import (
 def has_explicit_allocation_evidence_for_leg(
     bank_item: ReconciliationBankItemView | None,
     book_item: ReconciliationBookItemView | None,
+    semantic_observation: PairwiseSemanticObservation | None = None,
 ) -> bool:
     """
     Determine whether direct, explicit allocation evidence binds this bank item
     specifically to this book item.
 
     Recognizes:
-    1. Exact reference correspondence (case-insensitive, non-empty)
-    2. Substring reference in narration (word-bounded reference match)
-    3. Shared structured batch token (same explicit token across legs)
+    1. Provider-neutral semantic observation of reference match or batch/remittance reference
+    2. Exact reference correspondence (case-insensitive, non-empty)
+    3. Substring reference in narration (word-bounded reference match)
+    4. Shared structured batch token (same explicit token across legs)
     """
     if bank_item is None or book_item is None:
         return False
+
+    if semantic_observation is not None:
+        # Constraint 2: Reference contradiction requires positive incompatibility
+        if semantic_observation.reference_relation == ReferenceRelation.CONTRADICTED:
+            return False
+
+        if (
+            semantic_observation.reference_relation == ReferenceRelation.MATCH
+            or semantic_observation.matched_reference
+            or semantic_observation.batch_or_remittance_reference
+        ):
+            return True
 
     b_ref = bank_item.reference.strip().lower() if bank_item.reference else ""
     j_ref = book_item.reference.strip().lower() if book_item.reference else ""
@@ -77,6 +96,7 @@ def has_explicit_allocation_evidence_for_leg(
 def get_compatible_open_book_items(
     bank_item: ReconciliationBankItemView,
     view: ReconciliationView,
+    pairwise_observations: Mapping[tuple[str, str], PairwiseSemanticObservation] | None = None,
 ) -> tuple[ReconciliationBookItemView, ...]:
     """
     Return all open BookItems in view that have identity support with this bank item
@@ -111,7 +131,12 @@ def get_compatible_open_book_items(
                 continue
 
         # Identity support check
-        _, _, _, admissibility = score_reconciliation_pair(bank_item, book)
+        if pairwise_observations and (bank_item.bank_item_id, book.book_item_id) in pairwise_observations:
+            obs = pairwise_observations[(bank_item.bank_item_id, book.book_item_id)]
+            admissibility = obs.identity_admissibility
+        else:
+            _, _, _, admissibility = score_reconciliation_pair(bank_item, book)
+
         if admissibility != SemanticAdmissibility.SUPPORTED:
             continue
 
@@ -123,6 +148,7 @@ def get_compatible_open_book_items(
 def get_compatible_open_bank_items(
     book_item: ReconciliationBookItemView,
     view: ReconciliationView,
+    pairwise_observations: Mapping[tuple[str, str], PairwiseSemanticObservation] | None = None,
 ) -> tuple[ReconciliationBankItemView, ...]:
     """
     Return all open BankItems in view that have identity support with this book item
@@ -157,7 +183,12 @@ def get_compatible_open_bank_items(
                 continue
 
         # Identity support check
-        _, _, _, admissibility = score_reconciliation_pair(bank, book_item)
+        if pairwise_observations and (bank.bank_item_id, book_item.book_item_id) in pairwise_observations:
+            obs = pairwise_observations[(bank.bank_item_id, book_item.book_item_id)]
+            admissibility = obs.identity_admissibility
+        else:
+            _, _, _, admissibility = score_reconciliation_pair(bank, book_item)
+
         if admissibility != SemanticAdmissibility.SUPPORTED:
             continue
 
@@ -209,6 +240,7 @@ def find_matching_subsets_bank(
 def evaluate_allocation_support(
     candidate: ReconciliationCandidate,
     view: ReconciliationView,
+    pairwise_observations: Mapping[tuple[str, str], PairwiseSemanticObservation] | None = None,
 ) -> tuple[AllocationSupport, str]:
     """
     Evaluate allocation-specific evidence for a feasible reconciliation candidate.
@@ -228,14 +260,29 @@ def evaluate_allocation_support(
     for b_id, j_id, _ in pairs:
         b = view.get_bank_item(b_id)
         j = view.get_book_item(j_id)
-        _, _, _, admissibility = score_reconciliation_pair(b, j)
-        if admissibility == SemanticAdmissibility.CONTRADICTED:
-            return AllocationSupport.CONTRADICTED, f"Pair {b_id}->{j_id} is contradicted"
-        if admissibility != SemanticAdmissibility.SUPPORTED:
-            return (
-                AllocationSupport.INSUFFICIENT_EVIDENCE,
-                f"Pair {b_id}->{j_id} lacks identity support ({admissibility.value})",
-            )
+        if pairwise_observations and (b_id, j_id) in pairwise_observations:
+            obs = pairwise_observations[(b_id, j_id)]
+            admissibility = obs.identity_admissibility
+            if (
+                admissibility == SemanticAdmissibility.CONTRADICTED
+                or obs.counterparty_relation == CounterpartyRelation.CONTRADICTED
+                or obs.reference_relation == ReferenceRelation.CONTRADICTED
+            ):
+                return AllocationSupport.CONTRADICTED, f"Pair {b_id}->{j_id} is contradicted"
+            if admissibility != SemanticAdmissibility.SUPPORTED:
+                return (
+                    AllocationSupport.INSUFFICIENT_EVIDENCE,
+                    f"Pair {b_id}->{j_id} lacks identity support ({admissibility.value})",
+                )
+        else:
+            _, _, _, admissibility = score_reconciliation_pair(b, j)
+            if admissibility == SemanticAdmissibility.CONTRADICTED:
+                return AllocationSupport.CONTRADICTED, f"Pair {b_id}->{j_id} is contradicted"
+            if admissibility != SemanticAdmissibility.SUPPORTED:
+                return (
+                    AllocationSupport.INSUFFICIENT_EVIDENCE,
+                    f"Pair {b_id}->{j_id} lacks identity support ({admissibility.value})",
+                )
 
     # 2. Explicit Allocation Evidence Check
     # For grouped candidates, every material leg must have explicit evidence.
@@ -243,7 +290,8 @@ def evaluate_allocation_support(
     for b_id, j_id, _ in pairs:
         b = view.get_bank_item(b_id)
         j = view.get_book_item(j_id)
-        if not has_explicit_allocation_evidence_for_leg(b, j):
+        obs = pairwise_observations.get((b_id, j_id)) if pairwise_observations else None
+        if not has_explicit_allocation_evidence_for_leg(b, j, semantic_observation=obs):
             all_legs_explicit = False
             break
 
@@ -263,7 +311,7 @@ def evaluate_allocation_support(
         if b is None:
             return AllocationSupport.INSUFFICIENT_EVIDENCE, "Bank item not in view"
 
-        compatible_books = get_compatible_open_book_items(b, view)
+        compatible_books = get_compatible_open_book_items(b, view, pairwise_observations=pairwise_observations)
         matching_subsets = find_matching_subsets_book(total_amount, compatible_books)
 
         cand_subset = tuple(sorted(book_ids))
@@ -291,7 +339,7 @@ def evaluate_allocation_support(
         if j is None:
             return AllocationSupport.INSUFFICIENT_EVIDENCE, "Book item not in view"
 
-        compatible_banks = get_compatible_open_bank_items(j, view)
+        compatible_banks = get_compatible_open_bank_items(j, view, pairwise_observations=pairwise_observations)
         matching_subsets = find_matching_subsets_bank(total_amount, compatible_banks)
 
         cand_subset = tuple(sorted(bank_ids))
@@ -322,10 +370,10 @@ def evaluate_allocation_support(
 
         # C.1: 1:1 Exact (r(b) == r(j))
         if b.remaining_amount_int == j.remaining_amount_int:
-            compatible_books = get_compatible_open_book_items(b, view)
+            compatible_books = get_compatible_open_book_items(b, view, pairwise_observations=pairwise_observations)
             matching_book_subsets = find_matching_subsets_book(total_amount, compatible_books)
 
-            compatible_banks = get_compatible_open_bank_items(j, view)
+            compatible_banks = get_compatible_open_bank_items(j, view, pairwise_observations=pairwise_observations)
             matching_bank_subsets = find_matching_subsets_bank(total_amount, compatible_banks)
 
             # Is there any other book subset or bank subset that equals this amount?
@@ -365,7 +413,7 @@ def evaluate_allocation_support(
                     "Partial book reconciliation forbidden by policy",
                 )
 
-            compatible_books = get_compatible_open_book_items(b, view)
+            compatible_books = get_compatible_open_book_items(b, view, pairwise_observations=pairwise_observations)
             # A partial candidate is UNIQUE_INFERENCE only if j is the sole compatible
             # open obligation for this economic identity under current constraints.
             if len(compatible_books) == 1 and compatible_books[0].book_item_id == j.book_item_id:
@@ -387,7 +435,7 @@ def evaluate_allocation_support(
                     "Partial bank reconciliation forbidden by policy",
                 )
 
-            compatible_banks = get_compatible_open_bank_items(j, view)
+            compatible_banks = get_compatible_open_bank_items(j, view, pairwise_observations=pairwise_observations)
             if len(compatible_banks) == 1 and compatible_banks[0].bank_item_id == b.bank_item_id:
                 return (
                     AllocationSupport.UNIQUE_INFERENCE,

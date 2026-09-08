@@ -80,6 +80,8 @@ class ScenarioRunner:
         *,
         session_id: str | None = None,
         repository: BookkeepingRepository | None = None,
+        routing_semantic_provider: RoutingSemanticScoreProvider | None = None,
+        reconciliation_service: ReconciliationService | None = None,
     ) -> ScenarioResult:
         """
         Execute one scenario from its initial durable snapshot to closing truth.
@@ -102,11 +104,16 @@ class ScenarioRunner:
         # 2. Configure services
         engine = TransitionEngine(repository=repo)
         routing_service = RoutingService(
-            semantic_provider=scenario.routing_semantic_provider
+            semantic_provider=routing_semantic_provider
+            or scenario.routing_semantic_provider
             or ZeroRoutingSemanticScoreProvider()
         )
         dag_classifier = scenario.dag_classifier or SimulatedAseClassifier()
-        recon_service = scenario.reconciliation_service or ReconciliationService()
+        recon_service = (
+            reconciliation_service
+            or scenario.reconciliation_service
+            or ReconciliationService()
+        )
 
         # 3. Execute BookkeepingSession
         session = BookkeepingSession(

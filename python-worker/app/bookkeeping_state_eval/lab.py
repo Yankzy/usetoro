@@ -22,6 +22,13 @@ import sys
 from typing import Any
 import uuid
 
+# Ensure repository packages are importable regardless of launch directory
+_current_dir = Path(__file__).resolve().parent
+_app_dir = _current_dir.parent
+for p in (_app_dir, _current_dir):
+    if str(p) not in sys.path:
+        sys.path.insert(0, str(p))
+
 from bookkeeping_state_eval.reconciliation.models import (
     ReconciliationPlan,
     ReconciliationResult,
@@ -31,11 +38,6 @@ from bookkeeping_state_eval.scenarios.expected_truth import ExpectedTruth
 
 
 DEFAULT_CLOCK = datetime(2026, 1, 31, 12, 0, 0, tzinfo=timezone.utc)
-
-# Ensure repository packages are importable regardless of launch directory
-_current_dir = Path(__file__).resolve().parent
-if str(_current_dir) not in sys.path:
-    sys.path.insert(0, str(_current_dir))
 
 from bookkeeping_state_eval.dag.protocol import AseClassifier
 from bookkeeping_state_eval.dag.simulated_ase import SimulatedAseClassifier
@@ -75,6 +77,10 @@ from bookkeeping_state_eval.reconciliation.service import ReconciliationService
 from bookkeeping_state_eval.routing.scorer import (
     RoutingSemanticScoreProvider,
     ZeroRoutingSemanticScoreProvider,
+)
+from bookkeeping_state_eval.llm import (
+    create_reconciliation_semantic_provider,
+    create_routing_semantic_provider,
 )
 from bookkeeping_state_eval.routing.service import RoutingService
 from bookkeeping_state_eval.scenarios.catalog import (
@@ -315,9 +321,11 @@ class BookkeepingLab(cmd.Cmd):
         *,
         scenario_name: str | None = None,
         debug: bool = False,
+        semantic_provider: str = "deterministic",
     ) -> None:
         super().__init__()
         self.debug = debug
+        self.semantic_provider = semantic_provider
         self.session_counter = 0
         self.last_result: SessionResult | None = None
         self.last_reconciliation_result: ReconciliationResult | None = None
@@ -352,9 +360,15 @@ class BookkeepingLab(cmd.Cmd):
             self.state = None
 
         self.repository, self.company_id = create_demo_repository()
-        self.routing_semantic_provider = None
+        if self.semantic_provider == "llm":
+            self.routing_semantic_provider = create_routing_semantic_provider("llm")
+            self.reconciliation_service = ReconciliationService(
+                scorer=create_reconciliation_semantic_provider("llm")
+            )
+        else:
+            self.routing_semantic_provider = None
+            self.reconciliation_service = None
         self.dag_classifier = None
-        self.reconciliation_service = None
         self.clock_time = None
 
         self.hydrator = BookkeepingHydrator(repository=self.repository)
@@ -388,9 +402,15 @@ class BookkeepingLab(cmd.Cmd):
 
         self.repository = seed_scenario_repository(scenario)
         self.company_id = scenario.context.company_id
-        self.routing_semantic_provider = scenario.routing_semantic_provider
+        if self.semantic_provider == "llm":
+            self.routing_semantic_provider = create_routing_semantic_provider("llm")
+            self.reconciliation_service = ReconciliationService(
+                scorer=create_reconciliation_semantic_provider("llm")
+            )
+        else:
+            self.routing_semantic_provider = scenario.routing_semantic_provider
+            self.reconciliation_service = scenario.reconciliation_service
         self.dag_classifier = scenario.dag_classifier
-        self.reconciliation_service = scenario.reconciliation_service
         self.clock_time = scenario.clock_time
 
         scenario_clock = self.clock_time
@@ -2040,6 +2060,17 @@ def main() -> None:
         action="store_true",
         help="Enable full tracebacks on exceptions",
     )
+    parser.add_argument(
+        "--semantic-provider",
+        choices=["deterministic", "llm"],
+        default="deterministic",
+        help="Semantic reasoning provider ('deterministic' or 'llm')",
+    )
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        help="Execute one session run immediately and exit",
+    )
     args = parser.parse_args()
 
     if args.scenario and args.scenario not in SCENARIOS_MAP:
@@ -2049,7 +2080,16 @@ def main() -> None:
             print(f"  {sc_name}")
         sys.exit(1)
 
-    lab = BookkeepingLab(scenario_name=args.scenario, debug=args.debug)
+    lab = BookkeepingLab(
+        scenario_name=args.scenario,
+        debug=args.debug,
+        semantic_provider=args.semantic_provider,
+    )
+    provider_info = (
+        "LLM (model: gpt-5.6-luna)"
+        if args.semantic_provider == "llm"
+        else "DETERMINISTIC (offline heuristic)"
+    )
     print("==================================================")
     print("       BookkeepingState Developer Lab (REPL)      ")
     print("==================================================")
@@ -2058,7 +2098,14 @@ def main() -> None:
         print(f"Active scenario: {args.scenario} ({lab.company_id})")
     else:
         print(f"Active scenario: default demo ({lab.company_id})")
+    print(f"Semantic provider: {provider_info}")
     print()
+
+    if args.run:
+        lab.do_run("")
+        if lab.state is not None and not lab.state.is_closed:
+            lab.state.close()
+        return
 
     try:
         lab.cmdloop()

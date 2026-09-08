@@ -384,3 +384,42 @@ def reconciliation_plan_to_transition_batch(
     batch_id: str | None = None,
 ) -> TransitionBatch:
     return plan.to_batch(batch_id=batch_id)
+
+
+class CounterpartyRelation(StrEnum):
+    MATCH = "MATCH"
+    POSSIBLE_ALIAS = "POSSIBLE_ALIAS"
+    CONTRADICTED = "CONTRADICTED"
+    NONE = "NONE"
+
+
+class ReferenceRelation(StrEnum):
+    MATCH = "MATCH"
+    CONTRADICTED = "CONTRADICTED"
+    NONE = "NONE"
+
+
+class PairwiseSemanticObservation(BaseModel):
+    """
+    Provider-neutral semantic observation for one material (BankItem, BookItem) pair.
+    Carries semantic facts discovered by a semantic provider (e.g. LLM, Go ASE)
+    without imposing LLM transport models on deterministic allocation analysis.
+    """
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+    )
+
+    bank_item_id: Identifier
+    book_item_id: Identifier
+    identity_admissibility: SemanticAdmissibility = SemanticAdmissibility.SUPPORTED
+    semantic_score: int = Field(..., ge=0, le=1000)
+    counterparty_relation: CounterpartyRelation = CounterpartyRelation.NONE
+    reference_relation: ReferenceRelation = ReferenceRelation.NONE
+    matched_reference: str | None = None
+    partial_payment_language: bool = False
+    batch_or_remittance_reference: str | None = None
+    evidence_document_ids: tuple[Identifier, ...] = ()
+    evidence_tags: tuple[str, ...] = ()
+    rationale: str | None = None

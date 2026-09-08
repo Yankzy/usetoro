@@ -13,10 +13,13 @@ from bookkeeping_state_eval.reconciliation.models import (
     BookResidual,
     CandidateFeasibilityResult,
     CandidateType,
+    CounterpartyRelation,
     FeasibilityStatus,
+    PairwiseSemanticObservation,
     ReconciliationCandidate,
     ReconciliationPlan,
     ReconciliationResult,
+    ReferenceRelation,
     UnresolvedBankItem,
     reconciliation_plan_to_transition_batch,
 )
@@ -26,6 +29,7 @@ from bookkeeping_state_eval.reconciliation.optimizer import (
 )
 from bookkeeping_state_eval.reconciliation.service import (
     ReconciliationService,
+    ReconciliationServiceError,
 )
 from bookkeeping_state_eval.reconciliation.validation import (
     validate_candidate_allocations,
@@ -57,6 +61,9 @@ __all__ = (
     "CandidateGenerator",
     "DefaultReconciliationScorer",
     "PairwiseSemanticAssessment",
+    "PairwiseSemanticObservation",
+    "CounterpartyRelation",
+    "ReferenceRelation",
     "ReconciliationSemanticAssessment",
     "ReconciliationSemanticScoreProvider",
     "decompose_candidate_allocations",
@@ -64,4 +71,5 @@ __all__ = (
     "ReconciliationOptimizationError",
     "optimize_reconciliation",
     "ReconciliationService",
+    "ReconciliationServiceError",
 )

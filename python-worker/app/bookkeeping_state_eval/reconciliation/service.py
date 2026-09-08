@@ -33,6 +33,10 @@ from bookkeeping_state_eval.reconciliation.view import (
 from bookkeeping_state_eval.state.queries import BookkeepingQueries
 
 
+class ReconciliationServiceError(RuntimeError):
+    """Raised when reconciliation service violates its internal contract."""
+
+
 class ReconciliationService:
     """
     Pure reconciliation planning orchestrator.
@@ -107,41 +111,35 @@ class ReconciliationService:
         generated_hypotheses: list[ReconciliationHypothesis] = []
         for cand in candidates:
             assessment = assessment_by_id.get(cand.candidate_id)
-            if assessment is not None:
-                if assessment.admissibility != SemanticAdmissibility.SUPPORTED:
-                    eligibility = Eligibility.INELIGIBLE
-                elif assessment.allocation_support == AllocationSupport.EXPLICIT_EVIDENCE:
-                    eligibility = Eligibility.SELECTABLE
-                elif assessment.allocation_support == AllocationSupport.UNIQUE_INFERENCE:
-                    eligibility = (
-                        Eligibility.SELECTABLE
-                        if view.config.auto_reconcile_unique_inferred_allocation
-                        else Eligibility.COUNTERFACTUAL_ONLY
-                    )
-                else:
-                    eligibility = Eligibility.INELIGIBLE
+            if assessment is None:
+                raise ReconciliationServiceError(
+                    f"Incomplete semantic assessment: candidate {cand.candidate_id!r} has no assessment"
+                )
 
-                hyp = cand.to_hypothesis(
-                    state_revision=view.state_revision,
-                    utility=assessment.semantic_score,
-                    semantic_score=assessment.semantic_score,
-                    semantic_value=assessment.semantic_value,
-                    eligibility=eligibility,
-                    admissibility=assessment.admissibility,
-                    allocation_support=assessment.allocation_support,
-                    evidence_refs=assessment.evidence_refs,
-                    semantic_rationale=assessment.rationale,
+            if assessment.admissibility != SemanticAdmissibility.SUPPORTED:
+                eligibility = Eligibility.INELIGIBLE
+            elif assessment.allocation_support == AllocationSupport.EXPLICIT_EVIDENCE:
+                eligibility = Eligibility.SELECTABLE
+            elif assessment.allocation_support == AllocationSupport.UNIQUE_INFERENCE:
+                eligibility = (
+                    Eligibility.SELECTABLE
+                    if view.config.auto_reconcile_unique_inferred_allocation
+                    else Eligibility.COUNTERFACTUAL_ONLY
                 )
             else:
-                hyp = cand.to_hypothesis(
-                    state_revision=view.state_revision,
-                    utility=0,
-                    semantic_score=0,
-                    semantic_value=0,
-                    eligibility=Eligibility.INELIGIBLE,
-                    admissibility=SemanticAdmissibility.INSUFFICIENT_EVIDENCE,
-                    allocation_support=AllocationSupport.INSUFFICIENT_EVIDENCE,
-                )
+                eligibility = Eligibility.INELIGIBLE
+
+            hyp = cand.to_hypothesis(
+                state_revision=view.state_revision,
+                utility=assessment.semantic_score,
+                semantic_score=assessment.semantic_score,
+                semantic_value=assessment.semantic_value,
+                eligibility=eligibility,
+                admissibility=assessment.admissibility,
+                allocation_support=assessment.allocation_support,
+                evidence_refs=assessment.evidence_refs,
+                semantic_rationale=assessment.rationale,
+            )
             generated_hypotheses.append(hyp)
 
         # Combine generated hypotheses with any caller-provided hypotheses

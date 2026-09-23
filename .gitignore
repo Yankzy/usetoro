@@ -21,6 +21,7 @@ go/cmd/*/*
 
 bin/*
 !bin/*.sh
+go/bin/
 
 # Test binary, built with `go test -c`
 *.test

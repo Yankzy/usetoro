@@ -39,7 +39,7 @@ accurate record-keeping and reporting.
 
 from random import choices
 from string import ascii_lowercase, digits
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict, List, Any, cast, overload, Literal
 from uuid import uuid4
 
 from django.apps import apps
@@ -125,12 +125,12 @@ class ChartOfAccountModelManager(Manager):
             Returns a ChartOfAccountQuerySet with applied filters.
         """
         qs = self.get_queryset()
-        return qs.filter(
+        return cast(ChartOfAccountModelQuerySet, qs.filter(
             (
                     Q(entity__admin=user_model) |
                     Q(entity__managers__in=[user_model])
             )
-        )
+        ))
 
     def for_entity(self, entity_model, user_model) -> ChartOfAccountModelQuerySet:
         """
@@ -176,6 +176,8 @@ class ChartOfAccountModelAbstract(SlugNameMixIn, CreateUpdateMixIn):
     """
 
     uuid = models.UUIDField(default=uuid4, editable=False, primary_key=True)
+    entity_id: Any
+    accountmodel_set: Any
     entity = models.ForeignKey('ledger.EntityModel',
                                verbose_name=_('Entity'),
                                on_delete=models.CASCADE)
@@ -225,10 +227,47 @@ class ChartOfAccountModelAbstract(SlugNameMixIn, CreateUpdateMixIn):
         qs = self.get_coa_root_accounts_qs()
         return qs.get(role__exact=ROOT_COA)
 
+    @overload
+    def get_account_root_node(
+        self,
+        account_model: AccountModel,
+        root_account_qs: Optional[AccountModelQuerySet] = None,
+        as_queryset: Literal[False] = False,
+    ) -> AccountModel:
+        ...
+
+    @overload
+    def get_account_root_node(
+        self,
+        account_model: AccountModel,
+        root_account_qs: Optional[AccountModelQuerySet] = None,
+        *,
+        as_queryset: Literal[True],
+    ) -> AccountModelQuerySet:
+        ...
+
+    @overload
+    def get_account_root_node(
+        self,
+        account_model: AccountModel,
+        root_account_qs: Optional[AccountModelQuerySet],
+        as_queryset: Literal[True],
+    ) -> AccountModelQuerySet:
+        ...
+
+    @overload
+    def get_account_root_node(
+        self,
+        account_model: AccountModel,
+        root_account_qs: Optional[AccountModelQuerySet] = None,
+        as_queryset: bool = False,
+    ) -> Union[AccountModelQuerySet, AccountModel]:
+        ...
+
     def get_account_root_node(self,
                               account_model: AccountModel,
                               root_account_qs: Optional[AccountModelQuerySet] = None,
-                              as_queryset: bool = False) -> AccountModel:
+                              as_queryset: bool = False) -> Union[AccountModelQuerySet, AccountModel]:
         """
         Fetches the root node of the ChartOfAccountModel instance. The root node is the highest level of the CoA
         hierarchy. It can be used to traverse the hierarchy of the CoA structure downstream.
@@ -320,7 +359,7 @@ class ChartOfAccountModelAbstract(SlugNameMixIn, CreateUpdateMixIn):
             return qs.active()
         return qs
 
-    def get_coa_account_tree(self) -> Dict:
+    def get_coa_account_tree(self) -> List[Dict]:
         """
         Performs a bulk dump of the ChartOfAccounts model instance accounts to a dictionary.
         The method invokes the`dump_bulk` method on the ChartOfAccount model instance root node.
@@ -360,7 +399,7 @@ class ChartOfAccountModelAbstract(SlugNameMixIn, CreateUpdateMixIn):
                 raise ChartOfAccountsModelValidationError(
                     message=_(f'CoA {self.uuid} already has a slug')
                 )
-            return
+            return self.slug
         self.slug = f'coa-{self.entity.slug[-5:]}-' + ''.join(choices(SLUG_SUFFIX, k=15))
 
         if commit:
@@ -370,6 +409,7 @@ class ChartOfAccountModelAbstract(SlugNameMixIn, CreateUpdateMixIn):
                     'updated'
                 ]
             )
+        return self.slug
 
     def configure(self, raise_exception: bool = True):
         """
@@ -589,7 +629,7 @@ class ChartOfAccountModelAbstract(SlugNameMixIn, CreateUpdateMixIn):
 
         # Insert the account model and generate embedding asynchronously
         transaction.on_commit(
-            lambda: insert_account_embedding_task.delay(str(account_model.uuid))
+            lambda: cast(Any, insert_account_embedding_task).delay(str(account_model.uuid))
         )
         return account_model
 

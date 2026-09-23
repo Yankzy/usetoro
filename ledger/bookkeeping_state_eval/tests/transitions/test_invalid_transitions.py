@@ -23,7 +23,10 @@ from bookkeeping_state.domain.context import (
     AccountingPolicy,
     BookkeepingContext,
 )
-from bookkeeping_state.domain.enums import Direction
+from bookkeeping_state.domain.enums import (
+    Direction,
+    SourceType,
+)
 from bookkeeping_state.domain.reconciliations import (
     BankAllocation,
     BookAllocation,
@@ -838,6 +841,7 @@ def _baseline_snapshot() -> BookkeepingSnapshot:
 
     book_1 = BookItem(
         id="book-1",
+        source_type=SourceType.POSTED_BOOK_ITEM,
         origin_period="2026-01",
         date=date(2026, 1, 12),
         amount_units="1000000",
@@ -848,6 +852,7 @@ def _baseline_snapshot() -> BookkeepingSnapshot:
 
     book_2 = BookItem(
         id="book-2",
+        source_type=SourceType.POSTED_BOOK_ITEM,
         origin_period="2026-01",
         date=date(2026, 1, 18),
         amount_units="1000000",

@@ -63,6 +63,7 @@ class FeasibilityStatus(StrEnum):
     DIRECTION_MISMATCH = "DIRECTION_MISMATCH"
     ROUTING_CONTRADICTION = "ROUTING_CONTRADICTION"
     DATE_WINDOW_EXCEEDED = "DATE_WINDOW_EXCEEDED"
+    INVALID_SOURCE_TYPE = "INVALID_SOURCE_TYPE"
 
 
 class UnresolvedReason(StrEnum):
@@ -264,6 +265,19 @@ class ReconciliationResult(BaseModel):
     objective_reconciled_units: ResidualAmountUnits = "0"
     objective_amount_weighted_semantic_value: int = Field(default=0, ge=0)
     objective_items_cleared: int = Field(default=0, ge=0)
+    posted_authority_bank_item_ids: tuple[str, ...] = ()
+
+    @property
+    def selected_bank_item_ids(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {
+                    alloc.bank_item_id
+                    for h in self.selected_hypotheses
+                    for alloc in h.bank_allocations
+                }
+            )
+        )
 
     @property
     def reconciled_units_int(self) -> int:
@@ -355,6 +369,14 @@ class ReconciliationPlan(BaseModel):
     @property
     def has_reconciliations(self) -> bool:
         return bool(self.commands)
+
+    @property
+    def posted_authority_bank_item_ids(self) -> tuple[str, ...]:
+        return self.result.posted_authority_bank_item_ids
+
+    @property
+    def selected_bank_item_ids(self) -> tuple[str, ...]:
+        return self.result.selected_bank_item_ids
 
     def to_batch(
         self,

@@ -23,7 +23,7 @@ from bookkeeping_state.domain.documents import (
     DocumentStatus,
     DocumentType,
 )
-from bookkeeping_state.domain.enums import Direction
+from bookkeeping_state.domain.enums import Direction, SourceType
 from bookkeeping_state.domain.reconciliations import (
     BankAllocation,
     BookAllocation,
@@ -95,6 +95,7 @@ def book_item(
     description: str | None = None,
     reference: str | None = None,
     date_val: date = date(2026, 1, 15),
+    source_type: SourceType = SourceType.STAGING_BOOK_ITEM,
 ) -> BookItem:
     return BookItem(
         id=id,
@@ -107,6 +108,33 @@ def book_item(
         reference=reference,
         counterparty_id=counterparty_id,
         provenance_refs=provenance_refs,
+        source_type=source_type,
+    )
+
+
+def posted_book_item(
+    id: str = "book-1",
+    *,
+    amount: int = 1_000_000,
+    currency: str = "MAD",
+    direction: Direction = Direction.BOOK_BANK_CREDIT,
+    counterparty_id: str | None = None,
+    provenance_refs: tuple[str, ...] = (),
+    description: str | None = None,
+    reference: str | None = None,
+    date_val: date = date(2026, 1, 15),
+) -> BookItem:
+    return book_item(
+        id=id,
+        amount=amount,
+        currency=currency,
+        direction=direction,
+        counterparty_id=counterparty_id,
+        provenance_refs=provenance_refs,
+        description=description,
+        reference=reference,
+        date_val=date_val,
+        source_type=SourceType.POSTED_BOOK_ITEM,
     )
 
 

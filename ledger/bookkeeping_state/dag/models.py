@@ -35,6 +35,9 @@ class DagClassificationItem:
     supersedes_classification_id: str | None = None
     classification_id: str | None = None
     ase_node_id: str | None = None
+    candidate_source: str | None = None
+    constrained_macro: str | None = None
+    candidate_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +54,9 @@ class DagHoldItem:
     reason: str = "HOLD_INSUFFICIENT_EVIDENCE"
     rationale: str = ""
     ase_node_id: str = ""
+    candidate_source: str | None = None
+    constrained_macro: str | None = None
+    candidate_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

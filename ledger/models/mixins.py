@@ -7,7 +7,8 @@ from collections import defaultdict
 from datetime import timedelta, date, datetime
 from decimal import Decimal
 from itertools import groupby
-from typing import Optional, Union, Dict
+from dataclasses import dataclass
+from typing import Optional, Union, Dict, Any
 from uuid import UUID
 
 from django.conf import settings
@@ -25,6 +26,16 @@ from ledger.io.io_core import validate_io_timestamp, check_tx_balance, get_local
 from ledger.models.utils import lazy_loader
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
+
+
+@dataclass(frozen=True, slots=True)
+class PaymentPostingResult:
+    """
+    Explicit posting result returned by accounting state migration for payment operations.
+    Captures the exact cash TransactionModel and all associated transactions produced by this invocation.
+    """
+    cash_transaction: Any
+    transactions: tuple[Any, ...]
 
 
 class SlugNameMixIn(models.Model):
@@ -550,6 +561,8 @@ class AccrualMixIn(models.Model):
                       void: bool = False,
                       je_timestamp: Optional[Union[str, date, datetime]] = None,
                       raise_exception: bool = True,
+                      cash_account_override: Optional[Any] = None,
+                      return_posting_result: bool = False,
                       **kwargs):
 
         """
@@ -696,10 +709,13 @@ class AccrualMixIn(models.Model):
             else:
                 new_state = self.void_state(commit=commit)
 
+            effective_cash_account_id = (
+                cash_account_override.pk if cash_account_override is not None else getattr(self, "cash_account_id", None)
+            )
             amount_paid_split = self.split_amount(
                 amount=new_state['amount_paid'],
                 unit_split=unit_percents,
-                account_uuid=self.cash_account_id,
+                account_uuid=effective_cash_account_id,
                 account_balance_type='debit'
             )
             amount_prepaid_split = self.split_amount(
@@ -798,6 +814,20 @@ class AccrualMixIn(models.Model):
                         objs=[je for _, je in je_list.items()],
                         fields=['posted', 'locked', 'activity']
                     )
+
+                if return_posting_result:
+                    cash_txs = tuple(
+                        tx for tx in txs if tx.account_id == effective_cash_account_id
+                    )
+                    if len(cash_txs) != 1:
+                        raise ValidationError(
+                            f"Expected exactly 1 cash transaction for payment migration, got {len(cash_txs)}"
+                        )
+                    posting_result = PaymentPostingResult(
+                        cash_transaction=cash_txs[0],
+                        transactions=tuple(txs),
+                    )
+                    return item_data, io_data, posting_result
 
             return item_data, io_data
         else:

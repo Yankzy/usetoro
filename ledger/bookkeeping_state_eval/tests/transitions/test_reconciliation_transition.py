@@ -21,6 +21,7 @@ from bookkeeping_state.domain.context import (
 from bookkeeping_state.domain.enums import (
     Direction,
     Eligibility,
+    SourceType,
 )
 from bookkeeping_state.domain.events import StateEventType
 from bookkeeping_state.domain.hypotheses import (
@@ -1273,6 +1274,7 @@ def _baseline_snapshot() -> BookkeepingSnapshot:
 
     book_1 = BookItem(
         id="book-1",
+        source_type=SourceType.POSTED_BOOK_ITEM,
         origin_period="2026-01",
 
         date=date(
@@ -1292,6 +1294,7 @@ def _baseline_snapshot() -> BookkeepingSnapshot:
 
     book_2 = BookItem(
         id="book-2",
+        source_type=SourceType.POSTED_BOOK_ITEM,
         origin_period="2026-01",
 
         date=date(

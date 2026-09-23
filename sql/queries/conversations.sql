@@ -77,6 +77,14 @@ INSERT INTO toro_core.conversations (
 )
 ON CONFLICT (external_id) DO NOTHING;
 
+-- name: SaveConversationSessionMessageWithResult :execrows
+INSERT INTO toro_core.conversations (
+    entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, session_id, role
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+)
+ON CONFLICT (external_id) DO NOTHING;
+
 -- name: GetConversationByExternalID :one
 SELECT session_id FROM toro_core.conversations
 WHERE external_id = $1 AND session_id IS NOT NULL

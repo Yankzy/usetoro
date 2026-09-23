@@ -88,7 +88,7 @@ Transaction ID: TXN-003, Amount: $120.00, Description: Coffee supplies
 	cfg := core.AgentConfig{
 		DID:          "test-agent-did",
 		Name:         "Test Paging Agent",
-		Model:        "gpt-4o",
+		Model:        "gpt-5.4-mini",
 		SystemPrompt: "You are a helpful financial assistant. You MUST page in documents to answer questions.",
 	}
 

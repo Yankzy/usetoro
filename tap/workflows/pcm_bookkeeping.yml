@@ -4,7 +4,7 @@ description: "Legacy DB-selected route delegated to the canonical incremental PC
 trigger_topic: events.accounting.1.pcm_bookkeeping
 steps:
   - id: canonical_pcm_flow
-    sub_workflow: "PCM Statement Intake and Posting"
+    sub_workflow: "PCM Workflow"
     negotiate: false
     timeout: "900s"
     description: "Delegate unchanged input to the canonical Stage-2 review and Shadow ERP posting workflow."

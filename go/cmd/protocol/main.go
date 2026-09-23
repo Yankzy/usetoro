@@ -252,7 +252,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 
 	adapter := agent.NewNatsAdapter(q.Conn(), q.JetStream())
 	rt := agent.NewRuntime(logger, adapter, core.AgentConfig{
-		Model: "gpt-4o",
+		Model: "gpt-5.4-mini",
 		DID:   "did:toro:protocol:main",
 	})
 

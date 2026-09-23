@@ -96,6 +96,26 @@ class ValidationCode(StrEnum):
         "CLASSIFICATION_SUPERSESSION_SUBJECT_MISMATCH"
     )
 
+    UNKNOWN_RESIDUAL_CLASSIFICATION_SUPERSESSION = (
+        "UNKNOWN_RESIDUAL_CLASSIFICATION_SUPERSESSION"
+    )
+    RESIDUAL_CLASSIFICATION_SUPERSESSION_SUBJECT_MISMATCH = (
+        "RESIDUAL_CLASSIFICATION_SUPERSESSION_SUBJECT_MISMATCH"
+    )
+    UNKNOWN_RESIDUAL_CLASSIFICATION_INVALIDATION_TARGET = (
+        "UNKNOWN_RESIDUAL_CLASSIFICATION_INVALIDATION_TARGET"
+    )
+    RESIDUAL_CLASSIFICATION_BANK_ACCOUNT_MISMATCH = (
+        "RESIDUAL_CLASSIFICATION_BANK_ACCOUNT_MISMATCH"
+    )
+
+    UNKNOWN_POSTING_DECISION_TARGET = "UNKNOWN_POSTING_DECISION_TARGET"
+    UNKNOWN_POSTING_BANK_ITEM = "UNKNOWN_POSTING_BANK_ITEM"
+    DUPLICATE_POSTING_DECISION = "DUPLICATE_POSTING_DECISION"
+    UNKNOWN_POSTING_RECONCILIATION = "UNKNOWN_POSTING_RECONCILIATION"
+    POSTING_SUBJECT_MISMATCH = "POSTING_SUBJECT_MISMATCH"
+    INVALID_POSTING_LINKAGE = "INVALID_POSTING_LINKAGE"
+
     MULTIPLE_ACTIVE_DECISIONS = "MULTIPLE_ACTIVE_DECISIONS"
 
     # Reconciliation invariants
@@ -255,6 +275,16 @@ def validate_state(
         issues,
     )
 
+    _validate_residual_bank_classification_artifacts(
+        state,
+        issues,
+    )
+
+    _validate_residual_bank_posting_artifacts(
+        state,
+        issues,
+    )
+
     _validate_reconciliation_artifacts(
         state,
         issues,
@@ -377,7 +407,7 @@ def _validate_evidence_artifacts(
     assertions = state.book_item_evidence_assertions
 
     for assertion in assertions.values():
-        if state.get_book_item(assertion.book_item_id) is None:
+        if not state.is_known_book_item(assertion.book_item_id):
             _append_issue(
                 issues,
                 code=ValidationCode.UNKNOWN_EVIDENCE_ASSERTION_TARGET,
@@ -521,7 +551,7 @@ def _validate_routing_artifacts(
     decisions = state.routing_decisions
 
     for decision in decisions.values():
-        if state.get_book_item(decision.book_item_id) is None:
+        if not state.is_known_book_item(decision.book_item_id):
             _append_issue(
                 issues,
                 code=ValidationCode.UNKNOWN_BOOK_ITEM,
@@ -630,7 +660,7 @@ def _validate_classification_artifacts(
     classifications = state.classifications
 
     for classification in classifications.values():
-        if state.get_book_item(classification.book_item_id) is None:
+        if not state.is_known_book_item(classification.book_item_id):
             _append_issue(
                 issues,
                 code=ValidationCode.UNKNOWN_BOOK_ITEM,
@@ -732,8 +762,208 @@ def _validate_classification_artifacts(
 
 
 # ----------------------------------------------------------------------
+# Residual bank classification artifacts
+# ----------------------------------------------------------------------
+
+
+def _validate_residual_bank_classification_artifacts(
+    state: BookkeepingState,
+    issues: list[ValidationIssue],
+) -> None:
+    decisions = getattr(state, "residual_bank_classifications", {})
+    invalidations = getattr(state, "residual_bank_classification_invalidations", {})
+
+    for decision in decisions.values():
+        bank_item = state.get_bank_item(decision.bank_item_id)
+        if bank_item is None:
+            _append_issue(
+                issues,
+                code=ValidationCode.UNKNOWN_BANK_ITEM,
+                message=(
+                    f"ResidualBankClassificationDecision {decision.id!r} references "
+                    f"unknown BankItem {decision.bank_item_id!r}"
+                ),
+                artifact_ids=(
+                    decision.id,
+                    decision.bank_item_id,
+                ),
+            )
+        else:
+            if decision.bank_account_id != bank_item.bank_account_id:
+                _append_issue(
+                    issues,
+                    code=ValidationCode.RESIDUAL_CLASSIFICATION_BANK_ACCOUNT_MISMATCH,
+                    message=(
+                        f"ResidualBankClassificationDecision {decision.id!r} bank account "
+                        f"{decision.bank_account_id!r} does not match BankItem "
+                        f"{bank_item.id!r} bank account {bank_item.bank_account_id!r}"
+                    ),
+                    artifact_ids=(
+                        decision.id,
+                        decision.bank_account_id,
+                        bank_item.bank_account_id,
+                    ),
+                )
+
+        if state.get_bank_account(decision.bank_account_id) is None:
+            _append_issue(
+                issues,
+                code=ValidationCode.UNKNOWN_BANK_ACCOUNT,
+                message=(
+                    f"ResidualBankClassificationDecision {decision.id!r} references "
+                    f"unknown BankAccount {decision.bank_account_id!r}"
+                ),
+                artifact_ids=(
+                    decision.id,
+                    decision.bank_account_id,
+                ),
+            )
+
+        superseded_id = decision.supersedes_decision_id
+        if superseded_id is not None:
+            superseded = decisions.get(superseded_id)
+            if superseded is None:
+                _append_issue(
+                    issues,
+                    code=ValidationCode.UNKNOWN_RESIDUAL_CLASSIFICATION_SUPERSESSION,
+                    message=(
+                        f"ResidualBankClassificationDecision {decision.id!r} supersedes "
+                        f"unknown decision {superseded_id!r}"
+                    ),
+                    artifact_ids=(
+                        decision.id,
+                        superseded_id,
+                    ),
+                )
+            elif superseded.bank_item_id != decision.bank_item_id:
+                _append_issue(
+                    issues,
+                    code=ValidationCode.RESIDUAL_CLASSIFICATION_SUPERSESSION_SUBJECT_MISMATCH,
+                    message=(
+                        f"ResidualBankClassificationDecision {decision.id!r} for "
+                        f"BankItem {decision.bank_item_id!r} cannot supersede "
+                        f"decision {superseded.id!r} for BankItem {superseded.bank_item_id!r}"
+                    ),
+                    artifact_ids=(
+                        decision.id,
+                        superseded.id,
+                    ),
+                )
+
+    for invalidation in invalidations.values():
+        target = decisions.get(invalidation.classification_id)
+        if target is None:
+            _append_issue(
+                issues,
+                code=ValidationCode.UNKNOWN_RESIDUAL_CLASSIFICATION_INVALIDATION_TARGET,
+                message=(
+                    f"ResidualBankClassificationInvalidation {invalidation.id!r} targets "
+                    f"unknown decision {invalidation.classification_id!r}"
+                ),
+                artifact_ids=(
+                    invalidation.id,
+                    invalidation.classification_id,
+                ),
+            )
+
+
+# ----------------------------------------------------------------------
+# Residual bank posting artifacts
+# ----------------------------------------------------------------------
+
+
+def _validate_residual_bank_posting_artifacts(
+    state: BookkeepingState,
+    issues: list[ValidationIssue],
+) -> None:
+    postings = getattr(state, "residual_bank_postings", {})
+    seen_decisions: set[str] = set()
+
+    for posting in postings.values():
+        if posting.decision_id in seen_decisions:
+            _append_issue(
+                issues,
+                code=ValidationCode.DUPLICATE_POSTING_DECISION,
+                message=(
+                    f"Duplicate ResidualBankPosting for decision {posting.decision_id!r}"
+                ),
+                artifact_ids=(posting.id, posting.decision_id),
+            )
+        seen_decisions.add(posting.decision_id)
+
+        decision = state.get_residual_bank_classification(posting.decision_id)
+        if decision is None:
+            _append_issue(
+                issues,
+                code=ValidationCode.UNKNOWN_POSTING_DECISION_TARGET,
+                message=(
+                    f"ResidualBankPosting {posting.id!r} targets unknown "
+                    f"decision {posting.decision_id!r}"
+                ),
+                artifact_ids=(posting.id, posting.decision_id),
+            )
+        else:
+            if decision.bank_item_id != posting.bank_item_id:
+                _append_issue(
+                    issues,
+                    code=ValidationCode.POSTING_SUBJECT_MISMATCH,
+                    message=(
+                        f"ResidualBankPosting {posting.id!r} bank item "
+                        f"{posting.bank_item_id!r} does not match decision "
+                        f"bank item {decision.bank_item_id!r}"
+                    ),
+                    artifact_ids=(
+                        posting.id,
+                        posting.bank_item_id,
+                        decision.bank_item_id,
+                    ),
+                )
+
+        bank_item = state.get_bank_item(posting.bank_item_id)
+        if bank_item is None:
+            _append_issue(
+                issues,
+                code=ValidationCode.UNKNOWN_POSTING_BANK_ITEM,
+                message=(
+                    f"ResidualBankPosting {posting.id!r} references unknown "
+                    f"bank item {posting.bank_item_id!r}"
+                ),
+                artifact_ids=(posting.id, posting.bank_item_id),
+            )
+
+        reconciliation = state.reconciliations.get(posting.reconciliation_id)
+        if reconciliation is None:
+            _append_issue(
+                issues,
+                code=ValidationCode.UNKNOWN_POSTING_RECONCILIATION,
+                message=(
+                    f"ResidualBankPosting {posting.id!r} references unknown "
+                    f"reconciliation {posting.reconciliation_id!r}"
+                ),
+                artifact_ids=(posting.id, posting.reconciliation_id),
+            )
+
+        if (
+            not posting.journal_entry_id
+            or not posting.bank_cash_transaction_id
+            or not posting.contra_transaction_id
+            or posting.persistence_revision < 1
+        ):
+            _append_issue(
+                issues,
+                code=ValidationCode.INVALID_POSTING_LINKAGE,
+                message=(
+                    f"ResidualBankPosting {posting.id!r} has invalid linkage identifiers "
+                    f"or non-positive persistence revision"
+                ),
+                artifact_ids=(posting.id,),
+            )
+
+
+# ----------------------------------------------------------------------
 # Reconciliation artifacts
 # ----------------------------------------------------------------------
+
 
 
 def _validate_reconciliation_artifacts(

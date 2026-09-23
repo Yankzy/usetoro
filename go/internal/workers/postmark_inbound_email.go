@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -131,6 +133,42 @@ func (w *PostmarkInboundEmailWorker) Subscriptions() []SubscriptionConfig {
 	}
 }
 
+const (
+	MaxInboundAttachments         = 10
+	MaxDecodedAttachmentSize      = 10 * 1024 * 1024 // 10 MB per attachment
+	MaxTotalDecodedAttachmentSize = 20 * 1024 * 1024 // 20 MB total per email
+)
+
+func sanitizeAttachmentFileName(name string, contentType string) string {
+	base := filepath.Base(name)
+	base = strings.ReplaceAll(base, "..", "")
+	base = strings.ReplaceAll(base, "/", "")
+	base = strings.ReplaceAll(base, "\\", "")
+
+	var cleaned strings.Builder
+	for _, r := range base {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			cleaned.WriteRune(r)
+		} else {
+			cleaned.WriteRune('_')
+		}
+	}
+	res := strings.Trim(cleaned.String(), "._- ")
+	if res == "" {
+		switch {
+		case strings.Contains(contentType, "pdf"):
+			return "attachment.pdf"
+		case strings.Contains(contentType, "png"):
+			return "attachment.png"
+		case strings.Contains(contentType, "jpeg"), strings.Contains(contentType, "jpg"):
+			return "attachment.jpg"
+		default:
+			return "attachment.bin"
+		}
+	}
+	return res
+}
+
 func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) error {
 	// w.logger.Info("PostmarkInboundEmailWorker:", "MSG", msg)
 	meta, metaErr := msg.Metadata()
@@ -144,6 +182,35 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	if errUnmarshal := json.Unmarshal(msg.Data, &payload); errUnmarshal != nil {
 		w.logger.Error("PostmarkInboundEmailWorker: failed to unmarshal postmark email payload", "error", errUnmarshal)
 		return nil
+	}
+
+	cleanMessageID := CleanMessageID(payload.MessageID)
+	if cleanMessageID == "" {
+		cleanMessageID = payload.MessageID
+	}
+
+	// 0. Early DB-level idempotency check: If this MessageID has already been saved, ACK and return early
+	if cleanMessageID != "" && w.db != nil {
+		existingSessionID, err := w.db.GetConversationByExternalID(ctx, cleanMessageID)
+		if err == nil && existingSessionID.Valid {
+			w.logger.Info("PostmarkInboundEmailWorker: message already processed, suppressing duplicate", "message_id", cleanMessageID)
+			return nil
+		}
+	}
+
+	// 0b. Race safety: Acquire PostgreSQL advisory lock on MessageID to serialize concurrent deliveries
+	if w.pool != nil && cleanMessageID != "" {
+		var acquired bool
+		err := w.pool.QueryRow(ctx, "SELECT pg_try_advisory_lock(hashtext($1))", "postmark_inbound:"+cleanMessageID).Scan(&acquired)
+		if err == nil {
+			if !acquired {
+				w.logger.Info("PostmarkInboundEmailWorker: concurrent processing in progress for message, skipping duplicate", "message_id", cleanMessageID)
+				return nil
+			}
+			defer func() {
+				_, _ = w.pool.Exec(context.Background(), "SELECT pg_advisory_unlock(hashtext($1))", "postmark_inbound:"+cleanMessageID)
+			}()
+		}
 	}
 
 	// 1. Parse the recipient and determine canonical addresses
@@ -169,7 +236,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 	}
 
 	// 3. Resolve sender identity (entity_id, agent alias, session_id).
-	// If unverified, bounce immediately — do not run any downstream task.
+	// Uses deterministic recipient-based entity routing and hierarchical authorization.
 	inReplyToHeader, _ := ExtractMessageHeaders(payload.Headers)
 	sender, resolveErr := ResolveSender(ctx, w.logger, w.db, w.pool, payload.From, recipient, inReplyToHeader)
 	if resolveErr != nil {
@@ -178,17 +245,46 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 		return nil
 	}
 
-	// 4. Process attachments: Support pre-existing S3Key, or upload raw base64 content to S3
-	var attachmentMetadata []map[string]interface{}
+	// 4. Resolve or create conversation session FIRST (fixes session ordering so sender.SessionID is populated)
+	var session database.ToroCoreConversationSession
+	if w.db != nil {
+		sessionManager := conversation.NewSessionManager(w.db, w.logger)
+		s, _, err := sessionManager.FindOrCreateSession(ctx, conversation.FindOrCreateParams{
+			EntityID:          sender.EntityID,
+			ParticipantHandle: sender.FromHandle,
+			ToroHandle:        sender.ToHandle,
+			Source:            "email",
+			Subject:           payload.Subject,
+		})
+		if err != nil {
+			w.logger.Error("PostmarkInboundEmailWorker: failed to find or create conversation session", "error", err)
+			return fmt.Errorf("failed to find or create conversation session: %w", err)
+		}
+		session = s
+		sender.SessionID = uuidFromPG(session.ID)
+	}
+	// Fallback to non-empty synthetic session ID if DB is nil (e.g. testing) so documents are never empty
+	if sender.SessionID == "" {
+		sender.SessionID = uuid.New().String()
+	}
 
+	// 5. Process attachments with strict allowlist, size limits, content sniffing, and sanitization
+	var attachmentMetadata []map[string]interface{}
 	var docStore *know.DocumentStore
 	if w.pool != nil {
 		docStore = know.NewDocumentStore(w.pool, w.logger)
 	}
 	var documentIDs []string
 
-	for idx, att := range payload.Attachments {
-		// Attachment contains base64 content that needs to be uploaded to S3
+	// Enforce maximum attachment count
+	attachmentsToProcess := payload.Attachments
+	if len(attachmentsToProcess) > MaxInboundAttachments {
+		w.logger.Warn("PostmarkInboundEmailWorker: attachment count exceeds limit, truncating", "count", len(attachmentsToProcess), "max", MaxInboundAttachments)
+		attachmentsToProcess = attachmentsToProcess[:MaxInboundAttachments]
+	}
+
+	var totalDecodedSize int
+	for idx, att := range attachmentsToProcess {
 		if att.Content != "" {
 			if w.storage == nil {
 				w.logger.Error("PostmarkInboundEmailWorker: S3 storage service not configured, cannot upload attachment", "name", att.Name)
@@ -201,7 +297,6 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 
 			decodedBytes, decodeErr := base64.StdEncoding.DecodeString(rawContent)
 			if decodeErr != nil {
-				// Try raw unpadded decoding as fallback
 				if rawBytes, rawErr := base64.RawStdEncoding.DecodeString(rawContent); rawErr == nil {
 					decodedBytes = rawBytes
 					decodeErr = nil
@@ -215,9 +310,35 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 				continue
 			}
 
-			// Convert non-PDF image attachments to PDF format for standardized S3 storage
+			// Size limit checks
+			if len(decodedBytes) > MaxDecodedAttachmentSize {
+				w.logger.Warn("attachment exceeds maximum allowed size, skipping", "name", att.Name, "size", len(decodedBytes), "limit", MaxDecodedAttachmentSize)
+				continue
+			}
+			if totalDecodedSize+len(decodedBytes) > MaxTotalDecodedAttachmentSize {
+				w.logger.Warn("aggregate attachments exceed maximum total size, skipping", "name", att.Name, "total", totalDecodedSize+len(decodedBytes), "limit", MaxTotalDecodedAttachmentSize)
+				continue
+			}
+			totalDecodedSize += len(decodedBytes)
+
+			// Magic bytes sniffing and content type detection
+			detectedType := http.DetectContentType(decodedBytes[:min(512, len(decodedBytes))])
+			isPDF := bytes.HasPrefix(decodedBytes, []byte("%PDF-")) || detectedType == "application/pdf"
+			isPNG := detectedType == "image/png"
+			isJPEG := detectedType == "image/jpeg"
+
+			if !isPDF && !isPNG && !isJPEG {
+				w.logger.Warn("unsupported or dangerous attachment format detected, rejecting safely", "name", att.Name, "declared_type", att.ContentType, "detected_type", detectedType)
+				continue
+			}
+
 			contentType := att.ContentType
-			if strings.HasPrefix(contentType, "image/") && !strings.Contains(contentType, "pdf") {
+			if contentType == "" {
+				contentType = detectedType
+			}
+
+			// Convert non-PDF images (PNG/JPEG) to PDF for standardized OCR pipeline
+			if !isPDF && (isPNG || isJPEG) {
 				pdfBytes, err := convertImageToPDF(decodedBytes, contentType)
 				if err == nil {
 					decodedBytes = pdfBytes
@@ -229,14 +350,12 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 					w.logger.Warn("failed to convert image attachment to PDF", "name", att.Name, "error", err)
 				}
 			}
-			if contentType == "" {
-				contentType = "application/octet-stream"
-			}
 
 			// Calculate sha256 hash
 			hashSum := sha256.Sum256(decodedBytes)
 			sha256Str := hex.EncodeToString(hashSum[:])
 
+			cleanFileName := sanitizeAttachmentFileName(att.Name, contentType)
 			s3Key := ""
 
 			// Check if document already exists to avoid redundant S3 upload
@@ -244,15 +363,14 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 				existingDoc, _ := docStore.GetDocumentBySHA256(ctx, sha256Str)
 				if existingDoc != nil && existingDoc.S3URL != "" {
 					s3Key = existingDoc.S3URL
-					w.logger.Info("PostmarkInboundEmailWorker: document already exists, skipping S3 upload", "sha256", sha256Str, "file_name", att.Name)
+					w.logger.Info("PostmarkInboundEmailWorker: document already exists, skipping S3 upload", "sha256", sha256Str, "file_name", cleanFileName)
 				}
 			}
 			if s3Key == "" {
-				s3Key = fmt.Sprintf("%s-%s", uuid.New().String(), att.Name)
+				s3Key = fmt.Sprintf("inbound/%s/%s-%s", sender.SessionID, uuid.New().String(), cleanFileName)
 				uploadErr := w.storage.UploadFileToS3(ctx, s3Key, bytes.NewReader(decodedBytes), contentType)
 				if uploadErr != nil {
-					w.logger.Error("failed to upload attachment to S3", "error", uploadErr, "name", att.Name)
-					// TODO: Save fails in s3_upload_fails table
+					w.logger.Error("failed to upload attachment to S3", "error", uploadErr, "name", cleanFileName)
 					continue
 				}
 			}
@@ -270,10 +388,12 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 				"reply_to":       payload.ReplyTo,
 				"subject":        payload.Subject,
 				"agent_alias":    sender.AgentAlias,
-				"external_id":    payload.MessageID,
+				"external_id":    cleanMessageID,
 				"s3_key":         s3Key,
 				"sha256":         sha256Str,
 				"content_length": len(decodedBytes),
+				"callback_topic": "worker.inbox.python.accounting_intake",
+				"intake_source":  "bookkeeping_email",
 			}
 
 			var docID string
@@ -282,7 +402,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 					ctx,
 					sender.SessionID,
 					know.DocTypeOther,
-					att.Name,
+					cleanFileName,
 					contentType,
 					s3Key,
 					sha256Str,
@@ -291,17 +411,17 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 					docMetadata,
 				)
 				if docErr != nil {
-					w.logger.Error("PostmarkInboundEmailWorker: failed to create document record in DB", "error", docErr, "file_name", att.Name)
+					w.logger.Error("PostmarkInboundEmailWorker: failed to create document record in DB", "error", docErr, "file_name", cleanFileName)
 				} else if createdDoc != nil {
 					docID = createdDoc.ID.String()
 					documentIDs = append(documentIDs, docID)
-					w.logger.Info("PostmarkInboundEmailWorker: saved document in DB", "doc_id", docID, "file_name", att.Name)
+					w.logger.Info("PostmarkInboundEmailWorker: saved document in DB", "doc_id", docID, "file_name", cleanFileName, "session_id", sender.SessionID)
 				}
 			}
 
 			attMetadata := map[string]interface{}{
 				"document_id":    docID,
-				"name":           att.Name,
+				"name":           cleanFileName,
 				"s3_key":         s3Key,
 				"sha256":         sha256Str,
 				"content_type":   contentType,
@@ -313,8 +433,9 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 			sha256Str := att.SHA256
 			contentType := att.ContentType
 			if contentType == "" {
-				contentType = "application/octet-stream"
+				contentType = "application/pdf"
 			}
+			cleanFileName := sanitizeAttachmentFileName(att.Name, contentType)
 
 			docMetadata := map[string]any{
 				"session_id":     sender.SessionID,
@@ -324,10 +445,12 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 				"reply_to":       payload.ReplyTo,
 				"subject":        payload.Subject,
 				"agent_alias":    sender.AgentAlias,
-				"external_id":    payload.MessageID,
+				"external_id":    cleanMessageID,
 				"s3_key":         s3Key,
 				"sha256":         sha256Str,
 				"content_length": att.ContentLength,
+				"callback_topic": "worker.inbox.python.accounting_intake",
+				"intake_source":  "bookkeeping_email",
 			}
 
 			var docID string
@@ -336,7 +459,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 					ctx,
 					sender.SessionID,
 					know.DocTypeOther,
-					att.Name,
+					cleanFileName,
 					contentType,
 					s3Key,
 					sha256Str,
@@ -345,17 +468,17 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 					docMetadata,
 				)
 				if docErr != nil {
-					w.logger.Error("PostmarkInboundEmailWorker: failed to create document record in DB", "error", docErr, "file_name", att.Name)
+					w.logger.Error("PostmarkInboundEmailWorker: failed to create document record in DB", "error", docErr, "file_name", cleanFileName)
 				} else if createdDoc != nil {
 					docID = createdDoc.ID.String()
 					documentIDs = append(documentIDs, docID)
-					w.logger.Info("PostmarkInboundEmailWorker: saved document in DB", "doc_id", docID, "file_name", att.Name)
+					w.logger.Info("PostmarkInboundEmailWorker: saved document in DB", "doc_id", docID, "file_name", cleanFileName, "session_id", sender.SessionID)
 				}
 			}
 
 			attMetadata := map[string]interface{}{
 				"document_id":    docID,
-				"name":           att.Name,
+				"name":           cleanFileName,
 				"s3_key":         s3Key,
 				"sha256":         sha256Str,
 				"content_type":   contentType,
@@ -365,22 +488,9 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 		}
 	}
 
-	// 5. Save conversation session and conversation message in DB
+	// 6. Save conversation session and conversation message in DB with insert verification
+	var rowsInserted int64 = 1
 	if w.db != nil {
-		sessionManager := conversation.NewSessionManager(w.db, w.logger)
-		session, _, err := sessionManager.FindOrCreateSession(ctx, conversation.FindOrCreateParams{
-			EntityID:          sender.EntityID,
-			ParticipantHandle: sender.FromHandle,
-			ToroHandle:        sender.ToHandle,
-			Source:            "email",
-			Subject:           payload.Subject,
-		})
-		if err != nil {
-			w.logger.Error("PostmarkInboundEmailWorker: failed to find or create conversation session", "error", err)
-		} else {
-			sender.SessionID = uuidFromPG(session.ID)
-		}
-
 		inReplyTo, _ := ExtractMessageHeaders(payload.Headers)
 
 		metaBytes, _ := json.Marshal(map[string]interface{}{
@@ -389,10 +499,11 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 			"agent_alias": sender.AgentAlias,
 		})
 
-		if err := w.db.SaveConversationSessionMessage(ctx, database.SaveConversationSessionMessageParams{
+		var err error
+		rowsInserted, err = w.db.SaveConversationSessionMessageWithResult(ctx, database.SaveConversationSessionMessageWithResultParams{
 			EntityID:     sender.EntityID,
 			Source:       "email",
-			ExternalID:   payload.MessageID,
+			ExternalID:   cleanMessageID,
 			FromHandle:   sender.FromHandle,
 			ToHandle:     sender.ToHandle,
 			ReplyTo:      pgtype.Text{String: payload.ReplyTo, Valid: payload.ReplyTo != ""},
@@ -404,15 +515,24 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 			Metadata:     metaBytes,
 			SessionID:    session.ID,
 			Role:         "user",
-		}); err != nil {
+		})
+		if err != nil {
 			w.logger.Warn("PostmarkInboundEmailWorker: failed to save conversation message", "error", err)
 		}
 	}
 
-	// 6. Route all incoming emails to Dynamic Agent
+	// 7. Suppress downstream dispatch if this message was a duplicate conflict (rowsInserted == 0)
+	if rowsInserted == 0 && w.db != nil {
+		w.logger.Info("PostmarkInboundEmailWorker: duplicate conversation message conflict, skipping downstream dispatch",
+			"external_id", cleanMessageID,
+		)
+		return nil
+	}
+
+	// 8. Route incoming email to Dynamic Agent
 	destSubject := core.BuildTaskSubject("dynamic", core.ComplexityEntry, "purpose")
 
-	// 7. Publish ONE unified email task to Dynamic Agent in a FIPA REQUEST Envelope
+	// 9. Publish ONE unified email task to Dynamic Agent in a FIPA REQUEST Envelope
 	if w.nc != nil {
 		taskPayload := map[string]any{
 			"session_id":      sender.SessionID,
@@ -424,7 +544,7 @@ func (w *PostmarkInboundEmailWorker) Handle(ctx context.Context, msg *nats.Msg) 
 			"body_text":       payload.TextBody,
 			"agent_alias":     sender.AgentAlias,
 			"requested_agent": "dynamic-agent",
-			"external_id":     payload.MessageID,
+			"external_id":     cleanMessageID,
 			"document_ids":    documentIDs,
 			"attachments":     attachmentMetadata,
 		}

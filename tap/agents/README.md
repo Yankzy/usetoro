@@ -102,7 +102,7 @@ import (
 agents:
   - did: "did:toro:agent:my_agent_1"
     name: "My Agent"
-    model: "gpt-4o-mini"
+    model: "gpt-5.4-mini"
     engine: "internal"
     internal_module: "my-agent"
     dependencies:

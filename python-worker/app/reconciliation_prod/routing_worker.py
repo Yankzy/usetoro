@@ -1,14 +1,17 @@
 import json
 import logging
-from typing import Dict, List
+import os
+from typing import Any, Dict, List, Optional
 import nats
+from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from openai import AsyncOpenAI
+
+from app import nats_client
 from reconciliation_prod.domain.bank import BankItem
 from reconciliation_prod.domain.book import BookItem
 from reconciliation_prod.routing.engine import run_routing_pipeline
 
-import os
 logger = logging.getLogger(__name__)
 
 _openai_client: AsyncOpenAI | None = None
@@ -26,9 +29,10 @@ async def handle_routing_request(msg: Msg):
 
 async def handler(msg: Msg, llm_client: AsyncOpenAI):
     print(f"\n🚀 [ROUTING WORKER] Handler triggered! Received msg on '{msg.subject}' (Reply: {msg.reply}, Size: {len(msg.data)} bytes)", flush=True)
+    envelope: Optional[Dict[str, Any]] = None
     try:
-        # FIPA Envelope parsing
-        envelope = json.loads(msg.data.decode())
+        parsed = json.loads(msg.data.decode())
+        envelope = parsed if isinstance(parsed, dict) else {}
         payload_str = envelope.get("payload", "{}")
         if isinstance(payload_str, str):
             payload = json.loads(payload_str)
@@ -108,7 +112,7 @@ async def handler(msg: Msg, llm_client: AsyncOpenAI):
         except Exception:
             pass
 
-async def start_routing_worker(nc: nats.NATS, llm_client: AsyncOpenAI):
+async def start_routing_worker(nc: NATS, llm_client: AsyncOpenAI):
     subject = "worker.inbox.routing"
     durable_name = "worker-inbox-routing-group"
 

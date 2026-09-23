@@ -1,0 +1,53 @@
+{
+  "request": {
+    "schema_version": "bookkeeping.ase.book_categorize.v1",
+    "company_id": "comp-acme-corp",
+    "session_id": "sess-2026-09-14-001",
+    "state_revision": 3,
+    "persistence_revision": 2,
+    "dag_id": "bookkeeping_account_categorization_v1",
+    "request_id": "ase-request:sess-2026-09-14-001:3",
+    "idempotency_key": "ase-book-categorize:comp-acme-corp:sess-2026-09-14-001:3:test",
+    "requested_at": "2026-09-14T12:00:00Z",
+    "book_items": [
+      {
+        "book_item_id": "item-002",
+        "date": "2026-03-02",
+        "amount_units": 250000,
+        "currency": "EUR",
+        "direction": "INFLOW",
+        "description": "Customer invoice payment",
+        "counterparty_id": "cp-cust-002",
+        "counterparty_name": "Acme Customer B.V.",
+        "reference": "INV-2026-002",
+        "active_bank_account_id": "bank-acc-main",
+        "evidence_refs": ["ev-doc-2", "ev-doc-1"],
+        "safe_evidence_summaries": ["Doc:ev-doc-2:invoice", "Doc:ev-doc-1:contract"],
+        "existing_classification_id": null,
+        "existing_account_code": null,
+        "source_artifact_kind": "INVOICE",
+        "bookkeeping_role": "OPEN_RECEIVABLE"
+      },
+      {
+        "book_item_id": "item-001",
+        "date": "2026-03-01",
+        "amount_units": 10000,
+        "currency": "EUR",
+        "direction": "OUTFLOW",
+        "description": "Office supplies & equipment <cleaning>",
+        "counterparty_id": "cp-supp-001",
+        "counterparty_name": "Office Depot Supplies",
+        "reference": "REF-9988",
+        "active_bank_account_id": "bank-acc-main",
+        "evidence_refs": ["ev-doc-3"],
+        "safe_evidence_summaries": ["Doc:ev-doc-3:receipt"],
+        "existing_classification_id": "cls-prev-001",
+        "existing_account_code": "6064",
+        "source_artifact_kind": "BILL",
+        "bookkeeping_role": "OPEN_PAYABLE"
+      }
+    ]
+  },
+  "expected_canonical_bytes": "{\"company_id\":\"comp-acme-corp\",\"dag_id\":\"bookkeeping_account_categorization_v1\",\"items\":[{\"active_bank_account_id\":\"bank-acc-main\",\"amount_units\":10000,\"book_item_id\":\"item-001\",\"bookkeeping_role\":\"OPEN_PAYABLE\",\"counterparty_id\":\"cp-supp-001\",\"counterparty_name\":\"Office Depot Supplies\",\"currency\":\"EUR\",\"date\":\"2026-03-01\",\"description\":\"Office supplies & equipment <cleaning>\",\"direction\":\"OUTFLOW\",\"evidence_refs\":[\"ev-doc-3\"],\"existing_account_code\":\"6064\",\"existing_classification_id\":\"cls-prev-001\",\"reference\":\"REF-9988\",\"safe_evidence_summaries\":[\"Doc:ev-doc-3:receipt\"],\"source_artifact_kind\":\"BILL\"},{\"active_bank_account_id\":\"bank-acc-main\",\"amount_units\":250000,\"book_item_id\":\"item-002\",\"bookkeeping_role\":\"OPEN_RECEIVABLE\",\"counterparty_id\":\"cp-cust-002\",\"counterparty_name\":\"Acme Customer B.V.\",\"currency\":\"EUR\",\"date\":\"2026-03-02\",\"description\":\"Customer invoice payment\",\"direction\":\"INFLOW\",\"evidence_refs\":[\"ev-doc-1\",\"ev-doc-2\"],\"existing_account_code\":\"\",\"existing_classification_id\":\"\",\"reference\":\"INV-2026-002\",\"safe_evidence_summaries\":[\"Doc:ev-doc-1:contract\",\"Doc:ev-doc-2:invoice\"],\"source_artifact_kind\":\"INVOICE\"}],\"persistence_revision\":2,\"schema_version\":\"bookkeeping.ase.book_categorize.v1\",\"session_id\":\"sess-2026-09-14-001\",\"state_revision\":3}",
+  "expected_sha256_digest": "c16e6f272c3d98561be7b311bae99e02b49689fb8b60275fc38b8134dad4d855"
+}

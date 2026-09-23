@@ -23,15 +23,19 @@ from bookkeeping_state.domain.enums import (
     Direction,
     Eligibility,
 )
+from bookkeeping_state.domain.hypotheses import ReconciliationHypothesis
 from bookkeeping_state.domain.evidence import (
     BookItemEvidenceAssertion,
     BookItemEvidenceType,
     EvidenceSource,
 )
-from bookkeeping_state.domain.hypotheses import ReconciliationHypothesis
 from bookkeeping_state.domain.money import (
+    format_money,
     major_units_to_solver_units,
     solver_units_to_decimal,
+)
+from bookkeeping_state.domain.residual_bank_classifications import (
+    ResidualBankClassificationStatus,
 )
 from bookkeeping_state.hydration.hydrator import BookkeepingHydrator
 from bookkeeping_state.llm.factory import (
@@ -142,11 +146,13 @@ class BookkeepingWorkbench:
         semantic_provider: str = "deterministic",
         repository: BookkeepingRepository | None = None,
         company_id: str | None = None,
+        company_name: str | None = None,
         dag_classifier: AseClassifier | None = None,
         debug: bool = False,
     ) -> None:
         self.debug = debug
         self.semantic_provider = semantic_provider
+        self.company_name = company_name
         self.routing_semantic_provider = None
         self.reconciliation_service = None
         self.session_counter = 0
@@ -198,6 +204,28 @@ class BookkeepingWorkbench:
                 "BookkeepingWorkbench requires repository and company_id, "
                 "or a registered _default_repository_factory"
             )
+
+    @property
+    def company_display_name(self) -> str:
+        if self.company_name:
+            return self.company_name
+        try:
+            from ledger.models.entity import EntityModel
+            import uuid
+            e = None
+            try:
+                e = EntityModel.objects.filter(uuid=uuid.UUID(self.company_id)).first()
+            except Exception:
+                pass
+            if not e:
+                e = EntityModel.objects.filter(slug=self.company_id).first()
+            if e:
+                if e.name and e.slug and e.name.lower() != e.slug.lower():
+                    return f"{e.name} ({e.slug})"
+                return e.name or e.slug or self.company_id
+        except Exception:
+            pass
+        return self.company_id or "Unknown Company"
 
     def _update_repository_snapshot(self, new_snap: BookkeepingSnapshot) -> None:
         """Hook to update snapshot in persistence."""
@@ -447,16 +475,6 @@ class BookkeepingWorkbench:
         self.session_counter += 1
         session_id = f"workbench-session-{self.session_counter}"
 
-        session_state = self.hydrator.hydrate(
-            company_id=self.company_id,
-            session_id=session_id,
-        )
-
-        engine = TransitionEngine(repository=self.repository)
-        routing_service = RoutingService(
-            semantic_provider=self.routing_semantic_provider
-            or ZeroRoutingSemanticScoreProvider()
-        )
         dag_classifier = self._get_dag_classifier()
         base_reconciliation_service = (
             self.reconciliation_service or ReconciliationService()
@@ -479,18 +497,24 @@ class BookkeepingWorkbench:
             scorer=base_reconciliation_service.scorer,
         )
 
-        session = BookkeepingSession(
-            state=session_state,
-            engine=engine,
-            routing_service=routing_service,
+        from bookkeeping_state.session.service import BookkeepingApplicationService
+
+        app_service = BookkeepingApplicationService(
+            repository=self.repository,
+            hydrator=self.hydrator,
+            transition_engine=TransitionEngine(repository=self.repository),
             dag_classifier=dag_classifier,
+            routing_semantic_provider=self.routing_semantic_provider,
             reconciliation_service=reconciliation_service,
+            payment_application_service=getattr(self, "payment_application_service", None),
         )
 
-        result = session.run()
-
-        # Invariant: session state must be closed
-        assert session_state.is_closed, "Session did not close its live state."
+        scenario_clock = self.clock_time
+        result = app_service.run_session(
+            company_id=self.company_id,
+            session_id=session_id,
+            clock=(lambda: scenario_clock) if scenario_clock is not None else None,
+        )
 
         self.last_recon_plan = captured_plan
         self.last_reconciliation_result = captured_plan.result if captured_plan else None
@@ -578,6 +602,16 @@ class BookkeepingWorkbench:
                 "hold_count": hold_count,
                 "holds": holds_summary,
             },
+            "payment_application": {
+                "status": (
+                    result.payment_application_stage_result.status.value
+                    if result.payment_application_stage_result
+                    else "NOT_RUN"
+                ),
+                "executed_count": len(result.executed_payment_application_ids),
+                "rehydration_count": result.rehydration_count,
+                "executed_ids": list(result.executed_payment_application_ids),
+            },
             "reconciliation": {
                 "status": recon_status,
                 "applied_count": reconciliations_applied,
@@ -602,6 +636,7 @@ class BookkeepingWorkbench:
             ).persistence_revision
             return {
                 "company_id": self.company_id,
+                "company_name": self.company_display_name,
                 "is_closed": True,
                 "local_state_revision": "closed",
                 "persistence_revision": pers_rev,
@@ -612,8 +647,14 @@ class BookkeepingWorkbench:
         unres_bank = sum(1 for b in self.state.bank_items.values() if queries.bank_remaining_units(b.id) > 0)
         unres_book = sum(1 for b in self.state.book_items.values() if queries.book_remaining_units(b.id) > 0)
 
+        residual_decisions = list(self.state.residual_bank_classifications.values())
+        residual_classified = sum(1 for d in residual_decisions if d.status == ResidualBankClassificationStatus.CLASSIFIED)
+        residual_holds = sum(1 for d in residual_decisions if d.status == ResidualBankClassificationStatus.HOLD)
+        residual_postings = len(self.state.residual_bank_postings)
+
         return {
             "company_id": self.company_id,
+            "company_name": self.company_display_name,
             "session_id": self.state.session_id,
             "is_closed": False,
             "local_state_revision": self.state.revision,
@@ -621,8 +662,15 @@ class BookkeepingWorkbench:
             "bank_items_count": len(self.state.bank_items),
             "book_items_count": len(self.state.book_items),
             "active_routes_count": len(self.state.routing_decisions),
+            "legacy_book_classifications_count": len(self.state.classifications),
             "active_classifications_count": len(self.state.classifications),
+            "residual_bank_classifications_count": len(residual_decisions),
+            "residual_classified_count": residual_classified,
+            "residual_hold_count": residual_holds,
+            "active_residual_holds_count": residual_holds,
+            "residual_bank_postings_count": residual_postings,
             "active_reconciliations_count": len(queries.derived.active_reconciliations),
+            "executed_payment_applications_count": len(self.state.executed_payment_applications),
             "unresolved_bank_items_count": unres_bank,
             "unresolved_book_items_count": unres_book,
             "last_dag_holds_count": self.last_result.hold_count if self.last_result else 0,
@@ -655,6 +703,10 @@ class BookkeepingWorkbench:
                 if status.upper() == "RECONCILED" and item_status != "RECONCILED":
                     continue
 
+            res_dec = queries.derived.active_residual_bank_classification_by_bank_item.get(b.id)
+            residual_status = res_dec.status.value if res_dec else None
+            hold_reason = res_dec.hold_reason if (res_dec and res_dec.status == ResidualBankClassificationStatus.HOLD) else None
+
             results.append({
                 "id": b.id,
                 "bank_item_id": b.id,
@@ -671,6 +723,8 @@ class BookkeepingWorkbench:
                 "description": b.description,
                 "reference": b.reference,
                 "status": item_status,
+                "residual_classification_status": residual_status,
+                "hold_reason": hold_reason,
             })
         return results
 
@@ -792,6 +846,27 @@ class BookkeepingWorkbench:
                 hyps = hyps_by_bank.get(b.id, [])
                 orig_dec = solver_units_to_decimal(int(b.amount_units))
                 rem_dec = solver_units_to_decimal(rem)
+
+                res_dec = queries.derived.active_residual_bank_classification_by_bank_item.get(b.id)
+                is_hold = False
+                hold_reason = None
+                required_evidence: list[str] = []
+                residual_status = None
+                posting_exists = False
+
+                if res_dec is not None:
+                    residual_status = res_dec.status.value
+                    if res_dec.status == ResidualBankClassificationStatus.HOLD:
+                        is_hold = True
+                        hold_reason = res_dec.hold_reason
+                        required_evidence = list(res_dec.required_evidence)
+                        reason = f"HOLD: {res_dec.hold_reason}"
+                    else:
+                        posting_exists = queries.is_residual_bank_classification_posted(res_dec.id)
+                        reason = f"CLASSIFIED ({res_dec.account_code})" if posting_exists else "CLASSIFIED_PENDING_POSTING"
+                else:
+                    reason = unres_map.get(b.id, "UNMATCHED")
+
                 unresolved_bank.append({
                     "bank_item_id": b.id,
                     "currency": b.currency,
@@ -803,7 +878,12 @@ class BookkeepingWorkbench:
                     "remaining_amount_units": str(rem),
                     "description": b.description,
                     "reference": b.reference,
-                    "reason": unres_map.get(b.id, "UNMATCHED"),
+                    "reason": reason,
+                    "is_hold": is_hold,
+                    "hold_reason": hold_reason,
+                    "required_evidence": required_evidence,
+                    "residual_status": residual_status,
+                    "posting_exists": posting_exists,
                     "candidate_hypotheses_count": len(hyps),
                 })
 
@@ -827,12 +907,15 @@ class BookkeepingWorkbench:
                 })
 
         review_required = self.list_review_candidates()
+        active_residual_holds = [b for b in unresolved_bank if b.get("is_hold")]
 
         return {
             "unreconciled_bank_items_count": len(unresolved_bank),
             "unreconciled_book_items_count": len(unresolved_book),
+            "active_residual_holds_count": len(active_residual_holds),
             "bank_items": unresolved_bank,
             "book_items": unresolved_book,
+            "active_residual_holds": active_residual_holds,
             "review_required": review_required,
         }
 
@@ -869,6 +952,10 @@ class BookkeepingWorkbench:
                         "bank_item_id": a.bank_item_id,
                         "amount": f"{solver_units_to_decimal(int(a.amount_units)):.2f}",
                         "amount_units": str(a.amount_units),
+                        "amount_display": format_money(
+                            a.amount_units,
+                            self.state.bank_items[a.bank_item_id].currency if self.state and a.bank_item_id in self.state.bank_items else "MAD",
+                        ),
                     }
                     for a in hyp.bank_allocations
                 ],
@@ -877,6 +964,10 @@ class BookkeepingWorkbench:
                         "book_item_id": a.book_item_id,
                         "amount": f"{solver_units_to_decimal(int(a.amount_units)):.2f}",
                         "amount_units": str(a.amount_units),
+                        "amount_display": format_money(
+                            a.amount_units,
+                            self.state.book_items[a.book_item_id].currency if self.state and a.book_item_id in self.state.book_items else "MAD",
+                        ),
                     }
                     for a in hyp.book_allocations
                 ],
@@ -916,6 +1007,10 @@ class BookkeepingWorkbench:
                         "bank_item_id": a.bank_item_id,
                         "amount": f"{solver_units_to_decimal(int(a.amount_units)):.2f}",
                         "amount_units": a.amount_units,
+                        "amount_display": format_money(
+                            a.amount_units,
+                            st.bank_items[a.bank_item_id].currency if a.bank_item_id in st.bank_items else "MAD",
+                        ),
                     }
                     for a in r.bank_allocations
                 ],
@@ -924,6 +1019,10 @@ class BookkeepingWorkbench:
                         "book_item_id": a.book_item_id,
                         "amount": f"{solver_units_to_decimal(int(a.amount_units)):.2f}",
                         "amount_units": a.amount_units,
+                        "amount_display": format_money(
+                            a.amount_units,
+                            st.book_items[a.book_item_id].currency if a.book_item_id in st.book_items else "MAD",
+                        ),
                     }
                     for a in r.book_allocations
                 ],
@@ -955,26 +1054,67 @@ class BookkeepingWorkbench:
             })
         return results
 
-    def list_classifications(self, book_item_id: str | None = None) -> list[dict[str, Any]]:
-        """List active durable account classifications per book item."""
+    def list_classifications(
+        self,
+        book_item_id: str | None = None,
+        bank_item_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List active classifications across legacy book classifications and residual bank classifications."""
         st = self.get_or_hydrate_state()
         if st is None:
             return []
 
         queries = BookkeepingQueries(st)
-        active_cls = queries.derived.active_classification_by_book_item.values()
+        results: list[dict[str, Any]] = []
 
-        results = []
-        for c in sorted(active_cls, key=lambda x: x.book_item_id):
-            if book_item_id and c.book_item_id != book_item_id:
-                continue
-            results.append({
-                "book_item_id": c.book_item_id,
-                "account_code": c.account_code,
-                "confidence": c.confidence,
-                "source": c.source,
-                "rationale": c.rationale,
-            })
+        # 1. Legacy Book Item Classifications (from DAG)
+        if not bank_item_id:
+            active_cls = queries.derived.active_classification_by_book_item.values()
+            for c in sorted(active_cls, key=lambda x: x.book_item_id):
+                if book_item_id and c.book_item_id != book_item_id:
+                    continue
+                results.append({
+                    "classification_type": "LEGACY_BOOK",
+                    "book_item_id": c.book_item_id,
+                    "account_code": c.account_code,
+                    "confidence": c.confidence,
+                    "source": c.source,
+                    "rationale": c.rationale,
+                    "status": "CLASSIFIED",
+                })
+
+        # 2. Residual Bank Classifications (post-reconciliation decisions)
+        if not book_item_id:
+            for b_id, dec in sorted(st.residual_bank_classifications.items(), key=lambda x: x[1].bank_item_id):
+                if bank_item_id and dec.bank_item_id != bank_item_id:
+                    continue
+                b_item = st.bank_items.get(dec.bank_item_id)
+                rem = queries.bank_remaining_units(dec.bank_item_id) if b_item else dec.residual_amount_units
+                orig_dec = solver_units_to_decimal(dec.original_amount_units)
+                rem_dec = solver_units_to_decimal(rem)
+                curr = dec.currency or (b_item.currency if b_item else "MAD")
+                posting = st.get_residual_bank_posting_for_decision(dec.id)
+
+                results.append({
+                    "classification_type": "RESIDUAL_BANK",
+                    "bank_item_id": dec.bank_item_id,
+                    "decision_id": dec.id,
+                    "status": dec.status.value,
+                    "account_code": dec.account_code,
+                    "confidence": dec.confidence,
+                    "hold_reason": dec.hold_reason,
+                    "required_evidence": list(dec.required_evidence),
+                    "rationale": dec.rationale,
+                    "currency": curr,
+                    "original_amount": f"{orig_dec:.2f}",
+                    "remaining_amount": f"{rem_dec:.2f}",
+                    "amount_display": f"{rem_dec:,.2f} {curr}",
+                    "remaining_amount_display": f"{rem_dec:,.2f} {curr}",
+                    "original_amount_display": f"{orig_dec:,.2f} {curr}",
+                    "posting_exists": posting is not None,
+                    "journal_entry_id": posting.journal_entry_id if posting else None,
+                })
+
         return results
 
     def get_evidence(self, book_item_id: str | None = None) -> list[dict[str, Any]]:
@@ -1035,18 +1175,49 @@ class BookkeepingWorkbench:
         }
 
     def get_holds(self) -> list[dict[str, Any]]:
-        """Return holds from latest session run."""
-        if not self.last_result:
-            return []
-        return [
-            {
+        """Return active holds from durable residual bank classifications and latest session run."""
+        st = self.get_or_hydrate_state()
+        results: list[dict[str, Any]] = []
+
+        if st is not None:
+            queries = BookkeepingQueries(st)
+            for b_id, dec in sorted(st.residual_bank_classifications.items(), key=lambda x: x[1].bank_item_id):
+                if dec.status == ResidualBankClassificationStatus.HOLD:
+                    b_item = st.bank_items.get(dec.bank_item_id)
+                    rem = queries.bank_remaining_units(dec.bank_item_id) if b_item else dec.residual_amount_units
+                    orig_dec = solver_units_to_decimal(dec.original_amount_units)
+                    rem_dec = solver_units_to_decimal(rem)
+                    curr = dec.currency or (b_item.currency if b_item else "MAD")
+                    results.append({
+                        "hold_type": "RESIDUAL_BANK_HOLD",
+                        "type": "RESIDUAL_BANK_HOLD",
+                        "bank_item_id": dec.bank_item_id,
+                        "decision_id": dec.id,
+                        "status": "HOLD",
+                        "hold_reason": dec.hold_reason,
+                        "reason": dec.hold_reason,
+                        "required_evidence": list(dec.required_evidence),
+                        "confidence": dec.confidence,
+                        "rationale": dec.rationale,
+                        "currency": curr,
+                        "original_amount": f"{orig_dec:.2f}",
+                        "remaining_amount": f"{rem_dec:.2f}",
+                        "amount_display": f"{rem_dec:,.2f} {curr}",
+                        "remaining_amount_display": f"{rem_dec:,.2f} {curr}",
+                        "original_amount_display": f"{orig_dec:,.2f} {curr}",
+                        "posting_exists": False,
+                    })
+
+        for h in getattr(self.last_result, "holds", ()):
+            results.append({
+                "hold_type": "LEGACY_DAG_BOOK_HOLD",
+                "type": "LEGACY_DAG_BOOK_HOLD",
                 "book_item_id": h.book_item_id,
                 "reason": h.reason,
                 "rationale": getattr(h, "rationale", ""),
                 "ase_node_id": getattr(h, "ase_node_id", ""),
-            }
-            for h in getattr(self.last_result, "holds", ())
-        ]
+            })
+        return results
 
     def get_provider_issues(self) -> list[dict[str, Any]]:
         """Return provider issues from latest session run."""

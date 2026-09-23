@@ -63,6 +63,7 @@ from tests.factories import (
     book_item,
     classification,
     context,
+    posted_book_item,
     reconciliation,
     routing,
     snapshot,
@@ -83,7 +84,7 @@ def _setup_world(
         acc = accounts[i % len(accounts)]
         bank_objs.append(bank_item(b_id, account_id=acc, amount=1_000_000))
 
-    book_objs = tuple(book_item(b_id, amount=1_000_000) for b_id in books)
+    book_objs = tuple(posted_book_item(b_id, amount=1_000_000) for b_id in books)
 
     snap_ctx = context(**policy_updates) if policy_updates else context()
     snap = BookkeepingSnapshot(

@@ -437,6 +437,55 @@ func (q *Queries) SaveConversationSessionMessage(ctx context.Context, arg SaveCo
 	return err
 }
 
+const saveConversationSessionMessageWithResult = `-- name: SaveConversationSessionMessageWithResult :execrows
+INSERT INTO toro_core.conversations (
+    entity_id, source, external_id, from_handle, to_handle, reply_to, in_reply_to, subject, body_text, body_html, stripped_text, metadata, session_id, role
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+)
+ON CONFLICT (external_id) DO NOTHING
+`
+
+type SaveConversationSessionMessageWithResultParams struct {
+	EntityID     pgtype.UUID
+	Source       string
+	ExternalID   string
+	FromHandle   string
+	ToHandle     string
+	ReplyTo      pgtype.Text
+	InReplyTo    pgtype.Text
+	Subject      pgtype.Text
+	BodyText     pgtype.Text
+	BodyHtml     pgtype.Text
+	StrippedText pgtype.Text
+	Metadata     []byte
+	SessionID    pgtype.UUID
+	Role         string
+}
+
+func (q *Queries) SaveConversationSessionMessageWithResult(ctx context.Context, arg SaveConversationSessionMessageWithResultParams) (int64, error) {
+	result, err := q.db.Exec(ctx, saveConversationSessionMessageWithResult,
+		arg.EntityID,
+		arg.Source,
+		arg.ExternalID,
+		arg.FromHandle,
+		arg.ToHandle,
+		arg.ReplyTo,
+		arg.InReplyTo,
+		arg.Subject,
+		arg.BodyText,
+		arg.BodyHtml,
+		arg.StrippedText,
+		arg.Metadata,
+		arg.SessionID,
+		arg.Role,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const saveInboundConversation = `-- name: SaveInboundConversation :exec
 INSERT INTO toro_core.conversations (
     entity_id,

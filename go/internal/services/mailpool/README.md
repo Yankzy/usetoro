@@ -60,7 +60,7 @@ Every link inside your emails is automatically wrapped in a secure tracking link
 
 When a prospect replies:
 1. The reply is routed directly to our internal server.
-2. An AI (GPT-4o-mini) reads the reply and classifies it:
+2. An AI (GPT-5.4-mini) reads the reply and classifies it:
    - **Positive Interest**: The system flags the prospect as a hot opportunity and pauses automated follow-ups so you can take over manually.
    - **Out of Office (OOO)**: The AI extracts the return date and schedules the sequence to resume when they get back.
    - **Not Interested**: The prospect is permanently opted-out.
@@ -106,7 +106,7 @@ This section details the technical implementation, file structures, and state ma
 ### Phase 4: Feedback Loops & Deliverability (Go)
 **Location:** `/go/internal/workers/`, `/go/internal/api/`, and `/go/internal/services/mailpool/`
 - **SMTP Inbound Worker** (`smtp_inbound_worker.go`): Runs a lightweight raw TCP server on port `2525`. Mailpool is configured to route incoming replies to this port via SMTP forwarding. It parses the raw MIME, extracts the text, and publishes `email.inbound.reply.parsed`.
-- **Sentiment Analyzer** (`email_sentiment_worker.go`): Consumes parsed replies. It leverages the `agent.Runtime` package to invoke an LLM (GPT-4o-mini). It enforces structured JSON output to categorize the intent (`positive_interest`, `out_of_office`, `not_interested`) and executes database updates (`UpdateProspectStatus`) accordingly.
+- **Sentiment Analyzer** (`email_sentiment_worker.go`): Consumes parsed replies. It leverages the `agent.Runtime` package to invoke an LLM (GPT-5.4-mini). It enforces structured JSON output to categorize the intent (`positive_interest`, `out_of_office`, `not_interested`) and executes database updates (`UpdateProspectStatus`) accordingly.
 - **Webhook Integrations & Security**: 
   - **Schema Generation:** `Webhooks.yaml` is merged dynamically via a Python script into `Mailpool-API.yaml` and compiled by `oapi-codegen` via a dummy path, giving us native structs like `mailpool.MailboxesCreated`.
   - **Ingress Authentication (`ingress_router.go`)**: `HandleMailpoolWebhook` intercepts all Mailpool webhooks. It securely verifies the `X-Signature` using `HMAC-SHA256` hashing and `crypto.subtle.ConstantTimeCompare` against `MAILPOOL_WEBHOOK_SECRET` before publishing to NATS (`webhooks.mailpool.received`).
@@ -115,7 +115,7 @@ This section details the technical implementation, file structures, and state ma
 ### Phase 5: Warm-Up Engine (Go)
 **Location:** `/go/internal/workers/`
 - **Warmup Orchestrator** (`warmup_orchestrator.go`): A chron worker that dynamically calculates daily volume limits based on domain age (e.g., Phase 1: 5-10, Phase 5: 30-50). It publishes `email.warmup.generate` events targeting a static list of personal anchor accounts to safely build reputation without exposing the cluster to algorithm detection.
-- **Warmup Content Worker** (`warmup_content_worker.go`): Consumes generation events and invokes `agent.Runtime` (GPT-4o-mini) to produce a plain-text email under 50 words using heavy spintax. Explicitly strips links and tracking pixels. Sends directly via `net/smtp`.
+- **Warmup Content Worker** (`warmup_content_worker.go`): Consumes generation events and invokes `agent.Runtime` (GPT-5.4-mini) to produce a plain-text email under 50 words using heavy spintax. Explicitly strips links and tracking pixels. Sends directly via `net/smtp`.
 
 ### Database Schema
 **Location:** `/sql/schema/014_email_engine.sql`

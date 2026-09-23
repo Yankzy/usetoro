@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.errors import NATSPublishError
-from app.nats_client import close, connect, publish
+from app.nats_client import close, connect, publish, subscribe_jetstream
 
 
 class TestConnect:
@@ -46,6 +46,28 @@ class TestConnect:
         call_args = mock_nats.connect.call_args
         servers = call_args.kwargs.get("servers") or call_args.args[0]
         assert servers == ["nats://localhost:4222"]
+
+    @pytest.mark.asyncio
+    async def test_retries_on_failure_and_succeeds(self):
+        mock_connect = AsyncMock(side_effect=[Exception("Connection refused"), MagicMock()])
+
+        with patch("app.nats_client.nats.connect", mock_connect):
+            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await connect("nats://localhost:4222", max_retries=3, retry_delay=0.01)
+
+        assert mock_connect.await_count == 2
+        mock_sleep.assert_awaited_once_with(0.01)
+
+    @pytest.mark.asyncio
+    async def test_raises_after_max_retries_exceeded(self):
+        mock_connect = AsyncMock(side_effect=Exception("Connection refused"))
+
+        with patch("app.nats_client.nats.connect", mock_connect):
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                with pytest.raises(Exception, match="Connection refused"):
+                    await connect("nats://localhost:4222", max_retries=3, retry_delay=0.01)
+
+        assert mock_connect.await_count == 3
 
 
 class TestClose:
@@ -131,3 +153,44 @@ class TestPublish:
                     with pytest.raises(NATSPublishError):
                         await publish("test", {})
                     mock_logger.error.assert_called_once()
+
+
+class TestSubscribeJetstream:
+    @pytest.mark.asyncio
+    async def test_raises_error_when_not_connected(self):
+        with patch("app.nats_client._nc", None):
+            with pytest.raises(NATSPublishError, match="NATS not connected"):
+                await subscribe_jetstream("test.subject", "test_durable", AsyncMock())
+
+    @pytest.mark.asyncio
+    async def test_subscribes_successfully(self):
+        mock_nc = MagicMock()
+        mock_js = MagicMock()
+        mock_js.subscribe = AsyncMock()
+        mock_nc.jetstream.return_value = mock_js
+
+        cb = AsyncMock()
+        with patch("app.nats_client._nc", mock_nc):
+            await subscribe_jetstream("worker.inbox.test", "test_group", cb)
+
+        mock_js.subscribe.assert_awaited_once_with(
+            "worker.inbox.test",
+            durable="test_group",
+            cb=cb,
+            manual_ack=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_retries_jetstream_subscription_on_failure(self):
+        mock_nc = MagicMock()
+        mock_js = MagicMock()
+        mock_js.subscribe = AsyncMock(side_effect=[Exception("503 Leader not found"), MagicMock()])
+        mock_nc.jetstream.return_value = mock_js
+
+        cb = AsyncMock()
+        with patch("app.nats_client._nc", mock_nc):
+            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await subscribe_jetstream("worker.inbox.test", "test_group", cb, max_retries=3, retry_delay=0.01)
+
+        assert mock_js.subscribe.await_count == 2
+        mock_sleep.assert_awaited_once_with(0.01)

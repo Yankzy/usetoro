@@ -40,11 +40,11 @@ def build_cp_model(
 
     # x_h in {0, 1}: 1 if hypothesis h is selected, 0 otherwise.
     for hyp in req.hypotheses:
-        x_vars[hyp.id] = model.NewBoolVar(f"x_{hyp.id}")
+        x_vars[hyp.id] = model.new_bool_var(f"x_{hyp.id}")
 
     # u_b in {0, 1}: 1 if bank item b remains unresolved, 0 otherwise.
     for bank in req.bank_items:
-        u_vars[bank.id] = model.NewBoolVar(f"u_{bank.id}")
+        u_vars[bank.id] = model.new_bool_var(f"u_{bank.id}")
 
     # -------------------------------------------------------------------------
     # 2. Pre-processing lookups for constraint building

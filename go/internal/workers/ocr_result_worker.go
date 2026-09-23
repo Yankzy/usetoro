@@ -208,6 +208,50 @@ func (w *OCRResultWorker) forwardToCallback(payload map[string]any) {
 		return
 	}
 
+	// For the Django accounting intake boundary, emit ONLY after OCR_SUCCESS
+	// and emit a small, lightweight event instead of the massive financial extraction payload.
+	if callbackTopic == "worker.inbox.python.accounting_intake" {
+		statusStr, _ := payload["status"].(string)
+		if statusStr != "OCR_SUCCESS" {
+			logger.Warn("OCRResultWorker: suppressing accounting intake dispatch for non-success OCR result",
+				"status", statusStr, "doc_id", payload["document_id"])
+			return
+		}
+
+		docIDStr, _ := payload["document_id"].(string)
+		entityIDStr, _ := payload["entity_id"].(string)
+		sessionIDStr, _ := payload["session_id"].(string)
+		sourceMsgIDStr, _ := payload["external_id"].(string)
+		if sourceMsgIDStr == "" {
+			sourceMsgIDStr, _ = payload["source_message_id"].(string)
+		}
+		fileName, _ := payload["file_name"].(string)
+
+		accountingEvent := map[string]any{
+			"document_id":       docIDStr,
+			"entity_id":         entityIDStr,
+			"session_id":        sessionIDStr,
+			"source_message_id": sourceMsgIDStr,
+			"file_name":         fileName,
+			"status":            "OCR_SUCCESS",
+		}
+
+		outBytes, err := json.Marshal(accountingEvent)
+		if err != nil {
+			logger.Error("OCRResultWorker: failed to marshal accounting intake payload", "error", err)
+			return
+		}
+
+		if pubErr := w.nc.Publish(callbackTopic, outBytes); pubErr != nil {
+			logger.Error("OCRResultWorker: failed to forward to accounting intake topic",
+				"topic", callbackTopic, "error", pubErr)
+		} else {
+			logger.Info("OCRResultWorker: forwarded small accounting intake event",
+				"topic", callbackTopic, "doc_id", docIDStr)
+		}
+		return
+	}
+
 	// Build the outgoing payload that the downstream worker expects.
 	outBytes, err := json.Marshal(payload)
 	if err != nil {

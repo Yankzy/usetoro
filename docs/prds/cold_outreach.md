@@ -645,7 +645,7 @@ func (f *FirmographicProfilerNode) ProcessValidation(ctx context.Context, payloa
 	}
 
 	// Submit text block directly to OpenAI with functional schema constraints enforced
-	respBytes, err := f.openAIClient.AnalyzeText(ctx, "gpt-4o-mini", rawText, OpenAIProfileSchema{})
+	respBytes, err := f.openAIClient.AnalyzeText(ctx, "gpt-5.4-mini", rawText, OpenAIProfileSchema{})
 	if err != nil {
 		return nil, err
 	}
@@ -730,7 +730,7 @@ func (i *InfrastructureFingerprintNode) ProcessValidation(ctx context.Context, p
 	}
 
 	logStr, _ := json.Marshal(techLog)
-	respBytes, err := i.openAIClient.AnalyzeText(ctx, "gpt-4o-mini", string(logStr), OpenAIInfraSchema{})
+	respBytes, err := i.openAIClient.AnalyzeText(ctx, "gpt-5.4-mini", string(logStr), OpenAIInfraSchema{})
 	if err != nil {
 		return nil, err
 	}
@@ -869,7 +869,7 @@ func (v *VariablePersonalizationNode) ProcessValidation(ctx context.Context, pay
 		payload["core_offer"], payload["target_buyer"], payload["active_crm"],
 	)
 
-	respBytes, err := v.openAIClient.AnalyzeText(ctx, "gpt-4o", contextCompilation, OpenAICopySchema{})
+	respBytes, err := v.openAIClient.AnalyzeText(ctx, "gpt-5.4", contextCompilation, OpenAICopySchema{})
 	if err != nil {
 		return nil, err
 	}

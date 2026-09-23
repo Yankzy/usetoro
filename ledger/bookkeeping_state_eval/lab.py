@@ -5,8 +5,9 @@ A thin interactive CLI playground for inspecting, executing, closing,
 and rehydrating BookkeepingState through its validated runtime architecture.
 
 Usage:
-    ./.venv/bin/python python-worker/app/bookkeeping_state_eval/lab.py
-    ./.venv/bin/python python-worker/app/bookkeeping_state_eval/lab.py --scenario scenario_c_many_to_one
+    ./.venv/bin/python ledger/bookkeeping_state_eval/lab.py
+    ./.venv/bin/python ledger/bookkeeping_state_eval/lab.py --scenario scenario_c_many_to_one
+    ./.venv/bin/python ledger/bookkeeping_state_eval/lab.py --production-state
 """
 
 from __future__ import annotations
@@ -25,7 +26,8 @@ import uuid
 # Ensure repository packages are importable regardless of launch directory
 _current_dir = Path(__file__).resolve().parent
 _app_dir = _current_dir.parent
-for p in (_app_dir, _current_dir):
+_repo_root = _app_dir.parent
+for p in (_repo_root, _app_dir, _current_dir):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
@@ -57,15 +59,23 @@ from bookkeeping_state.domain.enums import (
     Direction,
     Eligibility,
     SemanticAdmissibility,
+    SourceType,
 )
+from bookkeeping_state.domain.hypotheses import ReconciliationHypothesis
 from bookkeeping_state.domain.evidence import (
     BookItemEvidenceAssertion,
     BookItemEvidenceInvalidation,
     BookItemEvidenceType,
     EvidenceSource,
 )
-from bookkeeping_state.domain.hypotheses import ReconciliationHypothesis
-from bookkeeping_state.domain.money import major_units_to_solver_units
+from bookkeeping_state.domain.money import (
+    format_money,
+    major_units_to_solver_units,
+    solver_units_to_decimal,
+)
+from bookkeeping_state.domain.residual_bank_classifications import (
+    ResidualBankClassificationStatus,
+)
 from bookkeeping_state.hydration.hydrator import BookkeepingHydrator
 from bookkeeping_state_eval.persistence.in_memory import InMemoryBookkeepingRepository
 from bookkeeping_state.persistence.repository import (
@@ -113,6 +123,7 @@ from bookkeeping_state_eval.scenarios.temporal import (
 )
 from bookkeeping_state.operator.agent import BookkeepingOperator
 from bookkeeping_state_eval.operator.workbench import BookkeepingWorkbench
+from bookkeeping_state.operator.workbench import WorkbenchSessionResult
 from bookkeeping_state.domain.evidence import (
     BookItemEvidenceAssertion,
     BookItemEvidenceInvalidation,
@@ -129,6 +140,34 @@ from bookkeeping_state.state.fingerprint import (
 )
 from bookkeeping_state.state.queries import BookkeepingQueries
 from bookkeeping_state.transitions.engine import TransitionEngine
+
+
+def _ensure_django_ready() -> None:
+    import os
+    import django
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    django.setup()
+
+
+def _resolve_production_company_info(company_id_or_slug: str) -> tuple[str, str, str | None]:
+    _ensure_django_ready()
+    from ledger.models.entity import EntityModel
+    entity = None
+    try:
+        entity = EntityModel.objects.filter(slug=company_id_or_slug).first()
+        if not entity:
+            import uuid
+            entity = EntityModel.objects.filter(uuid=uuid.UUID(company_id_or_slug)).first()
+    except Exception:
+        entity = None
+    if entity:
+        return str(entity.uuid), entity.name, entity.slug
+    return company_id_or_slug, company_id_or_slug, None
+
+
+def _resolve_production_company_uuid(company_id_or_slug: str) -> str:
+    uuid_str, _, _ = _resolve_production_company_info(company_id_or_slug)
+    return uuid_str
 
 
 def create_demo_repository() -> tuple[BookkeepingRepository, str]:
@@ -149,6 +188,7 @@ def create_demo_repository() -> tuple[BookkeepingRepository, str]:
             currency="MAD",
             description="Salary September payroll",
             reference="SAL-SEP",
+            source_type=SourceType.POSTED_BOOK_ITEM,
         ),
         BookItem(
             id="book-aws",
@@ -159,6 +199,7 @@ def create_demo_repository() -> tuple[BookkeepingRepository, str]:
             currency="MAD",
             description="AWS Cloud hosting services",
             reference="AWS-INV-1",
+            source_type=SourceType.POSTED_BOOK_ITEM,
         ),
         BookItem(
             id="book-rent",
@@ -169,6 +210,7 @@ def create_demo_repository() -> tuple[BookkeepingRepository, str]:
             currency="MAD",
             description="Office rent Casablanca",
             reference="RENT-SEP",
+            source_type=SourceType.POSTED_BOOK_ITEM,
         ),
         BookItem(
             id="book-supplier",
@@ -179,6 +221,7 @@ def create_demo_repository() -> tuple[BookkeepingRepository, str]:
             currency="MAD",
             description="Supplier Alpha invoice payment",
             reference="SUP-ALPHA",
+            source_type=SourceType.POSTED_BOOK_ITEM,
         ),
         BookItem(
             id="book-mystery",
@@ -189,6 +232,7 @@ def create_demo_repository() -> tuple[BookkeepingRepository, str]:
             currency="MAD",
             description="VIREMENT 828192",
             reference="VIR-828192",
+            source_type=SourceType.POSTED_BOOK_ITEM,
         ),
     )
 
@@ -280,7 +324,7 @@ def _parse_amount(raw_val: str) -> str:
 
 
 @dataclasses.dataclass(frozen=True)
-class LabSessionResult(SessionResult):
+class LabSessionResult(WorkbenchSessionResult):
     """
     Detached SessionResult enriched with reconciliation plan telemetry for lab debugging.
     """
@@ -324,19 +368,41 @@ class BookkeepingLab(cmd.Cmd):
         scenario_name: str | None = None,
         debug: bool = False,
         semantic_provider: str = "deterministic",
-        operator: bool = False,
-        operator_model: str | None = None,
+        operator: bool = True,
+        operator_model: str = "gpt-5.6-luna",
+        production_state: bool = False,
+        company_id: str | None = None,
     ) -> None:
         super().__init__()
         self.debug = debug
         self.semantic_provider = semantic_provider
         self.operator_enabled = operator
-        self.operator_model = operator_model
-        self.workbench = BookkeepingWorkbench(
-            scenario_name=scenario_name,
-            semantic_provider=semantic_provider,
-            debug=debug,
-        )
+        self.operator_model = operator_model or "gpt-5.6-luna"
+        self.production_state = production_state
+        self.company_name: str | None = None
+        self.company_slug: str | None = None
+        if production_state:
+            _ensure_django_ready()
+            raw_target = company_id or "toro-synthetic-bookkeeping"
+            uuid_str, name, slug = _resolve_production_company_info(raw_target)
+            self.target_company_id = uuid_str
+            self.company_name = name
+            self.company_slug = slug
+            self.workbench = BookkeepingWorkbench(
+                repository=BookkeepingRepository(),
+                company_id=self.target_company_id,
+                company_name=name,
+                semantic_provider=semantic_provider,
+                debug=debug,
+            )
+        else:
+            self.target_company_id = company_id or "demo-company"
+            self.company_name = self.target_company_id
+            self.workbench = BookkeepingWorkbench(
+                scenario_name=scenario_name,
+                semantic_provider=semantic_provider,
+                debug=debug,
+            )
         self.operator: BookkeepingOperator | None = None
         if self.operator_enabled:
             self.operator = BookkeepingOperator(
@@ -344,7 +410,7 @@ class BookkeepingLab(cmd.Cmd):
                 model_name=self.operator_model,
             )
         self.session_counter = 0
-        self.last_result: SessionResult | None = None
+        self.last_result: WorkbenchSessionResult | None = None
         self.last_reconciliation_result: ReconciliationResult | None = None
         self.last_recon_plan: ReconciliationPlan | None = None
         self.repository: BookkeepingRepository
@@ -362,10 +428,42 @@ class BookkeepingLab(cmd.Cmd):
         self.temporal_step_index: int = 0
         self.temporal_step_history: list[StepSummary] = []
 
-        if scenario_name:
+        if production_state:
+            self._load_production_state_internal(self.target_company_id)
+        elif scenario_name:
             self._load_scenario_internal(scenario_name)
         else:
             self._load_demo_internal()
+
+    @property
+    def company_display_name(self) -> str:
+        name = getattr(self, "company_name", None)
+        slug = getattr(self, "company_slug", None)
+        if name:
+            if slug and slug.lower() != name.lower():
+                return f"{name} ({slug})"
+            return name
+        cid = getattr(self, "company_id", None) or getattr(self, "target_company_id", None)
+        if cid:
+            try:
+                _ensure_django_ready()
+                from ledger.models.entity import EntityModel
+                import uuid
+                e = None
+                try:
+                    e = EntityModel.objects.filter(uuid=uuid.UUID(cid)).first()
+                except Exception:
+                    pass
+                if not e:
+                    e = EntityModel.objects.filter(slug=cid).first()
+                if e:
+                    if e.name and e.slug and e.name.lower() != e.slug.lower():
+                        return f"{e.name} ({e.slug})"
+                    return e.name or e.slug or cid
+            except Exception:
+                pass
+            return cid
+        return "Unknown Company"
 
     def _sync_to_workbench(self) -> None:
         if not hasattr(self, "workbench"):
@@ -373,6 +471,7 @@ class BookkeepingLab(cmd.Cmd):
         self.workbench.state = self.state
         self.workbench.repository = self.repository
         self.workbench.company_id = self.company_id
+        self.workbench.company_name = getattr(self, "company_name", None)
         self.workbench.session_counter = self.session_counter
         self.workbench.last_result = self.last_result
         self.workbench.last_reconciliation_result = self.last_reconciliation_result
@@ -390,6 +489,8 @@ class BookkeepingLab(cmd.Cmd):
         self.state = self.workbench.state
         self.repository = self.workbench.repository
         self.company_id = self.workbench.company_id
+        if getattr(self.workbench, "company_name", None):
+            self.company_name = self.workbench.company_name
         self.session_counter = self.workbench.session_counter
         self.last_result = self.workbench.last_result
         self.last_reconciliation_result = self.workbench.last_reconciliation_result
@@ -401,9 +502,48 @@ class BookkeepingLab(cmd.Cmd):
         self.temporal_step_index = self.workbench.temporal_step_index
         self.temporal_step_history = self.workbench.temporal_step_history
 
+    def clock(self) -> datetime:
+        return self.clock_time or DEFAULT_CLOCK
+
     # ------------------------------------------------------------------
     # Internal Loading Helpers
     # ------------------------------------------------------------------
+
+    def _load_production_state_internal(self, company_id: str) -> None:
+        if self.state is not None and not self.state.is_closed:
+            self.state.close()
+            self.state = None
+
+        resolved_company_id, name, slug = _resolve_production_company_info(company_id)
+        self.repository = BookkeepingRepository()
+        self.company_id = resolved_company_id
+        self.company_name = name
+        self.company_slug = slug
+        if self.semantic_provider == "llm":
+            self.routing_semantic_provider = create_routing_semantic_provider("llm")
+            self.reconciliation_service = ReconciliationService(
+                scorer=create_reconciliation_semantic_provider("llm")
+            )
+        else:
+            self.routing_semantic_provider = None
+            self.reconciliation_service = None
+        self.dag_classifier = None
+        self.clock_time = None
+
+        self.hydrator = BookkeepingHydrator(repository=self.repository)
+        self.session_counter += 1
+        self.state = self.hydrator.hydrate(
+            company_id=self.company_id,
+            session_id=f"lab-production-inspection-{self.session_counter}",
+        )
+        self.last_result = None
+        self.last_reconciliation_result = None
+        self.last_recon_plan = None
+        self.active_scenario = None
+        self.active_scenario_name = f"production:{company_id}"
+        self.active_challenge = None
+        self.active_temporal_challenge = None
+        self._sync_to_workbench()
 
     def _load_demo_internal(self) -> None:
         if self.state is not None and not self.state.is_closed:
@@ -654,7 +794,7 @@ class BookkeepingLab(cmd.Cmd):
             pers_rev = self.repository.load_snapshot(
                 company_id=self.company_id
             ).persistence_revision
-            print(f"Company: {self.company_id}")
+            print(f"Company: {self.company_display_name}")
             print("Session: none (state is closed)")
             print("Local revision: closed")
             print(f"Persistence revision: P{pers_rev}")
@@ -691,7 +831,7 @@ class BookkeepingLab(cmd.Cmd):
             self.last_result.provider_issue_count if self.last_result else 0
         )
 
-        print(f"Company: {self.company_id}")
+        print(f"Company: {self.company_display_name}")
         print(f"Session: {self.state.session_id}")
         print(f"Local revision: S{self.state.revision}")
         print(f"Persistence revision: P{self.state.persistence_revision}")
@@ -699,9 +839,18 @@ class BookkeepingLab(cmd.Cmd):
         print(f"Bank items: {len(self.state.bank_items)}")
         print(f"Book items: {len(self.state.book_items)}")
         print()
+        active_residual_holds = sum(
+            1
+            for dec in self.state.residual_bank_classifications.values()
+            if dec.status == ResidualBankClassificationStatus.HOLD
+        )
         print(f"Active routes: {active_routes}")
-        print(f"Active classifications: {active_classifications}")
+        print(f"Legacy book classifications: {active_classifications}")
+        print(f"Residual bank classifications: {len(self.state.residual_bank_classifications)}")
+        print(f"Residual bank postings: {len(self.state.residual_bank_postings)}")
+        print(f"Active residual HOLDs: {active_residual_holds}")
         print(f"Active reconciliations: {active_reconciliations}")
+        print(f"Executed payment applications: {len(self.state.executed_payment_applications)}")
         print()
         print(f"Unresolved bank items: {unresolved_bank}")
         print(f"Unresolved book items: {unresolved_book}")
@@ -721,9 +870,9 @@ class BookkeepingLab(cmd.Cmd):
             rem = queries.bank_remaining_units(item.id)
             desc = f'"{item.description}"' if item.description else '""'
             print(f"{item.id}")
-            print(f"  {int(item.amount_units):,} {item.currency}")
+            print(f"  {format_money(item.amount_units, item.currency)}")
             print(f"  {desc}")
-            print(f"  remaining: {rem:,}")
+            print(f"  remaining: {format_money(rem, item.currency)}")
             print()
 
     def do_book(self, arg: str) -> None:
@@ -742,10 +891,10 @@ class BookkeepingLab(cmd.Cmd):
             rem = queries.book_remaining_units(item.id)
             desc = f'"{item.description}"' if item.description else '""'
             print(f"{item.id}")
-            print(f"  {int(item.amount_units):,} {item.currency}")
+            print(f"  {format_money(item.amount_units, item.currency)}")
             print(f"  {desc}")
             print(f"  classification: {class_str}")
-            print(f"  remaining: {rem:,}")
+            print(f"  remaining: {format_money(rem, item.currency)}")
             print()
 
     def do_classifications(self, arg: str) -> None:
@@ -757,10 +906,15 @@ class BookkeepingLab(cmd.Cmd):
         queries = BookkeepingQueries(self.state)
         active = queries.derived.active_classification_by_book_item
         if not active:
-            print("No active classifications.")
+            print("No active legacy book classifications.")
+            if self.state.residual_bank_classifications:
+                print(
+                    f"Found {len(self.state.residual_bank_classifications)} residual bank classifications "
+                    "(use `residuals` to inspect)."
+                )
             return
 
-        print("ACTIVE CLASSIFICATIONS\n")
+        print("ACTIVE LEGACY BOOK CLASSIFICATIONS\n")
         for book_item_id, decision in sorted(active.items()):
             source_str = (
                 decision.source.value
@@ -775,6 +929,11 @@ class BookkeepingLab(cmd.Cmd):
             print(
                 f"{book_item_id} -> {decision.account_code} "
                 f"(source: {source_str}{conf_str})"
+            )
+        if self.state.residual_bank_classifications:
+            print(
+                f"\n(Found {len(self.state.residual_bank_classifications)} residual bank classifications; "
+                "use `residuals` to inspect)"
             )
 
     def do_routes(self, arg: str) -> None:
@@ -809,11 +968,11 @@ class BookkeepingLab(cmd.Cmd):
         for recon in sorted(active, key=lambda r: r.id):
             print(f"{recon.id}")
             bank_parts = [
-                f"{a.bank_item_id} ({int(a.amount_units):,})"
+                f"{a.bank_item_id} ({format_money(a.amount_units)})"
                 for a in recon.bank_allocations
             ]
             book_parts = [
-                f"{a.book_item_id} ({int(a.amount_units):,})"
+                f"{a.book_item_id} ({format_money(a.amount_units)})"
                 for a in recon.book_allocations
             ]
             print(f"  bank: {', '.join(bank_parts)}")
@@ -821,6 +980,31 @@ class BookkeepingLab(cmd.Cmd):
             if recon.source_hypothesis_utility is not None:
                 print(f"  score: {recon.source_hypothesis_utility}")
             print()
+
+    def do_residuals(self, arg: str) -> None:
+        """List residual bank classifications and postings in current state."""
+        state = self._get_or_hydrate_state()
+        if not state.residual_bank_classifications:
+            print("No residual bank classifications in current state.")
+            return
+
+        print(f"Residual Decisions ({len(state.residual_bank_classifications)}):")
+        for dec_id, dec in sorted(state.residual_bank_classifications.items(), key=lambda x: x[1].bank_item_id):
+            b_item = state.bank_items.get(dec.bank_item_id)
+            desc = b_item.description if b_item else "Unknown"
+            curr = dec.currency or (b_item.currency if b_item else "MAD")
+            amt_formatted = format_money(dec.residual_amount_units, curr)
+            posting = state.get_residual_bank_posting_for_decision(dec.id)
+            posting_info = f"POSTED ({posting.journal_entry_id})" if posting else "NO POSTING (HOLD)"
+            conf_str = f"{dec.confidence:.2f}" if dec.confidence is not None else "N/A"
+            print(f"  * [{dec.status.value}] Item {dec.bank_item_id} ({amt_formatted}): {desc[:40]}")
+            print(f"    Account: {dec.account_code or 'None'} | Conf: {conf_str} | Status: {posting_info}")
+            if dec.hold_reason:
+                print(f"    Hold Reason: {dec.hold_reason}")
+            if dec.required_evidence:
+                print(f"    Required Evidence: {', '.join(dec.required_evidence)}")
+            if dec.rationale:
+                print(f"    Rationale: {dec.rationale}")
 
     def do_remaining(self, arg: str) -> None:
         """Show remaining amounts for BankItems and BookItems."""
@@ -833,37 +1017,56 @@ class BookkeepingLab(cmd.Cmd):
         print("Bank items:")
         for item in sorted(self.state.bank_items.values(), key=lambda x: x.id):
             rem = queries.bank_remaining_units(item.id)
-            orig = int(item.amount_units)
             print(
-                f"  {item.id}: {rem:,} {item.currency} "
-                f"(original: {orig:,} {item.currency})"
+                f"  {item.id}: {format_money(rem, item.currency)} "
+                f"(original: {format_money(item.amount_units, item.currency)})"
             )
         print()
         print("Book items:")
         for item in sorted(self.state.book_items.values(), key=lambda x: x.id):
             rem = queries.book_remaining_units(item.id)
-            orig = int(item.amount_units)
             print(
-                f"  {item.id}: {rem:,} {item.currency} "
-                f"(original: {orig:,} {item.currency})"
+                f"  {item.id}: {format_money(rem, item.currency)} "
+                f"(original: {format_money(item.amount_units, item.currency)})"
             )
 
     def do_holds(self, arg: str) -> None:
-        """Show detached HOLD summaries from the most recent session, if any."""
-        if self.last_result is None:
-            print("No session has been run yet.")
+        """Show active holds across durable residual bank classifications and latest session run."""
+        state = self._get_or_hydrate_state()
+        residual_holds = [
+            dec for dec in state.residual_bank_classifications.values()
+            if dec.status == ResidualBankClassificationStatus.HOLD
+        ] if state else []
+
+        dag_holds = getattr(self.last_result, "holds", ()) if self.last_result else ()
+
+        if not residual_holds and not dag_holds:
+            print("No active holds in current state or latest session.")
             return
 
-        if not self.last_result.holds:
-            print("No holds in last session.")
-            return
+        print("ACTIVE HOLDS\n")
+        if residual_holds:
+            print(f"Residual Bank Classification Holds ({len(residual_holds)}):")
+            for rh in sorted(residual_holds, key=lambda x: x.bank_item_id):
+                b_item = state.bank_items.get(rh.bank_item_id) if state else None
+                desc = b_item.description if b_item else "Unknown"
+                curr = rh.currency or (b_item.currency if b_item else "MAD")
+                amt_str = format_money(rh.residual_amount_units, curr)
+                print(f"  * Item {rh.bank_item_id} ({amt_str}): {desc}")
+                print(f"    Hold Reason: {rh.hold_reason}")
+                if rh.required_evidence:
+                    print(f"    Required Evidence: {', '.join(rh.required_evidence)}")
+                if rh.rationale:
+                    print(f"    Rationale: {rh.rationale}")
+            print()
 
-        print("LAST SESSION HOLDS\n")
-        for hold in self.last_result.holds:
-            print(f"{hold.book_item_id}")
-            print(f"  {hold.reason}")
-            if hold.rationale:
-                print(f"  {hold.rationale}")
+        if dag_holds:
+            print(f"Legacy DAG Book Item Holds ({len(dag_holds)}):")
+            for hold in dag_holds:
+                print(f"  * {hold.book_item_id}")
+                print(f"    Reason: {hold.reason}")
+                if getattr(hold, "rationale", None):
+                    print(f"    Rationale: {hold.rationale}")
             print()
 
     def do_provider_issues(self, arg: str) -> None:
@@ -898,6 +1101,26 @@ class BookkeepingLab(cmd.Cmd):
         # 2. Execute BookkeepingSession against durable repository
         self.session_counter += 1
         session_id = f"lab-session-{self.session_counter}"
+
+        if getattr(self, "production_state", False):
+            from bookkeeping_state.session.service import (
+                create_production_bookkeeping_application_service,
+            )
+            app_service = create_production_bookkeeping_application_service()
+            result = app_service.run_session(
+                company_id=self.company_id,
+                session_id=session_id,
+            )
+            self.state = self.hydrator.hydrate(
+                company_id=self.company_id,
+                session_id=f"lab-inspection-{self.session_counter}",
+            )
+            self._sync_to_workbench()
+            print(
+                f"Production session finished: success={result.is_success}, "
+                f"P{result.starting_persistence_revision} -> P{result.final_persistence_revision}"
+            )
+            return
 
         session_state = self.hydrator.hydrate(
             company_id=self.company_id,
@@ -1014,6 +1237,32 @@ class BookkeepingLab(cmd.Cmd):
             f"Hydrated fresh state S{self.state.revision} from "
             f"persistence revision P{self.state.persistence_revision}."
         )
+
+    def do_load_production(self, arg: str) -> None:
+        """
+        Load live BookkeepingState from production PostgreSQL database.
+
+        Usage:
+            load_production [company_id]
+        """
+        target = arg.strip() or getattr(self, "company_id", "toro-synthetic-bookkeeping")
+        print(f"Loading production BookkeepingState for company '{target}' from PostgreSQL...")
+        try:
+            self.production_state = True
+            self._load_production_state_internal(target)
+            print(f"Successfully hydrated production state for '{self.company_id}'.")
+            if self.state:
+                print(f"  Persistence Revision: P{self.state.persistence_revision}")
+                print(f"  Bank Items: {len(self.state.bank_items)}")
+                print(f"  Book Items: {len(self.state.book_items)}")
+                print(f"  Reconciliations: {len(self.state.reconciliations)}")
+                print(f"  Residual Decisions: {len(self.state.residual_bank_classifications)}")
+                print(f"  Residual Postings: {len(self.state.residual_bank_postings)}")
+        except Exception as exc:
+            print(f"Failed to load production state: {exc}")
+            if self.debug:
+                import traceback
+                traceback.print_exc()
 
     def do_scenario(self, arg: str) -> None:
         """Replace lab contents with one existing catalog scenario and hydrate it."""
@@ -1293,7 +1542,7 @@ class BookkeepingLab(cmd.Cmd):
                 reconciliation_service=recon_svc,
             )
             s_res = session.run()
-            self.last_result = s_res
+            self.last_result = LabSessionResult.from_session_result(s_res)
             recons_count = (
                 s_res.reconciliation_stage_result.command_count
                 if s_res.reconciliation_stage_result
@@ -1837,8 +2086,9 @@ class BookkeepingLab(cmd.Cmd):
         self.last_recon_plan = None
 
         print("Reset complete.")
-        print(f"Persistence revision: P{self.state.persistence_revision}")
-        print(f"Local revision: S{self.state.revision}")
+        if self.state is not None:
+            print(f"Persistence revision: P{self.state.persistence_revision}")
+            print(f"Local revision: S{self.state.revision}")
 
     # ------------------------------------------------------------------
     # Observability & Inspection Commands
@@ -1878,10 +2128,19 @@ class BookkeepingLab(cmd.Cmd):
 
             for b in unresolved_bank:
                 rem = queries.bank_remaining_units(b.id)
-                orig = int(b.amount_units)
-                reason = unres_map.get(b.id, "UNMATCHED")
-                print(f"  {b.id}: remaining {rem:,} / {orig:,} {b.currency}")
+                res_dec = queries.derived.active_residual_bank_classification_by_bank_item.get(b.id)
+                if res_dec is not None and res_dec.status == ResidualBankClassificationStatus.HOLD:
+                    reason = f"HOLD: {res_dec.hold_reason}"
+                else:
+                    reason = unres_map.get(b.id, "UNMATCHED")
+
+                print(f"  {b.id}: remaining {format_money(rem, b.currency)} / {format_money(b.amount_units, b.currency)}")
                 print(f"    reason: {reason}")
+                if res_dec is not None and res_dec.status == ResidualBankClassificationStatus.HOLD:
+                    if res_dec.required_evidence:
+                        print(f"    required evidence: {', '.join(res_dec.required_evidence)}")
+                    if res_dec.rationale:
+                        print(f"    rationale: {res_dec.rationale}")
                 hyps = hypotheses_by_bank.get(b.id, [])
                 if hyps:
                     print(f"    hard candidate count: {len(hyps)}")
@@ -1920,8 +2179,7 @@ class BookkeepingLab(cmd.Cmd):
 
             for b in unresolved_book:
                 rem = queries.book_remaining_units(b.id)
-                orig = int(b.amount_units)
-                print(f"  {b.id}: remaining {rem:,} / {orig:,} {b.currency}")
+                print(f"  {b.id}: remaining {format_money(rem, b.currency)} / {format_money(b.amount_units, b.currency)}")
                 if b.id in holds_map:
                     h = holds_map[b.id]
                     print(f"    hold reason: {h.reason}")
@@ -1943,7 +2201,7 @@ class BookkeepingLab(cmd.Cmd):
         review_hyps = ()
         if self.last_reconciliation_result:
             review_hyps = self.last_reconciliation_result.review_hypotheses
-        elif self.last_result and hasattr(self.last_result, "review_hypotheses"):
+        elif self.last_result is not None:
             review_hyps = self.last_result.review_hypotheses
 
         if not review_hyps:
@@ -1955,10 +2213,10 @@ class BookkeepingLab(cmd.Cmd):
             bank_ids = [a.bank_item_id for a in hyp.bank_allocations]
             book_ids = [a.book_item_id for a in hyp.book_allocations]
             bank_allocs = ", ".join(
-                f"{a.bank_item_id} ({int(a.amount_units):,})" for a in hyp.bank_allocations
+                f"{a.bank_item_id} ({format_money(a.amount_units)})" for a in hyp.bank_allocations
             )
             book_allocs = ", ".join(
-                f"{a.book_item_id} ({int(a.amount_units):,})" for a in hyp.book_allocations
+                f"{a.book_item_id} ({format_money(a.amount_units)})" for a in hyp.book_allocations
             )
             print(f"Hypothesis: {hyp.id}")
             print(f"  BankItems: {bank_ids}")
@@ -1995,6 +2253,9 @@ class BookkeepingLab(cmd.Cmd):
             routing_inval_count = len(snap.routing_invalidations)
             class_count = len(snap.classifications)
             class_inval_count = len(snap.classification_invalidations)
+            res_class_count = len(snap.residual_bank_classifications)
+            res_inval_count = len(snap.residual_bank_classification_invalidations)
+            res_posting_count = len(snap.residual_bank_postings)
             recon_count = len(snap.reconciliations)
             recon_inval_count = len(snap.reconciliation_invalidations)
             assertion_count = len(snap.book_item_evidence_assertions)
@@ -2004,6 +2265,9 @@ class BookkeepingLab(cmd.Cmd):
             routing_inval_count = len(self.state.routing_invalidations)
             class_count = len(self.state.classifications)
             class_inval_count = len(self.state.classification_invalidations)
+            res_class_count = len(self.state.residual_bank_classifications)
+            res_inval_count = len(self.state.residual_bank_classification_invalidations)
+            res_posting_count = len(self.state.residual_bank_postings)
             recon_count = len(self.state.reconciliations)
             recon_inval_count = len(self.state.reconciliation_invalidations)
             assertion_count = len(self.state.book_item_evidence_assertions)
@@ -2011,7 +2275,9 @@ class BookkeepingLab(cmd.Cmd):
 
         print("DURABLE ARTIFACT HISTORY\n")
         print(f"  Routing decisions:              {routing_count} (invalidations: {routing_inval_count})")
-        print(f"  Classifications:                {class_count} (invalidations: {class_inval_count})")
+        print(f"  Legacy book classifications:    {class_count} (invalidations: {class_inval_count})")
+        print(f"  Residual bank classifications:  {res_class_count} (invalidations: {res_inval_count})")
+        print(f"  Residual bank postings:         {res_posting_count}")
         print(f"  Reconciliations:                {recon_count} (invalidations: {recon_inval_count})")
         print(f"  Evidence assertions:            {assertion_count} (invalidations: {assertion_inval_count})")
 
@@ -2112,7 +2378,7 @@ class BookkeepingLab(cmd.Cmd):
         else:
             print(
                 f"*** Unknown command: '{line}'. Type 'help' for available commands, "
-                "or run with --operator for natural-language assistance."
+                "or run with --operator (or type 'operator on') for natural-language assistance."
             )
 
     def do_operator(self, arg: str) -> None:
@@ -2188,14 +2454,26 @@ def main() -> None:
     )
     parser.add_argument(
         "--operator",
-        action="store_true",
-        help="Enable natural-language Operator LLM assistant",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable natural-language Operator LLM assistant (default: enabled; use --no-operator to disable)",
     )
     parser.add_argument(
         "--operator-model",
         type=str,
-        default=None,
+        default="gpt-5.6-luna",
         help="Model name for the Operator LLM (default: gpt-5.6-luna)",
+    )
+    parser.add_argument(
+        "--production-state",
+        action="store_true",
+        help="Hydrate BookkeepingState directly from production PostgreSQL database",
+    )
+    parser.add_argument(
+        "--company-id",
+        type=str,
+        default="toro-synthetic-bookkeeping",
+        help="Company ID or slug to hydrate from production database (default: toro-synthetic-bookkeeping)",
     )
     args = parser.parse_args()
 
@@ -2212,6 +2490,8 @@ def main() -> None:
         semantic_provider=args.semantic_provider,
         operator=args.operator,
         operator_model=args.operator_model,
+        production_state=args.production_state,
+        company_id=args.company_id,
     )
     provider_info = (
         "LLM (model: gpt-5.6-luna)"
@@ -2222,14 +2502,18 @@ def main() -> None:
     print("       BookkeepingState Developer Lab (REPL)      ")
     print("==================================================")
     print("Type 'help' for available commands or 'quit' to exit.")
-    if args.scenario:
-        print(f"Active scenario: {args.scenario} ({lab.company_id})")
+    if args.production_state:
+        print(f"Active mode: PRODUCTION STATE ({lab.company_display_name})")
+    elif args.scenario:
+        print(f"Active scenario: {args.scenario} ({lab.company_display_name})")
     else:
-        print(f"Active scenario: default demo ({lab.company_id})")
+        print(f"Active scenario: default demo ({lab.company_display_name})")
     print(f"Semantic provider: {provider_info}")
-    if args.operator:
-        op_model = args.operator_model or "gpt-5.6-luna"
+    if lab.operator_enabled:
+        op_model = lab.operator_model or "gpt-5.6-luna"
         print(f"Operator: ENABLED ({op_model}) - ask natural language questions directly.")
+    else:
+        print("Operator: DISABLED - explicit commands only.")
     print()
 
     if args.run:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any, Callable, Mapping, TypeVar
 
 from bookkeeping_state.domain.bank import BankItem
 from bookkeeping_state.domain.books import BookItem
@@ -397,11 +397,15 @@ def _document_sort_key(
     )
 
 
+_K = TypeVar("_K")
+_V = TypeVar("_V")
+
+
 def _freeze_grouped_index(
-    grouped: dict[object, list[object]],
+    grouped: Mapping[_K, list[_V]],
     *,
-    sort_key,
-):
+    sort_key: Callable[[_V], Any],
+) -> dict[_K, tuple[_V, ...]]:
     """
     Convert a mutable defaultdict/list index into deterministic tuple-backed
     storage.

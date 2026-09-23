@@ -11,6 +11,7 @@ class TransitionStatus(StrEnum):
     APPLIED = "APPLIED"
     REJECTED = "REJECTED"
     NOOP = "NOOP"
+    APPLIED_REQUIRES_REHYDRATION = "APPLIED_REQUIRES_REHYDRATION"
 
 
 class RejectionCode(StrEnum):
@@ -32,6 +33,7 @@ class RejectionCode(StrEnum):
     DUPLICATE_ARTIFACT = "DUPLICATE_ARTIFACT"
 
     UNKNOWN_BOOK_ITEM = "UNKNOWN_BOOK_ITEM"
+    INVALID_BOOK_ITEM_SOURCE_TYPE = "INVALID_BOOK_ITEM_SOURCE_TYPE"
     UNKNOWN_BANK_ITEM = "UNKNOWN_BANK_ITEM"
     UNKNOWN_BANK_ACCOUNT = "UNKNOWN_BANK_ACCOUNT"
 
@@ -91,6 +93,35 @@ class RejectionCode(StrEnum):
     PERSISTENCE_FAILURE = "PERSISTENCE_FAILURE"
 
     SESSION_MISMATCH = "SESSION_MISMATCH"
+
+    INVALID_STAGE1_CAPABILITY = "INVALID_STAGE1_CAPABILITY"
+    OBLIGATION_TYPE_INVALID = "OBLIGATION_TYPE_INVALID"
+    ACTIVE_STAGE2_ALLOCATION_EXISTS = "ACTIVE_STAGE2_ALLOCATION_EXISTS"
+
+    UNKNOWN_RESIDUAL_BANK_CLASSIFICATION = "UNKNOWN_RESIDUAL_BANK_CLASSIFICATION"
+    RESIDUAL_BANK_CLASSIFICATION_SUBJECT_MISMATCH = "RESIDUAL_BANK_CLASSIFICATION_SUBJECT_MISMATCH"
+    NOT_RESIDUAL_BANK_ITEM = "NOT_RESIDUAL_BANK_ITEM"
+    RESIDUAL_AMOUNT_MISMATCH = "RESIDUAL_AMOUNT_MISMATCH"
+    CONFIDENCE_BELOW_THRESHOLD = "CONFIDENCE_BELOW_THRESHOLD"
+    ACCOUNT_OUTSIDE_DEFAULT_COA = "ACCOUNT_OUTSIDE_DEFAULT_COA"
+    INACTIVE_ACCOUNT = "INACTIVE_ACCOUNT"
+    UNKNOWN_ACCOUNT_CODE = "UNKNOWN_ACCOUNT_CODE"
+    CANNOT_INVALIDATE_NON_TIP = "CANNOT_INVALIDATE_NON_TIP"
+    ALREADY_INVALIDATED = "ALREADY_INVALIDATED"
+    BRANCHING_HISTORY_FORBIDDEN = "BRANCHING_HISTORY_FORBIDDEN"
+    BANK_ACCOUNT_MISMATCH = "BANK_ACCOUNT_MISMATCH"
+    ECONOMIC_INPUT_MISMATCH = "ECONOMIC_INPUT_MISMATCH"
+    CANNOT_SUPERSEDE_POSTED_DECISION = "CANNOT_SUPERSEDE_POSTED_DECISION"
+    CANNOT_INVALIDATE_POSTED_DECISION = "CANNOT_INVALIDATE_POSTED_DECISION"
+    DECISION_ALREADY_POSTED = "DECISION_ALREADY_POSTED"
+    CANNOT_POST_NON_CLASSIFIED_DECISION = "CANNOT_POST_NON_CLASSIFIED_DECISION"
+    CANNOT_POST_INVALIDATED_DECISION = "CANNOT_POST_INVALIDATED_DECISION"
+    CANNOT_POST_SUPERSEDED_DECISION = "CANNOT_POST_SUPERSEDED_DECISION"
+    CANNOT_POST_NON_TIP_DECISION = "CANNOT_POST_NON_TIP_DECISION"
+    BANK_LEDGER_LOCKED = "BANK_LEDGER_LOCKED"
+    CLOSED_ACCOUNTING_PERIOD = "CLOSED_ACCOUNTING_PERIOD"
+    ACCOUNTING_KERNEL_FAILURE = "ACCOUNTING_KERNEL_FAILURE"
+    CANNOT_INVALIDATE_POSTING_RECONCILIATION = "CANNOT_INVALIDATE_POSTING_RECONCILIATION"
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,9 +270,23 @@ class TransitionResult:
                     "unchanged"
                 )
 
+        elif self.status == TransitionStatus.APPLIED_REQUIRES_REHYDRATION:
+            if self.rejection is not None:
+                raise ValueError(
+                    "APPLIED_REQUIRES_REHYDRATION TransitionResult cannot contain a rejection"
+                )
+            if self.delta is not None:
+                raise ValueError(
+                    "APPLIED_REQUIRES_REHYDRATION TransitionResult cannot contain a StateDelta"
+                )
+
     @property
     def applied(self) -> bool:
         return self.status == TransitionStatus.APPLIED
+
+    @property
+    def applied_requires_rehydration(self) -> bool:
+        return self.status == TransitionStatus.APPLIED_REQUIRES_REHYDRATION
 
     @property
     def rejected(self) -> bool:
@@ -250,6 +295,26 @@ class TransitionResult:
     @property
     def noop(self) -> bool:
         return self.status == TransitionStatus.NOOP
+
+    @classmethod
+    def rehydrate_required_result(
+        cls,
+        *,
+        command: BookkeepingCommand,
+        state_revision: int,
+        previous_persistence_revision: int,
+        new_persistence_revision: int,
+    ) -> "TransitionResult":
+        return cls(
+            status=TransitionStatus.APPLIED_REQUIRES_REHYDRATION,
+            command=command,
+            previous_state_revision=state_revision,
+            resulting_state_revision=state_revision,
+            previous_persistence_revision=previous_persistence_revision,
+            resulting_persistence_revision=new_persistence_revision,
+            delta=None,
+            rejection=None,
+        )
 
     @classmethod
     def applied_result(

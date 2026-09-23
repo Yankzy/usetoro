@@ -37,6 +37,38 @@ class SourceType(StrEnum):
     OPENING_STATE_ITEM = "OPENING_STATE_ITEM"
 
 
+class SourceArtifactKind(StrEnum):
+    """
+    Authoritative durable source artifact that originated a bookkeeping item.
+    """
+
+    INVOICE = "INVOICE"
+    BILL = "BILL"
+    TRANSACTION = "TRANSACTION"
+
+
+class BookkeepingRole(StrEnum):
+    """
+    Accounting lifecycle role of a bookkeeping item.
+
+    OPEN_RECEIVABLE:
+        Open receivable obligation from an approved customer invoice.
+        Awaiting settlement evidence in Stage 1. NOT a settlement.
+
+    OPEN_PAYABLE:
+        Open payable obligation from an approved vendor bill.
+        Awaiting settlement evidence in Stage 1. NOT a settlement.
+
+    POSTED_CASH_MOVEMENT:
+        Finalized cash-account transaction in the general ledger.
+        Awaiting bank reconciliation in Stage 2.
+    """
+
+    OPEN_RECEIVABLE = "OPEN_RECEIVABLE"
+    OPEN_PAYABLE = "OPEN_PAYABLE"
+    POSTED_CASH_MOVEMENT = "POSTED_CASH_MOVEMENT"
+
+
 class Eligibility(StrEnum):
     """
     Whether a reconciliation hypothesis may participate in final selection.

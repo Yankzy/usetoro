@@ -14,7 +14,7 @@ from bookkeeping_state.domain.commands import (
 from bookkeeping_state.domain.context import AccountingPolicy, BookkeepingContext, RuntimeContext
 from bookkeeping_state.domain.counterparties import Counterparty, CounterpartyType
 from bookkeeping_state.domain.documents import Document, DocumentStatus, DocumentType
-from bookkeeping_state.domain.enums import Direction
+from bookkeeping_state.domain.enums import Direction, SourceType
 from bookkeeping_state.domain.evidence import (
     BookItemEvidenceAssertion,
     BookItemEvidenceInvalidation,
@@ -81,6 +81,7 @@ def _create_base_fixture():
     )
     book_item = BookItem(
         id="book-1",
+        source_type=SourceType.POSTED_BOOK_ITEM,
         origin_period="2026-01",
         date=DEFAULT_DATE,
         amount_units="10000",

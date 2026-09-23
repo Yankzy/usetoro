@@ -137,7 +137,7 @@ func (w *WarmupLoopWorker) run(ctx context.Context) {
 
 	prompt := fmt.Sprintf("You are an employee inquiring about accounting services. Send a short, highly realistic, organic 1-3 sentence business inquiry to %s. Return exactly a valid JSON object with 'subject' and 'body' keys and no other text.", recipientEmail)
 	resp, err := llmClient.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model: shared.ChatModel("gpt-4o-mini"),
+		Model: shared.ChatModel("gpt-5.4-mini"),
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.UserMessage(prompt),
 		},

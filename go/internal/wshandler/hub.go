@@ -59,7 +59,7 @@ type joinRoomRequest struct {
 func NewHub(logger *slog.Logger, queueClient *queue.Client, db *database.Queries) *Hub {
 	adapter := agent.NewNatsAdapter(queueClient.Conn(), queueClient.JetStream())
 	rt := agent.NewRuntime(logger, adapter, core.AgentConfig{
-		Model: "gpt-4o",
+		Model: "gpt-5.4-mini",
 		DID:   "did:toro:wshandler:hub",
 	})
 	return &Hub{

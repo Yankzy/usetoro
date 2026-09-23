@@ -20,8 +20,8 @@ import (
 // telemetryMockDBTX mocks the DBTX interface to return pricing and track inserts.
 type telemetryMockDBTX struct {
 	lastInsertedParams *database.InsertLLMTurnMetricParams
-	pricingModel        database.ToroCoreLlmPricingModel
-	pricingErr          error
+	pricingModel       database.ToroCoreLlmPricingModel
+	pricingErr         error
 }
 
 func (m *telemetryMockDBTX) Exec(_ context.Context, _ string, _ ...interface{}) (pgconn.CommandTag, error) {
@@ -120,7 +120,7 @@ func TestLLMTelemetryWorker_Handle_HappyPath(t *testing.T) {
 			"agent_id":        "test-agent",
 			"step_number":     3,
 		},
-		"model":         "gpt-4o",
+		"model":         "gpt-5.4-mini",
 		"provider":      "openai",
 		"input_tokens":  1000,
 		"output_tokens": 500,
@@ -139,12 +139,12 @@ func TestLLMTelemetryWorker_Handle_HappyPath(t *testing.T) {
 
 	// Prepare mock database with pricing
 	var inputCost, outputCost pgtype.Numeric
-	_ = inputCost.Scan("2.500000") // $2.50 per 1M tokens
+	_ = inputCost.Scan("2.500000")   // $2.50 per 1M tokens
 	_ = outputCost.Scan("10.000000") // $10.00 per 1M tokens
 
 	dbtx := &telemetryMockDBTX{
 		pricingModel: database.ToroCoreLlmPricingModel{
-			Model:           "gpt-4o",
+			Model:           "gpt-5.4-mini",
 			Provider:        "openai",
 			InputCostPer1m:  inputCost,
 			OutputCostPer1m: outputCost,
@@ -166,8 +166,8 @@ func TestLLMTelemetryWorker_Handle_HappyPath(t *testing.T) {
 	}
 
 	params := dbtx.lastInsertedParams
-	if params.Model != "gpt-4o" {
-		t.Errorf("expected model 'gpt-4o', got %q", params.Model)
+	if params.Model != "gpt-5.4-mini" {
+		t.Errorf("expected model 'gpt-5.4-mini', got %q", params.Model)
 	}
 	if params.InputTokens != 1000 {
 		t.Errorf("expected input tokens 1000, got %d", params.InputTokens)

@@ -92,6 +92,36 @@ def canonical_artifact_projection(
                     state.reconciliation_invalidations
                 )
             ),
+            "executed_payment_applications": (
+                _artifact_collection_projection(
+                    getattr(state, "executed_payment_applications", {})
+                )
+            ),
+            "book_item_evidence_assertions": (
+                _artifact_collection_projection(
+                    getattr(state, "book_item_evidence_assertions", {})
+                )
+            ),
+            "book_item_evidence_invalidations": (
+                _artifact_collection_projection(
+                    getattr(state, "book_item_evidence_invalidations", {})
+                )
+            ),
+            "residual_bank_classifications": (
+                _artifact_collection_projection(
+                    getattr(state, "residual_bank_classifications", {})
+                )
+            ),
+            "residual_bank_classification_invalidations": (
+                _artifact_collection_projection(
+                    getattr(state, "residual_bank_classification_invalidations", {})
+                )
+            ),
+            "residual_bank_postings": (
+                _artifact_collection_projection(
+                    getattr(state, "residual_bank_postings", {})
+                )
+            ),
         },
     }
 
@@ -289,6 +319,13 @@ def _derived_projection(
             book_item_id: classification.id
             for book_item_id, classification in sorted(
                 derived.active_classification_by_book_item.items(),
+                key=lambda item: item[0],
+            )
+        },
+        "active_residual_bank_classification_by_bank_item": {
+            bank_item_id: decision.id
+            for bank_item_id, decision in sorted(
+                derived.active_residual_bank_classification_by_bank_item.items(),
                 key=lambda item: item[0],
             )
         },

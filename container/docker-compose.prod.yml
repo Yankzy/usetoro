@@ -58,6 +58,10 @@ services:
         condition: service_healthy
       nats-1:
         condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
     networks:
       - toro-net
 
@@ -81,6 +85,10 @@ services:
       torodb:
         condition: service_healthy
       nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
         condition: service_healthy
     networks:
       - toro-net
@@ -126,6 +134,10 @@ services:
         condition: service_healthy
       nats-1:
         condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
     networks:
       - toro-net
     volumes:
@@ -158,6 +170,10 @@ services:
       torodb:
         condition: service_healthy
       nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
         condition: service_healthy
     networks:
       - toro-net
@@ -210,6 +226,10 @@ services:
         condition: service_started
       nats-1:
         condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
     networks:
       - toro-net
 
@@ -242,20 +262,32 @@ services:
   nats-2:
     <<: *nats-common
     command: >
-      -js  -sd /data  --cluster_name=${NATS_CLUSTER_NAME}  --name=nats-2  --cluster=nats://0.0.0.0:${NATS_CLUSTER_PORT}  --routes=nats://nats-1:${NATS_CLUSTER_PORT},nats://nats-3:${NATS_CLUSTER_PORT} 
+      -js  -sd /data  --cluster_name=${NATS_CLUSTER_NAME}  --name=nats-2  --cluster=nats://0.0.0.0:${NATS_CLUSTER_PORT}  --routes=nats://nats-1:${NATS_CLUSTER_PORT},nats://nats-3:${NATS_CLUSTER_PORT}  --http_port=8222
     ports:
       - "4223:4222"
+      - "8223:8222"
     volumes:
       - nats_2_data:/data
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8222/varz" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   nats-3:
     <<: *nats-common
     command: >
-      -js  -sd /data  --cluster_name=${NATS_CLUSTER_NAME}  --name=nats-3  --cluster=nats://0.0.0.0:${NATS_CLUSTER_PORT}  --routes=nats://nats-1:${NATS_CLUSTER_PORT},nats://nats-2:${NATS_CLUSTER_PORT} 
+      -js  -sd /data  --cluster_name=${NATS_CLUSTER_NAME}  --name=nats-3  --cluster=nats://0.0.0.0:${NATS_CLUSTER_PORT}  --routes=nats://nats-1:${NATS_CLUSTER_PORT},nats://nats-2:${NATS_CLUSTER_PORT}  --http_port=8222
     ports:
       - "4224:4222"
+      - "8224:8222"
     volumes:
       - nats_3_data:/data
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8222/varz" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   fignode:
     image: yankz/usetoro:fignode
@@ -282,6 +314,10 @@ services:
       redis:
         condition: service_started
       nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
         condition: service_healthy
     networks:
       - toro-net
@@ -319,6 +355,10 @@ services:
         condition: service_started
       nats-1:
         condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
     networks:
       - toro-net
 
@@ -329,9 +369,12 @@ services:
       dockerfile: container/nginx/nginx.prod.Dockerfile
     ports:
       - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - gate
       - graphql
+      - ledger
     networks:
       - toro-net
 
@@ -365,6 +408,41 @@ services:
         condition: service_healthy
     networks:
       - toro-net
+  ledger:
+    image: yankz/usetoro:ledger
+    build:
+      context: ../
+      dockerfile: container/ledger/Dockerfile
+    restart: always
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      PGOPTIONS: "-c search_path=ledger,public"
+      REDIS_URL: redis://redis:6379/1
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      DJANGO_SETTINGS_MODULE: config.settings
+      IN_DOCKER: "1"
+      SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-production-secret-replace-me}
+      DEBUG: "False"
+      ALLOWED_HOSTS: "*"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      GUNICORN_WORKERS: "4"
+      GUNICORN_THREADS: "2"
+      GUNICORN_TIMEOUT: "120"
+    volumes:
+      - ../ledger:/app/ledger
+    depends_on:
+      torodb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
+    networks:
+      - toro-net
 
 volumes:
   db_data:
@@ -377,4 +455,5 @@ volumes:
 
 networks:
   toro-net:
-    driver: bridge
+    name: toro-net
+    external: true

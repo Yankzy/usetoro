@@ -1,0 +1,52 @@
+{
+  "request": {
+    "schema_version": "bookkeeping.ase.bank_categorize.v1",
+    "company_id": "comp-morocco-001",
+    "session_id": "sess-2026-09-16-001",
+    "state_revision": 2,
+    "persistence_revision": 1,
+    "dag_id": "bookkeeping_bank_categorization_v1",
+    "request_id": "bank-req:sess-2026-09-16-001:2",
+    "idempotency_key": "idem:comp-morocco-001:sess-2026-09-16-001:2",
+    "requested_at": "2026-09-16T15:00:00Z",
+    "bank_items": [
+      {
+        "bank_item_id": "staged:0191e4f2-9876-789a-bcde-000000000002",
+        "bank_account_id": "bank-acc-attijariwafa-01",
+        "residual_amount_units": 450000,
+        "original_amount_units": 450000,
+        "direction": "OUTFLOW",
+        "date": "2026-03-05",
+        "currency": "MAD",
+        "description": "FRAIS DE TENUE DE COMPTE",
+        "reference": "REF-FEE-2026-03",
+        "provenance_refs": [
+          "stmt-line-002",
+          "stmt-line-001"
+        ],
+        "bank_account_name": "Attijariwafa Current MAD",
+        "institution_name": "Attijariwafa Bank",
+        "counterparty_name": "Attijariwafa Bank"
+      },
+      {
+        "bank_item_id": "staged:0191e4f2-1234-789a-bcde-000000000001",
+        "bank_account_id": "bank-acc-attijariwafa-01",
+        "residual_amount_units": 1200000,
+        "original_amount_units": 2000000,
+        "direction": "INFLOW",
+        "date": "2026-03-04",
+        "currency": "MAD",
+        "description": "VIREMENT RECU MAROC TELECOM <CLIENT>",
+        "reference": "VIR-78901",
+        "provenance_refs": [
+          "stmt-line-003"
+        ],
+        "bank_account_name": "Attijariwafa Current MAD",
+        "institution_name": "Attijariwafa Bank",
+        "counterparty_name": null
+      }
+    ]
+  },
+  "expected_canonical_bytes": "{\"company_id\":\"comp-morocco-001\",\"dag_id\":\"bookkeeping_bank_categorization_v1\",\"items\":[{\"bank_account_id\":\"bank-acc-attijariwafa-01\",\"bank_account_name\":\"Attijariwafa Current MAD\",\"bank_item_id\":\"staged:0191e4f2-1234-789a-bcde-000000000001\",\"counterparty_name\":\"\",\"currency\":\"MAD\",\"date\":\"2026-03-04\",\"description\":\"VIREMENT RECU MAROC TELECOM <CLIENT>\",\"direction\":\"INFLOW\",\"institution_name\":\"Attijariwafa Bank\",\"original_amount_units\":2000000,\"provenance_refs\":[\"stmt-line-003\"],\"reference\":\"VIR-78901\",\"residual_amount_units\":1200000},{\"bank_account_id\":\"bank-acc-attijariwafa-01\",\"bank_account_name\":\"Attijariwafa Current MAD\",\"bank_item_id\":\"staged:0191e4f2-9876-789a-bcde-000000000002\",\"counterparty_name\":\"Attijariwafa Bank\",\"currency\":\"MAD\",\"date\":\"2026-03-05\",\"description\":\"FRAIS DE TENUE DE COMPTE\",\"direction\":\"OUTFLOW\",\"institution_name\":\"Attijariwafa Bank\",\"original_amount_units\":450000,\"provenance_refs\":[\"stmt-line-001\",\"stmt-line-002\"],\"reference\":\"REF-FEE-2026-03\",\"residual_amount_units\":450000}],\"persistence_revision\":1,\"schema_version\":\"bookkeeping.ase.bank_categorize.v1\",\"session_id\":\"sess-2026-09-16-001\",\"state_revision\":2}",
+  "expected_sha256_digest": "15275851c4198d1580480c8a12e78c51a27db8a96fb9297d67ae003f60f63f40"
+}

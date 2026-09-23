@@ -10,6 +10,9 @@ x-jetstream-default: &jetstream-default
 tracking_proxy_url: "http://localhost:8080"
 postmark_server_token: ""
 postmark_sender_signature: ""
+postmark_inbound_webhook_secret: ""
+postmark_inbound_username: ""
+postmark_inbound_password: ""
 vcoo_founder_email: "yankz@fignode.com"
 twilio_account_sid: ""
 twilio_auth_token: ""
@@ -97,6 +100,13 @@ nats:
         <<: *jetstream-default
         subjects:
           - ledger.>
+
+    bookkeeping:
+      stream_name: BOOKKEEPING_EVENTS
+      jetstream:
+        <<: *jetstream-default
+        subjects:
+          - events.bookkeeping.>
 
     tasks:
       stream_name: TASKS

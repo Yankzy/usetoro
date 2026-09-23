@@ -31,15 +31,15 @@ func TestResolveSender_RealUser(t *testing.T) {
 	db := database.New(pool)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	sender, err := ResolveSender(ctx, logger, db, pool, "yankz@fignode.com", "rap_morocco@a.usetoro.io", "")
+	sender, err := ResolveSender(ctx, logger, db, pool, "yankz@fignode.com", "accounting@toro-synthetic-bookkeeping.inbound.usetoro.io", "")
 
 	require.NoError(t, err, "ResolveSender should succeed for a known user")
 	assert.True(t, sender.EntityID.Valid, "EntityID should be valid")
 	assert.NotEmpty(t, sender.EntityIDStr, "EntityIDStr should not be empty")
 	assert.Equal(t, "yankz@fignode.com", sender.FromHandle)
-	assert.Equal(t, "rap_morocco@a.usetoro.io", sender.ToHandle)
-	assert.Equal(t, "rap_morocco", sender.AgentAlias)
-	assert.Equal(t, "a", sender.Subdomain)
+	assert.Equal(t, "accounting@toro-synthetic-bookkeeping.inbound.usetoro.io", sender.ToHandle)
+	assert.Equal(t, "accounting", sender.AgentAlias)
+	assert.Equal(t, "toro-synthetic-bookkeeping", sender.Subdomain)
 
 	t.Logf("✅ ResolveSender succeeded:")
 	t.Logf("   EntityID:    %s", sender.EntityIDStr)
@@ -52,7 +52,7 @@ func TestResolveSender_RealUser(t *testing.T) {
 	unknownSender, unknownErr := ResolveSender(ctx, logger, db, pool, "nobody@doesnotexist.com", "rap_morocco@a.usetoro.io", "")
 	assert.Error(t, unknownErr, "ResolveSender should fail for unknown user")
 	assert.False(t, unknownSender.EntityID.Valid, "EntityID should not be valid for unknown user")
-	assert.Contains(t, unknownErr.Error(), "unknown sender")
+	assert.Contains(t, unknownErr.Error(), "unauthorized sender")
 	_ = io.Discard // silence unused import if needed
 
 	t.Logf("✅ Unknown user correctly rejected: %s", unknownErr.Error())

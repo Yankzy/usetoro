@@ -12,7 +12,7 @@ from pydantic import (
     model_validator,
 )
 
-from .enums import Direction, SourceType
+from .enums import BookkeepingRole, Direction, SourceArtifactKind, SourceType
 from .money import AmountUnits, amount_units_to_int
 
 
@@ -117,6 +117,23 @@ class BookItem(BaseModel):
         ),
     )
 
+    source_artifact_kind: SourceArtifactKind | None = Field(
+        default=None,
+        description=(
+            "Authoritative origin artifact kind (INVOICE, BILL, TRANSACTION). "
+            "Inferred from id prefix or source_type when omitted."
+        ),
+    )
+
+    bookkeeping_role: BookkeepingRole | None = Field(
+        default=None,
+        description=(
+            "Accounting lifecycle role (OPEN_RECEIVABLE, OPEN_PAYABLE, "
+            "POSTED_CASH_MOVEMENT). Invoices and bills are open obligations, "
+            "never settlements."
+        ),
+    )
+
     @field_validator("currency")
     @classmethod
     def normalize_currency(cls, value: str) -> str:
@@ -149,7 +166,73 @@ class BookItem(BaseModel):
                 f"{self.direction!r}"
             )
 
+        # Infer source_artifact_kind and bookkeeping_role if omitted
+        inferred_kind = self.source_artifact_kind
+        inferred_role = self.bookkeeping_role
+
+        if inferred_kind is None:
+            id_lower = self.id.lower()
+            if id_lower.startswith("invoice:"):
+                inferred_kind = SourceArtifactKind.INVOICE
+            elif id_lower.startswith("bill:"):
+                inferred_kind = SourceArtifactKind.BILL
+            elif id_lower.startswith("tx:"):
+                inferred_kind = SourceArtifactKind.TRANSACTION
+
+        if inferred_role is None:
+            if inferred_kind == SourceArtifactKind.INVOICE:
+                inferred_role = BookkeepingRole.OPEN_RECEIVABLE
+            elif inferred_kind == SourceArtifactKind.BILL:
+                inferred_role = BookkeepingRole.OPEN_PAYABLE
+            elif inferred_kind == SourceArtifactKind.TRANSACTION:
+                inferred_role = BookkeepingRole.POSTED_CASH_MOVEMENT
+            elif self.source_type == SourceType.POSTED_BOOK_ITEM:
+                inferred_role = BookkeepingRole.POSTED_CASH_MOVEMENT
+
+        if inferred_kind != self.source_artifact_kind or inferred_role != self.bookkeeping_role:
+            object.__setattr__(self, "source_artifact_kind", inferred_kind)
+            object.__setattr__(self, "bookkeeping_role", inferred_role)
+
         return self
+
+    @property
+    def is_categorization_eligible(self) -> bool:
+        """
+        Return True if this BookItem is eligible for semantic account categorization.
+
+        Production BookItems whose accounting truth is already authoritative:
+        - Invoices (SourceArtifactKind.INVOICE, BookkeepingRole.OPEN_RECEIVABLE)
+        - Bills (SourceArtifactKind.BILL, BookkeepingRole.OPEN_PAYABLE)
+        - Posted Cash Movements (SourceArtifactKind.TRANSACTION, BookkeepingRole.POSTED_CASH_MOVEMENT, SourceType.POSTED_BOOK_ITEM)
+        are NOT eligible for semantic account categorization.
+        """
+        if self.source_artifact_kind in {
+            SourceArtifactKind.INVOICE,
+            SourceArtifactKind.BILL,
+            SourceArtifactKind.TRANSACTION,
+        }:
+            return False
+
+        if self.bookkeeping_role in {
+            BookkeepingRole.OPEN_RECEIVABLE,
+            BookkeepingRole.OPEN_PAYABLE,
+            BookkeepingRole.POSTED_CASH_MOVEMENT,
+        }:
+            return False
+
+        if self.source_type == SourceType.POSTED_BOOK_ITEM:
+            return False
+
+        # Backward compatibility check for string ID prefixes if untyped
+        id_lower = self.id.lower()
+        if (
+            id_lower.startswith("invoice:")
+            or id_lower.startswith("bill:")
+            or id_lower.startswith("tx:")
+        ):
+            return False
+
+        return True
 
     @property
     def amount_int(self) -> int:

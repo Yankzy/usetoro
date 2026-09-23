@@ -260,9 +260,11 @@ class BatchTransitionResult:
             TransitionStatus.APPLIED,
             TransitionStatus.NOOP,
             TransitionStatus.REJECTED,
+            TransitionStatus.APPLIED_REQUIRES_REHYDRATION,
             "APPLIED",
             "NOOP",
             "REJECTED",
+            "APPLIED_REQUIRES_REHYDRATION",
         }
 
         if self.status not in allowed:
@@ -289,6 +291,17 @@ class BatchTransitionResult:
             raise ValueError(
                 "resulting_persistence_revision cannot be negative"
             )
+
+        if self.is_applied_requires_rehydration:
+            if self.rejection is not None:
+                raise ValueError(
+                    "APPLIED_REQUIRES_REHYDRATION batch cannot contain rejection"
+                )
+            if self.delta is not None:
+                raise ValueError(
+                    "APPLIED_REQUIRES_REHYDRATION batch cannot contain StateDelta"
+                )
+            return
 
         if self.is_applied:
             if self.delta is None:
@@ -368,6 +381,15 @@ class BatchTransitionResult:
             )
 
     @property
+    def is_applied_requires_rehydration(
+        self,
+    ) -> bool:
+        return (
+            self.status == TransitionStatus.APPLIED_REQUIRES_REHYDRATION
+            or self.status == "APPLIED_REQUIRES_REHYDRATION"
+        )
+
+    @property
     def is_applied(
         self,
     ) -> bool:
@@ -393,24 +415,6 @@ class BatchTransitionResult:
             self.status == TransitionStatus.REJECTED
             or self.status == "REJECTED"
         )
-
-    @property
-    def applied(
-        self,
-    ) -> bool:
-        return self.is_applied
-
-    @property
-    def noop(
-        self,
-    ) -> bool:
-        return self.is_noop
-
-    @property
-    def rejected(
-        self,
-    ) -> bool:
-        return self.is_rejected
 
     def get_command_result(
         self,
@@ -529,5 +533,27 @@ class BatchTransitionResult:
                 artifact_ids=artifact_ids,
             ),
 
+            command_results=command_results,
+        )
+
+    @classmethod
+    def applied_requires_rehydration(
+        cls,
+        *,
+        batch: TransitionBatch,
+        previous_state_revision: int,
+        previous_persistence_revision: int,
+        new_persistence_revision: int,
+        command_results: tuple[TransitionResult, ...] = (),
+    ) -> "BatchTransitionResult":
+        return cls(
+            batch=batch,
+            status=TransitionStatus.APPLIED_REQUIRES_REHYDRATION,
+            previous_state_revision=previous_state_revision,
+            resulting_state_revision=previous_state_revision,
+            previous_persistence_revision=previous_persistence_revision,
+            resulting_persistence_revision=new_persistence_revision,
+            delta=None,
+            rejection=None,
             command_results=command_results,
         )

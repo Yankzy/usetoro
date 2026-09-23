@@ -48,7 +48,7 @@ func main() {
 	cfg := core.AgentConfig{
 		DID:          "did:toro:test-mapper",
 		ActivityType: "agents.accounting.map_csv",
-		Model:        "gpt-4o",
+		Model:        "gpt-5.4-mini",
 	}
 
 	rows := [][]string{

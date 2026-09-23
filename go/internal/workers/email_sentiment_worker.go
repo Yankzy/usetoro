@@ -32,7 +32,7 @@ func init() {
 		// Using an agent.Runtime allows us to leverage the existing LLM infrastructure
 		llmRuntime := agent.NewRuntime(deps.Logger, nil, core.AgentConfig{
 			DID:   "email_sentiment_analyzer",
-			Model: "gpt-4o-mini", // Using a fast/cheap model for sentiment
+			Model: "gpt-5.4-mini", // Using a fast/cheap model for sentiment
 			SystemPrompt: `You are an expert email sentiment analyzer for a B2B sales sequence.
 Read the prospect's reply and classify their intent.
 You must return ONLY a JSON object with a single key "intent" and one of these exact values:

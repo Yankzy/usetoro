@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+
 
 from bookkeeping_state.domain.bank import BankAccount, BankItem
 from bookkeeping_state.domain.books import BookItem
@@ -16,9 +16,17 @@ from bookkeeping_state.domain.evidence import (
     BookItemEvidenceAssertion,
     BookItemEvidenceInvalidation,
 )
+from bookkeeping_state.domain.payment_application import (
+    ExecutedPaymentApplication,
+)
 from bookkeeping_state.domain.reconciliations import (
     Reconciliation,
     ReconciliationInvalidation,
+)
+from bookkeeping_state.domain.residual_bank_classifications import (
+    ResidualBankClassificationDecision,
+    ResidualBankClassificationInvalidation,
+    ResidualBankPosting,
 )
 from bookkeeping_state.domain.routing import (
     RoutingDecision,
@@ -95,6 +103,7 @@ class BookkeepingSnapshot:
     bank_accounts: tuple[BankAccount, ...] = ()
     bank_items: tuple[BankItem, ...] = ()
     book_items: tuple[BookItem, ...] = ()
+    historical_book_item_ids: tuple[str, ...] = ()
 
     documents: tuple[Document, ...] = ()
     counterparties: tuple[Counterparty, ...] = ()
@@ -125,6 +134,53 @@ class BookkeepingSnapshot:
         BookItemEvidenceInvalidation,
         ...
     ] = ()
+
+    executed_payment_applications: tuple[
+        ExecutedPaymentApplication,
+        ...
+    ] = ()
+
+    residual_bank_classifications: tuple[
+        ResidualBankClassificationDecision,
+        ...
+    ] = ()
+    residual_bank_classification_invalidations: tuple[
+        ResidualBankClassificationInvalidation,
+        ...
+    ] = ()
+    residual_bank_postings: tuple[
+        ResidualBankPosting,
+        ...
+    ] = ()
+
+
+
+from datetime import date
+from bookkeeping_state.domain.money import AmountUnits
+
+
+@dataclass(frozen=True, slots=True)
+class PaymentApplicationObligationAllocationInstruction:
+    book_item_id: str
+    amount_units: AmountUnits
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyPaymentInstruction:
+    payment_application_id: str
+    bank_item_id: str
+    total_amount_units: AmountUnits
+    payment_date: date
+    allocations: tuple[PaymentApplicationObligationAllocationInstruction, ...]
+    session_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PostResidualBankClassificationInstruction:
+    decision_id: str
+    command_id: str
+    session_id: str | None = None
+    state_revision_at_creation: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +231,28 @@ class PersistenceWriteSet:
         ...
     ] = ()
 
+    payment_applications_to_execute: tuple[
+        ApplyPaymentInstruction,
+        ...
+    ] = ()
+
+    residual_bank_classifications: tuple[
+        ResidualBankClassificationDecision,
+        ...
+    ] = ()
+    residual_bank_classification_invalidations: tuple[
+        ResidualBankClassificationInvalidation,
+        ...
+    ] = ()
+    residual_bank_postings: tuple[
+        ResidualBankPosting,
+        ...
+    ] = ()
+    residual_bank_postings_to_execute: tuple[
+        PostResidualBankClassificationInstruction,
+        ...
+    ] = ()
+
     @property
     def is_empty(self) -> bool:
         return not any(
@@ -192,6 +270,11 @@ class PersistenceWriteSet:
                 self.reconciliation_invalidations,
                 self.book_item_evidence_assertions,
                 self.book_item_evidence_invalidations,
+                self.payment_applications_to_execute,
+                self.residual_bank_classifications,
+                self.residual_bank_classification_invalidations,
+                self.residual_bank_postings,
+                self.residual_bank_postings_to_execute,
             )
         )
 
@@ -208,17 +291,11 @@ class PersistenceCommitResult:
     write_set: PersistenceWriteSet
 
 
-@runtime_checkable
-class BookkeepingRepository(Protocol):
+class BookkeepingRepository:
     """
     Persistence boundary used by BookkeepingState.
 
-    Production may implement this with PostgreSQL/AlloyDB.
-
-    The eval will implement the same contract entirely in memory.
-
-    BookkeepingState must not know which implementation is behind this
-    interface.
+    Production implementation reads from the Django ledger models.
     """
 
     def load_snapshot(
@@ -227,11 +304,11 @@ class BookkeepingRepository(Protocol):
         company_id: str,
     ) -> BookkeepingSnapshot:
         """
-        Load one internally consistent durable snapshot.
-
-        All returned artifacts must correspond to the same
-        persistence_revision.
+        Load one internally consistent durable snapshot from the Django ledger models.
         """
+        from bookkeeping_state.persistence.reader import read_django_snapshot
+
+        return read_django_snapshot(company_id=company_id)
 
     def commit(
         self,
@@ -241,16 +318,14 @@ class BookkeepingRepository(Protocol):
         write_set: PersistenceWriteSet,
     ) -> PersistenceCommitResult:
         """
-        Atomically append durable artifacts.
-
-        Requirements:
-
-        1. Current persistence revision must equal expected_revision.
-        2. Every artifact ID is immutable.
-        3. Reinserting exactly the same artifact may be treated idempotently.
-        4. Same ID with different contents must fail.
-        5. The write set is all-or-nothing.
-        6. A successful non-empty commit advances persistence revision exactly
-           once.
-        7. A failed commit changes nothing.
+        Atomically append durable decision artifacts to Django storage.
         """
+        from bookkeeping_state.persistence.writer import commit_django_write_set
+
+        return commit_django_write_set(
+            company_id=company_id,
+            expected_revision=expected_revision,
+            write_set=write_set,
+        )
+
+

@@ -60,7 +60,7 @@ func NewDocumentOCRWorker(
 
 	rtCfg := core.AgentConfig{
 		DID:          "did:toro:torodb-ocr-worker",
-		Model:        "gpt-4o",
+		Model:        "gpt-5.4-mini",
 		SystemPrompt: ocrSystemPrompt,
 	}
 	rt := agent.NewRuntime(logger, nil, rtCfg)

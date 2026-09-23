@@ -159,7 +159,7 @@ def optimize_reconciliation(
     x_vars: dict[str, cp_model.IntVar] = {}
 
     for h in valid_hypotheses:
-        x_vars[h.id] = model.NewBoolVar(f"x_{h.id}")
+        x_vars[h.id] = model.new_bool_var(f"x_{h.id}")
 
     # Forced constraints
     for f_id in forced_set:
@@ -198,7 +198,7 @@ def optimize_reconciliation(
     # ------------------------------------------------------------------
     bank_cleared_vars: dict[str, cp_model.IntVar] = {}
     for b in view.bank_items:
-        b_var = model.NewBoolVar(f"bank_cleared_{b.bank_item_id}")
+        b_var = model.new_bool_var(f"bank_cleared_{b.bank_item_id}")
         bank_cleared_vars[b.bank_item_id] = b_var
         b_allocs = bank_to_hyps.get(b.bank_item_id, [])
         r_b = b.remaining_amount_int
@@ -211,7 +211,7 @@ def optimize_reconciliation(
 
     book_cleared_vars: dict[str, cp_model.IntVar] = {}
     for j in view.book_items:
-        j_var = model.NewBoolVar(f"book_cleared_{j.book_item_id}")
+        j_var = model.new_bool_var(f"book_cleared_{j.book_item_id}")
         book_cleared_vars[j.book_item_id] = j_var
         j_allocs = book_to_hyps.get(j.book_item_id, [])
         r_j = j.remaining_amount_int

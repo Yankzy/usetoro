@@ -35,7 +35,7 @@ async def run_single_eval(
     evidence: str,
     truth: GroundTruth,
     use_optimizer: bool,
-    model_name: str = "gpt-4o"
+    model_name: str = "gpt-5.4-mini"
 ) -> dict:
     """Executes a single evaluation run (either Config A or Config B)."""
     

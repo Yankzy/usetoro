@@ -247,6 +247,7 @@ type Querier interface {
 	GetMasterMerchantByID(ctx context.Context, id pgtype.UUID) (ToroCoreMasterMerchant, error)
 	GetMasterMerchantBySubstringPattern(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error)
 	GetMasterMerchantByTrigramSimilarity(ctx context.Context, cleanedStem string) (FignodeMasterMerchant, error)
+	GetMaxRootPath(ctx context.Context) (string, error)
 	GetMemoryRules(ctx context.Context, realmID string) ([]GetMemoryRulesRow, error)
 	GetNextAvailableEmailAccount(ctx context.Context, tenantID pgtype.UUID) (GetNextAvailableEmailAccountRow, error)
 	GetNonResidentForeignProviderByMerchantID(ctx context.Context, masterMerchantID pgtype.UUID) (ToroCoreNonResidentForeignProvider, error)
@@ -440,6 +441,7 @@ type Querier interface {
 	ResolveReconciliationReviewQueueItem(ctx context.Context, arg ResolveReconciliationReviewQueueItemParams) (ShadowErpReconciliationReviewQueue, error)
 	ResolveReviewQueueForMatchGroup(ctx context.Context, arg ResolveReviewQueueForMatchGroupParams) (int64, error)
 	SaveConversationSessionMessage(ctx context.Context, arg SaveConversationSessionMessageParams) error
+	SaveConversationSessionMessageWithResult(ctx context.Context, arg SaveConversationSessionMessageWithResultParams) (int64, error)
 	SaveInboundConversation(ctx context.Context, arg SaveInboundConversationParams) error
 	SearchAttachables(ctx context.Context, arg SearchAttachablesParams) ([]ShadowErpAttachable, error)
 	SearchClientsByEntityID(ctx context.Context, arg SearchClientsByEntityIDParams) ([]SearchClientsByEntityIDRow, error)

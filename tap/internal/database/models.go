@@ -1006,16 +1006,39 @@ type ToroCoreEnterpriseRelationship struct {
 }
 
 type ToroCoreEntity struct {
-	ID          pgtype.UUID
-	ParentID    pgtype.UUID
-	Name        string
-	EntityType  string
-	ErpProvider pgtype.Text
-	ErpTenantID pgtype.Text
-	PlanTier    pgtype.Text
-	Status      pgtype.Text
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	ID              pgtype.UUID
+	ParentID        pgtype.UUID
+	Name            string
+	EntityType      string
+	ErpProvider     pgtype.Text
+	ErpTenantID     pgtype.Text
+	PlanTier        pgtype.Text
+	Status          pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	Slug            string
+	Currency        string
+	AccrualMethod   bool
+	FyStartMonth    int32
+	LastClosingDate pgtype.Date
+	Picture         pgtype.Text
+	Meta            []byte
+	Hidden          bool
+	IsEphemeral     bool
+	DefaultCoaID    pgtype.UUID
+	AdminID         pgtype.UUID
+	Address1        pgtype.Text
+	Address2        pgtype.Text
+	City            pgtype.Text
+	State           pgtype.Text
+	Country         pgtype.Text
+	ZipCode         pgtype.Text
+	Email           pgtype.Text
+	Website         pgtype.Text
+	Phone           pgtype.Text
+	Path            string
+	Depth           int32
+	Numchild        int32
 }
 
 type ToroCoreErpConnection struct {

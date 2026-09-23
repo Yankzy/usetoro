@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from bookkeeping_state.persistence.bank_ledger import get_or_create_bank_ledger
 from bookkeeping_state.persistence.repository import (
     BookkeepingRepository,
     BookkeepingSnapshot,
@@ -18,4 +17,5 @@ __all__ = (
     "PersistenceDuplicateError",
     "PersistenceError",
     "PersistenceWriteSet",
+    "get_or_create_bank_ledger",
 )

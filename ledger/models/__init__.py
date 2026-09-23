@@ -18,3 +18,4 @@ from ledger.models.entity import *
 from ledger.models.data_import import *
 from ledger.models.plaid import *
 from ledger.models.usage import *
+from ledger.models.bookkeeping import *

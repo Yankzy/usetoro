@@ -22,7 +22,7 @@ EntityModel -< LedgerModel -< JournalEntryModel -< TransactionModel
 """
 from datetime import date
 from string import ascii_lowercase, digits
-from typing import Optional
+from typing import Optional, Any
 from uuid import uuid4
 
 from django.core.exceptions import ValidationError, ObjectDoesNotExist
@@ -164,6 +164,9 @@ class LedgerModelManager(models.Manager):
 
 
 class LedgerModelAbstract(CreateUpdateMixIn, IOMixIn):
+    journal_entries: Any
+    earliest_timestamp: Any
+
     """
     Base implementation of the LedgerModel.
 
@@ -186,6 +189,7 @@ class LedgerModelAbstract(CreateUpdateMixIn, IOMixIn):
     """
     _WRAPPED_MODEL_KEY = 'wrapped_model'
     uuid = models.UUIDField(default=uuid4, editable=False, primary_key=True)
+    entity_id: Any
     ledger_xid = models.SlugField(allow_unicode=True, max_length=150, null=True, blank=True,
                                   verbose_name=_('Ledger External ID'),
                                   help_text=_('User Defined Ledger ID'))
@@ -255,7 +259,7 @@ class LedgerModelAbstract(CreateUpdateMixIn, IOMixIn):
         return False
 
     def remove_wrapped_model_info(self):
-        if self.has_wrapped_model_info():
+        if self.has_wrapped_model_info() and self.additional_info is not None:
             del self.additional_info[self._WRAPPED_MODEL_KEY]
 
     def has_jes_in_locked_period(self, force_evaluation: bool = True) -> bool:
@@ -306,7 +310,7 @@ class LedgerModelAbstract(CreateUpdateMixIn, IOMixIn):
         }
 
     def get_wrapped_model_instance(self):
-        if self.has_wrapped_model_info():
+        if self.has_wrapped_model_info() and self.additional_info is not None:
             return getattr(self, self.additional_info[self._WRAPPED_MODEL_KEY]['model'])
 
         for model_class, attr in self.get_wrapper_info.items():
@@ -316,7 +320,9 @@ class LedgerModelAbstract(CreateUpdateMixIn, IOMixIn):
     def get_wrapped_model_url(self):
         if self.has_wrapped_model():
             wrapped_model = self.get_wrapped_model_instance()
-            return wrapped_model.get_absolute_url()
+            if wrapped_model is not None and hasattr(wrapped_model, 'get_absolute_url'):
+                return wrapped_model.get_absolute_url()
+        return None
 
     def is_posted(self) -> bool:
         """
@@ -617,7 +623,7 @@ class LedgerModelAbstract(CreateUpdateMixIn, IOMixIn):
                                     commited=commit,
                                     **kwargs)
 
-    def delete(self, **kwargs):
+    def delete(self, using=None, keep_parents=False, **kwargs):
         if not self.entity.is_ephemeral:
             if not self.can_delete():
                 raise LedgerModelValidationError(
@@ -636,7 +642,7 @@ class LedgerModelAbstract(CreateUpdateMixIn, IOMixIn):
                                 f'Journal Entries with date {earliest_date} cannot be deleted because of latest closing '
                                 f'entry on {self.get_entity_last_closing_date()}')
                         )
-        return super().delete(**kwargs)
+        return super().delete(using=using, keep_parents=keep_parents)
 
     def get_entity_name(self) -> str:
         return self.entity.name

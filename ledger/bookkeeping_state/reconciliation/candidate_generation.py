@@ -69,6 +69,70 @@ class CandidateGenerator:
     ) -> tuple[ReconciliationCandidate, ...]:
         candidates: list[ReconciliationCandidate] = []
         candidate_idx = 1
+        seen_cand_signatures: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+
+        # ------------------------------------------------------------------
+        # 0. Structured Stage-1 Payment Provenance Matches
+        # ------------------------------------------------------------------
+        for bank_id, cash_legs in getattr(view, "stage1_provenance", {}).items():
+            bank = view.get_bank_item(bank_id)
+            if bank is None or bank.remaining_amount_int <= 0:
+                continue
+
+            valid_legs = True
+            book_alloc_list: list[BookAllocation] = []
+            for tx_id, amt_str in cash_legs:
+                book = view.get_book_item(tx_id)
+                if book is None or book.remaining_amount_int < int(amt_str):
+                    valid_legs = False
+                    break
+                book_alloc_list.append(
+                    BookAllocation(
+                        book_item_id=tx_id,
+                        amount_units=amt_str,
+                    )
+                )
+
+            if not valid_legs or not book_alloc_list:
+                continue
+
+            total_book_int = sum(b.amount_int for b in book_alloc_list)
+            if bank.remaining_amount_int != total_book_int:
+                continue
+
+            bank_alloc = (
+                BankAllocation(
+                    bank_item_id=bank.bank_item_id,
+                    amount_units=bank.remaining_amount_units,
+                ),
+            )
+            book_alloc = tuple(book_alloc_list)
+            res = validate_candidate_allocations(view, bank_alloc, book_alloc)
+            if res.is_feasible:
+                cand_type = (
+                    CandidateType.ONE_TO_ONE_EXACT
+                    if len(book_alloc) == 1
+                    else CandidateType.ONE_TO_MANY
+                )
+                sig = (
+                    tuple(a.bank_item_id for a in bank_alloc),
+                    tuple(sorted(a.book_item_id for a in book_alloc)),
+                )
+                seen_cand_signatures.add(sig)
+                candidates.append(
+                    ReconciliationCandidate(
+                        candidate_id=f"cand-{candidate_idx}",
+                        candidate_type=cand_type,
+                        bank_allocations=bank_alloc,
+                        book_allocations=book_alloc,
+                        total_amount_units=bank.remaining_amount_units,
+                        rationale=(
+                            f"Structured Stage-1 payment provenance: Bank {bank.bank_item_id} -> "
+                            f"{len(book_alloc)} cash leg(s)"
+                        ),
+                    )
+                )
+                candidate_idx += 1
 
         # ------------------------------------------------------------------
         # 1. 1:1 Exact Matches
@@ -76,6 +140,9 @@ class CandidateGenerator:
         for bank in view.bank_items:
             for book in view.book_items:
                 if bank.remaining_amount_int == book.remaining_amount_int:
+                    sig = ((bank.bank_item_id,), (book.book_item_id,))
+                    if sig in seen_cand_signatures:
+                        continue
                     bank_alloc = (
                         BankAllocation(
                             bank_item_id=bank.bank_item_id,
@@ -196,6 +263,12 @@ class CandidateGenerator:
                     break
                 for book_combo in combinations(compatible_books, r):
                     if sum(b.remaining_amount_int for b in book_combo) == bank.remaining_amount_int:
+                        sig = (
+                            (bank.bank_item_id,),
+                            tuple(sorted(b.book_item_id for b in book_combo)),
+                        )
+                        if sig in seen_cand_signatures:
+                            continue
                         bank_alloc = (
                             BankAllocation(
                                 bank_item_id=bank.bank_item_id,
@@ -582,7 +655,8 @@ def score_reconciliation_pair(
     if has_matching_ref:
         score += 200
         reasons.append("ref_match:+200")
-        evidence_tags.append(f"ref:{bank_item.reference.strip()}")
+        ref_val = (bank_item.reference or "").strip()
+        evidence_tags.append(f"ref:{ref_val}")
 
     if has_matching_cp:
         score += 100
@@ -635,6 +709,43 @@ class DefaultReconciliationScorer:
         pairwise_assessments: list[PairwiseSemanticAssessment] = []
         total_semantic_value = 0
         pair_summaries: list[str] = []
+
+        # Check if candidate matches exact structured Stage-1 payment provenance
+        if getattr(view, "stage1_provenance", None) and len(candidate.bank_allocations) == 1:
+            b_id = candidate.bank_allocations[0].bank_item_id
+            if b_id in view.stage1_provenance:
+                prov_legs = {tx_id: amt_str for tx_id, amt_str in view.stage1_provenance[b_id]}
+                cand_legs = {alloc.book_item_id: alloc.amount_units for alloc in candidate.book_allocations}
+                if cand_legs == prov_legs:
+                    total_amount = candidate.total_amount_int
+                    total_semantic_value = 1000 * total_amount
+                    for b_leg, j_leg, amt in pairs:
+                        p_assessment = PairwiseSemanticAssessment(
+                            bank_item_id=b_leg,
+                            book_item_id=j_leg,
+                            allocated_amount_units=str(amt),
+                            score=1000,
+                            admissibility=SemanticAdmissibility.SUPPORTED,
+                            allocation_support=AllocationSupport.EXPLICIT_EVIDENCE,
+                            evidence_refs=(),
+                            evidence_tags=(f"stage1_provenance:{b_id}",),
+                            rationale="stage1_provenance:exact_structured_link",
+                        )
+                        pairwise_assessments.append(p_assessment)
+
+                    return ReconciliationSemanticAssessment(
+                        candidate_id=candidate.candidate_id,
+                        semantic_score=1000,
+                        admissibility=SemanticAdmissibility.SUPPORTED,
+                        allocation_support=AllocationSupport.EXPLICIT_EVIDENCE,
+                        evidence_refs=candidate.evidence_refs,
+                        rationale=(
+                            f"Structured Stage-1 payment provenance: Bank {b_id} -> "
+                            f"{len(candidate.book_allocations)} cash leg(s) [allocation: {AllocationSupport.EXPLICIT_EVIDENCE.value}]"
+                        ),
+                        semantic_value=total_semantic_value,
+                        pairwise_assessments=tuple(pairwise_assessments),
+                    )
 
         # Evaluate allocation support
         alloc_support, alloc_rationale = evaluate_allocation_support(candidate, view)

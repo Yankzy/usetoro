@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -15,10 +16,27 @@ def get_nc() -> NATS | None:
     return _nc
 
 
-async def connect(nats_url: str) -> None:
+async def connect(nats_url: str, max_retries: int = 10, retry_delay: float = 2.0) -> None:
     global _nc
     servers = nats_url.split(",")
-    _nc = await nats.connect(servers=servers, name="stripe-worker")
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"Connecting to NATS (attempt {attempt}/{max_retries})...")
+            _nc = await nats.connect(
+                servers=servers,
+                name="stripe-worker",
+                connect_timeout=5,
+                max_reconnect_attempts=60,
+                reconnect_time_wait=2,
+            )
+            logger.info("Successfully connected to NATS")
+            return
+        except Exception as e:
+            if attempt == max_retries:
+                logger.error(f"Failed to connect to NATS after {max_retries} attempts: {e}")
+                raise
+            logger.warning(f"NATS connection pending ({e}), retrying in {retry_delay}s...")
+            await asyncio.sleep(retry_delay)
 
 
 async def close() -> None:
@@ -49,21 +67,26 @@ async def subscribe(subject: str, callback) -> None:
         logger.error("Failed to subscribe to NATS subject", extra={"subject": subject, "error": str(e)})
         raise e
 
-async def subscribe_jetstream(subject: str, durable_name: str, callback) -> None:
+async def subscribe_jetstream(subject: str, durable_name: str, callback, max_retries: int = 5, retry_delay: float = 2.0) -> None:
     global _nc
     if _nc is None:
         raise NATSPublishError("NATS not connected")
     
     js = _nc.jetstream()
-    try:
-        await js.subscribe(
-            subject,
-            durable=durable_name,
-            cb=callback,
-            manual_ack=True
-        )
-        logger.info(f"Subscribed to JetStream subject {subject} with durable {durable_name}")
-    except Exception as e:
-        logger.error("Failed to subscribe to JetStream", extra={"subject": subject, "error": str(e)})
-        raise e
+    for attempt in range(1, max_retries + 1):
+        try:
+            await js.subscribe(
+                subject,
+                durable=durable_name,
+                cb=callback,
+                manual_ack=True
+            )
+            logger.info(f"Subscribed to JetStream subject {subject} with durable {durable_name}")
+            return
+        except Exception as e:
+            if attempt == max_retries:
+                logger.error("Failed to subscribe to JetStream", extra={"subject": subject, "error": str(e)})
+                raise e
+            logger.warning(f"JetStream subscription to {subject} pending ({e}), retrying in {retry_delay}s...")
+            await asyncio.sleep(retry_delay)
 

@@ -100,6 +100,11 @@ func (m *Manager) Register(w Worker) {
 	m.workers = append(m.workers, w)
 }
 
+// Workers returns a slice of all registered workers in the manager
+func (m *Manager) Workers() []Worker {
+	return m.workers
+}
+
 // StartAll subscribes all registered workers and blocks until ctx finishes.
 func (m *Manager) StartAll(ctx context.Context) error {
 	m.logger.Info("Starting all background workers centrally", "count", len(m.workers))

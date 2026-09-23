@@ -12,7 +12,7 @@ from django.db import models
 from django.db.models import Q, QuerySet
 from django.shortcuts import get_object_or_404
 from django.utils.translation import gettext_lazy as _
-from typing import Type, Tuple, Any, Dict
+from typing import Type, Tuple, Any, Dict, cast
 from ledger.models import CreateUpdateMixIn, FinancialAccountInfoMixin, ContactInfoMixIn
 from ledger.models.utils import lazy_loader
 from decimal import Decimal as _Decimal
@@ -128,6 +128,7 @@ class BankAccountModelAbstract(
         PLAID = 'plaid', 'Plaid'
         MANUAL = 'manual', 'Manual'
 
+    entity_model_id: Any
 
     uuid = models.UUIDField(default=uuid4, editable=False, primary_key=True)
     user = models.ForeignKey(UserModel, on_delete=models.CASCADE, null=True)
@@ -172,7 +173,7 @@ class BankAccountModelAbstract(
         if isinstance(entity_slug, str):
             if not user_model:
                 raise BankAccountValidationError(_('Must pass user_model when using entity_slug.'))
-            entity_model_qs = EntityModel.objects.for_user(user_model=user_model)
+            entity_model_qs = cast(Any, EntityModel.objects).for_user(user_model=user_model)
             entity_model = get_object_or_404(entity_model_qs, slug__exact=entity_slug)
         elif isinstance(entity_slug, EntityModel):
             entity_model = entity_slug
@@ -280,7 +281,7 @@ class BankAccountModelAbstract(
                 (cls.LEDGER_CASH, "ledger"),
                 (cls.BUDGETING_CASH, "budgeting")
             ]:
-                account, _ = cls.objects.get_or_create(
+                account, _created = cls.objects.get_or_create(
                     user=user,
                     account_type=acc_type,
                     defaults={"name": "Cash Account"}
@@ -358,12 +359,12 @@ class BankAccountModelAbstract(
             if data.get('plaid_item') is not None:
                 create_defaults['plaid_item'] = data.get('plaid_item')
 
-            return cls.objects.update_or_create(
+            return cast(Tuple["BankAccountModel", bool], cls.objects.update_or_create(
                 user=user,
                 account_number=account_number,
                 routing_number=routing_number,
                 defaults=create_defaults
-            )
+            ))
 
         except Exception as e:
             raise BankAccountValidationError(str(e))
@@ -377,7 +378,14 @@ class BankAccountModelAbstract(
 
 
     @classmethod
-    def create_transaction_for_account(cls, amount, account_id, timestamp: str = None, description: str = None, duplicate_window_seconds: int = 60):
+    def create_transaction_for_account(
+        cls,
+        amount,
+        account_id,
+        timestamp: Optional[str] = None,
+        description: Optional[str] = None,
+        duplicate_window_seconds: int = 60,
+    ):
         """
         Create a single TransactionModel for the bank account found by `account_id`.
 
@@ -418,16 +426,23 @@ class BankAccountModelAbstract(
         if not ledger:
             raise BankAccountValidationError(_('No LedgerModel found for entity.'))
 
-        tx_type = TransactionModel.CREDIT if amt > 0 else TransactionModel.DEBIT
+        tx_type = cast(Any, TransactionModel).CREDIT if amt > 0 else cast(Any, TransactionModel).DEBIT
         amt_abs = abs(amt)
 
         # timestamp handling
         from ledger.io.io_core import get_localtime, validate_io_timestamp
+        ts: datetime.datetime
         if timestamp is None:
             ts = get_localtime()
         elif isinstance(timestamp, str):
             try:
-                ts = validate_io_timestamp(timestamp)
+                parsed = validate_io_timestamp(timestamp)
+                if parsed is None:
+                    raise BankAccountValidationError(_('Invalid timestamp provided.'))
+                if isinstance(parsed, datetime.datetime):
+                    ts = parsed
+                else:
+                    ts = datetime.datetime.combine(parsed, datetime.time.min)
             except Exception:
                 raise BankAccountValidationError(_('Invalid timestamp provided.'))
         elif isinstance(timestamp, datetime.datetime):
@@ -436,7 +451,7 @@ class BankAccountModelAbstract(
             raise BankAccountValidationError(_('Invalid timestamp type provided.'))
 
         # duplicate detection window (and require same calendar date)
-        window = datetime.timedelta(seconds=int(duplicate_window_seconds or 60))
+        window = datetime.timedelta(seconds=duplicate_window_seconds or 60)
 
         existing = TransactionModel.objects.filter(
             account=account,

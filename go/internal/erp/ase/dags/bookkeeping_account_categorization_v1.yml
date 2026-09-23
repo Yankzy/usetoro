@@ -1,0 +1,61 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  batch_flush_seconds: 1
+  domain_tool: "pcm_cash_accounting"
+  expected_properties: 1
+
+dag:
+  entry_node: book_direction_classifier
+  nodes:
+    book_direction_classifier:
+      name: book_direction_classifier
+      kind: generic_classifier
+      batch_size: 10
+      batch_flush_seconds: 1
+      children:
+        OUTFLOW: book_macro_classifier_outflow
+        INFLOW: book_macro_classifier_inflow
+        HOLD_AMBIGUOUS: hold_account_ambiguity
+
+    book_macro_classifier_outflow:
+      name: book_macro_classifier_outflow
+      kind: macro_classifier
+      batch_size: 10
+      batch_flush_seconds: 1
+      children:
+        EXPENSE: pcge_account_resolver
+        ASSET: pcge_account_resolver
+        LIABILITY: pcge_account_resolver
+        EQUITY: pcge_account_resolver
+        HOLD_AMBIGUOUS: hold_account_ambiguity
+
+    book_macro_classifier_inflow:
+      name: book_macro_classifier_inflow
+      kind: macro_classifier
+      batch_size: 10
+      batch_flush_seconds: 1
+      children:
+        REVENUE: pcge_account_resolver
+        LIABILITY: pcge_account_resolver
+        ASSET: pcge_account_resolver
+        EQUITY: pcge_account_resolver
+        HOLD_AMBIGUOUS: hold_account_ambiguity
+
+    pcge_account_resolver:
+      name: pcge_account_resolver
+      kind: terminal
+      batch_size: 10
+      batch_flush_seconds: 1
+      execution_parameters:
+        close_status: "CLASSIFIED"
+        terminal_property: "account_code"
+
+    hold_account_ambiguity:
+      name: hold_account_ambiguity
+      kind: terminal
+      batch_size: 10
+      batch_flush_seconds: 1
+      execution_parameters:
+        close_status: "HOLD"
+        hold_reason: "HOLD_INSUFFICIENT_EVIDENCE"

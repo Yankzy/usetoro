@@ -23,6 +23,7 @@ from tests.factories import (
     book_item,
     counterparty,
     document,
+    posted_book_item,
     snapshot,
 )
 
@@ -37,8 +38,8 @@ def test_full_pipeline_admits_truth_only_through_atomic_transitions() -> None:
                     bank_item("bank-office", amount=300_000, provenance_refs=("doc-office",)),
                 ),
                 book_items=(
-                    book_item("book-supplier", amount=1_300_000, counterparty_id="supplier", provenance_refs=("doc-supplier",)),
-                    book_item("book-office", amount=300_000, counterparty_id="supplier", provenance_refs=("doc-office",)),
+                    posted_book_item("book-supplier", amount=1_300_000, counterparty_id="supplier", provenance_refs=("doc-supplier",)),
+                    posted_book_item("book-office", amount=300_000, counterparty_id="supplier", provenance_refs=("doc-office",)),
                 ),
                 documents=(document("doc-supplier"), document("doc-office")),
                 counterparties=(counterparty("supplier"),),

@@ -13,7 +13,7 @@ from bookkeeping_state.domain.context import (
     AccountingPolicy,
     BookkeepingContext,
 )
-from bookkeeping_state.domain.enums import Direction
+from bookkeeping_state.domain.enums import Direction, SourceType
 from bookkeeping_state.domain.reconciliations import (
     BankAllocation,
     BookAllocation,
@@ -97,6 +97,7 @@ def _book_item(
     description: str | None = None,
     reference: str | None = None,
     origin_period: str = "2026-01",
+    source_type: SourceType = SourceType.POSTED_BOOK_ITEM,
 ) -> BookItem:
     return BookItem(
         id=id,
@@ -107,6 +108,7 @@ def _book_item(
         currency=currency,
         description=description or id,
         reference=reference,
+        source_type=source_type,
     )
 
 

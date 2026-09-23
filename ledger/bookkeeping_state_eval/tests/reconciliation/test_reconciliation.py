@@ -23,6 +23,7 @@ from bookkeeping_state.domain.enums import (
     Direction,
     Eligibility,
     SemanticAdmissibility,
+    SourceType,
 )
 from bookkeeping_state.reconciliation.candidate_generation import (
     score_reconciliation_pair,
@@ -89,6 +90,7 @@ def _build_test_environment(
     routing_decisions=(),
     documents: tuple = (),
     policy_updates: dict | None = None,
+    default_posted: bool = True,
 ):
     if bank_accounts is None:
         acc_main = factories.account("acc-main", currency="MAD")
@@ -99,12 +101,24 @@ def _build_test_environment(
 
     ctx = factories.context(**(policy_updates or {}))
 
+    # In Stage-2 bank reconciliation tests, book items represent posted bank ledger entries
+    # unless default_posted=False is explicitly specified (e.g. to test staging rejection).
+    if default_posted:
+        resolved_book_items = tuple(
+            b.model_copy(update={"source_type": SourceType.POSTED_BOOK_ITEM})
+            if b.source_type == SourceType.STAGING_BOOK_ITEM
+            else b
+            for b in book_items
+        )
+    else:
+        resolved_book_items = book_items
+
     snap = BookkeepingSnapshot(
         persistence_revision=1,
         context=ctx,
         bank_accounts=accounts,
         bank_items=bank_items,
-        book_items=book_items,
+        book_items=resolved_book_items,
         counterparties=counterparties,
         documents=documents,
         reconciliations=reconciliations,
@@ -347,7 +361,7 @@ def test_routing_contradiction_rejection():
     # Account 1 & Account 2
     acc2 = factories.account("acc-other", currency="MAD")
     b_other = factories.bank_item("b-other", account_id="acc-other", amount=1_000_000)
-    j1 = factories.book_item("j1", amount=1_000_000)
+    j1 = factories.posted_book_item("j1", amount=1_000_000)
 
     # J1 is actively routed to acc-main
     r_decision = factories.routing("r-j1", book_item_id="j1", account_id="acc-main")

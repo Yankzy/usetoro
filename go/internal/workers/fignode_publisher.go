@@ -47,7 +47,7 @@ func NewFignodePublisherWorker(
 	if err == nil {
 		adapter := agent.NewNatsAdapter(nc, js)
 		w.rt = agent.NewRuntime(logger, adapter, core.AgentConfig{
-			Model: "gpt-4o",
+			Model: "gpt-5.4-mini",
 			DID:   "did:toro:worker:fignode-publisher",
 		})
 	}

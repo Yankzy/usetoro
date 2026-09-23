@@ -3,7 +3,7 @@ Real Test Script for python-worker/app/reconciliation_prod/reconciliation_worker
 
 This script runs the REAL Reconciliation Worker pipeline end-to-end:
 1. Real candidate generation (Bipartite Graph + CP-SAT subset sums)
-2. Real OpenAI LLM semantic scoring (via AsyncOpenAI & gpt-5.4-mini / gpt-4o structured outputs)
+2. Real OpenAI LLM semantic scoring (via AsyncOpenAI & gpt-5.4-mini / gpt-5.4-mini structured outputs)
 3. Real CP-SAT global optimization (Lexicographic optimization via Google OR-Tools)
 
 The only thing mocked is NATS transport (SimulatedNatsMsg and nats_client.publish interceptor)

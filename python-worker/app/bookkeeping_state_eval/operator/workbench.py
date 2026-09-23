@@ -30,7 +30,10 @@ from bookkeeping_state_eval.domain.evidence import (
     EvidenceSource,
 )
 from bookkeeping_state_eval.domain.hypotheses import ReconciliationHypothesis
-from bookkeeping_state_eval.domain.money import major_units_to_solver_units
+from bookkeeping_state_eval.domain.money import (
+    major_units_to_solver_units,
+    solver_units_to_decimal,
+)
 from bookkeeping_state_eval.hydration.hydrator import BookkeepingHydrator
 from bookkeeping_state_eval.llm.factory import (
     create_reconciliation_semantic_provider,
@@ -380,13 +383,15 @@ class BookkeepingWorkbench:
         Fails closed: inspection state is closed immediately before mutation.
         """
         self.close_state()
+        prev_p: int | None = None
 
         try:
             snap = self.repository.load_snapshot(company_id=self.company_id)
-            prev_p = snap.persistence_revision
+            prev_p_val: int = snap.persistence_revision
+            prev_p = prev_p_val
             self.repository.commit(
                 company_id=self.company_id,
-                expected_revision=prev_p,
+                expected_revision=prev_p_val,
                 write_set=write_set,
             )
         except Exception as exc:
@@ -396,11 +401,11 @@ class BookkeepingWorkbench:
             return {
                 "success": False,
                 "error": f"Source mutation failed: {exc}",
-                "persistence_revision_before": prev_p if "prev_p" in locals() else None,
-                "persistence_revision_after": prev_p if "prev_p" in locals() else None,
+                "persistence_revision_before": prev_p,
+                "persistence_revision_after": prev_p,
             }
 
-        new_p = prev_p + 1
+        new_p = (prev_p if prev_p is not None else 0) + 1
         # Attempt fresh post-commit hydration
         try:
             self.session_counter += 1
@@ -445,6 +450,8 @@ class BookkeepingWorkbench:
         Fails closed: inspection state is closed immediately before mutation.
         """
         self.close_state()
+        prev_p: int | None = None
+        mutation_state: BookkeepingState | None = None
 
         try:
             snap = self.repository.load_snapshot(company_id=self.company_id)
@@ -465,11 +472,11 @@ class BookkeepingWorkbench:
                 "success": False,
                 "applied": False,
                 "error": f"Transition execution error: {exc}",
-                "persistence_revision_before": prev_p if "prev_p" in locals() else None,
-                "persistence_revision_after": prev_p if "prev_p" in locals() else None,
+                "persistence_revision_before": prev_p,
+                "persistence_revision_after": prev_p,
             }
         finally:
-            if "mutation_state" in locals() and not mutation_state.is_closed:
+            if mutation_state is not None and not mutation_state.is_closed:
                 mutation_state.close()
 
         if not t_res.applied:
@@ -487,7 +494,7 @@ class BookkeepingWorkbench:
                 "persistence_revision_after": prev_p,
             }
 
-        new_p = prev_p + 1
+        new_p = (prev_p if prev_p is not None else 0) + 1
         # Commit succeeded; attempt post-commit hydration
         try:
             self.session_counter += 1
@@ -712,7 +719,7 @@ class BookkeepingWorkbench:
             "book_items_count": len(self.state.book_items),
             "active_routes_count": len(self.state.routing_decisions),
             "active_classifications_count": len(self.state.classifications),
-            "active_reconciliations_count": len(self.state.reconciliations),
+            "active_reconciliations_count": len(queries.derived.active_reconciliations),
             "unresolved_bank_items_count": unres_bank,
             "unresolved_book_items_count": unres_book,
             "last_dag_holds_count": self.last_result.hold_count if self.last_result else 0,
@@ -730,6 +737,8 @@ class BookkeepingWorkbench:
         for b in sorted(st.bank_items.values(), key=lambda x: x.id):
             orig = int(b.amount_units)
             rem = queries.bank_remaining_units(b.id)
+            orig_dec = solver_units_to_decimal(orig)
+            rem_dec = solver_units_to_decimal(rem)
             if rem == 0:
                 item_status = "RECONCILED"
             elif rem < orig:
@@ -748,8 +757,12 @@ class BookkeepingWorkbench:
                 "bank_item_id": b.id,
                 "bank_account_id": b.bank_account_id,
                 "date": str(b.date),
+                "original_amount": f"{orig_dec:.2f}",
+                "remaining_amount": f"{rem_dec:.2f}",
                 "original_amount_units": str(orig),
                 "remaining_amount_units": str(rem),
+                "amount_display": f"{orig_dec:,.2f} {b.currency}",
+                "remaining_amount_display": f"{rem_dec:,.2f} {b.currency}",
                 "currency": b.currency,
                 "direction": b.direction.value,
                 "description": b.description,
@@ -769,6 +782,8 @@ class BookkeepingWorkbench:
         for b in sorted(st.book_items.values(), key=lambda x: x.id):
             orig = int(b.amount_units)
             rem = queries.book_remaining_units(b.id)
+            orig_dec = solver_units_to_decimal(orig)
+            rem_dec = solver_units_to_decimal(rem)
             if rem == 0:
                 item_status = "RECONCILED"
             elif rem < orig:
@@ -790,8 +805,12 @@ class BookkeepingWorkbench:
                 "book_item_id": b.id,
                 "origin_period": b.origin_period,
                 "date": str(b.date),
+                "original_amount": f"{orig_dec:.2f}",
+                "remaining_amount": f"{rem_dec:.2f}",
                 "original_amount_units": str(orig),
                 "remaining_amount_units": str(rem),
+                "amount_display": f"{orig_dec:,.2f} {b.currency}",
+                "remaining_amount_display": f"{rem_dec:,.2f} {b.currency}",
                 "currency": b.currency,
                 "direction": b.direction.value,
                 "description": b.description,
@@ -824,11 +843,21 @@ class BookkeepingWorkbench:
             book_rem[b.id] = rem
             total_book += rem
 
+        total_bank_dec = solver_units_to_decimal(total_bank)
+        total_book_dec = solver_units_to_decimal(total_book)
+        base_curr = st.context.base_currency if st and st.context else "MAD"
+
         return {
             "total_unreconciled_bank_units": total_bank,
             "total_unreconciled_book_units": total_book,
             "total_unresolved_bank_units": total_bank,
             "total_unresolved_book_units": total_book,
+            "total_unresolved_bank_amount": f"{total_bank_dec:.2f}",
+            "total_unresolved_book_amount": f"{total_book_dec:.2f}",
+            "total_unresolved_bank_display": f"{total_bank_dec:,.2f} {base_curr}",
+            "total_unresolved_book_display": f"{total_book_dec:,.2f} {base_curr}",
+            "bank_remaining_amounts": {k: f"{solver_units_to_decimal(v):.2f}" for k, v in bank_rem.items()},
+            "book_remaining_amounts": {k: f"{solver_units_to_decimal(v):.2f}" for k, v in book_rem.items()},
             "bank_items": bank_rem,
             "book_items": book_rem,
             "bank_remaining": bank_rem,
@@ -858,9 +887,15 @@ class BookkeepingWorkbench:
             rem = queries.bank_remaining_units(b.id)
             if rem > 0:
                 hyps = hyps_by_bank.get(b.id, [])
+                orig_dec = solver_units_to_decimal(int(b.amount_units))
+                rem_dec = solver_units_to_decimal(rem)
                 unresolved_bank.append({
                     "bank_item_id": b.id,
                     "currency": b.currency,
+                    "original_amount": f"{orig_dec:.2f}",
+                    "remaining_amount": f"{rem_dec:.2f}",
+                    "amount_display": f"{orig_dec:,.2f} {b.currency}",
+                    "remaining_amount_display": f"{rem_dec:,.2f} {b.currency}",
                     "original_amount_units": str(int(b.amount_units)),
                     "remaining_amount_units": str(rem),
                     "description": b.description,
@@ -873,9 +908,15 @@ class BookkeepingWorkbench:
         for b in sorted(st.book_items.values(), key=lambda x: x.id):
             rem = queries.book_remaining_units(b.id)
             if rem > 0:
+                orig_dec = solver_units_to_decimal(int(b.amount_units))
+                rem_dec = solver_units_to_decimal(rem)
                 unresolved_book.append({
                     "book_item_id": b.id,
                     "currency": b.currency,
+                    "original_amount": f"{orig_dec:.2f}",
+                    "remaining_amount": f"{rem_dec:.2f}",
+                    "amount_display": f"{orig_dec:,.2f} {b.currency}",
+                    "remaining_amount_display": f"{rem_dec:,.2f} {b.currency}",
                     "original_amount_units": str(int(b.amount_units)),
                     "remaining_amount_units": str(rem),
                     "description": b.description,
@@ -921,11 +962,19 @@ class BookkeepingWorkbench:
             results.append({
                 "hypothesis_id": hyp.id,
                 "bank_allocations": [
-                    {"bank_item_id": a.bank_item_id, "amount_units": str(a.amount_units)}
+                    {
+                        "bank_item_id": a.bank_item_id,
+                        "amount": f"{solver_units_to_decimal(int(a.amount_units)):.2f}",
+                        "amount_units": str(a.amount_units),
+                    }
                     for a in hyp.bank_allocations
                 ],
                 "book_allocations": [
-                    {"book_item_id": a.book_item_id, "amount_units": str(a.amount_units)}
+                    {
+                        "book_item_id": a.book_item_id,
+                        "amount": f"{solver_units_to_decimal(int(a.amount_units)):.2f}",
+                        "amount_units": str(a.amount_units),
+                    }
                     for a in hyp.book_allocations
                 ],
                 "identity_admissibility": hyp.admissibility.value,
@@ -960,11 +1009,19 @@ class BookkeepingWorkbench:
             results.append({
                 "reconciliation_id": r.id,
                 "bank_allocations": [
-                    {"bank_item_id": a.bank_item_id, "amount_units": str(a.amount_units)}
+                    {
+                        "bank_item_id": a.bank_item_id,
+                        "amount": f"{solver_units_to_decimal(int(a.amount_units)):.2f}",
+                        "amount_units": str(a.amount_units),
+                    }
                     for a in r.bank_allocations
                 ],
                 "book_allocations": [
-                    {"book_item_id": a.book_item_id, "amount_units": str(a.amount_units)}
+                    {
+                        "book_item_id": a.book_item_id,
+                        "amount": f"{solver_units_to_decimal(int(a.amount_units)):.2f}",
+                        "amount_units": str(a.amount_units),
+                    }
                     for a in r.book_allocations
                 ],
                 "semantic_score": r.source_hypothesis_utility,
@@ -1154,7 +1211,7 @@ class BookkeepingWorkbench:
         except Exception as exc:
             return {"success": False, "applied": False, "error": f"Invalid bank item arguments: {exc}"}
 
-        ws = PersistenceWriteSet(bank_items=[item])
+        ws = PersistenceWriteSet(bank_items=(item,))
         return self._commit_source_writeset(ws, f"BankItem '{bank_item_id}'")
 
     def add_book_item(
@@ -1206,7 +1263,7 @@ class BookkeepingWorkbench:
         except Exception as exc:
             return {"success": False, "applied": False, "error": f"Invalid book item arguments: {exc}"}
 
-        ws = PersistenceWriteSet(book_items=[item])
+        ws = PersistenceWriteSet(book_items=(item,))
         return self._commit_source_writeset(ws, f"BookItem '{book_item_id}'")
 
     def add_counterparty(
@@ -1222,7 +1279,7 @@ class BookkeepingWorkbench:
     ) -> dict[str, Any]:
         """Authoritatively insert an exogenous Counterparty record."""
         try:
-            type_str = str(counterparty_type).upper()
+            type_str = counterparty_type.upper()
             if "CUST" in type_str:
                 cp_type = CounterpartyType.CUSTOMER
             elif "SUPP" in type_str or "VEND" in type_str:
@@ -1246,7 +1303,7 @@ class BookkeepingWorkbench:
         except Exception as exc:
             return {"success": False, "applied": False, "error": f"Invalid counterparty arguments: {exc}"}
 
-        ws = PersistenceWriteSet(counterparties=[cp])
+        ws = PersistenceWriteSet(counterparties=(cp,))
         return self._commit_source_writeset(ws, f"Counterparty '{name}' ({counterparty_id})")
 
     def assert_book_item_evidence(
@@ -1265,7 +1322,7 @@ class BookkeepingWorkbench:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Append a new BookItemEvidenceAssertion through TransitionEngine."""
-        eff_type_str = str(assertion_type or evidence_type).upper()
+        eff_type_str = (assertion_type or evidence_type).upper()
         if "COUNTERPARTY" in eff_type_str:
             ev_type = BookItemEvidenceType.COUNTERPARTY
         elif "REF" in eff_type_str:

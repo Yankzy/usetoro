@@ -17,6 +17,7 @@ Totals will be calculated and associated with the containing model at the time o
 """
 from decimal import Decimal
 from string import ascii_lowercase, digits
+from typing import Optional, cast, Any
 from uuid import uuid4, UUID
 
 from django.core.exceptions import ValidationError, ObjectDoesNotExist
@@ -289,7 +290,10 @@ class ItemModelManager(Manager):
     A custom defined ItemModelManager that implement custom QuerySet methods related to the ItemModel
     """
 
-    def for_entity(self, entity_slug, user_model):
+    def get_queryset(self) -> ItemModelQuerySet:
+        return cast(ItemModelQuerySet, super().get_queryset())
+
+    def for_entity(self, entity_slug, user_model) -> ItemModelQuerySet:
         """
         Returns a QuerySet of ItemModel associated with a specific EntityModel & UserModel.
         May pass an instance of EntityModel or a String representing the EntityModel slug.
@@ -323,7 +327,7 @@ class ItemModelManager(Manager):
             )
         ).select_related('uom')
 
-    def for_entity_active(self, entity_slug, user_model):
+    def for_entity_active(self, entity_slug, user_model) -> ItemModelQuerySet:
         """
         Returns a QuerySet of Active ItemModel associated with a specific EntityModel & UserModel.
         May pass an instance of EntityModel or a String representing the EntityModel slug.
@@ -343,7 +347,7 @@ class ItemModelManager(Manager):
         qs = self.for_entity(entity_slug=entity_slug, user_model=user_model)
         return qs.filter(is_active=True)
 
-    def for_invoice(self, entity_slug, user_model):
+    def for_invoice(self, entity_slug, user_model) -> ItemModelQuerySet:
         """
         Returns a QuerySet of ItemModels that can only be used for InvoiceModels for a specific EntityModel &
         UserModel. These types of items qualify as products or services sold.
@@ -364,7 +368,7 @@ class ItemModelManager(Manager):
         qs = self.for_entity_active(entity_slug=entity_slug, user_model=user_model)
         return qs.filter(is_product_or_service=True)
 
-    def for_bill(self, entity_slug, user_model):
+    def for_bill(self, entity_slug, user_model) -> ItemModelQuerySet:
         """
         Returns a QuerySet of ItemModels that can only be used for BillModels for a specific EntityModel &
         UserModel. These types of items qualify as expenses or inventory purchases.
@@ -394,7 +398,7 @@ class ItemModelManager(Manager):
             Q(for_inventory=True)
         )
 
-    def for_po(self, entity_slug, user_model):
+    def for_po(self, entity_slug, user_model) -> ItemModelQuerySet:
         """
         Returns a QuerySet of ItemModels that can only be used for PurchaseOrders for a specific EntityModel &
         UserModel. These types of items qualify as inventory purchases.
@@ -415,7 +419,7 @@ class ItemModelManager(Manager):
         qs = self.for_entity(entity_slug=entity_slug, user_model=user_model)
         return qs.inventory_all()
 
-    def for_estimate(self, entity_slug: str, user_model):
+    def for_estimate(self, entity_slug: str, user_model) -> ItemModelQuerySet:
         """
         Returns a QuerySet of ItemModels that can only be used for EstimateModels for a specific EntityModel &
         UserModel. These types of items qualify as products.
@@ -519,6 +523,13 @@ class ItemModelAbstract(CreateUpdateMixIn):
         ('service', _('Service')),
         ('product', _('Product')),
     ]
+
+    entity_id: Any
+    expense_account_id: Any
+    inventory_account_id: Any
+    cogs_account_id: Any
+    earnings_account_id: Any
+    get_item_type_display: Any
 
     uuid = models.UUIDField(default=uuid4, editable=False, primary_key=True)
     name = models.CharField(max_length=100, verbose_name=_('Item Name'))
@@ -708,7 +719,7 @@ class ItemModelAbstract(CreateUpdateMixIn):
         return self.item_type == self.ITEM_TYPE_OTHER
 
     def get_average_cost(self) -> Decimal:
-        if self.inventory_received:
+        if self.inventory_received and self.inventory_received_value is not None:
             try:
                 return self.inventory_received_value / self.inventory_received
             except ZeroDivisionError:
@@ -735,7 +746,7 @@ class ItemModelAbstract(CreateUpdateMixIn):
         ])
 
     def _get_next_state_model(self, raise_exception: bool = True):
-        EntityStateModel = lazy_loader.get_entity_state_model()
+        EntityStateModel: Any = lazy_loader.get_entity_state_model()
 
         try:
             LOOKUP = {
@@ -744,7 +755,7 @@ class ItemModelAbstract(CreateUpdateMixIn):
             }
 
             state_model_qs = EntityStateModel.objects.filter(**LOOKUP).select_for_update()
-            state_model = state_model_qs.get()
+            state_model: Any = state_model_qs.get()
             state_model.sequence = F('sequence') + 1
             state_model.save()
             state_model.refresh_from_db()
@@ -759,13 +770,13 @@ class ItemModelAbstract(CreateUpdateMixIn):
                 'key': EntityStateModel.KEY_ITEM,
                 'sequence': 1
             }
-            state_model = EntityStateModel.objects.create(**LOOKUP)
+            state_model: Any = EntityStateModel.objects.create(**LOOKUP)
             return state_model
         except IntegrityError as e:
             if raise_exception:
                 raise e
 
-    def generate_item_number(self, commit: bool = False) -> str:
+    def generate_item_number(self, commit: bool = False) -> Optional[str]:
         """
         Atomic Transaction. Generates the next Vendor Number available.
         @param commit: Commit transaction into VendorModel.
@@ -774,7 +785,7 @@ class ItemModelAbstract(CreateUpdateMixIn):
         if self.can_generate_item_number():
             with transaction.atomic(durable=True):
 
-                state_model = None
+                state_model: Any = None
                 while not state_model:
                     state_model = self._get_next_state_model(raise_exception=False)
 
@@ -933,7 +944,7 @@ class ItemTransactionModelManager(Manager):
 
     # Todo move this to QuerySet....
     def inventory_count(self, entity_slug):
-        PurchaseOrderModel = lazy_loader.get_purchase_order_model()
+        PurchaseOrderModel: Any = lazy_loader.get_purchase_order_model()
         qs = self.for_entity_inventory(entity_slug)
         qs = qs.filter(
             Q(item_model__for_inventory=True) &
@@ -1038,6 +1049,12 @@ class ItemTransactionModelAbstract(CreateUpdateMixIn):
         (STATUS_RECEIVED, _('Received')),
         (STATUS_CANCELED, _('Canceled')),
     ]
+
+    po_model_id: Any
+    bill_model_id: Any
+    invoice_model_id: Any
+    ce_model_id: Any
+    get_po_item_status_display: Any
 
     uuid = models.UUIDField(default=uuid4, editable=False, primary_key=True)
     entity_unit = models.ForeignKey('ledger.EntityUnitModel',
@@ -1268,14 +1285,14 @@ class ItemTransactionModelAbstract(CreateUpdateMixIn):
 
             if self.has_po():
 
-                if self.quantity > self.po_quantity:
+                if self.po_quantity is not None and self.quantity > self.po_quantity:
                     raise ValidationError(f'Billed quantity {self.quantity} cannot be greater than '
                                           f'PO quantity {self.po_quantity}')
-                if self.total_amount > self.po_total_amount:
+                if self.po_total_amount is not None and self.total_amount > self.po_total_amount:
                     raise ValidationError(f'Item amount {self.total_amount} cannot exceed authorized '
                                           f'PO amount {self.po_total_amount}')
 
-                if self.total_amount > self.po_total_amount:
+                if self.po_total_amount is not None and self.total_amount > self.po_total_amount:
                     # checks if difference is within tolerance...
                     diff = self.total_amount - self.po_total_amount
                     if diff > LEDGER_TRANSACTION_MAX_TOLERANCE:

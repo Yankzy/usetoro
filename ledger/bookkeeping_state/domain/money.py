@@ -143,3 +143,28 @@ def format_solver_units(
     """
     decimal_value = solver_units_to_decimal(value)
     return f"{decimal_value:.{SOLVER_DECIMAL_PLACES}f}"
+
+
+def format_money(
+    value: int | AmountUnits | ResidualAmountUnits | Decimal | None,
+    currency: str = "MAD",
+) -> str:
+    """
+    Format solver units or Decimal into standard human-readable currency display.
+
+    Examples:
+        78_500_000  -> "7,850.00 MAD"
+        1_500_000   -> "150.00 MAD"
+        34_000_000  -> "3,400.00 MAD"
+        100_000_000 -> "10,000.00 MAD"
+    """
+    if value is None:
+        dec = Decimal("0")
+    elif isinstance(value, Decimal):
+        dec = value
+    else:
+        dec = solver_units_to_decimal(value)
+
+    if currency:
+        return f"{dec:,.2f} {currency}".strip()
+    return f"{dec:,.2f}"

@@ -44,7 +44,7 @@ Roles serve several purposes:
 """
 from itertools import groupby
 from random import randint
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Any
 from uuid import uuid4
 
 from django.core.exceptions import ValidationError
@@ -59,7 +59,7 @@ from ledger.io.roles import (
     ACCOUNT_ROLE_CHOICES, BS_ROLES, GROUP_INVOICE, GROUP_BILL, validate_roles,
     GROUP_ASSETS, GROUP_LIABILITIES, GROUP_CAPITAL, GROUP_INCOME, GROUP_EXPENSES, GROUP_COGS,
     ROOT_GROUP, BS_BUCKETS, ROOT_ASSETS, ROOT_LIABILITIES,
-    ROOT_CAPITAL, ROOT_INCOME, ROOT_EXPENSES, ROOT_COA, VALID_PARENTS,
+    ROOT_CAPITAL, ROOT_INCOME, ROOT_COGS, ROOT_EXPENSES, ROOT_COA, VALID_PARENTS,
     ROLES_ORDER_ALL
 )
 from ledger.models.mixins import CreateUpdateMixIn
@@ -145,11 +145,8 @@ class AccountModelQuerySet(MP_NodeQuerySet):
         AccountModelQuerySet
             A QuerySet of accounts filtered by the provided roles.
         """
-        roles = validate_roles(roles)
-        if isinstance(roles, str):
-            roles = [roles]
-        roles = validate_roles(roles)
-        return self.filter(role__in=roles)
+        validated_roles = validate_roles(roles)
+        return self.filter(role__in=validated_roles)
 
     def with_codes(self, codes: Union[List, str]):
         if isinstance(codes, str):
@@ -419,6 +416,8 @@ class AccountModelAbstract(MP_Node, CreateUpdateMixIn):
     ]
 
     uuid = models.UUIDField(default=uuid4, editable=False, primary_key=True)
+    get_role_display: Any
+    coa_model_id: Any
     code = models.CharField(max_length=10, verbose_name=_('Account Code'), validators=[account_code_validator])
     name = models.CharField(max_length=100, verbose_name=_('Account Name'))
     role = models.CharField(max_length=30, choices=ACCOUNT_ROLE_CHOICES, verbose_name=_('Account Role'))
@@ -460,7 +459,7 @@ class AccountModelAbstract(MP_Node, CreateUpdateMixIn):
 
     def __str__(self):
         return '{x1} - {x5}: {x2} ({x3}/{x4})'.format(
-            x1=self.role_bs.upper(),
+            x1=(self.role_bs or "").upper(),
             x2=self.name,
             x3=self.role.upper(),
             x4=self.balance_type,
@@ -570,7 +569,7 @@ class AccountModelAbstract(MP_Node, CreateUpdateMixIn):
         return account_model
 
     @property
-    def role_bs(self) -> str:
+    def role_bs(self) -> Optional[str]:
         """
         Returns the principal role of the account on the balance sheet.
 
@@ -934,7 +933,7 @@ class AccountModelAbstract(MP_Node, CreateUpdateMixIn):
         elif self.is_income():
             return ROOT_INCOME
         elif self.is_cogs():
-            return ROOT_GROUP
+            return ROOT_COGS
         elif self.is_expense():
             return ROOT_EXPENSES
         elif self.is_coa_root():

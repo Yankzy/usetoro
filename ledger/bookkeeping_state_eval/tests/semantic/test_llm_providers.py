@@ -19,6 +19,7 @@ from bookkeeping_state.domain.enums import (
     AllocationSupport,
     Direction,
     SemanticAdmissibility,
+    SourceType,
 )
 from bookkeeping_state.domain.reconciliations import (
     BankAllocation,
@@ -266,6 +267,7 @@ class TestReconciliationLlmProvider:
             description="Invoice INV-01",
             reference="INV-01",
             counterparty_name="Acme Corp",
+            source_type=SourceType.POSTED_BOOK_ITEM,
         )
         cand = ReconciliationCandidate(
             candidate_id="cand-1",
@@ -359,6 +361,7 @@ class TestReconciliationLlmProvider:
             currency="EUR",
             description="Invoice INV-01",
             reference="INV-01",
+            source_type=SourceType.POSTED_BOOK_ITEM,
         )
         j2 = ReconciliationBookItemView(
             book_item_id="j2",
@@ -369,6 +372,7 @@ class TestReconciliationLlmProvider:
             currency="EUR",
             description="Invoice INV-02",
             reference="INV-02",
+            source_type=SourceType.POSTED_BOOK_ITEM,
         )
 
         cand1 = ReconciliationCandidate(
@@ -501,6 +505,7 @@ class TestReconciliationLlmProvider:
             currency="EUR",
             description="Invoice INV-001",
             reference="INV-001",
+            source_type=SourceType.POSTED_BOOK_ITEM,
         )
         cand = ReconciliationCandidate(
             candidate_id="cand-1",

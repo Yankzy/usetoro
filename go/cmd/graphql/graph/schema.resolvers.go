@@ -40,11 +40,25 @@ func (r *mutationResolver) Signup(ctx context.Context, input model.SignupInput) 
 
 	q := database.New(r.DB).WithTx(tx)
 
+	path, err := q.GenerateNextRootPath(ctx)
+	if err != nil {
+		r.Logger.Error("Failed to generate entity path", "error", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	// Generate a unique slug based on org name and a random suffix
+	cleanName := strings.ReplaceAll(strings.ToLower(input.OrgName), " ", "-")
+	slug := cleanName + "-" + uuid.New().String()[:8]
+
 	// 1. Create Entity (replaces old Tenant)
 	entityID, err := q.CreateEntity(ctx, database.CreateEntityParams{
 		Name:       input.OrgName,
 		EntityType: "client",
 		PlanTier:   pgtype.Text{String: "pro", Valid: true},
+		Slug:       slug,
+		Path:       path,
+		Depth:      1,
+		Numchild:   0,
 	})
 	if err != nil {
 		r.Logger.Error("Failed to create entity", "error", err)

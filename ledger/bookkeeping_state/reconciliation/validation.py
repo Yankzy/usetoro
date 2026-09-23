@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from bookkeeping_state.domain.enums import SourceType
 from bookkeeping_state.domain.reconciliations import (
     BankAllocation,
     BookAllocation,
@@ -88,6 +89,14 @@ def validate_candidate_allocations(
             return CandidateFeasibilityResult(
                 status=FeasibilityStatus.UNKNOWN_ITEM,
                 message=f"BookItem {a.book_item_id!r} is unknown or fully consumed in current view",
+            )
+        if j_item.source_type != SourceType.POSTED_BOOK_ITEM:
+            return CandidateFeasibilityResult(
+                status=FeasibilityStatus.INVALID_SOURCE_TYPE,
+                message=(
+                    f"BookItem {a.book_item_id!r} has invalid source_type "
+                    f"{j_item.source_type.value!r} for bank reconciliation"
+                ),
             )
         book_items[j_item.book_item_id] = j_item
 

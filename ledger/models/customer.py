@@ -3,8 +3,9 @@ A Customer refers to the person or entity that buys product and services. When i
 created before it can be assigned to the InvoiceModel. Only customers who are active can be assigned to new Invoices.
 """
 
+from typing import Any, Optional, cast
 from uuid import uuid4
-from django.core.exceptions import ObjectDoesNotExist
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import models, transaction, IntegrityError
 from django.db.models import Q, F, QuerySet, Manager
 from django.utils.translation import gettext_lazy as _
@@ -121,12 +122,12 @@ class CustomerModelManager(Manager):
         qs = self.for_user(user_model)
 
         if isinstance(entity_slug, lazy_loader.get_entity_model()):
-            return qs.filter(
+            return cast(CustomerModelQueryset, qs.filter(
                 Q(entity_model=entity_slug)
-            )
-        return qs.filter(
+            ))
+        return cast(CustomerModelQueryset, qs.filter(
             Q(entity_model__slug__exact=entity_slug)
-        )
+        ))
 
 
 class CustomerModelAbstract(ContactInfoMixIn, TaxCollectionMixIn, CreateUpdateMixIn):
@@ -163,6 +164,8 @@ class CustomerModelAbstract(ContactInfoMixIn, TaxCollectionMixIn, CreateUpdateMi
     additional_info: dict
         Any additional information about the customer, stored as a JSON object using a JSONField.
     """
+
+    entity_model_id: Any
 
     uuid = models.UUIDField(default=uuid4, editable=False, primary_key=True)
     customer_name = models.CharField(max_length=100)
@@ -228,7 +231,7 @@ class CustomerModelAbstract(ContactInfoMixIn, TaxCollectionMixIn, CreateUpdateMi
         EntityStateModel
             The EntityStateModel associated with the CustomerModel number sequence.
         """
-        EntityStateModel = lazy_loader.get_entity_state_model()
+        EntityStateModel: Any = lazy_loader.get_entity_state_model()
 
         try:
             LOOKUP = {
@@ -237,7 +240,7 @@ class CustomerModelAbstract(ContactInfoMixIn, TaxCollectionMixIn, CreateUpdateMi
             }
 
             state_model_qs = EntityStateModel.objects.filter(**LOOKUP).select_for_update()
-            state_model = state_model_qs.get()
+            state_model: Any = state_model_qs.get()
             state_model.sequence = F('sequence') + 1
             state_model.save()
             state_model.refresh_from_db()
@@ -258,7 +261,7 @@ class CustomerModelAbstract(ContactInfoMixIn, TaxCollectionMixIn, CreateUpdateMi
             if raise_exception:
                 raise e
 
-    def generate_customer_number(self, commit: bool = False) -> str:
+    def generate_customer_number(self, commit: bool = False) -> Optional[str]:
         """
         Atomic Transaction. Generates the next Customer Number available.
 
@@ -276,7 +279,7 @@ class CustomerModelAbstract(ContactInfoMixIn, TaxCollectionMixIn, CreateUpdateMi
         if self.can_generate_customer_number():
             with transaction.atomic(durable=True):
 
-                state_model = None
+                state_model: Any = None
                 while not state_model:
                     state_model = self._get_next_state_model(raise_exception=False)
 

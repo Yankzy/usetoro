@@ -21,7 +21,7 @@ from __future__ import annotations
 import io
 import json
 from contextlib import redirect_stdout
-from typing import Any
+from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -39,7 +39,7 @@ from bookkeeping_state_eval.operator.workbench import (
 
 
 @pytest.fixture
-def workbench() -> BookkeepingWorkbench:
+def workbench() -> Generator[BookkeepingWorkbench, None, None]:
     wb = BookkeepingWorkbench(semantic_provider="deterministic")
     yield wb
     wb.close_state()

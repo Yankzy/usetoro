@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 from typing import Annotated
 
@@ -11,7 +12,7 @@ from pydantic import (
     model_validator,
 )
 
-from bookkeeping_state.domain.enums import Direction
+from bookkeeping_state.domain.enums import Direction, SourceType
 from bookkeeping_state.domain.money import (
     AmountUnits,
     ResidualAmountUnits,
@@ -85,6 +86,7 @@ class ReconciliationBookItemView(BaseModel):
     )
 
     book_item_id: Identifier
+    source_type: SourceType
     date: date
     original_amount_units: AmountUnits
     remaining_amount_units: ResidualAmountUnits
@@ -107,6 +109,10 @@ class ReconciliationBookItemView(BaseModel):
 
     @model_validator(mode="after")
     def validate_book_view(self) -> "ReconciliationBookItemView":
+        if self.source_type != SourceType.POSTED_BOOK_ITEM:
+            raise ValueError(
+                f"ReconciliationBookItemView requires POSTED_BOOK_ITEM, got {self.source_type.value!r}"
+            )
         if self.remaining_amount_int <= 0:
             raise ValueError(
                 f"ReconciliationBookItemView requires positive remaining amount, got {self.remaining_amount_int}"
@@ -151,6 +157,7 @@ class ReconciliationView(BaseModel):
     session_id: Identifier
     bank_items: tuple[ReconciliationBankItemView, ...] = ()
     book_items: tuple[ReconciliationBookItemView, ...] = ()
+    stage1_provenance: Mapping[str, tuple[tuple[str, str], ...]] = Field(default_factory=dict)
     config: ReconciliationViewConfig = Field(default_factory=ReconciliationViewConfig)
 
     def get_bank_item(self, bank_item_id: str) -> ReconciliationBankItemView | None:
@@ -179,6 +186,9 @@ class ReconciliationView(BaseModel):
     @property
     def total_book_remaining_int(self) -> int:
         return sum(item.remaining_amount_int for item in self.book_items)
+
+
+ReconciliationView.model_rebuild()
 
 
 def build_reconciliation_view(
@@ -230,8 +240,12 @@ def build_reconciliation_view(
             )
 
     # Book items: collected across state, capturing routing and counterparties
+    # Only POSTED_BOOK_ITEM items are eligible for Stage 2 bank reconciliation.
     book_views: list[ReconciliationBookItemView] = []
     for book_item in sorted(queries._state.book_items.values(), key=lambda b: (b.date, b.id)):
+        if book_item.source_type != SourceType.POSTED_BOOK_ITEM:
+            continue
+
         remaining = derived.book_remaining(book_item.id)
         if remaining <= 0:
             continue
@@ -251,6 +265,7 @@ def build_reconciliation_view(
         book_views.append(
             ReconciliationBookItemView(
                 book_item_id=book_item.id,
+                source_type=book_item.source_type,
                 date=book_item.date,
                 original_amount_units=book_item.amount_units,
                 remaining_amount_units=str(remaining),
@@ -273,5 +288,6 @@ def build_reconciliation_view(
         session_id=queries.session_id,
         bank_items=tuple(bank_views),
         book_items=tuple(book_views),
+        stage1_provenance=queries.derived.stage1_bank_to_cash_provenance,
         config=resolved_config,
     )

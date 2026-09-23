@@ -180,6 +180,7 @@ class BookkeepingHydrator:
             bank_accounts=snapshot.bank_accounts,
             bank_items=snapshot.bank_items,
             book_items=snapshot.book_items,
+            historical_book_item_ids=snapshot.historical_book_item_ids,
 
             documents=snapshot.documents,
             counterparties=snapshot.counterparties,
@@ -201,6 +202,18 @@ class BookkeepingHydrator:
             ),
             book_item_evidence_invalidations=(
                 snapshot.book_item_evidence_invalidations
+            ),
+            executed_payment_applications=(
+                snapshot.executed_payment_applications
+            ),
+            residual_bank_classifications=(
+                snapshot.residual_bank_classifications
+            ),
+            residual_bank_classification_invalidations=(
+                snapshot.residual_bank_classification_invalidations
+            ),
+            residual_bank_postings=(
+                snapshot.residual_bank_postings
             ),
         )
 

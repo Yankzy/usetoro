@@ -1,6 +1,9 @@
 -- name: CreateEntity :one
-INSERT INTO toro_core.entities (name, entity_type, plan_tier)
-VALUES ($1, $2, $3) RETURNING id;
+INSERT INTO toro_core.entities (name, entity_type, plan_tier, slug, path, depth, numchild)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id;
+
+-- name: GetMaxRootPath :one
+SELECT path FROM toro_core.entities WHERE depth = 1 ORDER BY path DESC LIMIT 1;
 
 -- name: CreateUser :one
 INSERT INTO toro_core.users (entity_id, email, password_hash, role)

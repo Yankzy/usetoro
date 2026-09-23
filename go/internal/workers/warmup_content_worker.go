@@ -31,7 +31,7 @@ func init() {
 	RegisterFactory(func(deps Dependencies) (Worker, error) {
 		llmRuntime := agent.NewRuntime(deps.Logger, nil, core.AgentConfig{
 			DID:   "warmup_content_generator",
-			Model: "gpt-4o-mini",
+			Model: "gpt-5.4-mini",
 			SystemPrompt: `You are an AI warmup engine for email infrastructure.
 Generate a casual, plain-text email with a max of 50 words.
 Use spintax format {option1|option2|option3} for every 2-3 words to ensure uniqueness.
@@ -143,19 +143,19 @@ func sendSmtpMail(addr string, a smtp.Auth, from string, to []string, msg []byte
 		return err
 	}
 	defer c.Close()
-	
+
 	if ok, _ := c.Extension("STARTTLS"); ok {
 		if err = c.StartTLS(tlsConfig); err != nil {
 			return err
 		}
 	}
-	
+
 	if a != nil {
 		if err = c.Auth(a); err != nil {
 			return err
 		}
 	}
-	
+
 	if err = c.Mail(from); err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func sendSmtpMail(addr string, a smtp.Auth, from string, to []string, msg []byte
 			return err
 		}
 	}
-	
+
 	w, err := c.Data()
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ func sendSmtpMail(addr string, a smtp.Auth, from string, to []string, msg []byte
 	if err != nil {
 		return err
 	}
-	
+
 	err = w.Close()
 	if err != nil {
 		return err

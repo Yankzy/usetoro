@@ -18,8 +18,8 @@ DEPLOY_CONTEXT ?= droplet
 DOCKER_CONTEXT := docker --context $(DEPLOY_CONTEXT) compose -f container/docker-compose.prod.yml
 
 # App Services
-SERVICES := redis torodb gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync fignode protocol python-worker
-OUR_SERVICES := torodb gate migrator nginx ws graphql sync fignode protocol python-worker
+SERVICES := redis torodb gate migrator nginx ws graphql nats-1 nats-2 nats-3 sync fignode protocol python-worker ledger
+OUR_SERVICES := torodb gate migrator nginx ws graphql sync fignode protocol python-worker ledger
 
 # Allow passing service names as arguments, e.g., "make rebuild nginx" or "make restart nginx"
 ifneq ($(filter rebuild restart build_prod docker_context_prod_push deploy_second_mac build_run build_up two_stage,$(firstword $(MAKECMDGOALS))),)
@@ -222,7 +222,7 @@ rebuild_all:
 rebuild:
 	colima start
 	@if [ -n "$(RUN_ARGS)" ]; then \
-		$(MAKE) down && $(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) build $(RUN_ARGS) && $(MAKE) up; \
+		$(MAKE) down && $(MAKE) vndr && $(MAKE) sqlc && $(DOCKER_COMPOSE) up --build --force-recreate $(RUN_ARGS); \
 	else \
 		echo "Enter the service name: "; \
 		read SER_NAME; \
@@ -241,10 +241,6 @@ nats_consumers:
 
 build_prod:
 	docker compose -f container/docker-compose.prod.yml build $(if $(RUN_ARGS),$(RUN_ARGS),$(OUR_SERVICES))
-
-
-
-
 
 docker_context_prod_push:
 	colima start
@@ -318,3 +314,23 @@ colima-status:
 
 delete-colima:
 	colima delete
+
+
+run_python_test:
+	@if [ -n "$(test)" ]; then \
+		./.venv/bin/pytest -v -s "$(test)"; \
+	else \
+		printf "Enter the test path: "; \
+		read TEST_PATH; \
+		./.venv/bin/pytest -v -s "$$TEST_PATH"; \
+	fi
+
+py_check:
+# 	make py_check path=ledger/bookkeeping_state/state/queries.py
+	@if [ -n "$(path)" ]; then \
+		./.venv/bin/pyright "$(path)"; \
+	else \
+		printf "Enter the path: "; \
+		read PATH; \
+		./.venv/bin/pyright "$$PATH"; \
+	fi

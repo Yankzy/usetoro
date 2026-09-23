@@ -10,7 +10,12 @@ from bookkeeping_state.transitions.batch import BatchTransitionResult
 class FailureStage(StrEnum):
     ROUTING = "ROUTING"
     DAG = "DAG"
+    PAYMENT_APPLICATION = "PAYMENT_APPLICATION"
+    REHYDRATION = "REHYDRATION"
+    LOOP_INVARIANT = "LOOP_INVARIANT"
     RECONCILIATION = "RECONCILIATION"
+    RESIDUAL_CATEGORIZATION = "RESIDUAL_CATEGORIZATION"
+    RESIDUAL_POSTING = "RESIDUAL_POSTING"
     VALIDATION = "VALIDATION"
     COMMITTED_STATE_APPLICATION = "COMMITTED_STATE_APPLICATION"
 
@@ -112,11 +117,7 @@ class SessionBatchSummary:
             batch_res.rejection.message if batch_res.rejection else None
         )
 
-        status_str = (
-            batch_res.status.value
-            if hasattr(batch_res.status, "value")
-            else str(batch_res.status)
-        )
+        status_str = str(getattr(batch_res.status, "value", batch_res.status))
 
         return cls(
             status=status_str,
@@ -396,7 +397,20 @@ class SessionResult:
 
     routing_stage_result: SessionStageResult | None = None
     dag_stage_result: SessionStageResult | None = None
+    payment_application_stage_result: SessionStageResult | None = None
     reconciliation_stage_result: SessionStageResult | None = None
+    residual_stage_result: SessionStageResult | None = None
+
+    executed_payment_application_ids: tuple[str, ...] = ()
+    rehydration_count: int = 0
+
+    residual_evaluation_count: int = 0
+    residual_classified_count: int = 0
+    residual_hold_count: int = 0
+    residual_posting_count: int = 0
+    residual_posting_noop_count: int = 0
+    unresolved_residual_hold_count: int = 0
+    executed_residual_posting_ids: tuple[str, ...] = ()
 
     final_validation_status: StateValidationReport | None = None
 

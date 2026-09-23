@@ -251,7 +251,7 @@ def optimize_routing(
             entry.bank_account_id,
         )
 
-        pair_selected = model.NewBoolVar(
+        pair_selected = model.new_bool_var(
             _safe_variable_name(
                 "route",
                 *pair_key,
@@ -297,7 +297,7 @@ def optimize_routing(
                     f"{entry.bank_account_id!r}"
                 )
 
-            use_selected = model.NewBoolVar(
+            use_selected = model.new_bool_var(
                 _safe_variable_name(
                     "use",
                     entry.book_item_id,

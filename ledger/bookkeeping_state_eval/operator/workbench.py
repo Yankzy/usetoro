@@ -8,7 +8,7 @@ from bookkeeping_state.dag.protocol import AseClassifier
 from bookkeeping_state.domain.bank import BankAccount, BankItem
 from bookkeeping_state.domain.books import BookItem
 from bookkeeping_state.domain.context import AccountingPolicy, BookkeepingContext
-from bookkeeping_state.domain.enums import Direction
+from bookkeeping_state.domain.enums import Direction, SourceType
 from bookkeeping_state.hydration.hydrator import BookkeepingHydrator
 from bookkeeping_state.llm.factory import (
     create_reconciliation_semantic_provider,
@@ -50,6 +50,7 @@ def create_demo_repository() -> tuple[BookkeepingRepository, str]:
     book_items = (
         BookItem(
             id="book-salary",
+            source_type=SourceType.POSTED_BOOK_ITEM,
             origin_period="2026-09",
             date=dt_date(2026, 9, 1),
             amount_units="40000",
@@ -60,6 +61,7 @@ def create_demo_repository() -> tuple[BookkeepingRepository, str]:
         ),
         BookItem(
             id="book-aws",
+            source_type=SourceType.POSTED_BOOK_ITEM,
             origin_period="2026-09",
             date=dt_date(2026, 9, 2),
             amount_units="1200",
@@ -70,6 +72,7 @@ def create_demo_repository() -> tuple[BookkeepingRepository, str]:
         ),
         BookItem(
             id="book-rent",
+            source_type=SourceType.POSTED_BOOK_ITEM,
             origin_period="2026-09",
             date=dt_date(2026, 9, 3),
             amount_units="12000",
@@ -80,6 +83,7 @@ def create_demo_repository() -> tuple[BookkeepingRepository, str]:
         ),
         BookItem(
             id="book-supplier",
+            source_type=SourceType.POSTED_BOOK_ITEM,
             origin_period="2026-09",
             date=dt_date(2026, 9, 4),
             amount_units="18000",
@@ -90,6 +94,7 @@ def create_demo_repository() -> tuple[BookkeepingRepository, str]:
         ),
         BookItem(
             id="book-mystery",
+            source_type=SourceType.POSTED_BOOK_ITEM,
             origin_period="2026-09",
             date=dt_date(2026, 9, 5),
             amount_units="7500",
@@ -195,10 +200,12 @@ class BookkeepingWorkbench(ProductionBookkeepingWorkbench):
         semantic_provider: str = "deterministic",
         repository: BookkeepingRepository | None = None,
         company_id: str | None = None,
+        company_name: str | None = None,
         debug: bool = False,
     ) -> None:
         self.debug = debug
         self.semantic_provider = semantic_provider
+        self.company_name = company_name
         self.session_counter = 0
         self.last_result: WorkbenchSessionResult | None = None
         self.last_reconciliation_result: ReconciliationResult | None = None

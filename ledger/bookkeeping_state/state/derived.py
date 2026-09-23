@@ -11,6 +11,9 @@ from bookkeeping_state.domain.evidence import (
     BookItemEvidenceType,
 )
 from bookkeeping_state.domain.reconciliations import Reconciliation
+from bookkeeping_state.domain.residual_bank_classifications import (
+    ResidualBankClassificationDecision,
+)
 from bookkeeping_state.domain.routing import RoutingDecision
 from bookkeeping_state.state.bookkeeping_state import BookkeepingState
 
@@ -92,6 +95,15 @@ class BookkeepingDerivedState:
     active_evidence_by_book_item_and_type: Mapping[
         tuple[str, BookItemEvidenceType], BookItemEvidenceAssertion
     ]
+    active_residual_bank_classification_by_bank_item: Mapping[
+        str, ResidualBankClassificationDecision
+    ]
+    residual_bank_classification_history_by_bank_item: Mapping[
+        str, tuple[ResidualBankClassificationDecision, ...]
+    ]
+    latest_residual_bank_classification_by_bank_item: Mapping[
+        str, ResidualBankClassificationDecision
+    ]
 
     # ------------------------------------------------------------------
     # Reconciliation arithmetic
@@ -127,6 +139,13 @@ class BookkeepingDerivedState:
 
     overallocated_bank_item_ids: tuple[str, ...]
     overallocated_book_item_ids: tuple[str, ...]
+
+    # ------------------------------------------------------------------
+    # Stage 1 executed authority & structured provenance
+    # ------------------------------------------------------------------
+
+    executed_stage1_bank_item_ids: tuple[str, ...]
+    stage1_bank_to_cash_provenance: Mapping[str, tuple[tuple[str, str], ...]]
 
     def bank_remaining(self, bank_item_id: str) -> int:
         try:
@@ -174,6 +193,7 @@ def build_derived_state(
     active_classifications = resolve_active_classifications(state)
     active_reconciliations = resolve_active_reconciliations(state)
     active_evidence = resolve_active_evidence_assertions(state)
+    res_history, res_latest, res_active = resolve_residual_bank_classification_chains(state)
 
     bank_allocated: dict[str, int] = defaultdict(int)
     book_allocated: dict[str, int] = defaultdict(int)
@@ -247,6 +267,9 @@ def build_derived_state(
         ),
         active_reconciliations=_readonly(active_reconciliations),
         active_evidence_by_book_item_and_type=_readonly(active_evidence),
+        active_residual_bank_classification_by_bank_item=_readonly(res_active),
+        residual_bank_classification_history_by_bank_item=_readonly(res_history),
+        latest_residual_bank_classification_by_bank_item=_readonly(res_latest),
 
         bank_allocated_units=_readonly(dict(bank_allocated)),
         book_allocated_units=_readonly(dict(book_allocated)),
@@ -287,6 +310,17 @@ def build_derived_state(
         overallocated_book_item_ids=tuple(
             sorted(overallocated_book)
         ),
+
+        executed_stage1_bank_item_ids=tuple(
+            sorted({app.bank_item_id for app in getattr(state, "executed_payment_applications", {}).values()})
+        ),
+        stage1_bank_to_cash_provenance=_readonly({
+            app.bank_item_id: tuple(
+                (alloc.cash_transaction_book_item_id, alloc.amount_units)
+                for alloc in app.allocations
+            )
+            for app in getattr(state, "executed_payment_applications", {}).values()
+        }),
     )
 
 
@@ -326,6 +360,7 @@ def resolve_active_routing_decisions(
         for decision in state.routing_decisions.values()
         if decision.id not in invalidated_ids
         and decision.id not in superseded_ids
+        and decision.book_item_id in state.book_items
     ]
 
     by_book_item: dict[str, RoutingDecision] = {}
@@ -374,6 +409,7 @@ def resolve_active_classifications(
         for classification in state.classifications.values()
         if classification.id not in invalidated_ids
         and classification.id not in superseded_ids
+        and classification.book_item_id in state.book_items
     ]
 
     by_book_item: dict[str, ClassificationDecision] = {}
@@ -448,6 +484,7 @@ def resolve_active_evidence_assertions(
         for assertion in state.book_item_evidence_assertions.values()
         if assertion.id not in invalidated_ids
         and assertion.id not in superseded_ids
+        and assertion.book_item_id in state.book_items
     ]
 
     by_dimension: dict[
@@ -471,6 +508,107 @@ def resolve_active_evidence_assertions(
         by_dimension[key] = assertion
 
     return by_dimension
+
+
+def resolve_residual_bank_classification_chains(
+    state: BookkeepingState,
+) -> tuple[
+    dict[str, tuple[ResidualBankClassificationDecision, ...]],
+    dict[str, ResidualBankClassificationDecision],
+    dict[str, ResidualBankClassificationDecision],
+]:
+    """
+    Resolve linear history chains, latest decisions (chain tips), and active decisions
+    for residual bank items.
+
+    Returns:
+    - history_by_bank_item: mapping from bank_item_id to full linear history (ordered root to tip)
+    - latest_by_bank_item: mapping from bank_item_id to chain tip decision
+    - active_by_bank_item: mapping from bank_item_id to active decision (tip iff tip is not invalidated)
+
+    Enforces derived-state validation:
+    - If history exists for a bank item, exactly one root (supersedes_decision_id is None) must be discoverable.
+    - No branching: each decision in history has at most one successor.
+    - No cycles in history chain.
+    - No cross-staged predecessor links (predecessor bank_item_id must match successor bank_item_id).
+    - All decisions for the bank item must connect to the root.
+    """
+    decisions = getattr(state, "residual_bank_classifications", {})
+    invalidations = getattr(state, "residual_bank_classification_invalidations", {})
+
+    invalidated_ids = {
+        inv.classification_id for inv in invalidations.values()
+    }
+
+    by_item: dict[str, list[ResidualBankClassificationDecision]] = defaultdict(list)
+    for dec in decisions.values():
+        by_item[dec.bank_item_id].append(dec)
+
+    history_by_item: dict[str, tuple[ResidualBankClassificationDecision, ...]] = {}
+    latest_by_item: dict[str, ResidualBankClassificationDecision] = {}
+    active_by_item: dict[str, ResidualBankClassificationDecision] = {}
+
+    for bank_item_id, item_decisions in sorted(by_item.items(), key=lambda p: p[0]):
+        roots = [d for d in item_decisions if d.supersedes_decision_id is None]
+        if len(roots) > 1:
+            root_ids = sorted([r.id for r in roots])
+            raise DerivedStateError(
+                f"Multiple history roots found for bank item {bank_item_id!r}: {root_ids}"
+            )
+        if len(roots) == 0:
+            raise DerivedStateError(
+                f"No history root found for bank item {bank_item_id!r} with {len(item_decisions)} decisions"
+            )
+
+        root = roots[0]
+
+        successor_map: dict[str, ResidualBankClassificationDecision] = {}
+        for d in item_decisions:
+            if d.supersedes_decision_id is not None:
+                pred_id = d.supersedes_decision_id
+                if pred_id in successor_map:
+                    raise DerivedStateError(
+                        f"Branching history detected for decision {pred_id!r}: "
+                        f"superseded by both {successor_map[pred_id].id!r} and {d.id!r}"
+                    )
+                pred_dec = state.get_residual_bank_classification(pred_id)
+                if pred_dec is not None and pred_dec.bank_item_id != bank_item_id:
+                    raise DerivedStateError(
+                        f"Cross-item predecessor link: decision {d.id!r} on {bank_item_id!r} "
+                        f"supersedes {pred_id!r} on {pred_dec.bank_item_id!r}"
+                    )
+                successor_map[pred_id] = d
+
+        chain: list[ResidualBankClassificationDecision] = []
+        curr: ResidualBankClassificationDecision | None = root
+        visited_ids: set[str] = set()
+
+        while curr is not None:
+            if curr.id in visited_ids:
+                raise DerivedStateError(
+                    f"Cycle detected in history chain for bank item {bank_item_id!r} at {curr.id!r}"
+                )
+            visited_ids.add(curr.id)
+            chain.append(curr)
+            curr = successor_map.get(curr.id)
+
+        if len(visited_ids) != len(item_decisions):
+            unconnected = sorted([d.id for d in item_decisions if d.id not in visited_ids])
+            raise DerivedStateError(
+                f"Disconnected decisions found for bank item {bank_item_id!r}: {unconnected}"
+            )
+
+        chain_tuple = tuple(chain)
+        chain_tip = chain[-1]
+
+        history_by_item[bank_item_id] = chain_tuple
+        latest_by_item[bank_item_id] = chain_tip
+
+        if chain_tip.id not in invalidated_ids:
+            active_by_item[bank_item_id] = chain_tip
+
+    return history_by_item, latest_by_item, active_by_item
+
 
 
 KeyT = TypeVar("KeyT")

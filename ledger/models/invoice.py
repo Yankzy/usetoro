@@ -16,8 +16,12 @@ ________
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Union, Optional, Tuple, Dict
+from typing import Union, Optional, Tuple, Dict, Any, TYPE_CHECKING, cast, List
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from ledger.models.ledger import LedgerModel
+    from ledger.models.transactions import TransactionModelQuerySet
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError, ObjectDoesNotExist
@@ -34,11 +38,11 @@ from ledger.models import (
     lazy_loader, ItemTransactionModelQuerySet,
     ItemModelQuerySet, ItemModel, QuerySet, Manager
 )
-from ledger.models.entity import EntityModel
+from ledger.models.entity import EntityModel, EntityStateModel
 from ledger.models.mixins import (
     CreateUpdateMixIn, AccrualMixIn,
     MarkdownNotesMixIn, PaymentTermsMixIn,
-    ItemizeMixIn
+    ItemizeMixIn, PaymentPostingResult
 )
 from ledger.models.signals import (
     invoice_status_draft,
@@ -215,9 +219,10 @@ class InvoiceModelManager(Manager):
         """
         qs = self.for_user(user_model)
         if isinstance(entity_slug, EntityModel):
-            return qs.filter(ledger__entity=entity_slug)
+            return cast(InvoiceModelQuerySet, qs.filter(ledger__entity=entity_slug))
         elif isinstance(entity_slug, str):
-            return qs.filter(ledger__entity__slug__exact=entity_slug)
+            return cast(InvoiceModelQuerySet, qs.filter(ledger__entity__slug__exact=entity_slug))
+        raise InvoiceModelValidationError('entity_slug must be an instance of str or EntityModel')
 
     def for_entity_unpaid(self, entity_slug, user_model):
         qs = self.for_entity(entity_slug=entity_slug, user_model=user_model)
@@ -440,8 +445,8 @@ class InvoiceModelAbstract(
             self.invoice_status = self.INVOICE_STATUS_DRAFT
             self.date_draft = get_localdate() if not date_draft else date_draft
 
-            LedgerModel = lazy_loader.get_ledger_model()
-            ledger_model: LedgerModel = LedgerModel(entity=entity_model, posted=ledger_posted)
+            LedgerModelClass = lazy_loader.get_ledger_model()
+            ledger_model: LedgerModel = cast('LedgerModel', LedgerModelClass(entity=entity_model, posted=ledger_posted))
             ledger_model.configure_for_wrapper_model(model_instance=self)
             ledger_name = f'Invoice {self.uuid}' if not ledger_name else ledger_name
             ledger_model.name = ledger_name
@@ -487,7 +492,7 @@ class InvoiceModelAbstract(
             entity_id__exact=self.ledger.entity_id
         ).invoices()
 
-    def validate_itemtxs_qs(self, queryset: ItemTransactionModelQuerySet):
+    def validate_itemtxs_qs(self, queryset: Union[ItemTransactionModelQuerySet, List]):
         """
         Validates that the entire ItemTransactionModelQuerySet is bound to the InvoiceModel.
 
@@ -503,10 +508,10 @@ class InvoiceModelAbstract(
             raise InvoiceModelValidationError(f'Invalid queryset. All items must be assigned to Invoice {self.uuid}')
 
     def get_itemtxs_data(self,
-                         queryset: ItemTransactionModelQuerySet = None,
+                         queryset: Optional[Union[ItemTransactionModelQuerySet, List]] = None,
                          aggregate_on_db: bool = False,
                          lazy_agg: bool = False,
-                         ) -> Tuple[ItemTransactionModelQuerySet, Dict]:
+                         ) -> Tuple[Union[ItemTransactionModelQuerySet, List], Optional[Dict]]:
         """
         Fetches the InvoiceModel Items and aggregates the QuerySet.
 
@@ -529,6 +534,8 @@ class InvoiceModelAbstract(
             )
         else:
             self.validate_itemtxs_qs(queryset)
+
+        assert queryset is not None
 
         if aggregate_on_db and isinstance(queryset, ItemTransactionModelQuerySet):
             return queryset, queryset.aggregate(
@@ -564,7 +571,7 @@ class InvoiceModelAbstract(
         """
         return f'Invoice {self.invoice_number} account adjustment.'
 
-    def get_migration_data(self, queryset: Optional[ItemTransactionModelQuerySet] = None) -> ItemTransactionModelQuerySet:
+    def get_migration_data(self, queryset: Optional[ItemTransactionModelQuerySet] = None):
 
         """
         Fetches necessary item transaction data to perform a migration into the LedgerModel.
@@ -579,6 +586,7 @@ class InvoiceModelAbstract(
         else:
             self.validate_itemtxs_qs(queryset)
 
+        assert queryset is not None
         return queryset.select_related('item_model').order_by(
             'item_model__earnings_account__uuid',
             'entity_unit__uuid',
@@ -597,7 +605,7 @@ class InvoiceModelAbstract(
             'total_amount').annotate(
             account_unit_total=Sum('total_amount'))
 
-    def update_amount_due(self, itemtxs_qs: Optional[ItemTransactionModelQuerySet] = None) -> ItemTransactionModelQuerySet:
+    def update_amount_due(self, itemtxs_qs: Optional[Union[ItemTransactionModelQuerySet, List]] = None) -> Union[ItemTransactionModelQuerySet, List]:
         """
         Updates the InvoiceModel amount due.
 
@@ -613,7 +621,10 @@ class InvoiceModelAbstract(
             Newly fetched of previously fetched ItemTransactionModelQuerySet if provided.
         """
         itemtxs_qs, itemtxs_agg = self.get_itemtxs_data(queryset=itemtxs_qs)
-        self.amount_due = round(itemtxs_agg['total_amount__sum'], 2)
+        if itemtxs_agg and 'total_amount__sum' in itemtxs_agg and itemtxs_agg['total_amount__sum'] is not None:
+            self.amount_due = round(itemtxs_agg['total_amount__sum'], 2)
+        else:
+            self.amount_due = Decimal('0.00')
         return itemtxs_qs
 
     # STATE...
@@ -891,36 +902,18 @@ class InvoiceModelAbstract(
         """
         return self.is_approved()
 
-    def make_payment(self,
-                     payment_amount: Union[Decimal, float, int],
-                     payment_date: Optional[Union[datetime, date]] = None,
-                     commit: bool = False,
-                     raise_exception: bool = True):
+    def make_payment_with_result(
+        self,
+        payment_amount: Union[Decimal, float, int],
+        payment_date: Optional[Union[datetime, date]] = None,
+        cash_account_override: Optional[Any] = None,
+        commit: bool = False,
+        raise_exception: bool = True,
+    ) -> Optional[PaymentPostingResult]:
         """
-        Makes a payment to the InvoiceModel.
-
-        Parameters
-        __________
-
-        payment_amount: Decimal ot float
-            The payment amount to process.
-
-        payment_date: datetime or date.
-            Date or timestamp of the payment being applied.
-
-        commit: bool
-            If True, commits the transaction into the DB. Defaults to False.
-
-        raise_exception: bool
-            If True, raises InvoiceModelValidationError if payment exceeds amount due, else False.
-
-        Returns
-        _______
-
-        bool
-            True if can make payment, else False.
+        Makes a payment to the InvoiceModel and returns the explicit PaymentPostingResult.
+        Does not mutate self.cash_account.
         """
-
         if isinstance(payment_amount, float):
             payment_amount = Decimal.from_float(payment_amount)
         elif isinstance(payment_amount, int):
@@ -932,7 +925,7 @@ class InvoiceModelAbstract(
                 raise InvoiceModelValidationError(
                     f'Amount paid: {self.amount_paid} exceed amount due: {self.amount_due}.'
                 )
-            return
+            return None
 
         self.get_state(commit=True)
         self.clean()
@@ -940,13 +933,20 @@ class InvoiceModelAbstract(
         if not payment_date:
             payment_date = get_localtime()
 
+        posting_result: Optional[PaymentPostingResult] = None
         if commit:
-            self.migrate_state(
+            migration_res = self.migrate_state(
                 user_model=None,
                 entity_slug=self.ledger.entity.slug,
                 je_timestamp=payment_date,
-                raise_exception=True
+                raise_exception=True,
+                cash_account_override=cash_account_override,
+                return_posting_result=True,
             )
+            if isinstance(migration_res, tuple) and len(migration_res) >= 3:
+                res = migration_res[2]
+                if isinstance(res, PaymentPostingResult):
+                    posting_result = res
             self.save(
                 update_fields=[
                     'amount_paid',
@@ -955,6 +955,24 @@ class InvoiceModelAbstract(
                     'amount_receivable',
                     'updated'
                 ])
+        return posting_result
+
+    def make_payment(self,
+                     payment_amount: Union[Decimal, float, int],
+                     payment_date: Optional[Union[datetime, date]] = None,
+                     commit: bool = False,
+                     raise_exception: bool = True):
+        """
+        Makes a payment to the InvoiceModel.
+        Preserves original public return behavior.
+        """
+        self.make_payment_with_result(
+            payment_amount=payment_amount,
+            payment_date=payment_date,
+            cash_account_override=None,
+            commit=commit,
+            raise_exception=raise_exception,
+        )
 
     def bind_estimate(self, estimate_model, commit: bool = False):
         """
@@ -1068,7 +1086,7 @@ class InvoiceModelAbstract(
 
     # REVIEW...
     def mark_as_review(self,
-                       date_in_review: date = None,
+                       date_in_review: Optional[date] = None,
                        itemtxs_qs=None,
                        commit: bool = False,
                        **kwargs):
@@ -1161,7 +1179,7 @@ class InvoiceModelAbstract(
     def mark_as_approved(self,
                          entity_slug,
                          user_model,
-                         date_approved: date = None,
+                         date_approved: Optional[date] = None,
                          commit: bool = False,
                          force_migrate: bool = False,
                          raise_exception: bool = True,
@@ -1266,7 +1284,7 @@ class InvoiceModelAbstract(
     def mark_as_paid(self,
                      entity_slug: str,
                      user_model,
-                     date_paid: date = None,
+                     date_paid: Optional[date] = None,
                      commit: bool = False,
                      **kwargs):
         """
@@ -1337,7 +1355,7 @@ class InvoiceModelAbstract(
         """
         return f'djl-{self.uuid}-invoice-mark-as-paid'
 
-    def get_mark_as_paid_url(self, entity_slug: str = None):
+    def get_mark_as_paid_url(self, entity_slug: Optional[str] = None):
         """
         InvoiceModel Mark-as-Paid action URL.
 
@@ -1480,7 +1498,7 @@ class InvoiceModelAbstract(
 
     # CANCEL
     def mark_as_canceled(self,
-                         date_canceled: date = None,
+                         date_canceled: Optional[date] = None,
                          commit: bool = False,
                          **kwargs):
         """
@@ -1711,9 +1729,7 @@ class InvoiceModelAbstract(
         EntityStateModel
             An instance of EntityStateModel
         """
-        EntityStateModel = lazy_loader.get_entity_state_model()
-        EntityModel = lazy_loader.get_entity_model()
-        entity_model = EntityModel.objects.get(uuid__exact=self.ledger.entity_id)
+        entity_model: EntityModel = EntityModel.objects.get(uuid__exact=self.ledger.entity_id)
         fy_key = entity_model.get_fy_for_date(dt=self.date_draft)
         try:
             LOOKUP = {
@@ -1731,7 +1747,6 @@ class InvoiceModelAbstract(
             state_model.refresh_from_db()
             return state_model
         except ObjectDoesNotExist:
-            EntityModel = lazy_loader.get_entity_model()
             entity_model = EntityModel.objects.get(uuid__exact=self.ledger.entity_id)
             fy_key = entity_model.get_fy_for_date(dt=self.date_draft)
 

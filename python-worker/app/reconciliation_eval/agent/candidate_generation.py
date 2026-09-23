@@ -139,7 +139,7 @@ def generate_plausible_candidates(bank_items: List[BankItem], book_items: List[B
             if not valid_books:
                 continue
             model = cp_model.CpModel()
-            x = [model.NewBoolVar(f'x_{j.id}') for j in valid_books]
+            x = [model.new_bool_var(f'x_{j.id}') for j in valid_books]
             model.Add(sum(x[i] * valid_books[i].remaining_amount_int for i in range(len(valid_books))) == bank.amount_int)
             model.Add(sum(x) >= 2)
             if is_general:
@@ -157,7 +157,7 @@ def generate_plausible_candidates(bank_items: List[BankItem], book_items: List[B
             if not valid_banks:
                 continue
             model = cp_model.CpModel()
-            x = [model.NewBoolVar(f'x_{b.id}') for b in valid_banks]
+            x = [model.new_bool_var(f'x_{b.id}') for b in valid_banks]
             model.Add(sum(x[i] * valid_banks[i].amount_int for i in range(len(valid_banks))) == book.remaining_amount_int)
             model.Add(sum(x) >= 2)
             if is_general:

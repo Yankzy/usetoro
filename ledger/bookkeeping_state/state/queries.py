@@ -10,6 +10,10 @@ from bookkeeping_state.domain.evidence import (
     BookItemEvidenceType,
 )
 from bookkeeping_state.domain.reconciliations import Reconciliation
+from bookkeeping_state.domain.residual_bank_classifications import (
+    ResidualBankClassificationDecision,
+    ResidualBankPosting,
+)
 from bookkeeping_state.domain.routing import RoutingDecision
 from bookkeeping_state.state.bookkeeping_state import BookkeepingState
 from bookkeeping_state.state.derived import (
@@ -26,6 +30,7 @@ from bookkeeping_state.state.relationships import (
     RelationshipType,
     build_relationship_index,
 )
+from typing import Mapping
 
 
 class BookkeepingQueries:
@@ -94,6 +99,10 @@ class BookkeepingQueries:
     @property
     def context(self):
         return self._state.context
+
+    @property
+    def company_id(self) -> str:
+        return self._state.context.company_id
 
 
     @property
@@ -209,8 +218,20 @@ class BookkeepingQueries:
         self,
         book_item_id: str,
     ) -> RoutingDecision | None:
+        if book_item_id not in self._state.book_items:
+            return None
         return self.derived.active_routing_by_book_item.get(
             book_item_id
+        )
+
+    def routing_decisions_for_book_item(
+        self,
+        book_item_id: str,
+    ) -> tuple[RoutingDecision, ...]:
+        return tuple(
+            decision
+            for decision in self._state.routing_decisions.values()
+            if decision.book_item_id == book_item_id
         )
 
     def unrouted_book_items(
@@ -230,19 +251,43 @@ class BookkeepingQueries:
         self,
         book_item_id: str,
     ) -> ClassificationDecision | None:
+        if book_item_id not in self._state.book_items:
+            return None
         return (
             self.derived
             .active_classification_by_book_item
             .get(book_item_id)
         )
 
+    def classifications_for_book_item(
+        self,
+        book_item_id: str,
+    ) -> tuple[ClassificationDecision, ...]:
+        return tuple(
+            classification
+            for classification in self._state.classifications.values()
+            if classification.book_item_id == book_item_id
+        )
+
+    def is_categorization_eligible(
+        self,
+        book_item_or_id: BookItem | str,
+    ) -> bool:
+        if isinstance(book_item_or_id, BookItem):
+            return book_item_or_id.is_categorization_eligible
+        item = self._state.get_book_item(book_item_or_id)
+        if item is None:
+            return False
+        return item.is_categorization_eligible
+
     def unclassified_book_items(
         self,
     ) -> tuple[BookItem, ...]:
         return tuple(
-            self._state.book_items[book_item_id]
-            for book_item_id
-            in self.derived.book_items_without_active_classification
+            item
+            for book_item_id in self.derived.book_items_without_active_classification
+            if (item := self._state.book_items.get(book_item_id)) is not None
+            and item.is_categorization_eligible
         )
 
     # ------------------------------------------------------------------
@@ -441,10 +486,17 @@ class BookkeepingQueries:
     def active_evidence_assertion(
         self,
         book_item_id: str,
-        evidence_type: BookItemEvidenceType,
+        evidence_type: BookItemEvidenceType | str,
     ) -> BookItemEvidenceAssertion | None:
+        if book_item_id not in self._state.book_items:
+            return None
+        typed_evidence_type = (
+            evidence_type
+            if isinstance(evidence_type, BookItemEvidenceType)
+            else BookItemEvidenceType(evidence_type)
+        )
         return self.derived.active_evidence_by_book_item_and_type.get(
-            (book_item_id, evidence_type)
+            (book_item_id, typed_evidence_type)
         )
 
     def evidence_assertions_for_book_item(
@@ -505,14 +557,14 @@ class BookkeepingQueries:
     def effective_description(
         self,
         book_item_id: str,
-    ) -> str:
+    ) -> str | None:
         book_item = self._require_book_item(book_item_id)
         assertion = self.active_evidence_assertion(
             book_item_id, BookItemEvidenceType.DESCRIPTION
         )
         return (
             assertion.value
-            if assertion is not None and assertion.value is not None
+            if assertion is not None
             else book_item.description
         )
 
@@ -549,6 +601,153 @@ class BookkeepingQueries:
         return self.relationships.related_to(
             artifact_id
         )
+
+    # ------------------------------------------------------------------
+    # Stage 1 executed authority & provenance
+    # ------------------------------------------------------------------
+
+    def executed_stage1_bank_item_ids(self) -> tuple[str, ...]:
+        return self.derived.executed_stage1_bank_item_ids
+
+    def stage1_bank_to_cash_provenance(
+        self,
+        bank_item_id: str | None = None,
+    ) -> Mapping[str, tuple[tuple[str, str], ...]] | tuple[tuple[str, str], ...] | None:
+        prov = self.derived.stage1_bank_to_cash_provenance
+        if bank_item_id is None:
+            return prov
+        return prov.get(bank_item_id)
+
+    # ------------------------------------------------------------------
+    # Stage 2 reconciliation authority
+    # ------------------------------------------------------------------
+
+    def executed_stage2_reconciliation_bank_item_ids(self) -> tuple[str, ...]:
+        """
+        Return all bank item IDs reconciled in Stage 2 (excluding direct posting reconciliations).
+        """
+        self._refresh_if_required()
+        stage2_ids = {
+            alloc.bank_item_id
+            for rec in self.derived.active_reconciliations.values()
+            if self.get_residual_bank_posting_for_reconciliation(rec.id) is None
+            for alloc in rec.bank_allocations
+        }
+        return tuple(sorted(stage2_ids))
+
+    # ------------------------------------------------------------------
+    # Residual unmatched bank items (Post-Stage 1 & Stage 2)
+    # ------------------------------------------------------------------
+
+    def residual_unmatched_bank_items(self) -> tuple[tuple[BankItem, int], ...]:
+        """
+        Return residual unmatched BankItems and their remaining amount units.
+
+        Identifies BankItems that:
+        1. Were NOT consumed by an executed Stage 1 payment application.
+        2. Still have positive remaining amount units after active Stage 2
+           reconciliation allocations.
+
+        Returns a tuple of (BankItem, remaining_units: int) pairs, ordered
+        deterministically by (item.date, item.id).
+        """
+        self._refresh_if_required()
+        executed_stage1_ids = set(self.executed_stage1_bank_item_ids())
+
+        results: list[tuple[BankItem, int]] = []
+        for bank_item in self._state.bank_items.values():
+            if bank_item.id in executed_stage1_ids:
+                continue
+
+            remaining = self.bank_remaining_units(bank_item.id)
+            if remaining > 0:
+                results.append((bank_item, remaining))
+
+        results.sort(key=lambda pair: (pair[0].date, pair[0].id))
+        return tuple(results)
+
+    # ------------------------------------------------------------------
+    # Residual bank classification decisions
+    # ------------------------------------------------------------------
+
+    def residual_bank_classification_history(
+        self,
+        bank_item_id: str,
+    ) -> tuple[ResidualBankClassificationDecision, ...]:
+        """
+        Return the complete linear history of residual bank classification decisions
+        for this bank item in deterministic root-to-tip order.
+        """
+        return self.derived.residual_bank_classification_history_by_bank_item.get(
+            bank_item_id,
+            (),
+        )
+
+    def latest_residual_bank_classification(
+        self,
+        bank_item_id: str,
+    ) -> ResidualBankClassificationDecision | None:
+        """
+        Return the latest residual bank classification decision (chain tip)
+        for this bank item, regardless of whether it is currently invalidated.
+        """
+        return self.derived.latest_residual_bank_classification_by_bank_item.get(
+            bank_item_id,
+        )
+
+    def active_residual_bank_classification(
+        self,
+        bank_item_id: str,
+    ) -> ResidualBankClassificationDecision | None:
+        """
+        Return the currently active residual bank classification decision
+        for this bank item (chain tip if and only if not invalidated, otherwise None).
+        """
+        return self.derived.active_residual_bank_classification_by_bank_item.get(
+            bank_item_id,
+        )
+
+    def posting_for_residual_bank_classification(
+        self,
+        decision_id: str,
+    ) -> ResidualBankPosting | None:
+        """
+        Return the durable posting provenance record for a residual bank
+        classification decision, if posted.
+        """
+        return self._state.get_residual_bank_posting_for_decision(decision_id)
+
+    def get_residual_bank_posting_for_reconciliation(
+        self,
+        reconciliation_id: str,
+    ) -> ResidualBankPosting | None:
+        """
+        Return the durable posting provenance record for a direct reconciliation, if owned by a residual bank posting.
+        """
+        return self._state.get_residual_bank_posting_for_reconciliation(reconciliation_id)
+
+    def is_residual_bank_classification_posted(
+        self,
+        decision_id: str,
+    ) -> bool:
+        """
+        Return whether a residual bank classification decision has been posted to the general ledger.
+        """
+        return self._state.get_residual_bank_posting_for_decision(decision_id) is not None
+
+    def is_residual_bank_classification_invalidated(
+        self,
+        decision_id: str,
+    ) -> bool:
+        """
+        Return whether a residual bank classification decision has been invalidated.
+        """
+        return any(
+            inv.classification_id == decision_id
+            for inv in self._state.residual_bank_classification_invalidations.values()
+        )
+
+
 
     # ------------------------------------------------------------------
     # Internal helpers

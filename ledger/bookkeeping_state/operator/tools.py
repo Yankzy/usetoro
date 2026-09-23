@@ -77,7 +77,7 @@ OPERATOR_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "name": "list_unresolved",
-        "description": "List all items needing attention: unreconciled bank/book items, unrouted items, unclassified items, and review candidates.",
+        "description": "List all items needing attention: unreconciled bank/book items (including active HOLD reasons and required evidence) and review candidates.",
         "parameters": {
             "type": "object",
             "properties": {},
@@ -131,14 +131,18 @@ OPERATOR_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "name": "list_classifications",
-        "description": "List active durable account classifications per book item. Optionally filter by book_item_id.",
+        "description": "List active account classifications. Returns both legacy book classifications and post-reconciliation residual bank classifications (including CLASSIFIED decisions and active HOLDs). Optionally filter by book_item_id or bank_item_id.",
         "parameters": {
             "type": "object",
             "properties": {
                 "book_item_id": {
                     "type": "string",
-                    "description": "Filter by book item ID",
-                }
+                    "description": "Filter by book item ID (legacy book classifications)",
+                },
+                "bank_item_id": {
+                    "type": "string",
+                    "description": "Filter by bank item ID (residual bank classifications)",
+                },
             },
             "required": [],
         },
@@ -181,7 +185,7 @@ OPERATOR_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "name": "get_holds",
-        "description": "List active processing holds currently applied on items or accounts.",
+        "description": "List active processing holds currently applied on items (including residual bank classification HOLD decisions and legacy session holds).",
         "parameters": {
             "type": "object",
             "properties": {},
@@ -437,7 +441,8 @@ _DISPATCHER: dict[str, Callable[[BookkeepingWorkbench, dict[str, Any]], Any]] = 
     ),
     "list_routes": lambda wb, args: wb.list_routes(book_item_id=args.get("book_item_id")),
     "list_classifications": lambda wb, args: wb.list_classifications(
-        book_item_id=args.get("book_item_id")
+        book_item_id=args.get("book_item_id"),
+        bank_item_id=args.get("bank_item_id"),
     ),
     "get_evidence": lambda wb, args: wb.get_evidence(book_item_id=args.get("book_item_id")),
     "get_history": lambda wb, args: wb.get_history(),
@@ -451,7 +456,7 @@ _DISPATCHER: dict[str, Callable[[BookkeepingWorkbench, dict[str, Any]], Any]] = 
         currency=args["currency"],
         date=args["date"],
         counterparty=args.get("counterparty"),
-        description=args.get("description"),
+        description=args.get("description") or "",
         reference=args.get("reference"),
     ),
     "add_book_item": lambda wb, args: wb.add_book_item(
@@ -461,7 +466,7 @@ _DISPATCHER: dict[str, Callable[[BookkeepingWorkbench, dict[str, Any]], Any]] = 
         date=args["date"],
         item_type=args.get("item_type", "INVOICE"),
         counterparty=args.get("counterparty"),
-        description=args.get("description"),
+        description=args.get("description") or "",
         reference=args.get("reference"),
     ),
     "add_counterparty": lambda wb, args: wb.add_counterparty(

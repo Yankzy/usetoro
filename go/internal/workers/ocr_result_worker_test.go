@@ -115,3 +115,36 @@ func TestOCRResultWorker_Handle_MissingDocumentID(t *testing.T) {
 	err := worker.Handle(ctx, msg)
 	assert.NoError(t, err)
 }
+
+func TestOCRResultWorker_AccountingIntakeCallback(t *testing.T) {
+	t.Run("Non-success OCR suppresses dispatch to accounting intake", func(t *testing.T) {
+		worker := &OCRResultWorker{}
+		payload := map[string]any{
+			"document_id":             uuid.New().String(),
+			"status":                  "OCR_FAILED",
+			"original_callback_topic": "worker.inbox.python.accounting_intake",
+		}
+		// Since nc is nil, if it attempted to publish, it would have logged or panicked.
+		// forwardToCallback returns early without publishing.
+		worker.forwardToCallback(payload)
+	})
+
+	t.Run("Success OCR prepares small accounting payload", func(t *testing.T) {
+		worker := &OCRResultWorker{}
+		docID := uuid.New().String()
+		entityID := uuid.New().String()
+		sessionID := uuid.New().String()
+		payload := map[string]any{
+			"document_id":             docID,
+			"entity_id":               entityID,
+			"session_id":              sessionID,
+			"external_id":             "msg-12345",
+			"file_name":               "bank_statement.pdf",
+			"status":                  "OCR_SUCCESS",
+			"original_callback_topic": "worker.inbox.python.accounting_intake",
+			"huge_ocr_extractions":    "do_not_embed_in_event",
+		}
+		// In a worker without NATS conn, it safely logs error without panicking
+		worker.forwardToCallback(payload)
+	})
+}

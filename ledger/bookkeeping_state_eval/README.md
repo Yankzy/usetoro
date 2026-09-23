@@ -2,6 +2,10 @@
 
 Deterministic evaluation harness and developer lab for the Toro `BookkeepingState` runtime architecture.
 
+> [!TIP]
+> ### Authoritative Documentation Suite
+> For comprehensive developer and production documentation covering architecture, quickstart, stage-by-stage lifecycles, CP-SAT reconciliation, NATS ASE contracts, PostgreSQL schemas, and the operator REPL, see the **[Toro Bookkeeping Documentation Hub](../../docs/bookkeeping/README.md)**.
+
 > [!IMPORTANT]
 > ### 100% Deterministic Code — No LLM Dependency
 > All work in this commit and throughout this runtime architecture is **strictly deterministic, rule-based, and mathematically verifiable**.
@@ -105,30 +109,36 @@ The runtime validates the following core principles across all 339 tests:
 From the repository root:
 
 ```bash
-# Launch with default in-memory demo company
-./.venv/bin/python python-worker/app/bookkeeping_state_eval/lab.py
+# Launch with default in-memory demo company (Operator enabled with gpt-5.6-luna by default)
+./.venv/bin/python ledger/bookkeeping_state_eval/lab.py
 
 # Launch directly with a specific scenario from the catalog
-./.venv/bin/python python-worker/app/bookkeeping_state_eval/lab.py --scenario scenario_c_many_to_one
+./.venv/bin/python ledger/bookkeeping_state_eval/lab.py --scenario scenario_c_many_to_one
 
-# Launch with natural-language Operator LLM assistant enabled
-./.venv/bin/python python-worker/app/bookkeeping_state_eval/lab.py --operator
+# Launch directly hydrated from the real PostgreSQL production database (Operator enabled)
+./.venv/bin/python ledger/bookkeeping_state_eval/lab.py --production-state
+
+# Launch hydrated from a specific production company / slug (Operator enabled)
+./.venv/bin/python ledger/bookkeeping_state_eval/lab.py --production-state --company-id toro-synthetic-bookkeeping
 
 # Launch with custom Operator model and real LLM inner semantic scorers
-./.venv/bin/python python-worker/app/bookkeeping_state_eval/lab.py --operator --operator-model gpt-5.6-luna --semantic-provider llm
+./.venv/bin/python ledger/bookkeeping_state_eval/lab.py --operator-model gpt-5.6-luna --semantic-provider llm
+
+# Launch with Operator disabled (pure deterministic command REPL only)
+./.venv/bin/python ledger/bookkeeping_state_eval/lab.py --no-operator
 
 # Execute one session run immediately and exit (non-interactive mode)
-./.venv/bin/python python-worker/app/bookkeeping_state_eval/lab.py --scenario scenario_b_one_to_many --run
+./.venv/bin/python ledger/bookkeeping_state_eval/lab.py --scenario scenario_b_one_to_many --run
 
 # Launch with full debug tracebacks enabled
-./.venv/bin/python python-worker/app/bookkeeping_state_eval/lab.py --debug
+./.venv/bin/python ledger/bookkeeping_state_eval/lab.py --debug
 ```
 
 ---
 
 ### Natural-Language Operator Mode
 
-When launched with `--operator` (or toggled on via `operator on`), `lab.py` pairs the explicit command REPL with an autonomous **Operator LLM**. 
+The autonomous **Operator LLM** (default: `gpt-5.6-luna`) is enabled by default in `lab.py`.
 
 Any input not matching an explicit developer command is dispatched to the Operator agent, which plans and executes operations over **22 typed, detached workbench tools**:
 
@@ -296,3 +306,28 @@ Evaluates the natural-language conversational operator against multi-turn workfl
 ```bash
 PYTHONPATH=python-worker/app ./.venv/bin/python python-worker/app/bookkeeping_state_eval/operator_eval.py --model gpt-5.6-luna
 ```
+
+---
+
+## Comprehensive Documentation
+
+For detailed architecture guides, API references, step-by-step walkthroughs, and operational runbooks, consult the **[Toro Bookkeeping Documentation Hub](../../docs/bookkeeping/README.md)**:
+
+- [Quickstart Guide](../../docs/bookkeeping/quickstart.md)
+- [System Architecture](../../docs/bookkeeping/architecture.md)
+- [Domain Concepts](../../docs/bookkeeping/concepts.md)
+- [State Model & Hydration](../../docs/bookkeeping/state-model.md)
+- [Session Lifecycle](../../docs/bookkeeping/lifecycle.md)
+- [Stage 1: Payment Application](../../docs/bookkeeping/stage1-payment-application.md)
+- [Stage 2: Reconciliation Solver](../../docs/bookkeeping/stage2-reconciliation.md)
+- [Residual Bank Classification](../../docs/bookkeeping/residual-categorization.md)
+- [Residual Journal Posting](../../docs/bookkeeping/residual-posting.md)
+- [Operator REPL & Natural Language Interface](../../docs/bookkeeping/operator-repl.md)
+- [API Reference](../../docs/bookkeeping/api-reference.md)
+- [NATS ASE Wire Contracts](../../docs/bookkeeping/nats-ase-contract.md)
+- [Database Schema & Models](../../docs/bookkeeping/data-model.md)
+- [Production E2E Testing](../../docs/bookkeeping/production-e2e.md)
+- [Testing & Validation](../../docs/bookkeeping/testing.md)
+- [Troubleshooting & Diagnostics](../../docs/bookkeeping/troubleshooting.md)
+- [Extending the Platform](../../docs/bookkeeping/extending.md)
+- [Glossary of Terms](../../docs/bookkeeping/glossary.md)

@@ -1,0 +1,27 @@
+# Production Python dependencies for Ledger service
+Django>=5.1.0,<5.2
+gunicorn>=23.0.0
+whitenoise>=6.6.0
+psycopg>=3.1.18
+psycopg-binary>=3.1.18
+django-treebeard>=4.5.1
+nats-py>=2.9.0
+redis>=5.0.0
+markdown>=3.5.0
+tabulate>=0.9.0
+tenacity>=8.0.0
+pillow>=10.0.0
+celery>=5.3.0
+faker>=24.0.0
+pandas>=2.2.0
+numpy>=1.26.0
+ortools>=9.15.6755
+python-dateutil>=2.8.2
+six>=1.16.0
+sqlparse>=0.4.3
+ofxtools>=0.9.5
+pydantic>=2.0.0
+pyyaml>=6.0.0
+requests>=2.31.0
+openai>=1.0.0
+python-dotenv>=1.0.0

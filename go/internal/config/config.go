@@ -99,8 +99,11 @@ type Config struct {
 	TrackingProxyURL string `mapstructure:"tracking_proxy_url"`
 
 	// Postmark Config
-	PostmarkServerToken     string `mapstructure:"postmark_server_token"`
-	PostmarkSenderSignature string `mapstructure:"postmark_sender_signature"` // verified root, e.g. mark@usetoro.io
+	PostmarkServerToken           string `mapstructure:"postmark_server_token"`
+	PostmarkSenderSignature       string `mapstructure:"postmark_sender_signature"` // verified root, e.g. mark@usetoro.io
+	PostmarkInboundWebhookSecret string `mapstructure:"postmark_inbound_webhook_secret"`
+	PostmarkInboundUsername      string `mapstructure:"postmark_inbound_username"`
+	PostmarkInboundPassword      string `mapstructure:"postmark_inbound_password"`
 
 	// Mailpool Config
 	MailpoolAPIKey          string   `mapstructure:"mailpool_api_key"`

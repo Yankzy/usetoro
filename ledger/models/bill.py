@@ -14,7 +14,7 @@ ________
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Union, Optional, Tuple, Dict, List
+from typing import Union, Optional, Tuple, Dict, List, Any
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
@@ -35,7 +35,8 @@ from ledger.models.mixins import (
     AccrualMixIn,
     MarkdownNotesMixIn,
     PaymentTermsMixIn,
-    ItemizeMixIn
+    ItemizeMixIn,
+    PaymentPostingResult,
 )
 from ledger.models.signals import (
     bill_status_draft,
@@ -955,37 +956,18 @@ class BillModelAbstract(
         """
         return self.is_approved()
 
-    def make_payment(self,
-                     payment_amount: Union[Decimal, float, int],
-                     payment_date: Optional[Union[datetime, date]] = None,
-                     commit: bool = False,
-                     raise_exception: bool = True):
+    def make_payment_with_result(
+        self,
+        payment_amount: Union[Decimal, float, int],
+        payment_date: Optional[Union[datetime, date]] = None,
+        cash_account_override: Optional[Any] = None,
+        commit: bool = False,
+        raise_exception: bool = True,
+    ) -> Optional[PaymentPostingResult]:
         """
-        Makes a payment to the BillModel.
-
-
-        Parameters
-        __________
-
-        payment_amount: Decimal ot float
-            The payment amount to process.
-
-        payment_date: datetime or date.
-            Date or timestamp of the payment being applied.
-
-        commit: bool
-            If True, commits the transaction into the DB. Defaults to False.
-
-        raise_exception: bool
-            If True, raises BillModelValidationError if payment exceeds amount due, else False.
-
-        Returns
-        _______
-
-        bool
-            True if can make payment, else False.
+        Makes a payment to the BillModel and returns the explicit PaymentPostingResult.
+        Does not mutate self.cash_account.
         """
-
         if isinstance(payment_amount, float):
             payment_amount = Decimal.from_float(payment_amount)
         elif isinstance(payment_amount, int):
@@ -997,7 +979,7 @@ class BillModelAbstract(
                 raise BillModelValidationError(
                     f'Amount paid: {self.amount_paid} exceed amount due: {self.amount_due}.'
                 )
-            return
+            return None
 
         self.get_state(commit=True)
         self.clean()
@@ -1005,13 +987,20 @@ class BillModelAbstract(
         if not payment_date:
             payment_date = get_localtime()
 
+        posting_result: Optional[PaymentPostingResult] = None
         if commit:
-            self.migrate_state(
+            migration_res = self.migrate_state(
                 user_model=None,
                 entity_slug=self.ledger.entity.slug,
                 je_timestamp=payment_date,
-                raise_exception=True
+                raise_exception=True,
+                cash_account_override=cash_account_override,
+                return_posting_result=True,
             )
+            if isinstance(migration_res, tuple) and len(migration_res) >= 3:
+                res = migration_res[2]
+                if isinstance(res, PaymentPostingResult):
+                    posting_result = res
             self.save(
                 update_fields=[
                     'amount_paid',
@@ -1020,6 +1009,24 @@ class BillModelAbstract(
                     'amount_receivable',
                     'updated'
                 ])
+        return posting_result
+
+    def make_payment(self,
+                     payment_amount: Union[Decimal, float, int],
+                     payment_date: Optional[Union[datetime, date]] = None,
+                     commit: bool = False,
+                     raise_exception: bool = True):
+        """
+        Makes a payment to the BillModel.
+        Preserves original public return behavior.
+        """
+        self.make_payment_with_result(
+            payment_amount=payment_amount,
+            payment_date=payment_date,
+            cash_account_override=None,
+            commit=commit,
+            raise_exception=raise_exception,
+        )
 
     def bind_estimate(self, estimate_model, commit: bool = False, raise_exception: bool = True):
         """

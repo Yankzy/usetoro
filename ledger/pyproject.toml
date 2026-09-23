@@ -35,3 +35,10 @@ namespaces = false
 
 [tool.pyright]
 extraPaths = [".", "..", "bookkeeping_state", "bookkeeping_state_eval", "../ledger"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+pythonpath = [".", "ledger", ".."]
+testpaths = ["tests", "bookkeeping_state_eval"]
+django_find_project = false
+

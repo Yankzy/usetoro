@@ -150,6 +150,7 @@ def optimize_reconciliation(
             objective_reconciled_units="0",
             objective_amount_weighted_semantic_value=0,
             objective_items_cleared=0,
+            posted_authority_bank_item_ids=(),
         )
 
     # ------------------------------------------------------------------
@@ -159,7 +160,7 @@ def optimize_reconciliation(
     x_vars: dict[str, cp_model.IntVar] = {}
 
     for h in valid_hypotheses:
-        x_vars[h.id] = model.NewBoolVar(f"x_{h.id}")
+        x_vars[h.id] = model.new_bool_var(f"x_{h.id}")
 
     # Forced constraints
     for f_id in forced_set:
@@ -198,7 +199,7 @@ def optimize_reconciliation(
     # ------------------------------------------------------------------
     bank_cleared_vars: dict[str, cp_model.IntVar] = {}
     for b in view.bank_items:
-        b_var = model.NewBoolVar(f"bank_cleared_{b.bank_item_id}")
+        b_var = model.new_bool_var(f"bank_cleared_{b.bank_item_id}")
         bank_cleared_vars[b.bank_item_id] = b_var
         b_allocs = bank_to_hyps.get(b.bank_item_id, [])
         r_b = b.remaining_amount_int
@@ -211,7 +212,7 @@ def optimize_reconciliation(
 
     book_cleared_vars: dict[str, cp_model.IntVar] = {}
     for j in view.book_items:
-        j_var = model.NewBoolVar(f"book_cleared_{j.book_item_id}")
+        j_var = model.new_bool_var(f"book_cleared_{j.book_item_id}")
         book_cleared_vars[j.book_item_id] = j_var
         j_allocs = book_to_hyps.get(j.book_item_id, [])
         r_j = j.remaining_amount_int
@@ -369,6 +370,16 @@ def optimize_reconciliation(
         )
     )
 
+    posted_authority_bank_ids = tuple(
+        sorted(
+            {
+                b_alloc.bank_item_id
+                for h in valid_hypotheses
+                for b_alloc in h.bank_allocations
+            }
+        )
+    )
+
     return ReconciliationResult(
         state_revision=view.state_revision,
         solver_run_id=solver_run_id,
@@ -379,4 +390,5 @@ def optimize_reconciliation(
         objective_reconciled_units=str(max_money),
         objective_amount_weighted_semantic_value=total_amount_weighted_value,
         objective_items_cleared=max_items,
+        posted_authority_bank_item_ids=posted_authority_bank_ids,
     )

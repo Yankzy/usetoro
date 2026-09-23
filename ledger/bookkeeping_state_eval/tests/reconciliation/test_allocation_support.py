@@ -22,6 +22,7 @@ from bookkeeping_state.domain.enums import (
     Direction,
     Eligibility,
     SemanticAdmissibility,
+    SourceType,
 )
 from bookkeeping_state.domain.evidence import (
     BookItemEvidenceAssertion,
@@ -94,12 +95,18 @@ def _setup_hydrated_state(
         policy=pol,
     )
     acc = BankAccount(id="acc-1", name="BMCE MAD", currency="MAD")
+    resolved_book_items = tuple(
+        b.model_copy(update={"source_type": SourceType.POSTED_BOOK_ITEM})
+        if b.source_type == SourceType.STAGING_BOOK_ITEM
+        else b
+        for b in book_items
+    )
     snapshot = BookkeepingSnapshot(
         persistence_revision=1,
         context=ctx,
         bank_accounts=(acc,),
         bank_items=tuple(bank_items),
-        book_items=tuple(book_items),
+        book_items=resolved_book_items,
         book_item_evidence_assertions=tuple(evidence_assertions or ()),
     )
     repo = InMemoryBookkeepingRepository()

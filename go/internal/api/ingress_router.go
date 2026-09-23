@@ -38,6 +38,55 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Authenticate Postmark inbound webhook before reading large body or publishing
+	if activityType == "email.postmark_inbound" {
+		cfg := config.GetGlobal()
+		if cfg != nil && (cfg.PostmarkInboundWebhookSecret != "" || cfg.PostmarkInboundPassword != "") {
+			authorized := false
+
+			// 1. Check HTTP Basic Auth (supported natively by Postmark Webhook settings)
+			user, pass, hasBasic := r.BasicAuth()
+			if hasBasic {
+				if cfg.PostmarkInboundUsername != "" && cfg.PostmarkInboundPassword != "" {
+					userMatch := subtle.ConstantTimeCompare([]byte(user), []byte(cfg.PostmarkInboundUsername)) == 1
+					passMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(cfg.PostmarkInboundPassword)) == 1
+					if userMatch && passMatch {
+						authorized = true
+					}
+				} else if cfg.PostmarkInboundWebhookSecret != "" {
+					if subtle.ConstantTimeCompare([]byte(pass), []byte(cfg.PostmarkInboundWebhookSecret)) == 1 ||
+						subtle.ConstantTimeCompare([]byte(user), []byte(cfg.PostmarkInboundWebhookSecret)) == 1 {
+						authorized = true
+					}
+				}
+			}
+
+			// 2. Check Custom Header (e.g. X-Postmark-Webhook-Secret or X-Webhook-Secret)
+			if !authorized && cfg.PostmarkInboundWebhookSecret != "" {
+				customSecret := r.Header.Get("X-Postmark-Webhook-Secret")
+				if customSecret == "" {
+					customSecret = r.Header.Get("X-Webhook-Secret")
+				}
+				if customSecret != "" && subtle.ConstantTimeCompare([]byte(customSecret), []byte(cfg.PostmarkInboundWebhookSecret)) == 1 {
+					authorized = true
+				}
+			}
+
+			if !authorized {
+				h.Logger.Warn("ingress: unauthorized postmark inbound webhook attempt", "remote_addr", r.RemoteAddr)
+				w.Header().Set("WWW-Authenticate", `Basic realm="Postmark Inbound"`)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+	}
+
+	maxBody := int64(35 * 1024 * 1024) // 35MB coherent limit for large attachments
+	if h.MaxBodySize > 0 && h.MaxBodySize > maxBody {
+		maxBody = h.MaxBodySize
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+
 	body, err := io.ReadAll(r.Body)
 	fmt.Println("ingress: received request", "activity_type", activityType)
 	// h.Logger.Info("INGRESS BODY: " + string(body))
@@ -102,7 +151,13 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 
 	msg := nats.NewMsg(subject)
 	msg.Data = body
-	msg.Header.Set(nats.MsgIdHdr, fmt.Sprintf("ingress-%d", time.Now().UnixNano()))
+
+	natsMsgID := fmt.Sprintf("ingress-%d", time.Now().UnixNano())
+	if activityType == "email.postmark_inbound" {
+		natsMsgID = DerivePostmarkInboundNatsMsgID(body)
+	}
+
+	msg.Header.Set(nats.MsgIdHdr, natsMsgID)
 	msg.Header.Set("Nats-TTL", "1m")
 
 	publishCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -120,6 +175,19 @@ func (h *Handler) HandleIngressWorker(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"published"}`))
+}
+
+// DerivePostmarkInboundNatsMsgID extracts the Postmark MessageID and returns the deterministic NATS message ID.
+func DerivePostmarkInboundNatsMsgID(body []byte) string {
+	var peek struct {
+		MessageID string `json:"MessageID"`
+	}
+	if err := json.Unmarshal(body, &peek); err == nil && strings.TrimSpace(peek.MessageID) != "" {
+		cleanID := strings.TrimSpace(peek.MessageID)
+		cleanID = strings.Trim(cleanID, "<>")
+		return "postmark-inbound:" + cleanID
+	}
+	return fmt.Sprintf("ingress-%d", time.Now().UnixNano())
 }
 
 // HandleEmailClick handles tracked links in marketing emails.

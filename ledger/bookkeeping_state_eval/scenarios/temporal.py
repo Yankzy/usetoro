@@ -22,7 +22,14 @@ from typing import Any, Callable, Sequence
 
 from bookkeeping_state_eval.dag.simulated_ase import SimulatedAseClassifier
 from bookkeeping_state.domain.bank import BankAccount, BankItem
-from bookkeeping_state.domain.books import BookItem
+from bookkeeping_state.domain.books import BookItem as _DomainBookItem
+
+
+def BookItem(*args: Any, **kwargs: Any) -> _DomainBookItem:
+    if "source_type" not in kwargs:
+        kwargs["source_type"] = SourceType.POSTED_BOOK_ITEM
+    return _DomainBookItem(*args, **kwargs)
+
 from bookkeeping_state.domain.commands import (
     CommandSource,
     InvalidateReconciliationCommand,
@@ -33,7 +40,7 @@ from bookkeeping_state.domain.counterparties import (
     CounterpartyType,
 )
 from bookkeeping_state.domain.documents import Document
-from bookkeeping_state.domain.enums import Direction
+from bookkeeping_state.domain.enums import Direction, SourceType
 from bookkeeping_state.domain.evidence import (
     BookItemEvidenceAssertion,
     BookItemEvidenceInvalidation,

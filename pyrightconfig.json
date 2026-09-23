@@ -1,0 +1,25 @@
+{
+  "venvPath": "/Users/Yankz/programming/usetoro",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Darwin",
+  "reportMissingTypeStubs": false,
+  "reportIncompatibleVariableOverride": false,
+  "reportIncompatibleMethodOverride": false,
+  "reportAttributeAccessIssue": true,
+  "executionEnvironments": [
+    {
+      "root": "ledger",
+      "extraPaths": [
+        ".",
+        "ledger"
+      ]
+    },
+    {
+      "root": "python-worker",
+      "extraPaths": [
+        "python-worker/app"
+      ]
+    }
+  ]
+}

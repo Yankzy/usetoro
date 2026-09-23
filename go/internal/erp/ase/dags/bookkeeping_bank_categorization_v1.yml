@@ -1,0 +1,77 @@
+hyper_parameters:
+  confidence_threshold: 0.98
+  auto_advance: true
+  batch_flush_seconds: 1
+  expected_properties: 1
+
+dag:
+  entry_node: bank_direction_router
+  nodes:
+    bank_direction_router:
+      name: bank_direction_router
+      kind: generic_classifier
+      batch_size: 1
+      batch_flush_seconds: 1
+      children:
+        OUTFLOW: bank_macro_classifier_outflow
+        INFLOW: bank_macro_classifier_inflow
+        HOLD_AMBIGUOUS: terminal_hold
+        HOLD_INSUFFICIENT_EVIDENCE: terminal_hold
+      default_child: terminal_hold
+
+    bank_macro_classifier_outflow:
+      name: bank_macro_classifier_outflow
+      kind: macro_classifier
+      batch_size: 1
+      batch_flush_seconds: 1
+      children:
+        EXPENSE: account_resolver
+        ASSET: account_resolver
+        LIABILITY: account_resolver
+        EQUITY: account_resolver
+        HOLD_AMBIGUOUS: terminal_hold
+        HOLD_INSUFFICIENT_EVIDENCE: terminal_hold
+      default_child: account_resolver
+
+    bank_macro_classifier_inflow:
+      name: bank_macro_classifier_inflow
+      kind: macro_classifier
+      batch_size: 1
+      batch_flush_seconds: 1
+      children:
+        REVENUE: account_resolver
+        LIABILITY: account_resolver
+        ASSET: account_resolver
+        EQUITY: account_resolver
+        HOLD_AMBIGUOUS: terminal_hold
+        HOLD_INSUFFICIENT_EVIDENCE: terminal_hold
+      default_child: account_resolver
+
+    account_resolver:
+      name: account_resolver
+      kind: dynamic_classifier
+      batch_size: 1
+      batch_flush_seconds: 1
+      default_child: terminal_classified
+      children:
+        HOLD: terminal_hold
+        HOLD_AMBIGUOUS: terminal_hold
+        HOLD_INSUFFICIENT_EVIDENCE: terminal_hold
+
+    terminal_classified:
+      name: terminal_classified
+      kind: terminal
+      batch_size: 1
+      batch_flush_seconds: 1
+      execution_parameters:
+        close_status: "CLASSIFIED"
+        terminal_property: "account_code"
+
+    terminal_hold:
+      name: terminal_hold
+      kind: terminal
+      batch_size: 1
+      batch_flush_seconds: 1
+      execution_parameters:
+        close_status: "HOLD"
+        hold_reason: "HOLD_INSUFFICIENT_EVIDENCE"

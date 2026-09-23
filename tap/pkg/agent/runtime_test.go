@@ -44,7 +44,7 @@ func TestExecWithMessages(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	logger := slog.New(slog.NewTextHandler(buf, nil))
-	rt := NewRuntime(logger, nil, core.AgentConfig{DID: "did:toro:test", Model: "gpt-4o"})
+	rt := NewRuntime(logger, nil, core.AgentConfig{DID: "did:toro:test", Model: "gpt-5.4-mini"})
 	rt.Provider = &mockProvider{model: mockMod}
 
 	msgs := []MessageInput{

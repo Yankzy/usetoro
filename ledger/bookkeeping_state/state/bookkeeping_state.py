@@ -22,9 +22,17 @@ from bookkeeping_state.domain.evidence import (
     BookItemEvidenceInvalidation,
 )
 from bookkeeping_state.domain.hypotheses import ReconciliationHypothesis
+from bookkeeping_state.domain.payment_application import (
+    ExecutedPaymentApplication,
+)
 from bookkeeping_state.domain.reconciliations import (
     Reconciliation,
     ReconciliationInvalidation,
+)
+from bookkeeping_state.domain.residual_bank_classifications import (
+    ResidualBankClassificationDecision,
+    ResidualBankClassificationInvalidation,
+    ResidualBankPosting,
 )
 from bookkeeping_state.domain.routing import (
     RoutingDecision,
@@ -75,24 +83,31 @@ class BookkeepingState:
     """
 
     __slots__ = (
-        "_context",
-        "_runtime",
         "_bank_accounts",
         "_bank_items",
-        "_book_items",
-        "_documents",
-        "_counterparties",
-        "_routing_decisions",
-        "_routing_invalidations",
-        "_classifications",
-        "_classification_invalidations",
-        "_reconciliations",
-        "_reconciliation_invalidations",
         "_book_item_evidence_assertions",
         "_book_item_evidence_invalidations",
-        "_reconciliation_hypotheses",
-        "_events",
+        "_book_items",
+        "_classification_invalidations",
+        "_classifications",
         "_closed",
+        "_context",
+        "_counterparties",
+        "_documents",
+        "_events",
+        "_executed_payment_applications",
+        "_historical_book_item_ids",
+        "_reconciliation_hypotheses",
+        "_reconciliation_invalidations",
+        "_reconciliations",
+        "_residual_bank_classification_invalidations",
+        "_residual_bank_classifications",
+        "_residual_bank_postings",
+        "_residual_bank_postings_by_decision_id",
+        "_residual_bank_postings_by_reconciliation_id",
+        "_routing_decisions",
+        "_routing_invalidations",
+        "_runtime",
     )
 
     def __init__(
@@ -103,6 +118,7 @@ class BookkeepingState:
         bank_accounts: Iterable[BankAccount] = (),
         bank_items: Iterable[BankItem] = (),
         book_items: Iterable[BookItem] = (),
+        historical_book_item_ids: Iterable[str] = (),
         documents: Iterable[Document] = (),
         counterparties: Iterable[Counterparty] = (),
         routing_decisions: Iterable[RoutingDecision] = (),
@@ -120,6 +136,18 @@ class BookkeepingState:
         ] = (),
         book_item_evidence_invalidations: Iterable[
             BookItemEvidenceInvalidation
+        ] = (),
+        executed_payment_applications: Iterable[
+            ExecutedPaymentApplication
+        ] = (),
+        residual_bank_classifications: Iterable[
+            ResidualBankClassificationDecision
+        ] = (),
+        residual_bank_classification_invalidations: Iterable[
+            ResidualBankClassificationInvalidation
+        ] = (),
+        residual_bank_postings: Iterable[
+            ResidualBankPosting
         ] = (),
     ) -> None:
         self._context = context
@@ -181,6 +209,41 @@ class BookkeepingState:
             book_item_evidence_invalidations,
             artifact_name="BookItemEvidenceInvalidation",
         )
+        self._executed_payment_applications = self._index_unique(
+            executed_payment_applications,
+            artifact_name="ExecutedPaymentApplication",
+        )
+        self._residual_bank_classifications = self._index_unique(
+            residual_bank_classifications,
+            artifact_name="ResidualBankClassificationDecision",
+        )
+        self._residual_bank_classification_invalidations = self._index_unique(
+            residual_bank_classification_invalidations,
+            artifact_name="ResidualBankClassificationInvalidation",
+        )
+        self._residual_bank_postings = self._index_unique(
+            residual_bank_postings,
+            artifact_name="ResidualBankPosting",
+        )
+        self._residual_bank_postings_by_decision_id: dict[str, ResidualBankPosting] = {}
+        self._residual_bank_postings_by_reconciliation_id: dict[str, ResidualBankPosting] = {}
+        for p in self._residual_bank_postings.values():
+            if p.decision_id in self._residual_bank_postings_by_decision_id:
+                raise DuplicateArtifactError(
+                    f"Duplicate ResidualBankPosting for decision {p.decision_id!r}"
+                )
+            self._residual_bank_postings_by_decision_id[p.decision_id] = p
+            if p.reconciliation_id in self._residual_bank_postings_by_reconciliation_id:
+                raise DuplicateArtifactError(
+                    f"Duplicate ResidualBankPosting for reconciliation {p.reconciliation_id!r}"
+                )
+            self._residual_bank_postings_by_reconciliation_id[p.reconciliation_id] = p
+
+        self._historical_book_item_ids: set[str] = set(historical_book_item_ids)
+        for pa in self._executed_payment_applications.values():
+            for alloc in pa.allocations:
+                self._historical_book_item_ids.add(alloc.obligation_book_item_id)
+                self._historical_book_item_ids.add(alloc.cash_transaction_book_item_id)
 
         self._reconciliation_hypotheses: dict[
             str,
@@ -225,7 +288,7 @@ class BookkeepingState:
     
     @property
     def source_revisions(self) -> Mapping[str, int]:
-        return self._runtime.source_revisions
+        return getattr(self._runtime, "source_revisions", {})
 
     def close(self) -> None:
         """
@@ -259,6 +322,13 @@ class BookkeepingState:
 
         self._book_item_evidence_assertions.clear()
         self._book_item_evidence_invalidations.clear()
+        self._executed_payment_applications.clear()
+        self._residual_bank_classifications.clear()
+        self._residual_bank_classification_invalidations.clear()
+        self._residual_bank_postings.clear()
+        self._residual_bank_postings_by_decision_id.clear()
+        self._residual_bank_postings_by_reconciliation_id.clear()
+        self._historical_book_item_ids.clear()
 
         self._reconciliation_hypotheses.clear()
         self._events.clear()
@@ -268,6 +338,18 @@ class BookkeepingState:
     # ------------------------------------------------------------------
     # Authoritative artifact collections
     # ------------------------------------------------------------------
+
+    @property
+    def historical_book_item_ids(self) -> frozenset[str]:
+        self._ensure_open()
+        return frozenset(self._historical_book_item_ids)
+
+    def is_known_book_item(self, book_item_id: str) -> bool:
+        self._ensure_open()
+        return (
+            book_item_id in self._book_items
+            or book_item_id in self._historical_book_item_ids
+        )
 
     @property
     def bank_accounts(self) -> Mapping[str, BankAccount]:
@@ -343,6 +425,70 @@ class BookkeepingState:
     ) -> Mapping[str, BookItemEvidenceInvalidation]:
         self._ensure_open()
         return MappingProxyType(self._book_item_evidence_invalidations)
+
+    @property
+    def executed_payment_applications(
+        self,
+    ) -> Mapping[str, ExecutedPaymentApplication]:
+        self._ensure_open()
+        return MappingProxyType(self._executed_payment_applications)
+
+    @property
+    def residual_bank_classifications(
+        self,
+    ) -> Mapping[str, ResidualBankClassificationDecision]:
+        self._ensure_open()
+        return MappingProxyType(self._residual_bank_classifications)
+
+    @property
+    def residual_bank_classification_invalidations(
+        self,
+    ) -> Mapping[str, ResidualBankClassificationInvalidation]:
+        self._ensure_open()
+        return MappingProxyType(self._residual_bank_classification_invalidations)
+
+    def get_residual_bank_classification(
+        self,
+        decision_id: str,
+    ) -> ResidualBankClassificationDecision | None:
+        self._ensure_open()
+        return self._residual_bank_classifications.get(decision_id)
+
+    def get_residual_bank_classification_invalidation(
+        self,
+        invalidation_id: str,
+    ) -> ResidualBankClassificationInvalidation | None:
+        self._ensure_open()
+        return self._residual_bank_classification_invalidations.get(invalidation_id)
+
+    @property
+    def residual_bank_postings(
+        self,
+    ) -> Mapping[str, ResidualBankPosting]:
+        self._ensure_open()
+        return MappingProxyType(self._residual_bank_postings)
+
+    def get_residual_bank_posting(
+        self,
+        posting_id: str,
+    ) -> ResidualBankPosting | None:
+        self._ensure_open()
+        return self._residual_bank_postings.get(posting_id)
+
+    def get_residual_bank_posting_for_decision(
+        self,
+        decision_id: str,
+    ) -> ResidualBankPosting | None:
+        self._ensure_open()
+        return self._residual_bank_postings_by_decision_id.get(decision_id)
+
+    def get_residual_bank_posting_for_reconciliation(
+        self,
+        reconciliation_id: str,
+    ) -> ResidualBankPosting | None:
+        self._ensure_open()
+        return self._residual_bank_postings_by_reconciliation_id.get(reconciliation_id)
+
 
     # ------------------------------------------------------------------
     # Runtime-only state
@@ -559,6 +705,28 @@ class BookkeepingState:
             self._book_item_evidence_invalidations,
             artifact,
             artifact_name="BookItemEvidenceInvalidation",
+        )
+
+    def _insert_residual_bank_classification(
+        self,
+        artifact: ResidualBankClassificationDecision,
+    ) -> None:
+        self._ensure_open()
+        self._insert_unique(
+            self._residual_bank_classifications,
+            artifact,
+            artifact_name="ResidualBankClassificationDecision",
+        )
+
+    def _insert_residual_bank_classification_invalidation(
+        self,
+        artifact: ResidualBankClassificationInvalidation,
+    ) -> None:
+        self._ensure_open()
+        self._insert_unique(
+            self._residual_bank_classification_invalidations,
+            artifact,
+            artifact_name="ResidualBankClassificationInvalidation",
         )
 
     # ------------------------------------------------------------------

@@ -20,12 +20,12 @@ from bookkeeping_state.state.fingerprint import artifact_fingerprint, state_fing
 from bookkeeping_state.state.queries import BookkeepingQueries
 from bookkeeping_state.transitions.engine import TransitionEngine
 from bookkeeping_state.transitions.result import TransitionStatus
-from tests.factories import FIXED_TIME, account, bank_item, book_item, snapshot
+from tests.factories import FIXED_TIME, account, bank_item, book_item, posted_book_item, snapshot
 
 
 def test_destroy_and_rehydrate_reconstructs_truth_but_not_runtime_state() -> None:
     repository = InMemoryBookkeepingRepository(
-        initial_snapshots=[snapshot(bank_accounts=(account(),), bank_items=(bank_item(),), book_items=(book_item(),))]
+        initial_snapshots=[snapshot(bank_accounts=(account(),), bank_items=(bank_item(),), book_items=(posted_book_item(),))]
     )
     times = iter((FIXED_TIME, FIXED_TIME + timedelta(hours=3)))
     hydrator = BookkeepingHydrator(repository=repository, clock=lambda: next(times))

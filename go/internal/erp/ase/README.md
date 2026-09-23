@@ -19,7 +19,8 @@ The ASE is built on a **Directed Acyclic Graph (DAG)** architecture. Instead of 
 
 ## How it Uses LLMs for Reasoning
 1. **Specialized Brains:** The engine stores highly specialized instructions (prompts) for different nodes. It acts as the "brain," dynamically pulling relevant historical context, company rules, and hints.
-2. **Generic Execution:** It bundles this context and sends it over a messaging queue to a fleet of generic agents that execute the LLM call (e.g., GPT-4o) and return the results.
+2. **Generic Execution:** It bundles this context and sends it over a messaging queue to a fleet of generic agents that execute the LLM call (e.g., GPT-5.4-mini
+) and return the results.
 3. **Mathematical Guardrails:** The ASE protects against hallucinations by forcing the LLM to return a "probability distribution" (e.g., 98% confident it's X, 2% confident it's Y). The ASE runs strict mathematical validation to ensure confidence scores equal exactly 100%.
 
 ## Validation & Messaging Architecture

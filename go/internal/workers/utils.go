@@ -33,9 +33,10 @@ type ResolvedSender struct {
 	SessionID   string      // conversation session UUID (populated after session resolution)
 }
 
-// ResolveSender wraps ResolveEntityID and ParseAgentEmail into a single call.
+// ResolveSender wraps recipient-based entity resolution, sender authentication,
+// and hierarchical authorization into a single call.
 // It returns a populated ResolvedSender or an error when the sender cannot be
-// matched to a known entity (the caller should then Bounce).
+// matched or authorized for the target entity (the caller should then Bounce).
 func ResolveSender(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -56,19 +57,137 @@ func ResolveSender(
 		}, fmt.Errorf("database not available")
 	}
 
-	entityID := ResolveEntityID(ctx, logger, db, pool, from, inReplyTo)
-	if !entityID.Valid {
+	// 1. Authenticate sender: sender must be a registered active user
+	senderUserEntityID, err := db.GetEntityIDByEmail(ctx, from)
+	if err != nil || !senderUserEntityID.Valid {
 		return ResolvedSender{
 			FromHandle: from,
 			ToHandle:   recipient,
 			AgentAlias: agentAlias,
 			Subdomain:  subdomain,
-		}, fmt.Errorf("unknown sender: %s", from)
+		}, fmt.Errorf("unauthorized sender: %s is not a registered user", from)
+	}
+
+	// 2. Deterministically resolve target entity
+	var targetEntityID pgtype.UUID
+
+	// Precedence 1: In-Reply-To thread (reply-chain routing)
+	if inReplyTo != "" {
+		cleanID := CleanMessageID(inReplyTo)
+		refSessionID, err := db.GetConversationByExternalID(ctx, cleanID)
+		if err != nil || !refSessionID.Valid {
+			refSessionID, err = db.GetConversationByExternalID(ctx, inReplyTo)
+		}
+		if err == nil && refSessionID.Valid {
+			sess, err := db.GetConversationSession(ctx, refSessionID)
+			if err == nil && sess.EntityID.Valid {
+				targetEntityID = sess.EntityID
+			}
+		}
+
+		// ASE DAG Lookup fallback
+		if !targetEntityID.Valid && strings.Contains(inReplyTo, "<ase_") && pool != nil {
+			var aseNodeID string
+			for _, idStr := range strings.Split(inReplyTo, " ") {
+				if strings.HasPrefix(idStr, "<ase_") {
+					clean := strings.Trim(idStr, "<>")
+					if idx := strings.Index(clean, "@"); idx != -1 {
+						clean = clean[:idx]
+					}
+					if idx := strings.Index(clean, "__"); idx != -1 {
+						clean = clean[:idx]
+					}
+					parts := strings.Split(clean, "_")
+					if len(parts) >= 4 && parts[0] == "ase" {
+						aseNodeID = parts[1]
+						break
+					}
+				}
+			}
+			if aseNodeID != "" {
+				var createdBy pgtype.UUID
+				err := pool.QueryRow(ctx, `
+					SELECT s.created_by 
+					FROM fignode.staging_transactions t 
+					JOIN fignode.staging_sessions s ON t.session_id = s.id 
+					WHERE t.id = $1
+				`, aseNodeID).Scan(&createdBy)
+				if err == nil && createdBy.Valid {
+					targetEntityID = createdBy
+				}
+			}
+		}
+	}
+
+	// Precedence 2: Deterministic Recipient-based routing (<entity>@<domain> or <alias>@<entity>.<domain>)
+	if !targetEntityID.Valid {
+		var candidateSubdomain pgtype.UUID
+		var candidateAlias pgtype.UUID
+
+		// Check subdomain (ignoring generic domains)
+		sub := strings.ToLower(strings.TrimSpace(subdomain))
+		if sub != "" && sub != "inbound" && sub != "mail" && sub != "api" && sub != "gateway" && sub != "usetoro" {
+			if id, err := db.GetEntityBySubdomain(ctx, sub); err == nil && id.Valid {
+				candidateSubdomain = id
+			}
+		}
+
+		// Check agent alias
+		alias := strings.ToLower(strings.TrimSpace(agentAlias))
+		if alias != "" && alias != "inbox" && alias != "mail" && alias != "api" && alias != "support" {
+			if id, err := db.GetEntityBySubdomain(ctx, alias); err == nil && id.Valid {
+				candidateAlias = id
+			}
+		}
+
+		if candidateSubdomain.Valid && candidateAlias.Valid {
+			if candidateSubdomain != candidateAlias {
+				return ResolvedSender{
+					FromHandle: from,
+					ToHandle:   recipient,
+					AgentAlias: agentAlias,
+					Subdomain:  subdomain,
+				}, fmt.Errorf("ambiguous recipient: subdomain and alias resolve to different entities")
+			}
+			targetEntityID = candidateSubdomain
+		} else if candidateSubdomain.Valid {
+			targetEntityID = candidateSubdomain
+		} else if candidateAlias.Valid {
+			targetEntityID = candidateAlias
+		} else {
+			// Fallback to the sender's own entity if no specific entity was targeted
+			targetEntityID = senderUserEntityID
+		}
+	}
+
+	// 3. Sender Authorization check
+	isAuthorized := false
+	if senderUserEntityID == targetEntityID {
+		isAuthorized = true
+	} else {
+		descendants, err := db.GetEntityDescendants(ctx, senderUserEntityID)
+		if err == nil {
+			for _, desc := range descendants {
+				if desc.Valid && desc == targetEntityID {
+					isAuthorized = true
+					break
+				}
+			}
+		}
+	}
+
+	if !isAuthorized {
+		return ResolvedSender{
+			FromHandle: from,
+			ToHandle:   recipient,
+			AgentAlias: agentAlias,
+			Subdomain:  subdomain,
+		}, fmt.Errorf("sender %s is not authorized for entity %s", from, uuidFromPG(targetEntityID))
 	}
 
 	return ResolvedSender{
-		EntityID:    entityID,
-		EntityIDStr: uuidFromPG(entityID),
+		EntityID:    targetEntityID,
+		EntityIDStr: uuidFromPG(targetEntityID),
 		FromHandle:  from,
 		ToHandle:    recipient,
 		AgentAlias:  agentAlias,

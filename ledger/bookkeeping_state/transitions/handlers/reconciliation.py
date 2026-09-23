@@ -10,6 +10,7 @@ from bookkeeping_state.domain.enums import (
     AllocationSupport,
     Eligibility,
     SemanticAdmissibility,
+    SourceType,
 )
 from bookkeeping_state.domain.hypotheses import (
     ReconciliationHypothesis,
@@ -219,6 +220,20 @@ def _handle_create_reconciliation(
                 artifact_ids=(
                     command.reconciliation_id,
                     allocation.book_item_id,
+                ),
+            )
+
+        if book_item.source_type != SourceType.POSTED_BOOK_ITEM:
+            return TransitionRejection(
+                code=RejectionCode.INVALID_BOOK_ITEM_SOURCE_TYPE,
+                message=(
+                    f"Reconciliation {command.reconciliation_id!r} cannot reference "
+                    f"BookItem {book_item.id!r} with source_type {book_item.source_type.value!r}. "
+                    f"Bank reconciliation only accepts POSTED_BOOK_ITEM targets."
+                ),
+                artifact_ids=(
+                    command.reconciliation_id,
+                    book_item.id,
                 ),
             )
 
@@ -670,6 +685,22 @@ def _handle_invalidate_reconciliation(
                 f"Cannot invalidate Reconciliation "
                 f"{command.reconciliation_id!r}: "
                 "artifact does not exist"
+            ),
+            artifact_ids=(
+                command.reconciliation_id,
+            ),
+        )
+
+    posting = state.get_residual_bank_posting_for_reconciliation(
+        command.reconciliation_id
+    )
+    if posting is not None:
+        return TransitionRejection(
+            code=RejectionCode.CANNOT_INVALIDATE_POSTING_RECONCILIATION,
+            message=(
+                f"Cannot invalidate Reconciliation {command.reconciliation_id!r}: "
+                "reconciliation is owned by authoritative residual-bank posting and "
+                "requires future formal posting reversal. Standalone invalidation is forbidden."
             ),
             artifact_ids=(
                 command.reconciliation_id,

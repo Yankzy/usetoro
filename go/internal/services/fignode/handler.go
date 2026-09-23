@@ -126,11 +126,24 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 
 	hash := hashPassword(req.Password)
 
+	path, err := h.db.GenerateNextRootPath(r.Context())
+	if err != nil {
+		writeError(w, 500, "INTERNAL", "Failed to generate entity path")
+		return
+	}
+	
+	// Generate a unique slug based on email and a random suffix
+	slug := strings.ReplaceAll(req.Email, "@", "-") + "-" + uuid.New().String()[:8]
+
 	// Employees get a standalone entity (type=employee)
 	entityID, err := h.db.CreateEntity(r.Context(), database.CreateEntityParams{
 		Name:       req.Email, // Organization name
 		EntityType: "employee",
 		PlanTier:   pgtype.Text{String: "internal", Valid: true},
+		Slug:       slug,
+		Path:       path,
+		Depth:      1,
+		Numchild:   0,
 	})
 	if err != nil {
 		writeError(w, 500, "INTERNAL", "Failed to create entity")

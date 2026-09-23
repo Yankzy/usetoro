@@ -1,5 +1,11 @@
 {
     "postman.settings.dotenv-detection-notification-visibility": false,
     "git.ignoreLimitWarning": true,
-    "python.defaultInterpreterPath": "/Users/Yankz/programming/usetoro/.venv/bin/python"
+    "python.defaultInterpreterPath": "/Users/Yankz/programming/usetoro/.venv/bin/python",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/ledger",
+        "${workspaceFolder}/python-worker/app",
+        "ledger",
+        "python-worker/app"
+    ]
 }

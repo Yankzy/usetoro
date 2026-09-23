@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from threading import RLock
 
 from bookkeeping_state.domain.commands import (
+    ApplyPaymentCommand,
     AssertBookItemEvidenceCommand,
     BookkeepingCommand,
     CreateClassificationCommand,
@@ -12,7 +13,10 @@ from bookkeeping_state.domain.commands import (
     InvalidateBookItemEvidenceCommand,
     InvalidateClassificationCommand,
     InvalidateReconciliationCommand,
+    InvalidateResidualBankClassificationCommand,
     InvalidateRoutingDecisionCommand,
+    PostResidualBankClassificationCommand,
+    RecordResidualBankClassificationCommand,
 )
 from bookkeeping_state.domain.context import RuntimeContext
 from bookkeeping_state.domain.events import (
@@ -54,8 +58,14 @@ from bookkeeping_state.transitions.handlers.classification import (
 from bookkeeping_state.transitions.handlers.evidence import (
     handle_evidence_command,
 )
+from bookkeeping_state.transitions.handlers.payment_application import (
+    handle_apply_payment_command,
+)
 from bookkeeping_state.transitions.handlers.reconciliation import (
     handle_reconciliation_command,
+)
+from bookkeeping_state.transitions.handlers.residual_bank_classification import (
+    handle_residual_bank_classification_command,
 )
 from bookkeeping_state.transitions.handlers.routing import (
     handle_routing_command,
@@ -160,6 +170,11 @@ class TransitionEngine:
         self._repository = repository
         self._lock = RLock()
 
+    @property
+    def repository(self) -> BookkeepingRepository:
+        """The underlying authoritative bookkeeping repository."""
+        return self._repository
+
     # ==================================================================
     # Single-command transition
     # ==================================================================
@@ -216,8 +231,8 @@ class TransitionEngine:
 
             # In-memory optimistic concurrency
             if (
-                command.expected_state_revision
-                != state.revision
+                not isinstance(command, PostResidualBankClassificationCommand)
+                and command.expected_state_revision != state.revision
             ):
                 return self._reject(
                     state=state,
@@ -280,6 +295,42 @@ class TransitionEngine:
                     ),
                 )
 
+            # Special handling for executed payment applications or residual bank postings
+            if (
+                write_set.payment_applications_to_execute
+                or write_set.residual_bank_postings_to_execute
+            ):
+                previous_state_revision = state.revision
+                previous_persistence_revision = state.persistence_revision
+
+                commit, commit_err = self._commit_write_set(
+                    state=state,
+                    write_set=write_set,
+                    expected_revision=previous_persistence_revision,
+                )
+                if commit_err is not None or commit is None:
+                    code, msg = commit_err or (
+                        RejectionCode.PERSISTENCE_FAILURE,
+                        "Commit failed",
+                    )
+                    return self._reject(
+                        state=state,
+                        command=command,
+                        code=code,
+                        message=msg,
+                        artifact_ids=(command.command_id,),
+                    )
+
+                # Close the old live state to prevent any stale reads or writes
+                state.close()
+
+                return TransitionResult.rehydrate_required_result(
+                    command=command,
+                    state_revision=previous_state_revision,
+                    previous_persistence_revision=previous_persistence_revision,
+                    new_persistence_revision=commit.new_revision,
+                )
+
             # Pre-commit resulting-state validation
             preview = self._build_preview_state(
                 state=state,
@@ -339,8 +390,11 @@ class TransitionEngine:
                 write_set=write_set,
                 expected_revision=previous_persistence_revision,
             )
-            if commit_err is not None:
-                code, msg = commit_err
+            if commit_err is not None or commit is None:
+                code, msg = commit_err or (
+                    RejectionCode.PERSISTENCE_FAILURE,
+                    "Commit failed",
+                )
                 return self._reject(
                     state=state,
                     command=command,
@@ -413,7 +467,24 @@ class TransitionEngine:
                     artifact_ids=(batch.batch_id,),
                 )
 
-            if batch.expected_state_revision != state.revision:
+            # PostResidualBankClassificationCommand cannot be combined with sibling commands in a batch
+            has_post_residual = any(
+                isinstance(c, PostResidualBankClassificationCommand) for c in batch.commands
+            )
+            if has_post_residual and len(batch.commands) > 1:
+                return BatchTransitionResult.rejected(
+                    batch=batch,
+                    state=state,
+                    code=RejectionCode.UNSUPPORTED_COMMAND,
+                    message="PostResidualBankClassificationCommand cannot be combined with sibling commands in a batch.",
+                    artifact_ids=(batch.batch_id,),
+                )
+
+            # In-memory optimistic concurrency
+            if (
+                batch.expected_state_revision != state.revision
+                and not has_post_residual
+            ):
                 return BatchTransitionResult.rejected(
                     batch=batch,
                     state=state,
@@ -423,6 +494,19 @@ class TransitionEngine:
                         f"revision {batch.expected_state_revision}, but current "
                         f"revision is {state.revision}"
                     ),
+                    artifact_ids=(batch.batch_id,),
+                )
+
+            # ApplyPaymentCommand cannot be combined with sibling commands in a batch
+            has_payment_app = any(
+                isinstance(c, ApplyPaymentCommand) for c in batch.commands
+            )
+            if has_payment_app and len(batch.commands) > 1:
+                return BatchTransitionResult.rejected(
+                    batch=batch,
+                    state=state,
+                    code=RejectionCode.UNSUPPORTED_COMMAND,
+                    message="ApplyPaymentCommand cannot be combined with sibling commands in a batch.",
                     artifact_ids=(batch.batch_id,),
                 )
 
@@ -502,6 +586,47 @@ class TransitionEngine:
                     state_revision=state.revision,
                     persistence_revision=state.persistence_revision,
                     command_results=noop_results,
+                )
+
+            # Check if single command was an ApplyPaymentCommand or PostResidualBankClassificationCommand
+            if len(dispatched) == 1 and (
+                dispatched[0][1].payment_applications_to_execute
+                or dispatched[0][1].residual_bank_postings_to_execute
+            ):
+                cmd, ws = dispatched[0]
+                previous_state_rev = state.revision
+                previous_p_rev = state.persistence_revision
+                commit, commit_err = self._commit_write_set(
+                    state=state,
+                    write_set=ws,
+                    expected_revision=previous_p_rev,
+                )
+                if commit_err is not None or commit is None:
+                    code, msg = commit_err or (
+                        RejectionCode.PERSISTENCE_FAILURE,
+                        "Commit failed",
+                    )
+                    return BatchTransitionResult.rejected(
+                        batch=batch,
+                        state=state,
+                        code=code,
+                        message=msg,
+                        failed_command_id=cmd.command_id,
+                        artifact_ids=(cmd.command_id,),
+                    )
+                state.close()
+                cmd_res = TransitionResult.rehydrate_required_result(
+                    command=cmd,
+                    state_revision=previous_state_rev,
+                    previous_persistence_revision=previous_p_rev,
+                    new_persistence_revision=commit.new_revision,
+                )
+                return BatchTransitionResult.applied_requires_rehydration(
+                    batch=batch,
+                    previous_state_revision=previous_state_rev,
+                    previous_persistence_revision=previous_p_rev,
+                    new_persistence_revision=commit.new_revision,
+                    command_results=(cmd_res,),
                 )
 
             # 5. Merge non-empty sibling write sets
@@ -633,8 +758,11 @@ class TransitionEngine:
                 write_set=merged_write_set,
                 expected_revision=previous_persistence_revision,
             )
-            if commit_err is not None:
-                code, msg = commit_err
+            if commit_err is not None or commit is None:
+                code, msg = commit_err or (
+                    RejectionCode.PERSISTENCE_FAILURE,
+                    "Commit failed",
+                )
                 return BatchTransitionResult.rejected(
                     batch=batch,
                     state=state,
@@ -710,6 +838,10 @@ class TransitionEngine:
                 + write_set.classification_invalidations
                 + write_set.reconciliations
                 + write_set.reconciliation_invalidations
+                + write_set.book_item_evidence_assertions
+                + write_set.book_item_evidence_invalidations
+                + write_set.residual_bank_classifications
+                + write_set.residual_bank_classification_invalidations
             ):
                 if artifact.id in seen_artifact_ids:
                     first_cmd_id = seen_artifact_ids[artifact.id]
@@ -1026,6 +1158,27 @@ class TransitionEngine:
                 in candidate.reconciliation_invalidations
             )
 
+        if isinstance(command, RecordResidualBankClassificationCommand):
+            queries = BookkeepingQueries(candidate)
+            latest = queries.latest_residual_bank_classification(command.bank_item_id)
+            return (
+                latest is not None
+                and latest.status == command.status
+                and latest.account_code == command.account_code
+            )
+
+        if isinstance(command, InvalidateResidualBankClassificationCommand):
+            return (
+                next(
+                    (
+                        inv for inv in candidate.residual_bank_classification_invalidations.values()
+                        if inv.classification_id == command.decision_id
+                    ),
+                    None,
+                ) is not None
+                or candidate.get_residual_bank_classification(command.decision_id) is None
+            )
+
         return True
 
     @staticmethod
@@ -1131,6 +1284,28 @@ class TransitionEngine:
                 command,
             )
 
+        if isinstance(
+            command,
+            ApplyPaymentCommand,
+        ):
+            return handle_apply_payment_command(
+                state,
+                command,
+            )
+
+        if isinstance(
+            command,
+            (
+                RecordResidualBankClassificationCommand,
+                InvalidateResidualBankClassificationCommand,
+                PostResidualBankClassificationCommand,
+            ),
+        ):
+            return handle_residual_bank_classification_command(
+                state,
+                command,
+            )
+
         return TransitionRejection(
             code=RejectionCode.UNSUPPORTED_COMMAND,
             message=(
@@ -1185,6 +1360,24 @@ class TransitionEngine:
             reconciliation_invalidations=tuple(
                 a for ws in ws_list for a in ws.reconciliation_invalidations
             ),
+            book_item_evidence_assertions=tuple(
+                a for ws in ws_list for a in ws.book_item_evidence_assertions
+            ),
+            book_item_evidence_invalidations=tuple(
+                a for ws in ws_list for a in ws.book_item_evidence_invalidations
+            ),
+            payment_applications_to_execute=tuple(
+                a for ws in ws_list for a in ws.payment_applications_to_execute
+            ),
+            residual_bank_postings_to_execute=tuple(
+                a for ws in ws_list for a in ws.residual_bank_postings_to_execute
+            ),
+            residual_bank_classifications=tuple(
+                a for ws in ws_list for a in ws.residual_bank_classifications
+            ),
+            residual_bank_classification_invalidations=tuple(
+                a for ws in ws_list for a in ws.residual_bank_classification_invalidations
+            ),
         )
 
     @staticmethod
@@ -1231,6 +1424,8 @@ class TransitionEngine:
                 tuple(state.book_items.values())
                 + write_set.book_items
             ),
+
+            historical_book_item_ids=tuple(state.historical_book_item_ids),
 
             documents=(
                 tuple(state.documents.values())
@@ -1286,6 +1481,38 @@ class TransitionEngine:
                     .values()
                 )
                 + write_set.reconciliation_invalidations
+            ),
+
+            book_item_evidence_assertions=(
+                tuple(
+                    state.book_item_evidence_assertions.values()
+                )
+                + write_set.book_item_evidence_assertions
+            ),
+
+            book_item_evidence_invalidations=(
+                tuple(
+                    state.book_item_evidence_invalidations.values()
+                )
+                + write_set.book_item_evidence_invalidations
+            ),
+
+            executed_payment_applications=tuple(
+                state.executed_payment_applications.values()
+            ),
+
+            residual_bank_classifications=(
+                tuple(
+                    state.residual_bank_classifications.values()
+                )
+                + write_set.residual_bank_classifications
+            ),
+
+            residual_bank_classification_invalidations=(
+                tuple(
+                    state.residual_bank_classification_invalidations.values()
+                )
+                + write_set.residual_bank_classification_invalidations
             ),
         )
 
@@ -1362,9 +1589,24 @@ class TransitionEngine:
                 str(exc),
             )
         except PersistenceError as exc:
+            msg = str(exc)
+            if "CANNOT_INVALIDATE_POSTING_RECONCILIATION" in msg or "owned by an authoritative residual bank posting" in msg.lower():
+                return None, (RejectionCode.CANNOT_INVALIDATE_POSTING_RECONCILIATION, msg)
+            if "BANK_LEDGER_LOCKED" in msg or "is locked" in msg.lower():
+                return None, (RejectionCode.BANK_LEDGER_LOCKED, msg)
+            if "CLOSED_ACCOUNTING_PERIOD" in msg or "closed period" in msg.lower():
+                return None, (RejectionCode.CLOSED_ACCOUNTING_PERIOD, msg)
+            if "DECISION_ALREADY_POSTED" in msg or "already posted" in msg.lower():
+                return None, (RejectionCode.DECISION_ALREADY_POSTED, msg)
+            if "ACCOUNTING_KERNEL_FAILURE" in msg:
+                return None, (RejectionCode.ACCOUNTING_KERNEL_FAILURE, msg)
+            if "consumed" in msg.lower() or "not residual" in msg.lower():
+                return None, (RejectionCode.NOT_RESIDUAL_BANK_ITEM, msg)
+            if "mismatch" in msg.lower() and "residual" in msg.lower():
+                return None, (RejectionCode.RESIDUAL_AMOUNT_MISMATCH, msg)
             return None, (
                 RejectionCode.PERSISTENCE_FAILURE,
-                str(exc),
+                msg,
             )
 
         return commit, None
@@ -1519,6 +1761,18 @@ class TransitionEngine:
             delta.book_item_evidence_invalidations
         ):
             state._insert_book_item_evidence_invalidation(
+                artifact
+            )
+
+        for artifact in delta.residual_bank_classifications:
+            state._insert_residual_bank_classification(
+                artifact
+            )
+
+        for artifact in (
+            delta.residual_bank_classification_invalidations
+        ):
+            state._insert_residual_bank_classification_invalidation(
                 artifact
             )
 
@@ -1767,6 +2021,33 @@ class TransitionEngine:
                 (
                     invalidation.id,
                     invalidation.assertion_id,
+                ),
+            )
+
+        # Residual Bank Classification
+        for r_decision in write_set.residual_bank_classifications:
+            if r_decision.supersedes_decision_id is not None:
+                append_event(
+                    StateEventType.RESIDUAL_BANK_CLASSIFICATION_SUPERSEDED,
+                    (
+                        r_decision.id,
+                        r_decision.supersedes_decision_id,
+                    ),
+                )
+            else:
+                append_event(
+                    StateEventType.RESIDUAL_BANK_CLASSIFICATION_CREATED,
+                    (
+                        r_decision.id,
+                    ),
+                )
+
+        for r_invalidation in write_set.residual_bank_classification_invalidations:
+            append_event(
+                StateEventType.RESIDUAL_BANK_CLASSIFICATION_INVALIDATED,
+                (
+                    r_invalidation.id,
+                    r_invalidation.classification_id,
                 ),
             )
 

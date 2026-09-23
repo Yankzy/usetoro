@@ -9,6 +9,7 @@ from bookkeeping_state.domain.counterparties import Counterparty, CounterpartyTy
 from bookkeeping_state.domain.enums import (
     AllocationSupport,
     Direction,
+    SourceType,
 )
 from bookkeeping_state.domain.evidence import (
     BookItemEvidenceType,
@@ -403,6 +404,7 @@ def test_h_durable_world_mutation_causes_later_run_to_perform_new_work() -> None
             currency="MAD",
             description="Office supplies extra reorder",
             reference="OFF-BONUS",
+            source_type=SourceType.POSTED_BOOK_ITEM,
         )
         lab.add_bank_item(new_bank)
         lab.add_book_item(new_book)
@@ -639,6 +641,7 @@ def test_n_every_durable_mutation_leaves_a_fresh_usable_inspection_state_at_s0()
                 direction=Direction.BOOK_BANK_DEBIT,
                 currency="MAD",
                 description="Book N Debit",
+                source_type=SourceType.POSTED_BOOK_ITEM,
             )
         )
         verify_usable_s0(3)

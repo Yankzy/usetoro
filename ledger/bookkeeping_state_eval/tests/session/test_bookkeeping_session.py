@@ -15,7 +15,7 @@ from bookkeeping_state.domain.commands import (
     CreateReconciliationCommand,
     CreateRoutingDecisionCommand,
 )
-from bookkeeping_state.domain.enums import Eligibility
+from bookkeeping_state.domain.enums import Eligibility, SourceType
 from bookkeeping_state.domain.hypotheses import ReconciliationHypothesis
 from bookkeeping_state.domain.reconciliations import BankAllocation, BookAllocation
 from bookkeeping_state.hydration.hydrator import BookkeepingHydrator
@@ -80,7 +80,19 @@ class DummySemanticProvider(RoutingSemanticScoreProvider):
         )
 
 
-def _build_env(*, bank_items: tuple[BankItem, ...] = (), book_items: tuple[BookItem, ...] = ()):
+def _build_env(
+    *,
+    bank_items: tuple[BankItem, ...] = (),
+    book_items: tuple[BookItem, ...] = (),
+    default_posted: bool = True,
+):
+    if default_posted:
+        book_items = tuple(
+            item.model_copy(update={"source_type": SourceType.POSTED_BOOK_ITEM})
+            if item.source_type == SourceType.STAGING_BOOK_ITEM
+            else item
+            for item in book_items
+        )
     acc = factories.account("acc-main", currency="MAD")
     ctx = factories.context()
     snap = BookkeepingSnapshot(

@@ -464,10 +464,7 @@ func (t *PcmBankCashTool) GetBacktrackingInstructions(a *ase.AutonomousSemanticE
 }
 
 func (t *PcmBankCashTool) GetClassifier(deps domain_tools.ToolDependencies) ase.Classifier {
-	c := domain_tools.NewBookkeepingClassifier(deps.Runtime, deps.NC, "tasks.accounting.1.batch_categorization", deps.Logger)
-	c.SetDB(deps.DB)
-	c.SetVectorStore(deps.VectorStore)
-	return c
+	return NewPcmClassifier(deps.Runtime, deps.DBPool, deps.DB, deps.Logger)
 }
 
 func (t *PcmBankCashTool) GetStatePersister(deps domain_tools.ToolDependencies) ase.StatePersister {

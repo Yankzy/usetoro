@@ -19,6 +19,10 @@ from bookkeeping_state.domain.reconciliations import (
     Reconciliation,
     ReconciliationInvalidation,
 )
+from bookkeeping_state.domain.residual_bank_classifications import (
+    ResidualBankClassificationDecision,
+    ResidualBankClassificationInvalidation,
+)
 from bookkeeping_state.domain.routing import (
     RoutingDecision,
     RoutingDecisionInvalidation,
@@ -92,6 +96,15 @@ class StateDelta:
     ] = ()
     book_item_evidence_invalidations: tuple[
         BookItemEvidenceInvalidation,
+        ...
+    ] = ()
+
+    residual_bank_classifications: tuple[
+        ResidualBankClassificationDecision,
+        ...
+    ] = ()
+    residual_bank_classification_invalidations: tuple[
+        ResidualBankClassificationInvalidation,
         ...
     ] = ()
 
@@ -183,6 +196,8 @@ class StateDelta:
                 self.reconciliation_invalidations,
                 self.book_item_evidence_assertions,
                 self.book_item_evidence_invalidations,
+                self.residual_bank_classifications,
+                self.residual_bank_classification_invalidations,
                 self.events,
                 self.invalidated_hypothesis_ids,
                 self.clear_all_hypotheses,
@@ -220,6 +235,12 @@ class StateDelta:
             ),
             book_item_evidence_invalidations=(
                 self.book_item_evidence_invalidations
+            ),
+            residual_bank_classifications=(
+                self.residual_bank_classifications
+            ),
+            residual_bank_classification_invalidations=(
+                self.residual_bank_classification_invalidations
             ),
         )
 
@@ -295,6 +316,13 @@ class StateDelta:
             ),
             book_item_evidence_invalidations=(
                 write_set.book_item_evidence_invalidations
+            ),
+
+            residual_bank_classifications=(
+                write_set.residual_bank_classifications
+            ),
+            residual_bank_classification_invalidations=(
+                write_set.residual_bank_classification_invalidations
             ),
 
             events=events,

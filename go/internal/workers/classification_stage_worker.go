@@ -46,7 +46,7 @@ func init() {
 // It defines the specific behavior for the current classification stage.
 type StageConfig struct {
 	Stage            string `json:"stage" mapstructure:"stage" desc:"The name of the stage (e.g., 'macro_class', 'account_type')"`
-	Model            string `json:"model" mapstructure:"model" desc:"The specific LLM model to use for this stage (e.g., 'gpt-4o')"`
+	Model            string `json:"model" mapstructure:"model" desc:"The specific LLM model to use for this stage (e.g., 'gpt-5.4-mini')"`
 	GroupBy          string `json:"group_by" mapstructure:"group_by" desc:"How to group rows for batching: 'direction', 'macro_class', or 'none'"`
 	DBFilter         string `json:"db_filter" mapstructure:"db_filter" desc:"SQL WHERE clause filter to select rows eligible for this stage"`
 	DBWriteColumn    string `json:"db_write_column" mapstructure:"db_write_column" desc:"The primary database column to write the LLM's classification result to"`

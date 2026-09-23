@@ -10,22 +10,33 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
+import os
+import sys
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR.parent))
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+STAGE1_CAPABILITY_SECRET = os.environ.get("STAGE1_CAPABILITY_SECRET", "")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-*yi&^@4t384un)p!ur(6!g%u*_z@4k5g0koroqlc#^sa2#-&(6'
+SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-*yi&^@4t384un)p!ur(6!g%u*_z@4k5g0koroqlc#^sa2#-&(6')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
-ALLOWED_HOSTS = []
+raw_allowed_hosts = os.environ.get('ALLOWED_HOSTS', '*')
+ALLOWED_HOSTS = [h.strip() for h in raw_allowed_hosts.split(',') if h.strip()] if raw_allowed_hosts else ['*']
+
+NATS_URL = os.environ.get('NATS_URL', 'nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222')
 
 
 # Application definition
@@ -37,10 +48,16 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'treebeard',
+    'toro_core',
+    'ledger',
 ]
+
+AUTH_USER_MODEL = 'toro_core.ToroUser'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -73,10 +90,55 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
+from urllib.parse import parse_qs, urlparse
+
+def _is_in_docker() -> bool:
+    return os.path.exists("/.dockerenv") or os.environ.get("IN_DOCKER") == "1"
+
+# Load DATABASE_URL from container/.env if not already set in environment
+if not os.environ.get("DATABASE_URL"):
+    container_env = BASE_DIR.parent / "container" / ".env"
+    if container_env.exists():
+        with open(container_env, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k == "DATABASE_URL" and k not in os.environ:
+                        os.environ[k] = v
+                        break
+
+DEFAULT_DATABASE_URL = "postgres://toro:toro_password@127.0.0.1:5435/toro?sslmode=disable"
+db_url = os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL
+
+if not _is_in_docker():
+    if "@torodb:5432" in db_url:
+        db_url = db_url.replace("@torodb:5432", "@127.0.0.1:5435")
+    elif "@db:5432" in db_url:
+        db_url = db_url.replace("@db:5432", "@127.0.0.1:5435")
+    elif "@torodb:" in db_url:
+        db_url = db_url.replace("@torodb:", "@127.0.0.1:")
+
+parsed = urlparse(db_url)
+db_options = {}
+if parsed.query:
+    qs = parse_qs(parsed.query)
+    if "sslmode" in qs:
+        db_options["sslmode"] = qs["sslmode"][0]
+    if "options" in qs:
+        db_options["options"] = qs["options"][0]
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': parsed.path.lstrip("/") or "toro",
+        'USER': parsed.username or "toro",
+        'PASSWORD': parsed.password or "toro_password",
+        'HOST': parsed.hostname or "127.0.0.1",
+        'PORT': parsed.port or (5432 if _is_in_docker() else 5435),
+        'OPTIONS': db_options,
     }
 }
 
@@ -115,7 +177,9 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field

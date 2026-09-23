@@ -23,18 +23,30 @@ func (q *Queries) CountEntities(ctx context.Context) (int64, error) {
 }
 
 const createEntity = `-- name: CreateEntity :one
-INSERT INTO toro_core.entities (name, entity_type, plan_tier)
-VALUES ($1, $2, $3) RETURNING id
+INSERT INTO toro_core.entities (name, entity_type, plan_tier, slug, path, depth, numchild)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
 `
 
 type CreateEntityParams struct {
 	Name       string
 	EntityType string
 	PlanTier   pgtype.Text
+	Slug       string
+	Path       string
+	Depth      int32
+	Numchild   int32
 }
 
 func (q *Queries) CreateEntity(ctx context.Context, arg CreateEntityParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, createEntity, arg.Name, arg.EntityType, arg.PlanTier)
+	row := q.db.QueryRow(ctx, createEntity,
+		arg.Name,
+		arg.EntityType,
+		arg.PlanTier,
+		arg.Slug,
+		arg.Path,
+		arg.Depth,
+		arg.Numchild,
+	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -98,7 +110,7 @@ func (q *Queries) DeleteRefreshToken(ctx context.Context, tokenHash string) erro
 }
 
 const getEntities = `-- name: GetEntities :many
-SELECT id, parent_id, name, entity_type, erp_provider, erp_tenant_id, plan_tier, status, created_at, updated_at FROM toro_core.entities
+SELECT id, parent_id, name, entity_type, erp_provider, erp_tenant_id, plan_tier, status, created_at, updated_at, slug, currency, accrual_method, fy_start_month, last_closing_date, picture, meta, hidden, is_ephemeral, default_coa_id, admin_id, address_1, address_2, city, state, country, zip_code, email, website, phone, path, depth, numchild FROM toro_core.entities
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -128,6 +140,29 @@ func (q *Queries) GetEntities(ctx context.Context, arg GetEntitiesParams) ([]Tor
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Slug,
+			&i.Currency,
+			&i.AccrualMethod,
+			&i.FyStartMonth,
+			&i.LastClosingDate,
+			&i.Picture,
+			&i.Meta,
+			&i.Hidden,
+			&i.IsEphemeral,
+			&i.DefaultCoaID,
+			&i.AdminID,
+			&i.Address1,
+			&i.Address2,
+			&i.City,
+			&i.State,
+			&i.Country,
+			&i.ZipCode,
+			&i.Email,
+			&i.Website,
+			&i.Phone,
+			&i.Path,
+			&i.Depth,
+			&i.Numchild,
 		); err != nil {
 			return nil, err
 		}
@@ -137,6 +172,17 @@ func (q *Queries) GetEntities(ctx context.Context, arg GetEntitiesParams) ([]Tor
 		return nil, err
 	}
 	return items, nil
+}
+
+const getMaxRootPath = `-- name: GetMaxRootPath :one
+SELECT path FROM toro_core.entities WHERE depth = 1 ORDER BY path DESC LIMIT 1
+`
+
+func (q *Queries) GetMaxRootPath(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, getMaxRootPath)
+	var path string
+	err := row.Scan(&path)
+	return path, err
 }
 
 const getRefreshToken = `-- name: GetRefreshToken :one

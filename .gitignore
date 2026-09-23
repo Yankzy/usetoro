@@ -65,3 +65,7 @@ container/postgres/db_data
 # .idea/
 # .vscode/
 .aider*
+
+# Database files
+*.sqlite3
+*.db

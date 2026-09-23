@@ -3,7 +3,7 @@ from decimal import Decimal
 from itertools import cycle
 from logging import getLogger, DEBUG
 from random import randint, choice
-from typing import Optional, Literal
+from typing import Optional, Literal, Any, Union, List, cast
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -17,25 +17,26 @@ from ledger.io.io_generator import EntityDataGenerator
 from ledger.models import JournalEntryModel, LedgerModel, TransactionModel, AccountModel, AccountModelQuerySet
 from ledger.models.entity import EntityModel, EntityModelQuerySet, UserModel
 
-UserModel = get_user_model()
+UserModel: Any = get_user_model()
 
 
 class DjangoLedgerBaseTest(TestCase):
-    FY_STARTS = None
-    CAPITAL_CONTRIBUTION = None
-    START_DATE = None
+    FY_STARTS: Any = list(str(i) for i in range(1, 13))
+    CAPITAL_CONTRIBUTION: Any = Decimal('50000.00')
+    START_DATE: Any = None
     DAYS_FORWARD = 9 * 30
     TX_QUANTITY = 50
-    user_model = None
-    TEST_DATA = list()
-    CLIENT = None
-    TZ = None
+    user_model: Any = None
+    TEST_DATA: list = list()
+    CLIENT: Any = None
+    TZ: Any = None
     N = 1
-    USER_EMAIL = None
-    PASSWORD = None
-    USERNAME = None
-    logger = None
+    USER_EMAIL: Any = None
+    PASSWORD: Any = None
+    USERNAME: Any = None
+    logger: Any = None
     accrual_cycle = cycle([True, False])
+    ENTITY_MODEL_QUERYSET: Any = None
 
     @classmethod
     def setUpTestData(cls):
@@ -43,11 +44,11 @@ class DjangoLedgerBaseTest(TestCase):
         cls.logger = getLogger(__name__)
         cls.logger.setLevel(level=DEBUG)
 
-        cls.USERNAME: str = 'testuser'
-        cls.PASSWORD: str = '@password1234'
-        cls.USER_EMAIL: str = 'testuser@fignode.com'
+        cls.USERNAME = 'testuser'
+        cls.PASSWORD = '@password1234'
+        cls.USER_EMAIL = 'testuser@fignode.com'
 
-        cls.DAYS_FWD: int = randint(180, 180 * 3)
+        cls.DAYS_FWD = randint(180, 180 * 3)
         cls.TZ = get_default_timezone()
         cls.START_DATE = cls.get_random_date(as_datetime=True)
 
@@ -56,7 +57,8 @@ class DjangoLedgerBaseTest(TestCase):
         try:
             cls.user_model = UserModel.objects.get(email=cls.USER_EMAIL)
         except ObjectDoesNotExist:
-            cls.user_model = UserModel.objects.create_user(
+            cls.user_model = cast(Any, UserModel.objects).create_user(
+                username=cls.USERNAME,
                 email=cls.USER_EMAIL,
                 password=cls.PASSWORD,
             )
@@ -64,13 +66,13 @@ class DjangoLedgerBaseTest(TestCase):
         cls.FY_STARTS = list(str(i) for i in range(1, 13))
         cls.TEST_DATA = list()
         cls.CAPITAL_CONTRIBUTION = Decimal('50000.00')
-        cls.ENTITY_MODEL_QUERYSET: Optional[EntityModelQuerySet] = None
+        cls.ENTITY_MODEL_QUERYSET = None
 
         cls.create_entity_models(n=cls.N)
         cls.populate_entity_models()
 
     @classmethod
-    def get_random_date(cls, as_datetime: bool = False) -> date:
+    def get_random_date(cls, as_datetime: bool = False) -> Any:
         dt = date(
             year=choice(range(1990, 2020)),
             month=choice(range(1, 13)),
@@ -109,7 +111,7 @@ class DjangoLedgerBaseTest(TestCase):
         cls.CLIENT.logout()
 
     @classmethod
-    def refresh_test_data(cls, n: int = None):
+    def refresh_test_data(cls, n: Optional[int] = None):
         N = n if n else cls.N
         cls.TEST_DATA = [cls.get_random_entity_data() for _ in range(N)]
 
@@ -232,13 +234,14 @@ class DjangoLedgerBaseTest(TestCase):
         """.
         Returns 1 random JournalEntryModel object.
         """
-        if not ledger_model:
-            ledger_model: LedgerModel = self.get_random_ledger(
+        if ledger_model is None:
+            ledger_model = self.get_random_ledger(
                 entity_model=entity_model,
                 qs_limit=qs_limit,
             )
         else:
             entity_model.validate_ledger_model_for_entity(ledger_model)
+        assert ledger_model is not None
         journal_entry_qs = ledger_model.journal_entries.all()
 
         # no need to check because data generator will always populate an entity with sample data.
@@ -270,11 +273,12 @@ class DjangoLedgerBaseTest(TestCase):
         """
         Returns all TransactionModel related to a random or specified JournalEntryModel.
         """
-        if not je_model:
+        if je_model is None:
             je_model = self.get_random_je(entity_model=entity_model, posted=posted)
         else:
             ledger_model = je_model.ledger
             entity_model.validate_ledger_model_for_entity(ledger_model)
+        assert je_model is not None
         txs_model_qs = je_model.transactionmodel_set.all()
         return choice(txs_model_qs[:qs_limit])
 
